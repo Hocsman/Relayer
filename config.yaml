@@ -1,0 +1,10 @@
+# Patterns d'interception de Relayer.
+intercept_patterns:
+  - pattern: '(?i)overwrite.*\[y/n\]'
+    description: "confirmation d'écrasement"
+  - pattern: '(?i)\[[yn]/[yn]\]'
+    description: "confirmation oui/non"
+  - pattern: '(?im)password:[[:space:]]*$'
+    description: "saisie d'un mot de passe"
+  - pattern: '(?i)do you want to continue'
+    description: "confirmation de poursuite"

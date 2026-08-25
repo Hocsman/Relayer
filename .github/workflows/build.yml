@@ -1,0 +1,32 @@
+name: Build
+
+# Déclenche l'action à chaque push ou pull request sur la branche main
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build:
+    name: Test & Build
+    runs-on: ubuntu-latest # Le serveur virtuel utilisé par GitHub
+
+    steps:
+      # 1. Télécharge votre code sur le serveur
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      # 2. Installe le langage Go
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21" # Spécifiez la version minimale requise
+
+      # 3. Télécharge les dépendances (Bubble Tea, PTY, etc.)
+      - name: Install dependencies
+        run: go mod tidy
+
+      # 4. Tente de compiler le projet (sans générer le binaire final, juste pour vérifier que ça marche)
+      - name: Build
+        run: go build -v ./...
