@@ -1092,6 +1092,7 @@ func newModel(manager *SessionManager, events <-chan tea.Msg, sessions [2]*Sessi
 	input.Placeholder = "En attente d'une validation interactive…"
 	input.CharLimit = 4096
 	input.Blur()
+	setInputInterceptionStyle(&input, false)
 
 	result := model{
 		manager:     manager,
@@ -1177,6 +1178,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.inputTarget = -1
 				m.input.Reset()
 				m.input.Blur()
+				setInputInterceptionStyle(&m.input, false)
 				m.writePending = true
 				m.appendLog(fmt.Sprintf("Réponse transmise à %s", m.panes[paneIndex].name))
 				commands = append(commands, deliverInput(
@@ -1305,6 +1307,7 @@ func (m *model) activateNextPrompt() tea.Cmd {
 		m.input.Blur()
 		m.input.EchoMode = textinput.EchoNormal
 		m.input.Placeholder = "En attente d'une validation interactive…"
+		setInputInterceptionStyle(&m.input, false)
 		if m.activePanel == 2 {
 			m.activePanel = 0
 		}
@@ -1321,7 +1324,24 @@ func (m *model) activateNextPrompt() tea.Cmd {
 		m.input.EchoMode = textinput.EchoNormal
 	}
 	m.input.Placeholder = fmt.Sprintf("Réponse pour %s (Entrée pour envoyer)", target.name)
+	setInputInterceptionStyle(&m.input, true)
 	return m.input.Focus()
+}
+
+func setInputInterceptionStyle(input *textinput.Model, active bool) {
+	if active {
+		input.PromptStyle = inputActivePromptStyle
+		input.TextStyle = inputActiveTextStyle
+		input.PlaceholderStyle = inputActivePlaceholderStyle
+		input.Cursor.Style = inputActiveCursorStyle
+		input.Cursor.TextStyle = inputActiveTextStyle
+		return
+	}
+	input.PromptStyle = inputInactivePromptStyle
+	input.TextStyle = inputInactiveTextStyle
+	input.PlaceholderStyle = inputInactivePlaceholderStyle
+	input.Cursor.Style = inputInactivePromptStyle
+	input.Cursor.TextStyle = inputInactiveTextStyle
 }
 
 func (m *model) syncFocus() tea.Cmd {
@@ -1412,7 +1432,9 @@ func calculateLayout(width, height int) layoutGeometry {
 	result.rightWidth = maxInt(1, result.width-result.leftWidth)
 
 	if result.height >= minTerminalHeight {
-		result.supervisorHeight = maxInt(6, result.height/3)
+		// Reserve one quarter for supervision and leave roughly 75% of the
+		// terminal to the two live agent streams.
+		result.supervisorHeight = maxInt(6, result.height/4)
 		result.topHeight = result.height - result.supervisorHeight
 		if result.topHeight < 4 {
 			result.topHeight = 4
@@ -1423,25 +1445,26 @@ func calculateLayout(width, height int) layoutGeometry {
 		result.supervisorHeight = maxInt(1, result.height-result.topHeight)
 	}
 
-	frame := panelStyle(false, false)
+	agentFrame := agentABorderStyle
 	result.agentViewportWidths[0] = maxInt(
 		1,
-		result.leftWidth-frame.GetHorizontalFrameSize(),
+		result.leftWidth-agentFrame.GetHorizontalFrameSize(),
 	)
 	result.agentViewportWidths[1] = maxInt(
 		1,
-		result.rightWidth-frame.GetHorizontalFrameSize(),
+		result.rightWidth-agentFrame.GetHorizontalFrameSize(),
 	)
-	agentInnerHeight := maxInt(1, result.topHeight-frame.GetVerticalFrameSize())
+	agentInnerHeight := maxInt(1, result.topHeight-agentFrame.GetVerticalFrameSize())
 	result.agentViewportHeight = maxInt(1, agentInnerHeight-1)
 
+	supervisorFrame := supervisorBorderStyle
 	result.supervisorViewportWidth = maxInt(
 		1,
-		result.width-frame.GetHorizontalFrameSize(),
+		result.width-supervisorFrame.GetHorizontalFrameSize(),
 	)
 	supervisorInnerHeight := maxInt(
 		1,
-		result.supervisorHeight-frame.GetVerticalFrameSize(),
+		result.supervisorHeight-supervisorFrame.GetVerticalFrameSize(),
 	)
 	result.supervisorViewportHeight = maxInt(1, supervisorInnerHeight-3)
 	result.inputWidth = maxInt(1, result.supervisorViewportWidth-2)
@@ -1497,10 +1520,39 @@ func (m *model) resize(width, height int) {
 }
 
 var (
-	colorMuted   = lipgloss.Color("241")
-	colorActive  = lipgloss.Color("39")
-	colorBlocked = lipgloss.Color("196")
-	colorSuccess = lipgloss.Color("42")
+	colorAgentA    = lipgloss.Color("#00D7FF")
+	colorAgentB    = lipgloss.Color("#FF5AF7")
+	colorMuted     = lipgloss.Color("#4B5563")
+	colorText      = lipgloss.Color("#E5E7EB")
+	colorBlocked   = lipgloss.Color("#FF0000")
+	colorSuccess   = lipgloss.Color("#00D75F")
+	colorInputHint = lipgloss.Color("#9CA3AF")
+
+	// Normal state: each agent keeps its own visual identity while the
+	// supervisor stays deliberately understated.
+	agentABorderStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(colorAgentA)
+	agentBBorderStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(colorAgentB)
+	supervisorBorderStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(colorMuted)
+
+	// Interception state: a double, bright-red border is more prominent than
+	// the normal rounded frame without changing its one-cell frame size.
+	interceptionBorderStyle = lipgloss.NewStyle().
+				Border(lipgloss.DoubleBorder()).
+				BorderForeground(colorBlocked)
+
+	inputInactivePromptStyle      = lipgloss.NewStyle().Foreground(colorMuted)
+	inputInactiveTextStyle        = lipgloss.NewStyle().Foreground(colorInputHint)
+	inputInactivePlaceholderStyle = lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
+	inputActivePromptStyle        = lipgloss.NewStyle().Foreground(colorBlocked).Bold(true)
+	inputActiveTextStyle          = lipgloss.NewStyle().Foreground(colorText)
+	inputActivePlaceholderStyle   = lipgloss.NewStyle().Foreground(colorInputHint)
+	inputActiveCursorStyle        = lipgloss.NewStyle().Foreground(colorBlocked).Reverse(true)
 )
 
 func (m model) View() string {
@@ -1511,6 +1563,11 @@ func (m model) View() string {
 		return lipgloss.NewStyle().
 			Foreground(colorBlocked).
 			Bold(true).
+			Width(m.width).
+			Height(m.height).
+			MaxWidth(m.width).
+			MaxHeight(m.height).
+			Align(lipgloss.Center, lipgloss.Center).
 			Render(fmt.Sprintf(
 				"Terminal trop petit (%dx%d). Minimum conseillé: %dx%d.",
 				m.width,
@@ -1529,12 +1586,12 @@ func (m model) View() string {
 
 func (m model) renderAgentPane(index, outerWidth, outerHeight int) string {
 	pane := m.panes[index]
-	style := panelStyle(m.activePanel == index, pane.blocked)
+	style := agentPanelStyle(index, pane.blocked)
 	innerWidth := maxInt(1, outerWidth-style.GetHorizontalFrameSize())
 	innerHeight := maxInt(1, outerHeight-style.GetVerticalFrameSize())
 
 	status := "EN COURS"
-	statusColor := colorActive
+	statusColor := agentColor(index)
 	if pane.blocked {
 		status = "INTERVENTION REQUISE"
 		statusColor = colorBlocked
@@ -1546,7 +1603,11 @@ func (m model) renderAgentPane(index, outerWidth, outerHeight int) string {
 		statusColor = colorBlocked
 	}
 
-	title := lipgloss.NewStyle().Bold(true).Render(pane.name) + "  " +
+	focusMarker := "  "
+	if m.activePanel == index {
+		focusMarker = "▶ "
+	}
+	title := lipgloss.NewStyle().Foreground(agentColor(index)).Bold(true).Render(focusMarker+pane.name) + "  " +
 		lipgloss.NewStyle().Foreground(statusColor).Render("● "+status)
 	title = lipgloss.NewStyle().MaxWidth(innerWidth).Render(title)
 	content := title + "\n" + pane.viewport.View()
@@ -1554,35 +1615,63 @@ func (m model) renderAgentPane(index, outerWidth, outerHeight int) string {
 }
 
 func (m model) renderSupervisorPane(outerWidth, outerHeight int) string {
-	style := panelStyle(m.activePanel == 2, false)
+	intercepting := m.hasBlockedPane()
+	style := supervisorPanelStyle(intercepting)
 	innerWidth := maxInt(1, outerWidth-style.GetHorizontalFrameSize())
 	innerHeight := maxInt(1, outerHeight-style.GetVerticalFrameSize())
 
-	title := "SUPERVISEUR"
+	title := "SUPERVISEUR  •  AUTOMATIQUE"
+	if intercepting {
+		title = "SUPERVISEUR  •  ACTION HUMAINE REQUISE"
+	}
 	if m.inputTarget >= 0 {
 		title += "  →  " + m.panes[m.inputTarget].name
 	}
 	help := lipgloss.NewStyle().Foreground(colorMuted).MaxWidth(innerWidth).Render(
 		"Ctrl+←/→: panneau • ↑/↓, PgUp/PgDn: historique • Entrée: envoyer • Ctrl+C: quitter",
 	)
-	title = lipgloss.NewStyle().Bold(true).MaxWidth(innerWidth).Render(title)
+	titleColor := colorMuted
+	if intercepting {
+		titleColor = colorBlocked
+	}
+	title = lipgloss.NewStyle().Foreground(titleColor).Bold(true).MaxWidth(innerWidth).Render(title)
 	content := title + "\n" +
 		m.supervisor.View() + "\n" +
 		m.input.View() + "\n" + help
 	return style.Width(innerWidth).Height(innerHeight).Render(content)
 }
 
-func panelStyle(active, blocked bool) lipgloss.Style {
-	color := colorMuted
-	if active {
-		color = colorActive
-	}
+func agentPanelStyle(index int, blocked bool) lipgloss.Style {
 	if blocked {
-		color = colorBlocked
+		return interceptionBorderStyle
 	}
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(color)
+	if index == 0 {
+		return agentABorderStyle
+	}
+	return agentBBorderStyle
+}
+
+func supervisorPanelStyle(blocked bool) lipgloss.Style {
+	if blocked {
+		return interceptionBorderStyle
+	}
+	return supervisorBorderStyle
+}
+
+func agentColor(index int) lipgloss.Color {
+	if index == 0 {
+		return colorAgentA
+	}
+	return colorAgentB
+}
+
+func (m model) hasBlockedPane() bool {
+	for _, pane := range m.panes {
+		if pane.blocked {
+			return true
+		}
+	}
+	return false
 }
 
 func batchCommands(commands ...tea.Cmd) tea.Cmd {
@@ -1663,7 +1752,7 @@ func run() error {
 	defer manager.Close()
 
 	first, err := manager.Start(
-		"Agent CLI A",
+		"Agent A (Claude)",
 		*pane1Command,
 		initialLayout.agentViewportWidths[0],
 		initialLayout.agentViewportHeight,
@@ -1672,7 +1761,7 @@ func run() error {
 		return err
 	}
 	second, err := manager.Start(
-		"Agent CLI B",
+		"Agent B (Local)",
 		*pane2Command,
 		initialLayout.agentViewportWidths[1],
 		initialLayout.agentViewportHeight,

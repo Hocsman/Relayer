@@ -27,31 +27,31 @@ func TestWindowSizeMsgRecomputesViewportGeometry(t *testing.T) {
 		inputWidth               int
 	}{
 		{
-			name:                     "odd terminal width",
+			name:                     "75/25 height and exact odd width split",
 			width:                    121,
 			height:                   40,
 			leftWidth:                60,
 			rightWidth:               61,
-			topHeight:                27,
-			supervisorHeight:         13,
+			topHeight:                30,
+			supervisorHeight:         10,
 			leftViewportWidth:        58,
 			rightViewportWidth:       59,
-			agentViewportHeight:      24,
+			agentViewportHeight:      27,
 			supervisorViewportWidth:  119,
-			supervisorViewportHeight: 8,
+			supervisorViewportHeight: 5,
 			inputWidth:               117,
 		},
 		{
 			name:                     "second resize replaces prior geometry",
 			width:                    81,
-			height:                   25,
+			height:                   32,
 			leftWidth:                40,
 			rightWidth:               41,
-			topHeight:                17,
+			topHeight:                24,
 			supervisorHeight:         8,
 			leftViewportWidth:        38,
 			rightViewportWidth:       39,
-			agentViewportHeight:      14,
+			agentViewportHeight:      21,
 			supervisorViewportWidth:  79,
 			supervisorViewportHeight: 3,
 			inputWidth:               77,
@@ -97,6 +97,18 @@ func TestWindowSizeMsgRecomputesViewportGeometry(t *testing.T) {
 					test.leftWidth,
 					test.rightWidth,
 				)
+			}
+			if application.leftWidth+application.rightWidth != application.width {
+				t.Fatalf(
+					"50/50 split loses columns: %d + %d != %d",
+					application.leftWidth,
+					application.rightWidth,
+					application.width,
+				)
+			}
+			widthDifference := application.rightWidth - application.leftWidth
+			if widthDifference < 0 || widthDifference > 1 {
+				t.Fatalf("50/50 pane width difference = %d, want 0 or 1", widthDifference)
 			}
 			if application.topHeight != test.topHeight || application.supervisorHeight != test.supervisorHeight {
 				t.Fatalf(
@@ -179,7 +191,7 @@ func TestWindowSizeMsgPropagatesViewportDimensionsToPTYs(t *testing.T) {
 	application := newModel(manager, events, sessions)
 	for _, size := range []tea.WindowSizeMsg{
 		{Width: 121, Height: 40},
-		{Width: 81, Height: 25},
+		{Width: 81, Height: 32},
 	} {
 		application = updateModel(t, application, size)
 		for index, session := range sessions {
