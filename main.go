@@ -1197,6 +1197,8 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.panes[m.activePanel].viewport, command = m.panes[m.activePanel].viewport.Update(msg)
 			commands = append(commands, command)
 		}
+	case tea.MouseMsg:
+		commands = append(commands, m.handleViewportMouse(msg))
 	case SessionOutputMsg:
 		if paneIndex := m.paneIndex(msg.SessionID); paneIndex >= 0 {
 			m.refreshPaneOutput(paneIndex, msg.Content)
@@ -1275,6 +1277,40 @@ func isViewportNavigationKey(message tea.KeyMsg) bool {
 	default:
 		return false
 	}
+}
+
+// handleViewportMouse sends vertical wheel events to the viewport below the
+// cursor, independently of keyboard focus. Coordinates in tea.MouseMsg are
+// zero-based and refer to the whole terminal, whose top/bottom split is kept
+// in the model by calculateLayout.
+func (m *model) handleViewportMouse(message tea.MouseMsg) tea.Cmd {
+	event := tea.MouseEvent(message)
+	if event.Action != tea.MouseActionPress ||
+		(event.Button != tea.MouseButtonWheelUp && event.Button != tea.MouseButtonWheelDown) {
+		return nil
+	}
+	if m.width < minTerminalWidth || m.height < minTerminalHeight {
+		// View() displays only the size warning, so no viewport is actually under
+		// the pointer in this state.
+		return nil
+	}
+	if event.X < 0 || event.X >= m.width || event.Y < 0 || event.Y >= m.height {
+		return nil
+	}
+
+	if event.Y < m.topHeight {
+		paneIndex := 0
+		if event.X >= m.leftWidth {
+			paneIndex = 1
+		}
+		var command tea.Cmd
+		m.panes[paneIndex].viewport, command = m.panes[paneIndex].viewport.Update(message)
+		return command
+	}
+
+	var command tea.Cmd
+	m.supervisor, command = m.supervisor.Update(message)
+	return command
 }
 
 func deliverInput(
@@ -1628,7 +1664,7 @@ func (m model) renderSupervisorPane(outerWidth, outerHeight int) string {
 		title += "  →  " + m.panes[m.inputTarget].name
 	}
 	help := lipgloss.NewStyle().Foreground(colorMuted).MaxWidth(innerWidth).Render(
-		"Ctrl+←/→: panneau • ↑/↓, PgUp/PgDn: historique • Entrée: envoyer • Ctrl+C: quitter",
+		"Ctrl+←/→: panneau • ↑/↓, PgUp/PgDn, molette: historique • Entrée: envoyer • Ctrl+C: quitter",
 	)
 	titleColor := colorMuted
 	if intercepting {
@@ -1776,7 +1812,11 @@ func run() error {
 		application.appendLog(fmt.Sprintf("Configuration par défaut créée: %s", *configPath))
 	}
 	application.appendLog(fmt.Sprintf("%d patterns chargés depuis %s", len(patterns), *configPath))
-	program := tea.NewProgram(application, tea.WithAltScreen())
+	program := tea.NewProgram(
+		application,
+		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
+	)
 	_, err = program.Run()
 	return err
 }
