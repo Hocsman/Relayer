@@ -1744,9 +1744,17 @@ func clampInt(value, minimum, maximum int) int {
 	return minInt(maxInt(value, minimum), maximum)
 }
 
-const defaultPane1Command = `printf 'Agent A: Running...\n'; sleep 2; printf 'Overwrite file? [Y/n] '; read ans; printf 'Agent A done: %s\n' "$ans"`
+// defaultMockCommand is used for either pane whose command is omitted. The
+// single quotes are consumed by SessionManager's outer /bin/sh without
+// expanding variables; the nested Bash process receives the script intact.
+const defaultMockCommand = `exec bash -c 'echo "🤖 Agent démarré..."; for i in {1..20}; do echo "Génération ligne $i..."; sleep 0.1; done; echo "⚠️ Attention: Overwrite file? [Y/n]"; IFS= read -r ans; echo "✅ Vous avez répondu : $ans. Fin de la tâche."'`
 
-const defaultPane2Command = `printf 'Agent B: Running...\n'; sleep 4; printf 'Password: '; stty -echo; read ans; stty echo; printf '\nAgent B received %d characters\n' "${#ans}"`
+func resolvePaneCommand(command string) (resolved string, mock bool) {
+	if strings.TrimSpace(command) == "" {
+		return defaultMockCommand, true
+	}
+	return command, false
+}
 
 // initialTerminalLayout avoids starting fast-producing CLIs with the old
 // arbitrary 80x16 PTY size. Bubble Tea still remains authoritative: every
@@ -1765,10 +1773,12 @@ func initialTerminalLayout() layoutGeometry {
 }
 
 func run() error {
-	pane1Command := flag.String("pane1", defaultPane1Command, "commande shell du premier agent")
-	pane2Command := flag.String("pane2", defaultPane2Command, "commande shell du second agent")
+	pane1Flag := flag.String("pane1", "", "commande shell du premier agent (mock si omise)")
+	pane2Flag := flag.String("pane2", "", "commande shell du second agent (mock si omise)")
 	configPath := flag.String("config", defaultConfigPath, "fichier YAML des patterns d'interception")
 	flag.Parse()
+	pane1Command, pane1UsesMock := resolvePaneCommand(*pane1Flag)
+	pane2Command, pane2UsesMock := resolvePaneCommand(*pane2Flag)
 	patterns, configCreated, err := loadPromptPatterns(*configPath)
 	if err != nil {
 		return err
@@ -1789,7 +1799,7 @@ func run() error {
 
 	first, err := manager.Start(
 		"Agent A (Claude)",
-		*pane1Command,
+		pane1Command,
 		initialLayout.agentViewportWidths[0],
 		initialLayout.agentViewportHeight,
 	)
@@ -1798,7 +1808,7 @@ func run() error {
 	}
 	second, err := manager.Start(
 		"Agent B (Local)",
-		*pane2Command,
+		pane2Command,
 		initialLayout.agentViewportWidths[1],
 		initialLayout.agentViewportHeight,
 	)
@@ -1808,6 +1818,16 @@ func run() error {
 
 	application := newModel(manager, events, [2]*Session{first, second})
 	application.resize(initialLayout.width, initialLayout.height)
+	mockAgents := make([]string, 0, 2)
+	if pane1UsesMock {
+		mockAgents = append(mockAgents, "Agent A")
+	}
+	if pane2UsesMock {
+		mockAgents = append(mockAgents, "Agent B")
+	}
+	if len(mockAgents) > 0 {
+		application.appendLog("Mode simulation actif: " + strings.Join(mockAgents, ", "))
+	}
 	if configCreated {
 		application.appendLog(fmt.Sprintf("Configuration par défaut créée: %s", *configPath))
 	}
