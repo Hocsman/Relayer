@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/intercept"
 	"github.com/Hocsman/Relayer/internal/platform"
 	"github.com/creack/pty"
@@ -35,12 +36,20 @@ func TestManagerLifecyclePromptResizeInputAndFinalOutput(t *testing.T) {
 	defer manager.Close()
 
 	command := `printf 'Running...\n'; printf 'Overwrite? [Y/n]'; IFS= read -r answer; printf '\nDone: %s\n' "$answer"; stty size`
-	info, err := manager.Start("integration", command, 40, 10)
+	info, err := manager.Start(agent.Spec{
+		ID:    "integration",
+		Name:  "integration",
+		Shell: command,
+	}, 40, 10)
 	if err != nil {
 		t.Fatalf("Start returned an error: %v", err)
 	}
-	if info.ID != 0 || info.Name != "integration" || info.Command != command {
+	if info.ID != "integration" || info.Name != "integration" ||
+		info.DisplayCommand != "[shell explicite]" || !info.Shell {
 		t.Fatalf("Start info = %#v", info)
+	}
+	if strings.Contains(info.DisplayCommand, command) {
+		t.Fatalf("shell script leaked through session metadata: %#v", info)
 	}
 	done, err := manager.Done(info.ID)
 	if err != nil {
@@ -136,7 +145,7 @@ func TestManagerLifecyclePromptResizeInputAndFinalOutput(t *testing.T) {
 	if err := manager.SendInput(info.ID, "late input"); !errors.Is(err, ErrClosed) {
 		t.Fatalf("SendInput after Close returned %v, want %v", err, ErrClosed)
 	}
-	if _, err := manager.Start("late", "true", 40, 10); !errors.Is(err, ErrClosed) {
+	if _, err := manager.Start(agent.Spec{ID: "late", Name: "late", Command: []string{"true"}}, 40, 10); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Start after Close returned %v, want %v", err, ErrClosed)
 	}
 }
@@ -150,7 +159,11 @@ func TestManagerCloseKillsSignalIgnoringDescendants(t *testing.T) {
 	defer manager.Close()
 
 	command := `trap '' TERM HUP; (trap '' TERM HUP; while :; do sleep 30; done) & printf 'READY\n'; wait`
-	info, err := manager.Start("stubborn group", command, 40, 10)
+	info, err := manager.Start(agent.Spec{
+		ID:    "stubborn-group",
+		Name:  "stubborn group",
+		Shell: command,
+	}, 40, 10)
 	if err != nil {
 		t.Fatalf("Start returned an error: %v", err)
 	}
@@ -202,8 +215,11 @@ func TestConcurrentCloseUnblocksIOAndJoinsManagerGoroutines(t *testing.T) {
 	}
 
 	info, err := manager.Start(
-		"concurrent shutdown",
-		`trap '' TERM HUP; printf 'READY\n'; while :; do sleep 30; done`,
+		agent.Spec{
+			ID:    "concurrent-shutdown",
+			Name:  "concurrent shutdown",
+			Shell: `trap '' TERM HUP; printf 'READY\n'; while :; do sleep 30; done`,
+		},
 		40,
 		10,
 	)
@@ -275,14 +291,18 @@ func TestManagerCoalescesOutputButNeverDropsPrompt(t *testing.T) {
 	events := make(chan Event, 1)
 	// Saturate the channel before output arrives. Output notifications are
 	// intentionally best-effort, while a detected prompt must wait for room.
-	events <- OutputAvailable{SessionID: -1}
+	events <- OutputAvailable{SessionID: "saturated"}
 	manager, err := NewManager(context.Background(), events, integrationPatterns, 1024)
 	if err != nil {
 		t.Fatalf("NewManager returned an error: %v", err)
 	}
 	defer manager.Close()
 
-	info, err := manager.Start("priority", `printf 'Overwrite? [Y/n]'; IFS= read -r answer`, 40, 10)
+	info, err := manager.Start(agent.Spec{
+		ID:    "priority",
+		Name:  "priority",
+		Shell: `printf 'Overwrite? [Y/n]'; IFS= read -r answer`,
+	}, 40, 10)
 	if err != nil {
 		t.Fatalf("Start returned an error: %v", err)
 	}
@@ -305,7 +325,7 @@ func TestManagerCoalescesOutputButNeverDropsPrompt(t *testing.T) {
 
 	queued := <-events
 	placeholder, ok := queued.(OutputAvailable)
-	if !ok || placeholder.SessionID != -1 {
+	if !ok || placeholder.SessionID != "saturated" {
 		t.Fatalf("non-essential output displaced the saturated event: %#v", queued)
 	}
 	select {

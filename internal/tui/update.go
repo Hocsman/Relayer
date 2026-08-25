@@ -7,7 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	commands := make([]tea.Cmd, 0, 3)
 	if event, ok := message.(backendEventMsg); ok {
 		message = event.Event
@@ -18,64 +18,72 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.resize(msg.Width, msg.Height)
 	case tea.KeyMsg:
-		if msg.String() == "ctrl+c" {
+		switch msg.Type {
+		case tea.KeyCtrlC:
 			m.backend.BeginShutdown()
 			return m, tea.Quit
-		}
-		if msg.String() == "ctrl+left" {
-			m.activePanel = (m.activePanel + 2) % 3
+		case tea.KeyCtrlLeft:
+			m.moveFocus(-1)
 			commands = append(commands, m.syncFocus())
 			break
-		}
-		if msg.String() == "ctrl+right" {
-			m.activePanel = (m.activePanel + 1) % 3
+		case tea.KeyCtrlRight:
+			m.moveFocus(1)
 			commands = append(commands, m.syncFocus())
 			break
-		}
-		if m.activePanel == 2 && isViewportNavigationKey(msg) {
-			// Vertical navigation is unambiguous for the supervisor: textinput
-			// only needs horizontal cursor movement, while these keys browse logs.
-			var command tea.Cmd
-			m.supervisor, command = m.supervisor.Update(msg)
-			commands = append(commands, command)
+		case tea.KeyCtrlPgUp:
+			m.movePage(-1)
+			commands = append(commands, m.syncFocus())
 			break
-		}
-
-		if m.activePanel == 2 && m.inputTarget >= 0 {
-			if msg.Type == tea.KeyEnter && !m.writePending {
-				paneIndex := m.inputTarget
-				prompt := m.panes[paneIndex].prompt
-				value := m.input.Value()
-
-				// Clear the old waiting state before the asynchronous write. This
-				// allows an immediate second prompt from this session to be queued.
-				m.panes[paneIndex].blocked = false
-				m.panes[paneIndex].prompt = session.PromptDetected{}
-				m.removePending(paneIndex)
-				m.inputTarget = -1
-				m.input.Reset()
-				m.input.Blur()
-				setInputInterceptionStyle(&m.input, false)
-				m.writePending = true
-				m.appendLog(fmt.Sprintf("Réponse transmise à %s", m.panes[paneIndex].name))
-				commands = append(commands, deliverInput(
-					m.backend,
-					m.panes[paneIndex].sessionID,
-					value,
-					prompt,
-				))
+		case tea.KeyCtrlPgDown:
+			m.movePage(1)
+			commands = append(commands, m.syncFocus())
+			break
+		default:
+			if m.focus.Kind == FocusSupervisor && isViewportNavigationKey(msg) {
+				var command tea.Cmd
+				m.supervisor, command = m.supervisor.Update(msg)
+				commands = append(commands, command)
 				break
 			}
-			var command tea.Cmd
-			m.input, command = m.input.Update(msg)
-			commands = append(commands, command)
-		} else if m.activePanel >= 0 && m.activePanel < len(m.panes) {
-			var command tea.Cmd
-			m.panes[m.activePanel].viewport, command = m.panes[m.activePanel].viewport.Update(msg)
-			commands = append(commands, command)
+
+			if m.focus.Kind == FocusSupervisor && m.inputTarget != "" {
+				if msg.Type == tea.KeyEnter && !m.writePending {
+					paneIndex := m.paneIndex(m.inputTarget)
+					if paneIndex < 0 {
+						break
+					}
+					targetID := m.inputTarget
+					prompt := m.panes[paneIndex].prompt
+					value := m.input.Value()
+
+					// Clear the old waiting state before the asynchronous write. This
+					// lets an immediate second prompt from this session enter the queue.
+					m.panes[paneIndex].blocked = false
+					m.panes[paneIndex].prompt = session.PromptDetected{}
+					m.removePending(targetID)
+					m.inputTarget = ""
+					m.input.Reset()
+					m.input.Blur()
+					setInputInterceptionStyle(&m.input, false)
+					m.writePending = true
+					m.appendLog(fmt.Sprintf("Réponse transmise à %s", m.panes[paneIndex].name))
+					commands = append(commands, deliverInput(m.backend, targetID, value, prompt))
+					break
+				}
+				var command tea.Cmd
+				m.input, command = m.input.Update(msg)
+				commands = append(commands, command)
+				break
+			}
+
+			if paneIndex := m.focusedPaneIndex(); paneIndex >= 0 {
+				var command tea.Cmd
+				m.panes[paneIndex].viewport, command = m.panes[paneIndex].viewport.Update(msg)
+				commands = append(commands, command)
+			}
 		}
 	case tea.MouseMsg:
-		commands = append(commands, m.handleViewportMouse(msg))
+		commands = append(commands, m.handleMouse(msg))
 	case session.OutputAvailable:
 		if paneIndex := m.paneIndex(msg.SessionID); paneIndex >= 0 {
 			m.refreshPaneOutput(paneIndex)
@@ -89,14 +97,14 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.panes[paneIndex].blocked {
 				m.panes[paneIndex].blocked = true
 				m.panes[paneIndex].prompt = msg
-				m.pending = append(m.pending, paneIndex)
+				m.pending = append(m.pending, msg.SessionID)
 				m.appendLog(fmt.Sprintf(
 					"%s attend une intervention humaine (%s)",
 					m.panes[paneIndex].name,
 					msg.Description,
 				))
 			}
-			if m.inputTarget < 0 && !m.writePending {
+			if m.inputTarget == "" && !m.writePending {
 				commands = append(commands, m.activateNextPrompt())
 			}
 		}
@@ -110,12 +118,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.appendLog(fmt.Sprintf("%s terminé avec erreur: %v", m.panes[paneIndex].name, msg.Err))
 			}
-			wasInputTarget := m.inputTarget == paneIndex
-			m.removePending(paneIndex)
+			wasInputTarget := m.inputTarget == msg.SessionID
+			m.removePending(msg.SessionID)
 			m.panes[paneIndex].blocked = false
 			m.panes[paneIndex].prompt = session.PromptDetected{}
 			if wasInputTarget {
-				m.inputTarget = -1
+				m.inputTarget = ""
 				// In particular, never carry a password into the next agent.
 				m.input.Reset()
 				commands = append(commands, m.activateNextPrompt())
@@ -136,7 +144,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.panes[paneIndex].exited && !m.panes[paneIndex].blocked {
 				m.panes[paneIndex].blocked = true
 				m.panes[paneIndex].prompt = msg.Prompt
-				m.prependPending(paneIndex)
+				m.prependPending(msg.SessionID)
 			}
 		}
 		commands = append(commands, m.activateNextPrompt())
@@ -156,32 +164,74 @@ func isViewportNavigationKey(message tea.KeyMsg) bool {
 	}
 }
 
-// handleViewportMouse sends vertical wheel events to the viewport below the
-// cursor, independently of keyboard focus.
-func (m *Model) handleViewportMouse(message tea.MouseMsg) tea.Cmd {
+func (m *Model) moveFocus(delta int) {
+	position := len(m.panes)
+	if paneIndex := m.focusedPaneIndex(); paneIndex >= 0 {
+		position = paneIndex
+	}
+	position = (position + delta) % (len(m.panes) + 1)
+	if position < 0 {
+		position += len(m.panes) + 1
+	}
+	if position == len(m.panes) {
+		m.focus = FocusTarget{Kind: FocusSupervisor}
+		return
+	}
+	m.focus = FocusTarget{Kind: FocusAgent, AgentID: m.panes[position].sessionID}
+	m.setPage(position / maxAgentsPerPage)
+}
+
+func (m *Model) movePage(delta int) {
+	newPage := clampInt(m.page+delta, 0, pageCount(len(m.panes))-1)
+	if newPage == m.page {
+		return
+	}
+	m.setPage(newPage)
+	if m.focus.Kind == FocusAgent && len(m.layout.Cells) > 0 {
+		index := m.layout.Cells[0].AgentIndex
+		m.focus.AgentID = m.panes[index].sessionID
+	}
+}
+
+// handleMouse routes wheel events using the same cells that View renders and
+// lets a left click select an agent or the supervisor explicitly.
+func (m *Model) handleMouse(message tea.MouseMsg) tea.Cmd {
 	event := tea.MouseEvent(message)
-	if event.Action != tea.MouseActionPress ||
-		(event.Button != tea.MouseButtonWheelUp && event.Button != tea.MouseButtonWheelDown) {
-		return nil
-	}
-	if m.width < minTerminalWidth || m.height < minTerminalHeight {
-		return nil
-	}
 	if event.X < 0 || event.X >= m.width || event.Y < 0 || event.Y >= m.height {
 		return nil
 	}
 
-	if event.Y < m.topHeight {
-		paneIndex := 0
-		if event.X >= m.leftWidth {
-			paneIndex = 1
+	if event.Action == tea.MouseActionPress && event.Button == tea.MouseButtonLeft {
+		for _, cell := range m.layout.Cells {
+			if cell.Outer.Contains(event.X, event.Y) {
+				m.focus = FocusTarget{Kind: FocusAgent, AgentID: m.panes[cell.AgentIndex].sessionID}
+				m.input.Blur()
+				return nil
+			}
 		}
-		var command tea.Cmd
-		m.panes[paneIndex].viewport, command = m.panes[paneIndex].viewport.Update(message)
-		return command
+		if m.layout.Supervisor.Contains(event.X, event.Y) {
+			m.focus = FocusTarget{Kind: FocusSupervisor}
+			return m.syncFocus()
+		}
+		return nil
 	}
 
-	var command tea.Cmd
-	m.supervisor, command = m.supervisor.Update(message)
-	return command
+	if event.Action != tea.MouseActionPress ||
+		(event.Button != tea.MouseButtonWheelUp && event.Button != tea.MouseButtonWheelDown) {
+		return nil
+	}
+	for _, cell := range m.layout.Cells {
+		if cell.Outer.Contains(event.X, event.Y) {
+			var command tea.Cmd
+			index := cell.AgentIndex
+			m.panes[index].viewport, command = m.panes[index].viewport.Update(message)
+			return command
+		}
+	}
+	if m.layout.Supervisor.Contains(event.X, event.Y) {
+		var command tea.Cmd
+		m.supervisor, command = m.supervisor.Update(message)
+		return command
+	}
+	return nil
 }

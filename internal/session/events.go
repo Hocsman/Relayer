@@ -12,14 +12,14 @@ type Event interface {
 // OutputAvailable invalidates a consumer's cached output snapshot. The latest
 // bounded snapshot is retrieved with Manager.Output.
 type OutputAvailable struct {
-	SessionID int
+	SessionID string
 }
 
 func (OutputAvailable) sessionEvent() {}
 
 // PromptDetected reports an interactive prompt that requires human input.
 type PromptDetected struct {
-	SessionID   int
+	SessionID   string
 	Pattern     string
 	Description string
 	Match       string
@@ -30,7 +30,7 @@ func (PromptDetected) sessionEvent() {}
 
 // Exited reports the result of the single Wait call for a session process.
 type Exited struct {
-	SessionID int
+	SessionID string
 	Err       error
 }
 
@@ -38,7 +38,7 @@ func (Exited) sessionEvent() {}
 
 // Error reports an unexpected error while reading the PTY.
 type Error struct {
-	SessionID int
+	SessionID string
 	Err       error
 }
 
@@ -46,7 +46,8 @@ func (Error) sessionEvent() {}
 
 // Info is the immutable session metadata needed by higher layers.
 type Info struct {
-	ID      int
-	Name    string
-	Command string
+	ID             string
+	Name           string
+	DisplayCommand string
+	Shell          bool
 }

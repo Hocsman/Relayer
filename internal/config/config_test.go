@@ -39,7 +39,12 @@ func TestLoadPromptPatternsCreatesAndReloadsDefaultConfig(t *testing.T) {
 	if !strings.Contains(string(payload), "intercept_patterns:") {
 		t.Fatalf("generated config has no intercept_patterns wrapper:\n%s", payload)
 	}
-	if !strings.HasPrefix(string(payload), "# Patterns d'interception de Relayer.\n") {
+	for _, required := range []string{"version: 1\n", "backend: pty\n", "agents: []\n"} {
+		if !strings.Contains(string(payload), required) {
+			t.Fatalf("generated config has no %q field:\n%s", strings.TrimSpace(required), payload)
+		}
+	}
+	if !strings.HasPrefix(string(payload), "# Configuration de Relayer; agents: [] active les deux mocks.\n") {
 		t.Fatalf("generated config has no explanatory header:\n%s", payload)
 	}
 

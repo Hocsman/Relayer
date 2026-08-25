@@ -17,7 +17,7 @@ func TestActiveAgentViewportHandlesNavigationKeys(t *testing.T) {
 		application.panes[index].viewport.GotoTop()
 	}
 
-	application.activePanel = 0
+	application.focus = FocusTarget{Kind: FocusAgent, AgentID: "agent-a"}
 	application, _ = updateModel(t, application, tea.KeyMsg{Type: tea.KeyDown})
 	downOffset := application.panes[0].viewport.YOffset
 	if downOffset <= 0 {
@@ -42,7 +42,7 @@ func TestActiveAgentViewportHandlesNavigationKeys(t *testing.T) {
 	}
 
 	firstPaneOffset := application.panes[0].viewport.YOffset
-	application.activePanel = 1
+	application.focus = FocusTarget{Kind: FocusAgent, AgentID: "agent-b"}
 	application, _ = updateModel(t, application, tea.KeyMsg{Type: tea.KeyDown})
 	if got := application.panes[1].viewport.YOffset; got <= 0 {
 		t.Fatalf("Down did not move pane 1: %d", got)
@@ -61,7 +61,7 @@ func TestAgentViewportPreservesScrollAndResumesAutoFollow(t *testing.T) {
 		t.Fatal("initial output did not start at bottom")
 	}
 
-	application.activePanel = 0
+	application.focus = FocusTarget{Kind: FocusAgent, AgentID: "agent-a"}
 	application, _ = updateModel(t, application, tea.KeyMsg{Type: tea.KeyPgUp})
 	if application.panes[0].viewport.AtBottom() {
 		t.Fatal("PageUp left viewport at bottom")
@@ -93,8 +93,8 @@ func TestAgentViewportPreservesScrollAndResumesAutoFollow(t *testing.T) {
 
 func TestAgentViewportPreservesScrollPositionAcrossResize(t *testing.T) {
 	application, backend, _ := newModelHarness(t)
-	application = publishOutput(t, application, backend, 10, viewportTestLines(0, 120))
-	application.activePanel = 0
+	application = publishOutput(t, application, backend, "agent-a", viewportTestLines(0, 120))
+	application.focus = FocusTarget{Kind: FocusAgent, AgentID: "agent-a"}
 	application, _ = updateModel(t, application, tea.KeyMsg{Type: tea.KeyPgUp})
 	beforeOffset := application.panes[0].viewport.YOffset
 	if application.panes[0].viewport.AtBottom() {
@@ -115,9 +115,9 @@ func TestSupervisorViewportHandlesPageKeysWhileInputFocused(t *testing.T) {
 		application.appendLog(fmt.Sprintf("supervisor event %03d", index))
 	}
 	application, _ = updateModel(t, application, session.PromptDetected{
-		SessionID: 10, Pattern: "confirmation", Description: "manual approval",
+		SessionID: "agent-a", Pattern: "confirmation", Description: "manual approval",
 	})
-	if application.activePanel != 2 || application.inputTarget != 0 || !application.supervisor.AtBottom() {
+	if application.focus.Kind != FocusSupervisor || application.inputTarget != "agent-a" || !application.supervisor.AtBottom() {
 		t.Fatal("supervisor prompt precondition failed")
 	}
 	application.input.SetValue("answer-in-progress")
@@ -147,12 +147,12 @@ func TestSupervisorViewportHandlesPageKeysWhileInputFocused(t *testing.T) {
 
 func TestOutputFailureLeavesExistingViewportUntouched(t *testing.T) {
 	application, backend, _ := newModelHarness(t)
-	application = publishOutput(t, application, backend, 10, "existing")
+	application = publishOutput(t, application, backend, "agent-a", "existing")
 	backend.mu.Lock()
-	backend.outputErrors[10] = errFakeBackend
-	backend.outputs[10] = "replacement"
+	backend.outputErrors["agent-a"] = errFakeBackend
+	backend.outputs["agent-a"] = "replacement"
 	backend.mu.Unlock()
-	application, _ = updateModel(t, application, session.OutputAvailable{SessionID: 10})
+	application, _ = updateModel(t, application, session.OutputAvailable{SessionID: "agent-a"})
 	if got := application.panes[0].viewport.View(); !strings.Contains(got, "existing") || strings.Contains(got, "replacement") {
 		t.Fatalf("failed Output changed viewport: %q", got)
 	}

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/tui"
 	tea "github.com/charmbracelet/bubbletea"
@@ -28,9 +29,13 @@ func TestWindowSizeMsgPropagatesThroughManagerToRealPTYs(t *testing.T) {
 	defer manager.Close()
 
 	command := `printf 'READY\n'; while IFS= read -r line; do printf 'SIZE '; stty size; done`
-	var infos [2]session.Info
+	infos := make([]session.Info, 2)
 	for index := range infos {
-		infos[index], err = manager.Start(fmt.Sprintf("resize agent %d", index), command, 40, 10)
+		infos[index], err = manager.Start(agent.Spec{
+			ID:      fmt.Sprintf("resize-%d", index+1),
+			Name:    fmt.Sprintf("resize agent %d", index),
+			Command: []string{"/bin/sh", "-c", command},
+		}, 40, 10)
 		if err != nil {
 			t.Fatalf("starting session %d: %v", index, err)
 		}
@@ -39,17 +44,20 @@ func TestWindowSizeMsgPropagatesThroughManagerToRealPTYs(t *testing.T) {
 		return strings.Contains(output, "READY")
 	})
 
-	application := tui.NewModel(
+	application, err := tui.NewModel(
 		manager,
 		events,
-		[2]tui.Pane{
-			{ID: infos[0].ID, Name: infos[0].Name, Command: infos[0].Command},
-			{ID: infos[1].ID, Name: infos[1].Name, Command: infos[1].Command},
+		[]tui.Pane{
+			{ID: infos[0].ID, Name: infos[0].Name, Command: infos[0].DisplayCommand, Shell: infos[0].Shell},
+			{ID: infos[1].ID, Name: infos[1].Name, Command: infos[1].DisplayCommand, Shell: infos[1].Shell},
 		},
 		80,
 		24,
 		nil,
 	)
+	if err != nil {
+		t.Fatalf("tui.NewModel returned an error: %v", err)
+	}
 	const width = 121
 	const height = 40
 	_, _ = application.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -59,9 +67,9 @@ func TestWindowSizeMsgPropagatesThroughManagerToRealPTYs(t *testing.T) {
 		}
 	}
 
-	geometry := tui.CalculateLayout(width, height)
 	waitForSessionOutput(t, manager, infos, func(index int, output string) bool {
-		want := fmt.Sprintf("SIZE %d %d", geometry.AgentViewportHeight, geometry.AgentViewportWidths[index])
+		columns, rows := tui.AgentViewportSize(width, height, len(infos), index)
+		want := fmt.Sprintf("SIZE %d %d", rows, columns)
 		return strings.Contains(output, want)
 	})
 }
@@ -69,7 +77,7 @@ func TestWindowSizeMsgPropagatesThroughManagerToRealPTYs(t *testing.T) {
 func waitForSessionOutput(
 	t *testing.T,
 	manager *session.Manager,
-	infos [2]session.Info,
+	infos []session.Info,
 	ready func(index int, output string) bool,
 ) {
 	t.Helper()

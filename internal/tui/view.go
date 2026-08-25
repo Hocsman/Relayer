@@ -6,11 +6,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func (m Model) View() string {
+func (m *Model) View() string {
 	if m.width == 0 || m.height == 0 {
 		return "Initialisation de Relayer…"
 	}
-	if m.width < minTerminalWidth || m.height < minTerminalHeight {
+	if !m.layoutRenderable() {
 		return lipgloss.NewStyle().
 			Foreground(colorBlocked).
 			Bold(true).
@@ -20,26 +20,71 @@ func (m Model) View() string {
 			MaxHeight(m.height).
 			Align(lipgloss.Center, lipgloss.Center).
 			Render(fmt.Sprintf(
-				"Terminal trop petit (%dx%d). Minimum conseillé: %dx%d.",
+				"Terminal trop petit (%dx%d). Agrandissez la fenêtre pour afficher %d agent(s).",
 				m.width,
 				m.height,
-				minTerminalWidth,
-				minTerminalHeight,
+				len(m.panes),
 			))
 	}
 
-	left := m.renderAgentPane(0, m.leftWidth, m.topHeight)
-	right := m.renderAgentPane(1, m.rightWidth, m.topHeight)
-	top := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
-	supervisor := m.renderSupervisorPane(m.width, m.supervisorHeight)
-	return lipgloss.JoinVertical(lipgloss.Left, top, supervisor)
+	agents := m.renderAgentArea()
+	supervisor := m.renderSupervisorPane(m.layout.Supervisor)
+	return lipgloss.JoinVertical(lipgloss.Left, agents, supervisor)
 }
 
-func (m Model) renderAgentPane(index, outerWidth, outerHeight int) string {
+func (m *Model) layoutRenderable() bool {
+	if m.width < minTerminalWidth || m.height < minTerminalHeight || m.layout.Supervisor.Height < 6 {
+		return false
+	}
+	for _, cell := range m.layout.Cells {
+		if cell.Outer.Width < 3 || cell.Outer.Height < 3 {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *Model) renderAgentArea() string {
+	cells := m.layout.Cells
+	switch len(cells) {
+	case 1:
+		return m.renderAgentPane(cells[0])
+	case 2:
+		return lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			m.renderAgentPane(cells[0]),
+			m.renderAgentPane(cells[1]),
+		)
+	case 3:
+		top := lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			m.renderAgentPane(cells[0]),
+			m.renderAgentPane(cells[1]),
+		)
+		return lipgloss.JoinVertical(lipgloss.Left, top, m.renderAgentPane(cells[2]))
+	case 4:
+		top := lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			m.renderAgentPane(cells[0]),
+			m.renderAgentPane(cells[1]),
+		)
+		bottom := lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			m.renderAgentPane(cells[2]),
+			m.renderAgentPane(cells[3]),
+		)
+		return lipgloss.JoinVertical(lipgloss.Left, top, bottom)
+	default:
+		return ""
+	}
+}
+
+func (m *Model) renderAgentPane(cell Cell) string {
+	index := cell.AgentIndex
 	pane := m.panes[index]
 	style := agentPanelStyle(index, pane.blocked)
-	innerWidth := maxInt(1, outerWidth-style.GetHorizontalFrameSize())
-	innerHeight := maxInt(1, outerHeight-style.GetVerticalFrameSize())
+	innerWidth := maxInt(1, cell.Outer.Width-style.GetHorizontalFrameSize())
+	innerHeight := maxInt(1, cell.Outer.Height-style.GetVerticalFrameSize())
 
 	status := "EN COURS"
 	statusColor := agentColor(index)
@@ -55,37 +100,43 @@ func (m Model) renderAgentPane(index, outerWidth, outerHeight int) string {
 	}
 
 	focusMarker := "  "
-	if m.activePanel == index {
+	if m.focus.Kind == FocusAgent && m.focus.AgentID == pane.sessionID {
 		focusMarker = "▶ "
 	}
 	title := lipgloss.NewStyle().Foreground(agentColor(index)).Bold(true).Render(focusMarker+pane.name) + "  " +
 		lipgloss.NewStyle().Foreground(statusColor).Render("● "+status)
-	title = lipgloss.NewStyle().MaxWidth(innerWidth).Render(title)
+	if pane.shell {
+		title += "  " + lipgloss.NewStyle().Foreground(colorMuted).Render("SHELL")
+	}
+	title = lipgloss.NewStyle().MaxWidth(innerWidth).MaxHeight(1).Render(title)
 	content := title + "\n" + pane.viewport.View()
 	return style.Width(innerWidth).Height(innerHeight).Render(content)
 }
 
-func (m Model) renderSupervisorPane(outerWidth, outerHeight int) string {
+func (m *Model) renderSupervisorPane(outer Rect) string {
 	intercepting := m.hasBlockedPane()
 	style := supervisorPanelStyle(intercepting)
-	innerWidth := maxInt(1, outerWidth-style.GetHorizontalFrameSize())
-	innerHeight := maxInt(1, outerHeight-style.GetVerticalFrameSize())
+	innerWidth := maxInt(1, outer.Width-style.GetHorizontalFrameSize())
+	innerHeight := maxInt(1, outer.Height-style.GetVerticalFrameSize())
 
 	title := "SUPERVISEUR  •  AUTOMATIQUE"
 	if intercepting {
 		title = "SUPERVISEUR  •  ACTION HUMAINE REQUISE"
 	}
-	if m.inputTarget >= 0 {
-		title += "  →  " + m.panes[m.inputTarget].name
+	if m.inputTarget != "" {
+		if paneIndex := m.paneIndex(m.inputTarget); paneIndex >= 0 {
+			title += "  →  " + m.panes[paneIndex].name
+		}
 	}
-	help := lipgloss.NewStyle().Foreground(colorMuted).MaxWidth(innerWidth).Render(
-		"Ctrl+←/→: panneau • ↑/↓, PgUp/PgDn, molette: historique • Entrée: envoyer • Ctrl+C: quitter",
+	title += fmt.Sprintf("  •  PAGE %d/%d", m.layout.Page+1, m.layout.PageCount)
+	help := lipgloss.NewStyle().Foreground(colorMuted).MaxWidth(innerWidth).MaxHeight(1).Render(
+		"Ctrl+←/→: focus • Ctrl+PgUp/PgDn: page • ↑/↓, PgUp/PgDn, molette: historique • Ctrl+C: quitter",
 	)
 	titleColor := colorMuted
 	if intercepting {
 		titleColor = colorBlocked
 	}
-	title = lipgloss.NewStyle().Foreground(titleColor).Bold(true).MaxWidth(innerWidth).Render(title)
+	title = lipgloss.NewStyle().Foreground(titleColor).Bold(true).MaxWidth(innerWidth).MaxHeight(1).Render(title)
 	content := title + "\n" +
 		m.supervisor.View() + "\n" +
 		m.input.View() + "\n" + help

@@ -7,9 +7,13 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/intercept"
 	"github.com/Hocsman/Relayer/internal/platform"
 	"github.com/creack/pty"
@@ -22,8 +26,7 @@ type Manager struct {
 	events chan<- Event
 
 	mu           sync.RWMutex
-	sessions     map[int]*processSession
-	nextID       int
+	sessions     map[string]*processSession
 	closed       bool
 	patterns     []intercept.Pattern
 	ringCapacity int
@@ -53,7 +56,7 @@ func NewManager(
 		ctx:          ctx,
 		cancel:       cancel,
 		events:       events,
-		sessions:     make(map[int]*processSession),
+		sessions:     make(map[string]*processSession),
 		patterns:     append([]intercept.Pattern(nil), patterns...),
 		ringCapacity: ringCapacity,
 	}, nil
@@ -83,28 +86,44 @@ func (m *Manager) emit(event Event, essential bool) bool {
 	}
 }
 
-// Start launches command through /bin/sh with a correctly sized PTY.
-func (m *Manager) Start(name, command string, columns, rows int) (Info, error) {
+// Start validates and launches one direct or explicitly requested shell
+// command with a correctly sized PTY.
+func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
+	normalized, err := agent.ValidateSpec(spec, ".", agent.BackendPTY)
+	if err != nil {
+		return Info{}, fmt.Errorf("agent invalide: %w", err)
+	}
+	if normalized.Backend != agent.BackendPTY {
+		return Info{}, fmt.Errorf("backend %q non pris en charge par le gestionnaire PTY", normalized.Backend)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return Info{}, ErrClosed
 	}
+	for existingID := range m.sessions {
+		if strings.EqualFold(existingID, normalized.ID) {
+			return Info{}, fmt.Errorf("session %q déjà démarrée", normalized.ID)
+		}
+	}
 
 	sessionCtx, sessionCancel := context.WithCancel(m.ctx)
-	cmd := exec.CommandContext(sessionCtx, "/bin/sh", "-c", command)
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd, shell, err := newCommand(sessionCtx, normalized)
+	if err != nil {
+		sessionCancel()
+		return Info{}, fmt.Errorf("préparation de %s: %w", normalized.Name, err)
+	}
 	master, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Rows: uint16(clamp(rows, 1, 65535)),
 		Cols: uint16(clamp(columns, 1, 65535)),
 	})
 	if err != nil {
 		sessionCancel()
-		return Info{}, fmt.Errorf("démarrage de %s: %w", name, err)
+		return Info{}, fmt.Errorf("démarrage de %s: %w", normalized.Name, err)
 	}
 
-	sessionID := m.nextID
-	m.nextID++
+	sessionID := normalized.ID
 	interceptor, err := intercept.New(
 		m.patterns,
 		m.ringCapacity,
@@ -131,7 +150,12 @@ func (m *Manager) Start(name, command string, columns, rows int) (Info, error) {
 		return Info{}, err
 	}
 
-	info := Info{ID: sessionID, Name: name, Command: command}
+	info := Info{
+		ID:             sessionID,
+		Name:           normalized.Name,
+		DisplayCommand: displayCommand(normalized),
+		Shell:          shell,
+	}
 	session := &processSession{
 		info:        info,
 		cmd:         cmd,
@@ -191,17 +215,18 @@ func (m *Manager) waitSession(session *processSession) {
 	}
 }
 
-func (m *Manager) session(sessionID int) (*processSession, error) {
+func (m *Manager) session(sessionID string) (*processSession, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	session, ok := m.sessions[sessionID]
-	if !ok {
-		return nil, fmt.Errorf("session %d inconnue", sessionID)
+	for existingID, session := range m.sessions {
+		if strings.EqualFold(existingID, sessionID) {
+			return session, nil
+		}
 	}
-	return session, nil
+	return nil, fmt.Errorf("session %q inconnue", sessionID)
 }
 
-func (m *Manager) SendInput(sessionID int, value string) error {
+func (m *Manager) SendInput(sessionID string, value string) error {
 	session, err := m.session(sessionID)
 	if err != nil {
 		return err
@@ -217,7 +242,7 @@ func (m *Manager) SendInput(sessionID int, value string) error {
 	return nil
 }
 
-func (m *Manager) Output(sessionID int) (string, error) {
+func (m *Manager) Output(sessionID string) (string, error) {
 	session, err := m.session(sessionID)
 	if err != nil {
 		return "", err
@@ -228,7 +253,7 @@ func (m *Manager) Output(sessionID int) (string, error) {
 // Done exposes lifecycle completion without leaking the underlying process or
 // PTY descriptor. The channel is closed before the corresponding Exited event
 // is emitted.
-func (m *Manager) Done(sessionID int) (<-chan struct{}, error) {
+func (m *Manager) Done(sessionID string) (<-chan struct{}, error) {
 	session, err := m.session(sessionID)
 	if err != nil {
 		return nil, err
@@ -236,7 +261,7 @@ func (m *Manager) Done(sessionID int) (<-chan struct{}, error) {
 	return session.done, nil
 }
 
-func (m *Manager) Resize(sessionID, columns, rows int) error {
+func (m *Manager) Resize(sessionID string, columns, rows int) error {
 	session, err := m.session(sessionID)
 	if err != nil {
 		return err
@@ -275,4 +300,63 @@ func isExpectedPTYError(err error) bool {
 	return errors.Is(err, io.EOF) ||
 		errors.Is(err, os.ErrClosed) ||
 		platform.IsPTYCloseError(err)
+}
+
+func newCommand(ctx context.Context, spec agent.Spec) (*exec.Cmd, bool, error) {
+	var (
+		command *exec.Cmd
+		err     error
+		shell   bool
+	)
+	if spec.Shell != "" {
+		command, err = platform.NewShellCommand(ctx, spec.Shell)
+		shell = true
+	} else {
+		command = exec.CommandContext(ctx, spec.Command[0], spec.Command[1:]...)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	command.Dir = spec.Cwd
+	command.Env = mergedEnvironment(spec.Env)
+	return command, shell, nil
+}
+
+func mergedEnvironment(overrides map[string]string) []string {
+	values := make(map[string]string, len(os.Environ())+len(overrides)+1)
+	for _, assignment := range os.Environ() {
+		name, value, found := strings.Cut(assignment, "=")
+		if found {
+			values[name] = value
+		}
+	}
+	values["TERM"] = "xterm-256color"
+	for name, value := range overrides {
+		values[name] = value
+	}
+
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	environment := make([]string, 0, len(names))
+	for _, name := range names {
+		environment = append(environment, name+"="+values[name])
+	}
+	return environment
+}
+
+func displayCommand(spec agent.Spec) string {
+	if spec.Shell != "" {
+		// Shell scripts commonly embed credentials or substitutions. Consumers
+		// only need to know that interpreted mode is active; never expose the
+		// script through session metadata or persistent TUI history.
+		return "[shell explicite]"
+	}
+	parts := make([]string, len(spec.Command))
+	for index, argument := range spec.Command {
+		parts[index] = strconv.Quote(argument)
+	}
+	return strings.Join(parts, " ")
 }

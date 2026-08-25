@@ -13,15 +13,24 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/intercept"
 	"gopkg.in/yaml.v3"
 )
 
-const DefaultPath = "config.yaml"
+const (
+	DefaultPath    = "config.yaml"
+	CurrentVersion = 1
+	maxAgents      = 8
+)
 
 // Result describes the effective interception configuration and whether the
 // loader had to create the file during this call.
 type Result struct {
+	Version  int
+	Legacy   bool
+	Backend  string
+	Agents   []agent.Spec
 	Patterns []intercept.Pattern
 	Created  bool
 }
@@ -32,8 +41,38 @@ type ConfigPattern struct {
 	Description string `yaml:"description"`
 }
 
-type file struct {
+type legacyFile struct {
 	InterceptPatterns []ConfigPattern `yaml:"intercept_patterns"`
+}
+
+// versionOneFile is intentionally pointer-based for required collection and
+// scalar fields. This lets the strict decoder distinguish a missing key from
+// an explicitly empty agents list, which is valid and asks the application to
+// provide its historical fallback agents.
+type versionOneFile struct {
+	Version           *int               `yaml:"version"`
+	Backend           *string            `yaml:"backend"`
+	Agents            *[]configuredAgent `yaml:"agents"`
+	InterceptPatterns *[]ConfigPattern   `yaml:"intercept_patterns"`
+}
+
+type configuredAgent struct {
+	ID      string            `yaml:"id"`
+	Name    string            `yaml:"name"`
+	Command *[]string         `yaml:"command"`
+	Shell   *string           `yaml:"shell"`
+	Cwd     string            `yaml:"cwd"`
+	Env     map[string]string `yaml:"env"`
+	Adapter string            `yaml:"adapter"`
+	Backend string            `yaml:"backend"`
+}
+
+type decodedFile struct {
+	Version  int
+	Legacy   bool
+	Backend  string
+	Agents   []configuredAgent
+	Patterns []ConfigPattern
 }
 
 // Load reads path before any PTY is started. It accepts both a direct list and
@@ -61,11 +100,31 @@ func Load(path string) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("configuration %s invalide: %w", path, err)
 	}
-	patterns, err := validate(configured)
+	patterns, err := validate(configured.Patterns)
 	if err != nil {
 		return Result{}, fmt.Errorf("configuration %s invalide: %w", path, err)
 	}
-	return Result{Patterns: patterns, Created: created}, nil
+
+	var agents []agent.Spec
+	if !configured.Legacy {
+		baseDir, absoluteErr := filepath.Abs(filepath.Dir(path))
+		if absoluteErr != nil {
+			return Result{}, fmt.Errorf("résolution du dossier de configuration %s: %w", path, absoluteErr)
+		}
+		agents, err = validateAgents(configured.Agents, baseDir, configured.Backend)
+		if err != nil {
+			return Result{}, fmt.Errorf("configuration %s invalide: %w", path, err)
+		}
+	}
+
+	return Result{
+		Version:  configured.Version,
+		Legacy:   configured.Legacy,
+		Backend:  configured.Backend,
+		Agents:   agents,
+		Patterns: patterns,
+		Created:  created,
+	}, nil
 }
 
 // DefaultPatterns returns an independent copy of the built-in patterns.
@@ -82,11 +141,19 @@ func createDefault(path string) (bool, error) {
 			Description: pattern.Description,
 		})
 	}
-	payload, err := yaml.Marshal(file{InterceptPatterns: configured})
+	version := CurrentVersion
+	backend := agent.BackendPTY
+	agents := []configuredAgent{}
+	payload, err := yaml.Marshal(versionOneFile{
+		Version:           &version,
+		Backend:           &backend,
+		Agents:            &agents,
+		InterceptPatterns: &configured,
+	})
 	if err != nil {
 		return false, fmt.Errorf("sérialisation de la configuration par défaut: %w", err)
 	}
-	payload = append([]byte("# Patterns d'interception de Relayer.\n"), payload...)
+	payload = append([]byte("# Configuration de Relayer; agents: [] active les deux mocks.\n"), payload...)
 
 	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, 0o755); err != nil {
@@ -155,71 +222,280 @@ func createExclusively(path string, payload []byte, linkErr error) (bool, error)
 	return true, nil
 }
 
-func decode(data []byte) ([]ConfigPattern, error) {
+func decode(data []byte) (decodedFile, error) {
 	var document yaml.Node
 	if err := yaml.Unmarshal(data, &document); err != nil {
-		return nil, err
+		return decodedFile{}, err
 	}
 	if len(document.Content) == 0 {
-		return nil, errors.New("le document YAML est vide")
+		return decodedFile{}, errors.New("le document YAML est vide")
 	}
 
 	root := document.Content[0]
-	if err := validateScalarTypes(root); err != nil {
-		return nil, err
-	}
 	switch root.Kind {
 	case yaml.SequenceNode:
+		if err := validatePatternNode(root); err != nil {
+			return decodedFile{}, err
+		}
 		var direct []ConfigPattern
 		if err := decodeStrict(data, &direct); err != nil {
-			return nil, err
+			return decodedFile{}, err
 		}
-		return direct, nil
+		return decodedFile{
+			Legacy:   true,
+			Backend:  agent.BackendPTY,
+			Patterns: direct,
+		}, nil
 	case yaml.MappingNode:
-		var wrapped file
-		if err := decodeStrict(data, &wrapped); err != nil {
-			return nil, err
+		if mappingHasKey(root, "version") {
+			return decodeVersionOne(data, root)
 		}
-		return wrapped.InterceptPatterns, nil
+		if sequence := mappingValue(root, "intercept_patterns"); sequence != nil {
+			if err := validatePatternNode(sequence); err != nil {
+				return decodedFile{}, err
+			}
+		}
+		var wrapped legacyFile
+		if err := decodeStrict(data, &wrapped); err != nil {
+			return decodedFile{}, err
+		}
+		return decodedFile{
+			Legacy:   true,
+			Backend:  agent.BackendPTY,
+			Patterns: wrapped.InterceptPatterns,
+		}, nil
 	default:
-		return nil, errors.New("la racine YAML doit être une liste ou contenir intercept_patterns")
+		return decodedFile{}, errors.New("la racine YAML doit être une liste ou un objet de configuration")
 	}
 }
 
-func validateScalarTypes(root *yaml.Node) error {
-	sequence := root
-	if root.Kind == yaml.MappingNode {
-		sequence = nil
-		for index := 0; index+1 < len(root.Content); index += 2 {
-			if root.Content[index].Value == "intercept_patterns" {
-				sequence = root.Content[index+1]
-				break
-			}
-		}
+func decodeVersionOne(data []byte, root *yaml.Node) (decodedFile, error) {
+	if err := rejectVersionOneIndirections(root); err != nil {
+		return decodedFile{}, err
 	}
-	if sequence == nil || sequence.Kind != yaml.SequenceNode {
-		return nil
+	if err := validateVersionOneNode(root); err != nil {
+		return decodedFile{}, err
 	}
 
-	for entryIndex, entry := range sequence.Content {
-		if entry.Kind != yaml.MappingNode {
-			continue
+	var configured versionOneFile
+	if err := decodeStrict(data, &configured); err != nil {
+		return decodedFile{}, err
+	}
+	if configured.Version == nil {
+		return decodedFile{}, errors.New("version manquante")
+	}
+	if *configured.Version != CurrentVersion {
+		return decodedFile{}, fmt.Errorf("version %d non prise en charge (attendue: %d)", *configured.Version, CurrentVersion)
+	}
+	if configured.Backend == nil {
+		return decodedFile{}, errors.New("backend manquant")
+	}
+	backend := strings.TrimSpace(*configured.Backend)
+	if backend != agent.BackendPTY {
+		return decodedFile{}, fmt.Errorf("backend %q non pris en charge (attendu: %s)", *configured.Backend, agent.BackendPTY)
+	}
+	if configured.Agents == nil {
+		return decodedFile{}, errors.New("agents manquant")
+	}
+	if len(*configured.Agents) > maxAgents {
+		return decodedFile{}, fmt.Errorf("%d agents configurés; maximum autorisé: %d", len(*configured.Agents), maxAgents)
+	}
+	if configured.InterceptPatterns == nil {
+		return decodedFile{}, errors.New("intercept_patterns manquant")
+	}
+
+	return decodedFile{
+		Version:  *configured.Version,
+		Backend:  backend,
+		Agents:   append([]configuredAgent(nil), (*configured.Agents)...),
+		Patterns: append([]ConfigPattern(nil), (*configured.InterceptPatterns)...),
+	}, nil
+}
+
+// Versioned configuration is intentionally explicit: aliases and merge keys
+// can hide fields from the node-level type checks and make review of execution
+// settings harder. Legacy pattern-only documents keep their historical YAML
+// behavior, while v1 requires every executable field to appear directly.
+func rejectVersionOneIndirections(node *yaml.Node) error {
+	if node == nil {
+		return nil
+	}
+	if node.Kind == yaml.AliasNode {
+		return errors.New("les alias YAML ne sont pas autorisés dans une configuration versionnée")
+	}
+	if node.Kind == yaml.MappingNode {
+		for index := 0; index+1 < len(node.Content); index += 2 {
+			if node.Content[index].Value == "<<" {
+				return errors.New("les clés de fusion YAML ne sont pas autorisées dans une configuration versionnée")
+			}
 		}
-		for fieldIndex := 0; fieldIndex+1 < len(entry.Content); fieldIndex += 2 {
-			name := entry.Content[fieldIndex].Value
-			if name != "pattern" && name != "description" {
-				continue
+	}
+	for _, child := range node.Content {
+		if err := rejectVersionOneIndirections(child); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func mappingHasKey(root *yaml.Node, name string) bool {
+	return mappingValue(root, name) != nil
+}
+
+func mappingValue(root *yaml.Node, name string) *yaml.Node {
+	if root.Kind != yaml.MappingNode {
+		return nil
+	}
+	for index := 0; index+1 < len(root.Content); index += 2 {
+		if root.Content[index].Value == name {
+			return root.Content[index+1]
+		}
+	}
+	return nil
+}
+
+func validateVersionOneNode(root *yaml.Node) error {
+	for index := 0; index+1 < len(root.Content); index += 2 {
+		name := root.Content[index].Value
+		value := dereferenceAlias(root.Content[index+1])
+		switch name {
+		case "version":
+			if err := requireScalar(value, "!!int", "version doit être un entier YAML"); err != nil {
+				return err
 			}
-			value := entry.Content[fieldIndex+1]
-			if value.Kind == yaml.AliasNode && value.Alias != nil {
-				value = value.Alias
+		case "backend":
+			if err := requireScalar(value, "!!str", "backend doit être une chaîne YAML"); err != nil {
+				return err
 			}
-			if value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
-				return fmt.Errorf("entrée %d: %s doit être une chaîne YAML", entryIndex+1, name)
+		case "agents":
+			if err := validateAgentNode(value); err != nil {
+				return err
+			}
+		case "intercept_patterns":
+			if err := validatePatternNode(value); err != nil {
+				return err
 			}
 		}
 	}
 	return nil
+}
+
+func validatePatternNode(sequence *yaml.Node) error {
+	sequence = dereferenceAlias(sequence)
+	if sequence.Kind != yaml.SequenceNode {
+		return errors.New("intercept_patterns doit être une liste YAML")
+	}
+	for entryIndex, rawEntry := range sequence.Content {
+		entry := dereferenceAlias(rawEntry)
+		if entry.Kind != yaml.MappingNode {
+			return fmt.Errorf("pattern %d doit être un objet YAML", entryIndex+1)
+		}
+		for fieldIndex := 0; fieldIndex+1 < len(entry.Content); fieldIndex += 2 {
+			name := entry.Content[fieldIndex].Value
+			if name == "pattern" || name == "description" {
+				value := dereferenceAlias(entry.Content[fieldIndex+1])
+				if err := requireScalar(value, "!!str", fmt.Sprintf("pattern %d: %s doit être une chaîne YAML", entryIndex+1, name)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateAgentNode(sequence *yaml.Node) error {
+	sequence = dereferenceAlias(sequence)
+	if sequence.Kind != yaml.SequenceNode {
+		return errors.New("agents doit être une liste YAML")
+	}
+	for entryIndex, rawEntry := range sequence.Content {
+		entry := dereferenceAlias(rawEntry)
+		if entry.Kind != yaml.MappingNode {
+			return fmt.Errorf("agent %d doit être un objet YAML", entryIndex+1)
+		}
+		for fieldIndex := 0; fieldIndex+1 < len(entry.Content); fieldIndex += 2 {
+			name := entry.Content[fieldIndex].Value
+			value := dereferenceAlias(entry.Content[fieldIndex+1])
+			switch name {
+			case "id", "name", "shell", "cwd", "adapter", "backend":
+				if err := requireScalar(value, "!!str", fmt.Sprintf("agent %d: %s doit être une chaîne YAML", entryIndex+1, name)); err != nil {
+					return err
+				}
+			case "command":
+				if value.Kind != yaml.SequenceNode {
+					return fmt.Errorf("agent %d: command doit être une liste de chaînes YAML", entryIndex+1)
+				}
+				for argumentIndex, argument := range value.Content {
+					if err := requireScalar(dereferenceAlias(argument), "!!str", fmt.Sprintf("agent %d: command[%d] doit être une chaîne YAML", entryIndex+1, argumentIndex)); err != nil {
+						return err
+					}
+				}
+			case "env":
+				if value.Kind != yaml.MappingNode {
+					return fmt.Errorf("agent %d: env doit être un objet chaîne-vers-chaîne YAML", entryIndex+1)
+				}
+				for envIndex := 0; envIndex+1 < len(value.Content); envIndex += 2 {
+					key := dereferenceAlias(value.Content[envIndex])
+					envValue := dereferenceAlias(value.Content[envIndex+1])
+					if err := requireScalar(key, "!!str", fmt.Sprintf("agent %d: les noms d'environnement doivent être des chaînes YAML", entryIndex+1)); err != nil {
+						return err
+					}
+					if err := requireScalar(envValue, "!!str", fmt.Sprintf("agent %d: env[%s] doit être une chaîne YAML", entryIndex+1, key.Value)); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func requireScalar(node *yaml.Node, tag string, message string) error {
+	if node.Kind != yaml.ScalarNode || node.Tag != tag {
+		return errors.New(message)
+	}
+	return nil
+}
+
+func dereferenceAlias(node *yaml.Node) *yaml.Node {
+	for node != nil && node.Kind == yaml.AliasNode && node.Alias != nil {
+		node = node.Alias
+	}
+	return node
+}
+
+func validateAgents(configured []configuredAgent, baseDir, defaultBackend string) ([]agent.Spec, error) {
+	specs := make([]agent.Spec, 0, len(configured))
+	for index, entry := range configured {
+		if entry.Command != nil && entry.Shell != nil {
+			return nil, fmt.Errorf("agent %d: command et shell sont mutuellement exclusifs", index+1)
+		}
+
+		var command []string
+		if entry.Command != nil {
+			command = append([]string(nil), (*entry.Command)...)
+		}
+		shell := ""
+		if entry.Shell != nil {
+			shell = *entry.Shell
+		}
+		specs = append(specs, agent.Spec{
+			ID:      entry.ID,
+			Name:    entry.Name,
+			Command: command,
+			Shell:   shell,
+			Cwd:     entry.Cwd,
+			Env:     entry.Env,
+			Adapter: entry.Adapter,
+			Backend: entry.Backend,
+		})
+	}
+
+	validated, err := agent.ValidateAll(specs, baseDir, defaultBackend)
+	if err != nil {
+		return nil, err
+	}
+	return validated, nil
 }
 
 func decodeStrict(data []byte, target any) error {

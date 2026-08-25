@@ -15,11 +15,13 @@ func TestMouseWheelRoutesToViewportUnderCursor(t *testing.T) {
 	}
 	setViewportContent(&application.supervisor, content)
 
-	application.activePanel = 1
+	application.focus = FocusTarget{Kind: FocusAgent, AgentID: "agent-b"}
+	leftCell := application.layout.Cells[0]
+	rightCell := application.layout.Cells[1]
 	leftBefore := application.panes[0].viewport.YOffset
 	rightBefore := application.panes[1].viewport.YOffset
 	supervisorBefore := application.supervisor.YOffset
-	application, _ = updateModel(t, application, mouseWheelUp(10, 5))
+	application, _ = updateModel(t, application, mouseWheelUp(leftCell.Outer.X+1, leftCell.Outer.Y+1))
 	leftAfterUp := application.panes[0].viewport.YOffset
 	if leftAfterUp >= leftBefore {
 		t.Fatalf("wheel up over left moved %d to %d", leftBefore, leftAfterUp)
@@ -30,18 +32,18 @@ func TestMouseWheelRoutesToViewportUnderCursor(t *testing.T) {
 	if got := application.supervisor.YOffset; got != supervisorBefore {
 		t.Fatalf("left wheel changed supervisor to %d", got)
 	}
-	if application.activePanel != 1 {
-		t.Fatalf("wheel changed keyboard focus to %d", application.activePanel)
+	if application.focus.AgentID != "agent-b" {
+		t.Fatalf("wheel changed keyboard focus to %#v", application.focus)
 	}
 
-	application, _ = updateModel(t, application, mouseWheelDown(10, 5))
+	application, _ = updateModel(t, application, mouseWheelDown(leftCell.Outer.X+1, leftCell.Outer.Y+1))
 	if got := application.panes[0].viewport.YOffset; got <= leftAfterUp {
 		t.Fatalf("wheel down did not move toward bottom: %d -> %d", leftAfterUp, got)
 	}
 
 	leftBeforeRightWheel := application.panes[0].viewport.YOffset
 	rightBefore = application.panes[1].viewport.YOffset
-	application, _ = updateModel(t, application, mouseWheelUp(application.leftWidth+5, 5))
+	application, _ = updateModel(t, application, mouseWheelUp(rightCell.Outer.X+1, rightCell.Outer.Y+1))
 	if got := application.panes[1].viewport.YOffset; got >= rightBefore {
 		t.Fatalf("wheel up over right moved %d to %d", rightBefore, got)
 	}
@@ -49,9 +51,10 @@ func TestMouseWheelRoutesToViewportUnderCursor(t *testing.T) {
 		t.Fatalf("right wheel changed left pane to %d", got)
 	}
 
-	agentOffsets := [2]int{application.panes[0].viewport.YOffset, application.panes[1].viewport.YOffset}
+	agentOffsets := []int{application.panes[0].viewport.YOffset, application.panes[1].viewport.YOffset}
 	supervisorBefore = application.supervisor.YOffset
-	application, _ = updateModel(t, application, mouseWheelUp(50, application.topHeight))
+	supervisorPoint := application.layout.Supervisor
+	application, _ = updateModel(t, application, mouseWheelUp(supervisorPoint.X+1, supervisorPoint.Y+1))
 	supervisorAfterUp := application.supervisor.YOffset
 	if supervisorAfterUp >= supervisorBefore {
 		t.Fatalf("wheel up over supervisor moved %d to %d", supervisorBefore, supervisorAfterUp)
@@ -61,18 +64,46 @@ func TestMouseWheelRoutesToViewportUnderCursor(t *testing.T) {
 			t.Fatalf("supervisor wheel changed pane %d to %d", index, got)
 		}
 	}
-	application, _ = updateModel(t, application, mouseWheelDown(50, application.topHeight+1))
+	application, _ = updateModel(t, application, mouseWheelDown(supervisorPoint.X+1, supervisorPoint.Y+1))
 	if got := application.supervisor.YOffset; got <= supervisorAfterUp {
-		t.Fatalf("wheel down did not move supervisor toward bottom")
+		t.Fatal("wheel down did not move supervisor toward bottom")
+	}
+}
+
+func TestMouseClickSelectsEveryGridQuadrantAndSupervisor(t *testing.T) {
+	backend := newFakeBackend()
+	t.Cleanup(backend.cancel)
+	application, err := NewModel(backend, make(chan session.Event), testPanes(8), 121, 40, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for page := 0; page < 2; page++ {
+		application.setPage(page)
+		for _, cell := range application.layout.Cells {
+			application, _ = updateModel(t, application, mouseLeftClick(
+				cell.Outer.X+cell.Outer.Width/2,
+				cell.Outer.Y+cell.Outer.Height/2,
+			))
+			wantID := application.panes[cell.AgentIndex].sessionID
+			if application.focus != (FocusTarget{Kind: FocusAgent, AgentID: wantID}) {
+				t.Fatalf("page %d cell %d click focus = %#v", page, cell.AgentIndex, application.focus)
+			}
+		}
+	}
+	supervisor := application.layout.Supervisor
+	application, _ = updateModel(t, application, mouseLeftClick(supervisor.X+1, supervisor.Y+1))
+	if application.focus.Kind != FocusSupervisor {
+		t.Fatalf("supervisor click focus = %#v", application.focus)
 	}
 }
 
 func TestMouseScrolledAgentDoesNotSnapThenResumesAutoFollow(t *testing.T) {
 	application, backend, _ := newModelHarness(t)
 	sessionID := application.panes[0].sessionID
+	cell := application.layout.Cells[0]
 	initial := viewportTestLines(0, 80)
 	application = publishOutput(t, application, backend, sessionID, initial)
-	application, _ = updateModel(t, application, mouseWheelUp(10, 5))
+	application, _ = updateModel(t, application, mouseWheelUp(cell.Outer.X+1, cell.Outer.Y+1))
 	if application.panes[0].viewport.AtBottom() {
 		t.Fatal("wheel up left viewport at bottom")
 	}
@@ -88,7 +119,7 @@ func TestMouseScrolledAgentDoesNotSnapThenResumesAutoFollow(t *testing.T) {
 		t.Fatal("visible history changed after output while mouse-scrolled")
 	}
 	for attempts := 0; attempts < 100 && !application.panes[0].viewport.AtBottom(); attempts++ {
-		application, _ = updateModel(t, application, mouseWheelDown(10, 5))
+		application, _ = updateModel(t, application, mouseWheelDown(cell.Outer.X+1, cell.Outer.Y+1))
 	}
 	if !application.panes[0].viewport.AtBottom() {
 		t.Fatal("wheel down did not return viewport to bottom")
@@ -105,10 +136,11 @@ func TestMouseScrolledAgentDoesNotSnapThenResumesAutoFollow(t *testing.T) {
 
 func TestMouseOutsidePanelsAndNonWheelAreIgnored(t *testing.T) {
 	application, _, _ := newModelHarness(t)
-	before := application
+	beforeOffset := application.panes[0].viewport.YOffset
+	beforeFocus := application.focus
 	application, _ = updateModel(t, application, mouseWheelUp(-1, 5))
-	if application.panes[0].viewport.YOffset != before.panes[0].viewport.YOffset {
-		t.Fatal("out-of-bounds mouse changed viewport")
+	if application.panes[0].viewport.YOffset != beforeOffset || application.focus != beforeFocus {
+		t.Fatal("out-of-bounds mouse changed model state")
 	}
 	// Keep the session import exercised in this test file alongside routed
 	// event tests, preventing accidental replacement with PTY-layer messages.

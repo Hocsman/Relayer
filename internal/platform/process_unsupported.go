@@ -2,7 +2,16 @@
 
 package platform
 
-import "os/exec"
+import (
+	"context"
+	"fmt"
+	"os/exec"
+	"runtime"
+)
+
+func NewShellCommand(context.Context, string) (*exec.Cmd, error) {
+	return nil, fmt.Errorf("%w: %s", ErrShellUnsupported, runtime.GOOS)
+}
 
 // Unsupported platforms cannot address Unix process groups. PTY startup will
 // normally fail first with pty.ErrUnsupported; these stubs keep the package

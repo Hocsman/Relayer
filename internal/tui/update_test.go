@@ -11,20 +11,24 @@ import (
 
 func TestKeyboardSwitchesPanelsAndCtrlCShutsDown(t *testing.T) {
 	application, backend, _ := newModelHarness(t)
-	if application.activePanel != 0 {
-		t.Fatalf("initial active panel = %d", application.activePanel)
+	if application.focus != (FocusTarget{Kind: FocusAgent, AgentID: "agent-a"}) {
+		t.Fatalf("initial focus = %#v", application.focus)
 	}
 	application, _ = updateModel(t, application, tea.KeyMsg{Type: tea.KeyCtrlRight})
-	if application.activePanel != 1 {
-		t.Fatalf("Ctrl+Right active panel = %d, want 1", application.activePanel)
+	if application.focus != (FocusTarget{Kind: FocusAgent, AgentID: "agent-b"}) {
+		t.Fatalf("Ctrl+Right focus = %#v", application.focus)
+	}
+	application, _ = updateModel(t, application, tea.KeyMsg{Type: tea.KeyCtrlRight})
+	if application.focus.Kind != FocusSupervisor {
+		t.Fatalf("second Ctrl+Right focus = %#v, want supervisor", application.focus)
 	}
 	application, _ = updateModel(t, application, tea.KeyMsg{Type: tea.KeyCtrlLeft})
-	if application.activePanel != 0 {
-		t.Fatalf("Ctrl+Left active panel = %d, want 0", application.activePanel)
+	if application.focus.AgentID != "agent-b" {
+		t.Fatalf("Ctrl+Left focus = %#v", application.focus)
 	}
 
 	updated, command := application.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	application = updated.(Model)
+	application = updated.(*Model)
 	if command == nil {
 		t.Fatal("Ctrl+C returned no quit command")
 	}
@@ -39,20 +43,55 @@ func TestKeyboardSwitchesPanelsAndCtrlCShutsDown(t *testing.T) {
 	}
 }
 
+func TestFocusTraversesEightAgentsAndPages(t *testing.T) {
+	backend := newFakeBackend()
+	t.Cleanup(backend.cancel)
+	application, err := NewModel(backend, make(chan session.Event), testPanes(8), 120, 40, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 1; index < 8; index++ {
+		application, _ = updateModel(t, application, tea.KeyMsg{Type: tea.KeyCtrlRight})
+		if application.focus.AgentID != application.panes[index].sessionID {
+			t.Fatalf("step %d focus = %#v", index, application.focus)
+		}
+		if application.page != index/4 {
+			t.Fatalf("step %d page = %d", index, application.page)
+		}
+	}
+	application, _ = updateModel(t, application, tea.KeyMsg{Type: tea.KeyCtrlRight})
+	if application.focus.Kind != FocusSupervisor || application.page != 1 {
+		t.Fatalf("supervisor focus/page = %#v/%d", application.focus, application.page)
+	}
+	application, _ = updateModel(t, application, tea.KeyMsg{Type: tea.KeyCtrlRight})
+	if application.focus.AgentID != "agent-1" || application.page != 0 {
+		t.Fatalf("wrapped focus/page = %#v/%d", application.focus, application.page)
+	}
+
+	application, _ = updateModel(t, application, tea.KeyMsg{Type: tea.KeyCtrlPgDown})
+	if application.page != 1 || application.focus.AgentID != "agent-5" {
+		t.Fatalf("Ctrl+PageDown = page %d focus %#v", application.page, application.focus)
+	}
+	application, _ = updateModel(t, application, tea.KeyMsg{Type: tea.KeyCtrlPgUp})
+	if application.page != 0 || application.focus.AgentID != "agent-1" {
+		t.Fatalf("Ctrl+PageUp = page %d focus %#v", application.page, application.focus)
+	}
+}
+
 func TestPromptQueuePreservesImmediateSecondPrompt(t *testing.T) {
 	application, _, _ := newModelHarness(t)
-	first := session.PromptDetected{SessionID: 10, Pattern: "confirmation", Description: "first prompt"}
+	first := session.PromptDetected{SessionID: "agent-a", Pattern: "confirmation", Description: "first prompt"}
 	application, _ = updateModel(t, application, first)
 	application.input.SetValue("yes")
 
 	var delivery tea.Cmd
 	application, delivery = updateModel(t, application, tea.KeyMsg{Type: tea.KeyEnter})
-	if !application.writePending || application.inputTarget != -1 || application.panes[0].blocked {
+	if !application.writePending || application.inputTarget != "" || application.panes[0].blocked {
 		t.Fatalf("old prompt was not cleared before delivery")
 	}
-	second := session.PromptDetected{SessionID: 10, Pattern: "confirmation", Description: "second prompt"}
+	second := session.PromptDetected{SessionID: "agent-a", Pattern: "confirmation", Description: "second prompt"}
 	application, _ = updateModel(t, application, second)
-	if !application.panes[0].blocked || application.inputTarget != -1 {
+	if !application.panes[0].blocked || application.inputTarget != "" {
 		t.Fatal("second prompt should be queued while first write is in flight")
 	}
 
@@ -61,7 +100,7 @@ func TestPromptQueuePreservesImmediateSecondPrompt(t *testing.T) {
 		t.Fatalf("delivery command returned unexpected message")
 	}
 	application, _ = updateModel(t, application, delivered)
-	if application.inputTarget != 0 || !application.panes[0].blocked {
+	if application.inputTarget != "agent-a" || !application.panes[0].blocked {
 		t.Fatal("second prompt was lost when first delivery completed")
 	}
 	if application.panes[0].prompt.Description != "second prompt" {
@@ -69,11 +108,60 @@ func TestPromptQueuePreservesImmediateSecondPrompt(t *testing.T) {
 	}
 }
 
+func TestPromptOnHiddenPageOpensThatPageAndQueuesByStableID(t *testing.T) {
+	backend := newFakeBackend()
+	t.Cleanup(backend.cancel)
+	application, err := NewModel(backend, make(chan session.Event), testPanes(8), 120, 40, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	application, _ = updateModel(t, application, session.PromptDetected{
+		SessionID: "agent-7", Pattern: "confirmation", Description: "hidden prompt",
+	})
+	if application.page != 1 || application.focus.Kind != FocusSupervisor || application.inputTarget != "agent-7" {
+		t.Fatalf("hidden prompt state = page %d focus %#v target %q", application.page, application.focus, application.inputTarget)
+	}
+	if len(application.pending) != 1 || application.pending[0] != "agent-7" {
+		t.Fatalf("pending IDs = %#v", application.pending)
+	}
+	if !strings.Contains(application.View(), "Agent 7") {
+		t.Fatal("prompt target page is not rendered")
+	}
+}
+
+func TestPromptQueueAdvancesAcrossPagesAfterDelivery(t *testing.T) {
+	backend := newFakeBackend()
+	t.Cleanup(backend.cancel)
+	application, err := NewModel(backend, make(chan session.Event), testPanes(8), 120, 40, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	application, _ = updateModel(t, application, session.PromptDetected{
+		SessionID: "agent-2", Pattern: "confirmation", Description: "first page prompt",
+	})
+	application, _ = updateModel(t, application, session.PromptDetected{
+		SessionID: "agent-7", Pattern: "confirmation", Description: "second page prompt",
+	})
+	if application.inputTarget != "agent-2" || application.page != 0 {
+		t.Fatalf("second prompt disrupted active target: target %q page %d", application.inputTarget, application.page)
+	}
+
+	application.input.SetValue("yes")
+	application, delivery := updateModel(t, application, tea.KeyMsg{Type: tea.KeyEnter})
+	application, _ = updateModel(t, application, executeCommand(t, delivery))
+	if application.inputTarget != "agent-7" || application.page != 1 || application.focus.Kind != FocusSupervisor {
+		t.Fatalf("queue did not advance across pages: target %q page %d focus %#v", application.inputTarget, application.page, application.focus)
+	}
+	if len(application.pending) != 1 || application.pending[0] != "agent-7" {
+		t.Fatalf("pending IDs after delivery = %#v", application.pending)
+	}
+}
+
 func TestPasswordClearedBeforeDeliveryAndBeforeAdvancingAfterExit(t *testing.T) {
 	t.Run("delivery", func(t *testing.T) {
 		application, backend, _ := newModelHarness(t)
 		application, _ = updateModel(t, application, session.PromptDetected{
-			SessionID: 10, Pattern: "password", Description: "password prompt", Sensitive: true,
+			SessionID: "agent-a", Pattern: "password", Description: "password prompt", Sensitive: true,
 		})
 		application.input.SetValue("top-secret")
 		if strings.Contains(application.View(), "top-secret") {
@@ -84,13 +172,11 @@ func TestPasswordClearedBeforeDeliveryAndBeforeAdvancingAfterExit(t *testing.T) 
 			t.Fatalf("password remains in model after Enter: %q", got)
 		}
 		if application.input.EchoMode != textinput.EchoPassword {
-			// Echo mode resets when the delivery completes or another prompt is
-			// activated; before that the value itself is the sensitive state.
 			t.Fatalf("unexpected interim echo mode: %v", application.input.EchoMode)
 		}
 		message := executeCommand(t, delivery)
 		calls := backend.inputSnapshot()
-		if len(calls) != 1 || calls[0] != (inputCall{id: 10, value: "top-secret"}) {
+		if len(calls) != 1 || calls[0] != (inputCall{id: "agent-a", value: "top-secret"}) {
 			t.Fatalf("input calls = %#v", calls)
 		}
 		application, _ = updateModel(t, application, message)
@@ -102,18 +188,18 @@ func TestPasswordClearedBeforeDeliveryAndBeforeAdvancingAfterExit(t *testing.T) 
 	t.Run("target exits", func(t *testing.T) {
 		application, _, _ := newModelHarness(t)
 		application, _ = updateModel(t, application, session.PromptDetected{
-			SessionID: 10, Pattern: "password", Description: "password prompt", Sensitive: true,
+			SessionID: "agent-a", Pattern: "password", Description: "password prompt", Sensitive: true,
 		})
 		application.input.SetValue("top-secret")
 		application, _ = updateModel(t, application, session.PromptDetected{
-			SessionID: 20, Pattern: "confirmation", Description: "next prompt",
+			SessionID: "agent-b", Pattern: "confirmation", Description: "next prompt",
 		})
-		application, _ = updateModel(t, application, session.Exited{SessionID: 10})
+		application, _ = updateModel(t, application, session.Exited{SessionID: "agent-a"})
 		if got := application.input.Value(); got != "" {
 			t.Fatalf("password survived target exit: %q", got)
 		}
-		if application.input.EchoMode != textinput.EchoNormal || application.inputTarget != 1 {
-			t.Fatalf("next prompt state = target %d, echo %v", application.inputTarget, application.input.EchoMode)
+		if application.input.EchoMode != textinput.EchoNormal || application.inputTarget != "agent-b" {
+			t.Fatalf("next prompt state = target %q, echo %v", application.inputTarget, application.input.EchoMode)
 		}
 	})
 }
@@ -121,12 +207,12 @@ func TestPasswordClearedBeforeDeliveryAndBeforeAdvancingAfterExit(t *testing.T) 
 func TestDeliveryErrorRequeuesPromptWithoutRestoringSecret(t *testing.T) {
 	application, backend, _ := newModelHarness(t)
 	backend.inputError = errFakeBackend
-	prompt := session.PromptDetected{SessionID: 10, Pattern: "password", Description: "credential", Sensitive: true}
+	prompt := session.PromptDetected{SessionID: "agent-a", Pattern: "password", Description: "credential", Sensitive: true}
 	application, _ = updateModel(t, application, prompt)
 	application.input.SetValue("secret")
 	application, command := updateModel(t, application, tea.KeyMsg{Type: tea.KeyEnter})
 	application, _ = updateModel(t, application, executeCommand(t, command))
-	if application.inputTarget != 0 || !application.panes[0].blocked {
+	if application.inputTarget != "agent-a" || !application.panes[0].blocked {
 		t.Fatalf("failed delivery was not requeued")
 	}
 	if got := application.input.Value(); got != "" {
@@ -142,15 +228,15 @@ func TestDeliveryErrorRequeuesPromptWithoutRestoringSecret(t *testing.T) {
 
 func TestSessionEventsRefreshOutputExitAndError(t *testing.T) {
 	application, backend, _ := newModelHarness(t)
-	application = publishOutput(t, application, backend, 10, "hello\nworld")
+	application = publishOutput(t, application, backend, "agent-a", "hello\nworld")
 	if !strings.Contains(application.panes[0].viewport.View(), "world") {
 		t.Fatalf("output event did not refresh pane: %q", application.panes[0].viewport.View())
 	}
-	application, _ = updateModel(t, application, session.Error{SessionID: 10, Err: errFakeBackend})
+	application, _ = updateModel(t, application, session.Error{SessionID: "agent-a", Err: errFakeBackend})
 	if !strings.Contains(strings.Join(application.logs, "\n"), "Erreur PTY") {
 		t.Fatal("session error was not logged")
 	}
-	application, _ = updateModel(t, application, session.Exited{SessionID: 10})
+	application, _ = updateModel(t, application, session.Exited{SessionID: "agent-a"})
 	if !application.panes[0].exited || application.panes[0].exitErr != nil {
 		t.Fatalf("exit event was not recorded")
 	}
@@ -158,10 +244,10 @@ func TestSessionEventsRefreshOutputExitAndError(t *testing.T) {
 
 func TestInitResubscribesToEventsAndStopsAfterBackendCancellation(t *testing.T) {
 	application, backend, events := newModelHarness(t)
-	backend.setOutput(10, "streamed output")
+	backend.setOutput("agent-a", "streamed output")
 
 	wait := application.Init()
-	events <- session.OutputAvailable{SessionID: 10}
+	events <- session.OutputAvailable{SessionID: "agent-a"}
 	message := executeCommand(t, wait)
 	if _, ok := message.(backendEventMsg); !ok {
 		t.Fatalf("Init command returned %T, want backendEventMsg", message)

@@ -8,6 +8,12 @@ import (
 var (
 	colorAgentA    = lipgloss.Color("#00D7FF")
 	colorAgentB    = lipgloss.Color("#FF5AF7")
+	colorAgentC    = lipgloss.Color("#FFD75F")
+	colorAgentD    = lipgloss.Color("#5F87FF")
+	colorAgentE    = lipgloss.Color("#5FFFAF")
+	colorAgentF    = lipgloss.Color("#AF87FF")
+	colorAgentG    = lipgloss.Color("#FF875F")
+	colorAgentH    = lipgloss.Color("#87D7FF")
 	colorMuted     = lipgloss.Color("#4B5563")
 	colorText      = lipgloss.Color("#E5E7EB")
 	colorBlocked   = lipgloss.Color("#FF0000")
@@ -45,10 +51,15 @@ func agentPanelStyle(index int, blocked bool) lipgloss.Style {
 	if blocked {
 		return interceptionBorderStyle
 	}
-	if index == 0 {
-		return agentABorderStyle
+	if index < 2 {
+		if index == 0 {
+			return agentABorderStyle
+		}
+		return agentBBorderStyle
 	}
-	return agentBBorderStyle
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(agentColor(index))
 }
 
 func supervisorPanelStyle(blocked bool) lipgloss.Style {
@@ -59,10 +70,20 @@ func supervisorPanelStyle(blocked bool) lipgloss.Style {
 }
 
 func agentColor(index int) lipgloss.Color {
-	if index == 0 {
-		return colorAgentA
+	colors := [...]lipgloss.Color{
+		colorAgentA,
+		colorAgentB,
+		colorAgentC,
+		colorAgentD,
+		colorAgentE,
+		colorAgentF,
+		colorAgentG,
+		colorAgentH,
 	}
-	return colorAgentB
+	if index < 0 {
+		index = 0
+	}
+	return colors[index%len(colors)]
 }
 
 func setInputInterceptionStyle(input *textinput.Model, active bool) {

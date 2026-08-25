@@ -10,15 +10,16 @@ import "context"
 // Backend is the process/session boundary consumed by the TUI.
 type Backend interface {
 	Context() context.Context
-	Output(id int) (string, error)
-	SendInput(id int, value string) error
-	Resize(id, columns, rows int) error
+	Output(id string) (string, error)
+	SendInput(id string, value string) error
+	Resize(id string, columns, rows int) error
 	BeginShutdown()
 }
 
 // Pane describes one agent already started by the caller.
 type Pane struct {
-	ID      int
+	ID      string
 	Name    string
 	Command string
+	Shell   bool
 }

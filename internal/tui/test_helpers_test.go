@@ -13,13 +13,13 @@ import (
 )
 
 type resizeCall struct {
-	id      int
+	id      string
 	columns int
 	rows    int
 }
 
 type inputCall struct {
-	id    int
+	id    string
 	value string
 }
 
@@ -28,8 +28,8 @@ type fakeBackend struct {
 	cancel context.CancelFunc
 
 	mu            sync.Mutex
-	outputs       map[int]string
-	outputErrors  map[int]error
+	outputs       map[string]string
+	outputErrors  map[string]error
 	resizeCalls   []resizeCall
 	inputCalls    []inputCall
 	resizeError   error
@@ -42,27 +42,27 @@ func newFakeBackend() *fakeBackend {
 	return &fakeBackend{
 		ctx:          ctx,
 		cancel:       cancel,
-		outputs:      make(map[int]string),
-		outputErrors: make(map[int]error),
+		outputs:      make(map[string]string),
+		outputErrors: make(map[string]error),
 	}
 }
 
 func (b *fakeBackend) Context() context.Context { return b.ctx }
 
-func (b *fakeBackend) Output(id int) (string, error) {
+func (b *fakeBackend) Output(id string) (string, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.outputs[id], b.outputErrors[id]
 }
 
-func (b *fakeBackend) SendInput(id int, value string) error {
+func (b *fakeBackend) SendInput(id string, value string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.inputCalls = append(b.inputCalls, inputCall{id: id, value: value})
 	return b.inputError
 }
 
-func (b *fakeBackend) Resize(id, columns, rows int) error {
+func (b *fakeBackend) Resize(id string, columns, rows int) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.resizeCalls = append(b.resizeCalls, resizeCall{id: id, columns: columns, rows: rows})
@@ -76,7 +76,7 @@ func (b *fakeBackend) BeginShutdown() {
 	b.cancel()
 }
 
-func (b *fakeBackend) setOutput(id int, output string) {
+func (b *fakeBackend) setOutput(id string, output string) {
 	b.mu.Lock()
 	b.outputs[id] = output
 	b.mu.Unlock()
@@ -100,37 +100,40 @@ func (b *fakeBackend) inputSnapshot() []inputCall {
 	return append([]inputCall(nil), b.inputCalls...)
 }
 
-func newModelHarness(t *testing.T) (Model, *fakeBackend, chan session.Event) {
+func newModelHarness(t *testing.T) (*Model, *fakeBackend, chan session.Event) {
 	t.Helper()
 	backend := newFakeBackend()
 	t.Cleanup(backend.cancel)
 	events := make(chan session.Event, 16)
-	application := NewModel(
+	application, err := NewModel(
 		backend,
 		events,
-		[2]Pane{
-			{ID: 10, Name: "Agent A", Command: "agent-a"},
-			{ID: 20, Name: "Agent B", Command: "agent-b"},
+		[]Pane{
+			{ID: "agent-a", Name: "Agent A", Command: "agent-a"},
+			{ID: "agent-b", Name: "Agent B", Command: "agent-b"},
 		},
 		100,
 		30,
 		nil,
 	)
+	if err != nil {
+		t.Fatalf("NewModel returned an error: %v", err)
+	}
 	backend.resetResizeCalls()
 	return application, backend, events
 }
 
-func updateModel(t *testing.T, application Model, message tea.Msg) (Model, tea.Cmd) {
+func updateModel(t *testing.T, application *Model, message tea.Msg) (*Model, tea.Cmd) {
 	t.Helper()
 	updated, command := application.Update(message)
-	result, ok := updated.(Model)
+	result, ok := updated.(*Model)
 	if !ok {
 		t.Fatalf("Update returned model type %T", updated)
 	}
 	return result, command
 }
 
-func publishOutput(t *testing.T, application Model, backend *fakeBackend, sessionID int, content string) Model {
+func publishOutput(t *testing.T, application *Model, backend *fakeBackend, sessionID string, content string) *Model {
 	t.Helper()
 	backend.setOutput(sessionID, content)
 	updated, _ := updateModel(t, application, session.OutputAvailable{SessionID: sessionID})
@@ -170,6 +173,16 @@ func mouseWheelDown(x, y int) tea.MouseMsg {
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonWheelDown,
 		Type:   tea.MouseWheelDown,
+	}
+}
+
+func mouseLeftClick(x, y int) tea.MouseMsg {
+	return tea.MouseMsg{
+		X:      x,
+		Y:      y,
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		Type:   tea.MouseLeft,
 	}
 }
 

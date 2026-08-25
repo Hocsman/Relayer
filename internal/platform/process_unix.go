@@ -6,11 +6,18 @@
 package platform
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"syscall"
 )
+
+// NewShellCommand constructs the explicitly requested Unix shell invocation.
+// The script is passed as one argument; it is never interpolated by Relayer.
+func NewShellCommand(ctx context.Context, script string) (*exec.Cmd, error) {
+	return exec.CommandContext(ctx, "/bin/sh", "-c", script), nil
+}
 
 // TerminateProcessGroup asks the whole process group led by command to stop.
 // creack/pty starts commands in a new session on Unix, so the command PID is

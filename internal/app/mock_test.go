@@ -27,8 +27,92 @@ func TestParseOptionsPreservesPublicCLIFlags(t *testing.T) {
 	if options.pane1 != "claude" || options.pane2 != "ollama run llama3.2" || options.configPath != "custom.yaml" {
 		t.Fatalf("parsed options = %#v", options)
 	}
+	if !options.pane1Set || !options.pane2Set {
+		t.Fatalf("explicit pane flags were not tracked: %#v", options)
+	}
 	if diagnostics.Len() != 0 {
 		t.Fatalf("successful parsing wrote diagnostics: %q", diagnostics.String())
+	}
+}
+
+func TestParseOptionsDistinguishesOmittedAndExplicitEmptyPaneFlags(t *testing.T) {
+	var diagnostics bytes.Buffer
+	omitted, err := parseOptions(nil, &diagnostics)
+	if err != nil {
+		t.Fatalf("parseOptions with omitted flags: %v", err)
+	}
+	if omitted.pane1Set || omitted.pane2Set {
+		t.Fatalf("omitted pane flags were reported as present: %#v", omitted)
+	}
+
+	explicit, err := parseOptions([]string{"--pane1", "", "--pane2="}, &diagnostics)
+	if err != nil {
+		t.Fatalf("parseOptions with explicit empty flags: %v", err)
+	}
+	if !explicit.pane1Set || !explicit.pane2Set {
+		t.Fatalf("explicit empty pane flags were not reported as present: %#v", explicit)
+	}
+}
+
+func TestSplitLegacyCommandPreservesQuotedArgumentsWithoutShellExpansion(t *testing.T) {
+	input := `tool "argument with spaces" "O'Reilly" '$HOME' 'a|b;c&d*e' "" plain\ value`
+	want := []string{
+		"tool",
+		"argument with spaces",
+		"O'Reilly",
+		"$HOME",
+		"a|b;c&d*e",
+		"",
+		"plain value",
+	}
+
+	got, err := splitLegacyCommand(input)
+	if err != nil {
+		t.Fatalf("splitLegacyCommand returned an error: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("arguments = %#v, want %#v", got, want)
+	}
+}
+
+func TestSplitLegacyCommandTreatsUnquotedShellMetacharactersAsLiteralArguments(t *testing.T) {
+	input := `tool $HOME $(whoami) a|b ; redirection>file "" '' escaped\ space`
+	want := []string{
+		"tool",
+		"$HOME",
+		"$(whoami)",
+		"a|b",
+		";",
+		"redirection>file",
+		"",
+		"",
+		"escaped space",
+	}
+
+	got, err := splitLegacyCommand(input)
+	if err != nil {
+		t.Fatalf("splitLegacyCommand returned an error: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("arguments = %#v, want %#v", got, want)
+	}
+}
+
+func TestResolveAgentPlansRejectsNULInLegacyOverrideBeforeStartup(t *testing.T) {
+	_, err := resolveAgentPlans(config.Result{
+		Backend: "pty",
+		Agents:  configuredAgentSpecs(1),
+	}, options{pane1Set: true, pane1: "runner argument\x00suffix"}, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "NUL") {
+		t.Fatalf("resolveAgentPlans error = %v, want NUL validation error", err)
+	}
+}
+
+func TestSplitLegacyCommandRejectsIncompleteQuoting(t *testing.T) {
+	for _, input := range []string{`tool "unfinished`, `tool trailing\`} {
+		if _, err := splitLegacyCommand(input); err == nil {
+			t.Fatalf("splitLegacyCommand accepted %q", input)
+		}
 	}
 }
 
@@ -36,34 +120,43 @@ func TestResolvePaneCommand(t *testing.T) {
 	tests := []struct {
 		name         string
 		input        string
-		wantCommand  string
+		wantCommand  []string
 		wantUsesMock bool
 	}{
 		{
 			name:         "absent",
 			input:        "",
-			wantCommand:  defaultMockCommand,
+			wantCommand:  mockCommand(),
 			wantUsesMock: true,
 		},
 		{
 			name:         "blank",
 			input:        " \t\n ",
-			wantCommand:  defaultMockCommand,
+			wantCommand:  mockCommand(),
 			wantUsesMock: true,
 		},
 		{
-			name:         "custom preserved exactly",
+			name:         "custom becomes direct argv",
 			input:        "  ollama run llama3.2  ",
-			wantCommand:  "  ollama run llama3.2  ",
+			wantCommand:  []string{"ollama", "run", "llama3.2"},
 			wantUsesMock: false,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			command, usesMock := resolvePaneCommand(test.input)
-			if command != test.wantCommand {
-				t.Fatalf("resolved command = %q, want %q", command, test.wantCommand)
+			configured := configuredAgentSpecs(1)
+			resolution, err := resolveAgentPlans(config.Result{
+				Backend: "pty",
+				Agents:  configured,
+			}, options{pane1Set: true, pane1: test.input}, t.TempDir())
+			if err != nil {
+				t.Fatalf("resolveAgentPlans: %v", err)
+			}
+			command := resolution.Specs[0].Command
+			usesMock := len(resolution.MockAgentNames) == 1
+			if !reflect.DeepEqual(command, test.wantCommand) {
+				t.Fatalf("resolved command = %#v, want %#v", command, test.wantCommand)
 			}
 			if usesMock != test.wantUsesMock {
 				t.Fatalf("usesMock = %t, want %t", usesMock, test.wantUsesMock)
@@ -92,11 +185,14 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 	}
 	defer manager.Close()
 
-	command, usesMock := resolvePaneCommand("")
-	if !usesMock {
-		t.Fatal("empty pane command did not select the mock")
+	resolution, err := resolveAgentPlans(config.Result{Backend: "pty"}, options{}, t.TempDir())
+	if err != nil {
+		t.Fatalf("resolving default agents: %v", err)
 	}
-	agent, err := manager.Start("default mock", command, 100, 30)
+	if len(resolution.MockAgentNames) != 2 {
+		t.Fatal("empty agent configuration did not select the mocks")
+	}
+	startedAgent, err := manager.Start(resolution.Specs[0], 100, 30)
 	if err != nil {
 		t.Fatalf("starting default mock: %v", err)
 	}
@@ -106,7 +202,7 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 	latestOutput := ""
 	refreshOutput := func() {
 		var outputErr error
-		latestOutput, outputErr = manager.Output(agent.ID)
+		latestOutput, outputErr = manager.Output(startedAgent.ID)
 		if outputErr != nil {
 			t.Fatalf("reading mock output: %v", outputErr)
 		}
@@ -119,21 +215,21 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 		case message := <-events:
 			switch msg := message.(type) {
 			case session.OutputAvailable:
-				if msg.SessionID == agent.ID {
+				if msg.SessionID == startedAgent.ID {
 					refreshOutput()
 				}
 			case session.PromptDetected:
-				if msg.SessionID == agent.ID {
+				if msg.SessionID == startedAgent.ID {
 					detected = msg
 					promptSeen = true
 					refreshOutput()
 				}
 			case session.Exited:
-				if msg.SessionID == agent.ID {
+				if msg.SessionID == startedAgent.ID {
 					t.Fatalf("mock exited before validation prompt: %v", msg.Err)
 				}
 			case session.Error:
-				if msg.SessionID == agent.ID {
+				if msg.SessionID == startedAgent.ID {
 					t.Fatalf("mock emitted a PTY error before validation: %v", msg.Err)
 				}
 			}
@@ -180,7 +276,7 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 		)
 	}
 
-	if err := manager.SendInput(agent.ID, "Y"); err != nil {
+	if err := manager.SendInput(startedAgent.ID, "Y"); err != nil {
 		t.Fatalf("sending mock validation: %v", err)
 	}
 
@@ -191,11 +287,11 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 		case message := <-events:
 			switch msg := message.(type) {
 			case session.OutputAvailable:
-				if msg.SessionID == agent.ID {
+				if msg.SessionID == startedAgent.ID {
 					refreshOutput()
 				}
 			case session.Exited:
-				if msg.SessionID == agent.ID {
+				if msg.SessionID == startedAgent.ID {
 					refreshOutput()
 					if msg.Err != nil {
 						t.Fatalf("mock exited with an error: %v; output: %q", msg.Err, latestOutput)
@@ -203,7 +299,7 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 					exited = true
 				}
 			case session.Error:
-				if msg.SessionID == agent.ID {
+				if msg.SessionID == startedAgent.ID {
 					t.Fatalf("mock emitted a PTY error: %v", msg.Err)
 				}
 			}
@@ -212,7 +308,7 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 		}
 	}
 
-	done, err := manager.Done(agent.ID)
+	done, err := manager.Done(startedAgent.ID)
 	if err != nil {
 		t.Fatalf("reading mock completion channel: %v", err)
 	}

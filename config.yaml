@@ -1,4 +1,7 @@
-# Patterns d'interception de Relayer.
+# Configuration de Relayer; agents: [] active les deux mocks.
+version: 1
+backend: pty
+agents: []
 intercept_patterns:
   - pattern: '(?i)overwrite.*\[y/n\]'
     description: "confirmation d'écrasement"

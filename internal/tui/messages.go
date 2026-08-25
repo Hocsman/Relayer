@@ -8,7 +8,7 @@ import (
 )
 
 type inputDeliveredMsg struct {
-	SessionID int
+	SessionID string
 	Prompt    session.PromptDetected
 	Err       error
 }
@@ -37,7 +37,7 @@ func waitForBackendEvent(ctx context.Context, events <-chan session.Event) tea.C
 
 func deliverInput(
 	backend Backend,
-	sessionID int,
+	sessionID string,
 	value string,
 	prompt session.PromptDetected,
 ) tea.Cmd {
