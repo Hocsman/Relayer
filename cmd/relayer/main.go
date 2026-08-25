@@ -1,6 +1,4 @@
-// Command relayer is kept at the repository root for compatibility with the
-// original `go build -o relayer main.go` installation command. New builds
-// should use the canonical ./cmd/relayer entrypoint.
+// Command relayer starts the human-in-the-loop PTY orchestrator.
 package main
 
 import (

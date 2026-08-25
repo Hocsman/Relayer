@@ -27,6 +27,15 @@ jobs:
       - name: Install dependencies
         run: go mod tidy
 
+      - name: Verify module files
+        run: git diff --exit-code -- go.mod go.sum
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Vet
+        run: go vet ./...
+
       # 4. Tente de compiler le projet (sans générer le binaire final, juste pour vérifier que ça marche)
       - name: Build
         run: go build -v ./...

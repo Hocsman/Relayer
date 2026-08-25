@@ -1,6 +1,7 @@
-package main
+package app
 
 import (
+	"bytes"
 	"context"
 	"os/exec"
 	"reflect"
@@ -9,8 +10,27 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/Hocsman/Relayer/internal/config"
+	"github.com/Hocsman/Relayer/internal/session"
 )
+
+func TestParseOptionsPreservesPublicCLIFlags(t *testing.T) {
+	var diagnostics bytes.Buffer
+	options, err := parseOptions([]string{
+		"--pane1", "claude",
+		"--pane2", "ollama run llama3.2",
+		"--config", "custom.yaml",
+	}, &diagnostics)
+	if err != nil {
+		t.Fatalf("parseOptions returned an error: %v", err)
+	}
+	if options.pane1 != "claude" || options.pane2 != "ollama run llama3.2" || options.configPath != "custom.yaml" {
+		t.Fatalf("parsed options = %#v", options)
+	}
+	if diagnostics.Len() != 0 {
+		t.Fatalf("successful parsing wrote diagnostics: %q", diagnostics.String())
+	}
+}
 
 func TestResolvePaneCommand(t *testing.T) {
 	tests := []struct {
@@ -60,11 +80,11 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 		t.Skipf("default mock requires bash: %v", err)
 	}
 
-	events := make(chan tea.Msg, 128)
-	manager, err := NewSessionManager(
+	events := make(chan session.Event, 128)
+	manager, err := session.NewManager(
 		context.Background(),
 		events,
-		defaultPromptPatterns,
+		config.DefaultPatterns(),
 		64*1024,
 	)
 	if err != nil {
@@ -76,7 +96,7 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 	if !usesMock {
 		t.Fatal("empty pane command did not select the mock")
 	}
-	session, err := manager.Start("default mock", command, 100, 30)
+	agent, err := manager.Start("default mock", command, 100, 30)
 	if err != nil {
 		t.Fatalf("starting default mock: %v", err)
 	}
@@ -86,34 +106,34 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 	latestOutput := ""
 	refreshOutput := func() {
 		var outputErr error
-		latestOutput, outputErr = manager.Output(session.ID)
+		latestOutput, outputErr = manager.Output(agent.ID)
 		if outputErr != nil {
 			t.Fatalf("reading mock output: %v", outputErr)
 		}
 	}
 
-	var detected PromptDetectedMsg
+	var detected session.PromptDetected
 	promptSeen := false
 	for !promptSeen {
 		select {
 		case message := <-events:
 			switch msg := message.(type) {
-			case SessionOutputMsg:
-				if msg.SessionID == session.ID {
+			case session.OutputAvailable:
+				if msg.SessionID == agent.ID {
 					refreshOutput()
 				}
-			case PromptDetectedMsg:
-				if msg.SessionID == session.ID {
+			case session.PromptDetected:
+				if msg.SessionID == agent.ID {
 					detected = msg
 					promptSeen = true
 					refreshOutput()
 				}
-			case SessionExitedMsg:
-				if msg.SessionID == session.ID {
+			case session.Exited:
+				if msg.SessionID == agent.ID {
 					t.Fatalf("mock exited before validation prompt: %v", msg.Err)
 				}
-			case SessionErrorMsg:
-				if msg.SessionID == session.ID {
+			case session.Error:
+				if msg.SessionID == agent.ID {
 					t.Fatalf("mock emitted a PTY error before validation: %v", msg.Err)
 				}
 			}
@@ -160,7 +180,7 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 		)
 	}
 
-	if err := manager.SendInput(session.ID, "Y"); err != nil {
+	if err := manager.SendInput(agent.ID, "Y"); err != nil {
 		t.Fatalf("sending mock validation: %v", err)
 	}
 
@@ -170,20 +190,20 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 		select {
 		case message := <-events:
 			switch msg := message.(type) {
-			case SessionOutputMsg:
-				if msg.SessionID == session.ID {
+			case session.OutputAvailable:
+				if msg.SessionID == agent.ID {
 					refreshOutput()
 				}
-			case SessionExitedMsg:
-				if msg.SessionID == session.ID {
+			case session.Exited:
+				if msg.SessionID == agent.ID {
 					refreshOutput()
 					if msg.Err != nil {
 						t.Fatalf("mock exited with an error: %v; output: %q", msg.Err, latestOutput)
 					}
 					exited = true
 				}
-			case SessionErrorMsg:
-				if msg.SessionID == session.ID {
+			case session.Error:
+				if msg.SessionID == agent.ID {
 					t.Fatalf("mock emitted a PTY error: %v", msg.Err)
 				}
 			}
@@ -192,8 +212,12 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 		}
 	}
 
+	done, err := manager.Done(agent.ID)
+	if err != nil {
+		t.Fatalf("reading mock completion channel: %v", err)
+	}
 	select {
-	case <-session.done:
+	case <-done:
 	default:
 		t.Fatal("mock session done channel is open after SessionExitedMsg")
 	}

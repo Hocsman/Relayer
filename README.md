@@ -23,14 +23,14 @@ Stop paying per-token API fees to orchestrate AI agents. Run `claude` (Claude Pr
 
 ### Installation
 
-Download the latest compiled binary for your OS (macOS, Linux, Windows) from the [Releases page](https://github.com/Hocsman/Relayer/releases).
+Download the latest compiled binary for macOS or Linux from the [Releases page](https://github.com/Hocsman/Relayer/releases). The current PTY and process-group implementation targets Unix-like systems; native Windows support is not implemented yet.
 
 Or build it from source:
 
 ```bash
 git clone https://github.com/Hocsman/Relayer.git
-cd relayer
-go build -o relayer main.go
+cd Relayer
+go build -o relayer ./cmd/relayer
 ```
 
 ### Basic Usage
@@ -41,11 +41,13 @@ Launch Relayer by specifying the CLI commands you want to run in parallel. For e
 ./relayer --pane1 "claude" --pane2 "ollama run llama3.2"
 ```
 
-Use `Ctrl+Arrow` to switch focus between the supervisor input and the agent panes.
+Use `Ctrl+Left` and `Ctrl+Right` to switch focus between the supervisor input and the agent panes.
 
 ## ⚙️ How it Works (The Architecture)
 
 Relayer allocates pseudo-terminals (PTY) for each CLI tool, tricking them into believing they are attached to a real interactive terminal. A background Go engine continuously strips ANSI codes and parses the output using regex patterns. When a blocking pattern is matched, it triggers an event in the Bubble Tea UI, highlighting the pane and awaiting your manual keystroke to relay back to the agent.
+
+The code is split into focused internal packages: `config` owns strict YAML loading, `buffer` bounds retained output, `intercept` detects prompts independently of Bubble Tea, `session` exclusively owns PTYs and process lifecycles, and `tui` renders typed session events through a narrow backend interface. Unix-specific process-group behavior is isolated in `internal/platform` behind build tags. The root `main.go` remains a compatibility entrypoint; `cmd/relayer` is the canonical command.
 
 ## 🛠️ Configuration
 
@@ -61,6 +63,8 @@ intercept_patterns:
 
   description: "Generic CLI pause"
 ```
+
+Use an alternate file with `./relayer --config path/to/config.yaml`. If the selected file does not exist, Relayer creates it with the default patterns without overwriting an existing user file.
 
 ## 🤝 Contributing
 

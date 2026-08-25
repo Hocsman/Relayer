@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"errors"
@@ -8,8 +8,15 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/Hocsman/Relayer/internal/intercept"
 )
+
+var defaultPromptPatterns = DefaultPatterns()
+
+func loadPromptPatterns(path string) ([]intercept.Pattern, bool, error) {
+	result, err := Load(path)
+	return result.Patterns, result.Created, err
+}
 
 func TestLoadPromptPatternsCreatesAndReloadsDefaultConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "config.yaml")
@@ -58,7 +65,7 @@ func TestCreateDefaultConfigDoesNotOverwriteExistingFile(t *testing.T) {
 	original := []byte("# user formatting must survive\n- pattern: '(?i)custom gate'\n  description: Custom gate\n")
 	writeConfigTestFile(t, path, original)
 
-	created, err := createDefaultConfig(path)
+	created, err := createDefault(path)
 	if err != nil {
 		t.Fatalf("createDefaultConfig returned an error for an existing file: %v", err)
 	}
@@ -83,7 +90,7 @@ func TestCreateDefaultConfigDoesNotOverwriteExistingFile(t *testing.T) {
 func TestExclusiveConfigFallbackCreatesWithoutOverwriting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	first := []byte("- pattern: first\n  description: First\n")
-	created, err := createConfigExclusively(path, first, errors.New("hard links unsupported"))
+	created, err := createExclusively(path, first, errors.New("hard links unsupported"))
 	if err != nil {
 		t.Fatalf("createConfigExclusively returned an error: %v", err)
 	}
@@ -92,7 +99,7 @@ func TestExclusiveConfigFallbackCreatesWithoutOverwriting(t *testing.T) {
 	}
 	assertConfigFileBytes(t, path, first)
 
-	created, err = createConfigExclusively(
+	created, err = createExclusively(
 		path,
 		[]byte("- pattern: second\n  description: Second\n"),
 		errors.New("hard links unsupported"),
@@ -137,7 +144,7 @@ func TestLoadPromptPatternsAcceptsBothDocumentShapes(t *testing.T) {
 			if created {
 				t.Fatal("existing config was reported as created")
 			}
-			want := []PromptPattern{{
+			want := []intercept.Pattern{{
 				Name:        "config-1",
 				Description: "Custom action",
 				Expression:  `(?i)do the custom thing`,
@@ -347,33 +354,25 @@ func TestLoadedConfigPatternReachesInterceptor(t *testing.T) {
 		t.Fatalf("got %d patterns, want 1", len(patterns))
 	}
 
-	var emitted []tea.Msg
-	interceptor, err := NewInterceptor(
-		42,
+	var detected *intercept.Detection
+	engine, err := intercept.New(
 		patterns,
 		128,
-		func(message tea.Msg, _ bool) bool {
-			emitted = append(emitted, message)
-			return true
-		},
-	)
-	if err != nil {
-		t.Fatalf("NewInterceptor returned an error: %v", err)
-	}
-	interceptor.Consume([]byte("MAGIC "))
-	interceptor.Consume([]byte("APPROVAL?"))
-
-	var detected *PromptDetectedMsg
-	for _, message := range emitted {
-		if prompt, ok := message.(PromptDetectedMsg); ok {
+		intercept.Hooks{OnPrompt: func(prompt intercept.Detection) {
 			promptCopy := prompt
 			detected = &promptCopy
-		}
+		}},
+	)
+	if err != nil {
+		t.Fatalf("intercept.New returned an error: %v", err)
 	}
+	engine.Consume([]byte("MAGIC "))
+	engine.Consume([]byte("APPROVAL?"))
+
 	if detected == nil {
 		t.Fatal("loaded custom pattern did not reach the interceptor")
 	}
-	if detected.SessionID != 42 || detected.Pattern != "config-1" {
+	if detected.Pattern != "config-1" {
 		t.Fatalf("unexpected prompt identity: %#v", *detected)
 	}
 	if detected.Description != "Custom gate" || detected.Match != "MAGIC APPROVAL?" {
@@ -385,7 +384,7 @@ func TestLoadedConfigPatternReachesInterceptor(t *testing.T) {
 }
 
 func TestInterceptorMasksSensitiveMatchEvenWhenRegexIsObfuscated(t *testing.T) {
-	patterns, err := validateConfigPatterns([]ConfigPattern{{
+	patterns, err := validate([]ConfigPattern{{
 		Pattern:     `(?i)p[a]ssword:`,
 		Description: "Authentication gate",
 	}})
@@ -396,22 +395,18 @@ func TestInterceptorMasksSensitiveMatchEvenWhenRegexIsObfuscated(t *testing.T) {
 		t.Fatal("test precondition failed: obfuscated expression was inferred as sensitive")
 	}
 
-	var detected PromptDetectedMsg
-	interceptor, err := NewInterceptor(
-		7,
+	var detected intercept.Detection
+	engine, err := intercept.New(
 		patterns,
 		128,
-		func(message tea.Msg, _ bool) bool {
-			if prompt, ok := message.(PromptDetectedMsg); ok {
-				detected = prompt
-			}
-			return true
-		},
+		intercept.Hooks{OnPrompt: func(prompt intercept.Detection) {
+			detected = prompt
+		}},
 	)
 	if err != nil {
-		t.Fatalf("NewInterceptor returned an error: %v", err)
+		t.Fatalf("intercept.New returned an error: %v", err)
 	}
-	interceptor.Consume([]byte("Password:"))
+	engine.Consume([]byte("Password:"))
 	if !detected.Sensitive {
 		t.Fatal("a password prompt match was not marked sensitive")
 	}
@@ -420,7 +415,7 @@ func TestInterceptorMasksSensitiveMatchEvenWhenRegexIsObfuscated(t *testing.T) {
 func TestInterceptorMasksCommonCredentialPrompts(t *testing.T) {
 	for _, prompt := range []string{"API key:", "Access token:", "PIN:", "OTP:"} {
 		t.Run(prompt, func(t *testing.T) {
-			if !isSensitiveText(prompt) {
+			if !intercept.IsSensitiveText(prompt) {
 				t.Fatalf("credential prompt %q was not classified as sensitive", prompt)
 			}
 		})
