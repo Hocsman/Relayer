@@ -1,0 +1,199 @@
+// Package ptybackend adapts Relayer's established PTY session manager to the
+// context-aware terminal.Backend contract.
+package ptybackend
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os/exec"
+	"strings"
+	"sync"
+
+	"github.com/Hocsman/Relayer/internal/agent"
+	"github.com/Hocsman/Relayer/internal/intercept"
+	"github.com/Hocsman/Relayer/internal/session"
+	"github.com/Hocsman/Relayer/internal/terminal"
+)
+
+type Manager struct {
+	inner *session.Manager
+
+	mu       sync.RWMutex
+	ownedIDs map[string]struct{}
+}
+
+var _ terminal.Backend = (*Manager)(nil)
+
+func New(
+	parent context.Context,
+	events chan<- session.Event,
+	patterns []intercept.Pattern,
+	ringCapacity int,
+) (*Manager, error) {
+	inner, err := session.NewManager(parent, events, patterns, ringCapacity)
+	if err != nil {
+		return nil, err
+	}
+	return &Manager{inner: inner, ownedIDs: make(map[string]struct{})}, nil
+}
+
+func (m *Manager) Name() string { return agent.BackendPTY }
+
+func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size) (terminal.Info, error) {
+	if err := contextError(ctx); err != nil {
+		return terminal.Info{}, err
+	}
+	size = size.Normalize()
+	info, err := m.inner.Start(spec, size.Columns, size.Rows)
+	if err != nil {
+		return terminal.Info{}, &terminal.OperationError{Backend: m.Name(), Operation: "start", SessionID: spec.ID, Err: err}
+	}
+	m.mu.Lock()
+	m.ownedIDs[strings.ToLower(info.ID)] = struct{}{}
+	m.mu.Unlock()
+	return terminal.Info{
+		ID:             info.ID,
+		Name:           info.Name,
+		DisplayCommand: info.DisplayCommand,
+		Backend:        agent.BackendPTY,
+		Shell:          info.Shell,
+	}, nil
+}
+
+func (m *Manager) Send(ctx context.Context, id terminal.SessionID, data []byte) error {
+	if err := m.check(ctx, id); err != nil {
+		return err
+	}
+	if err := m.inner.SendData(id, data); err != nil {
+		return &terminal.OperationError{Backend: m.Name(), Operation: "send", SessionID: id, Err: err}
+	}
+	return nil
+}
+
+func (m *Manager) Resize(ctx context.Context, id terminal.SessionID, size terminal.Size) error {
+	if err := m.check(ctx, id); err != nil {
+		return err
+	}
+	size = size.Normalize()
+	if err := m.inner.Resize(id, size.Columns, size.Rows); err != nil {
+		return &terminal.OperationError{Backend: m.Name(), Operation: "resize", SessionID: id, Err: err}
+	}
+	return nil
+}
+
+func (m *Manager) Snapshot(ctx context.Context, id terminal.SessionID) (terminal.Snapshot, error) {
+	if err := m.check(ctx, id); err != nil {
+		return terminal.Snapshot{}, err
+	}
+	output, err := m.inner.Output(id)
+	if err != nil {
+		return terminal.Snapshot{}, &terminal.OperationError{Backend: m.Name(), Operation: "snapshot", SessionID: id, Err: err}
+	}
+	exited, waitErr, exitCode, err := m.inner.Result(id)
+	if err != nil {
+		return terminal.Snapshot{}, &terminal.OperationError{Backend: m.Name(), Operation: "snapshot", SessionID: id, Err: err}
+	}
+	status := terminal.StatusRunning
+	if exited {
+		status = terminal.StatusExited
+		if waitErr != nil {
+			status = terminal.StatusFailed
+		}
+	}
+	return terminal.Snapshot{
+		ID:       id,
+		Status:   status,
+		Running:  !exited,
+		ExitCode: exitCode,
+		Output:   output,
+	}, nil
+}
+
+// Output returns the interceptor's in-memory ring without any process query.
+func (m *Manager) Output(id string) (string, error) {
+	if err := m.check(context.Background(), id); err != nil {
+		return "", err
+	}
+	return m.inner.Output(id)
+}
+
+func (m *Manager) AttachCommand(context.Context, terminal.SessionID) (*exec.Cmd, error) {
+	return nil, fmt.Errorf("%w: backend %s", terminal.ErrNotAttachable, m.Name())
+}
+
+func (m *Manager) Stop(ctx context.Context, id terminal.SessionID) error {
+	if err := m.check(ctx, id); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() { done <- m.inner.Stop(id) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			return &terminal.OperationError{Backend: m.Name(), Operation: "stop", SessionID: id, Err: err}
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (m *Manager) Close(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	m.inner.BeginShutdown()
+	done := make(chan struct{})
+	go func() {
+		m.inner.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Context exposes the owner cancellation to the narrow Bubble Tea adapter.
+func (m *Manager) Context() context.Context { return m.inner.Context() }
+
+// BeginShutdown is intentionally non-blocking so Bubble Tea can quit before
+// Close joins process and reader goroutines.
+func (m *Manager) BeginShutdown() { m.inner.BeginShutdown() }
+
+func (m *Manager) check(ctx context.Context, id string) error {
+	if err := contextError(ctx); err != nil {
+		return err
+	}
+	m.mu.RLock()
+	_, exists := m.ownedIDs[strings.ToLower(id)]
+	m.mu.RUnlock()
+	if !exists {
+		return fmt.Errorf("%w: %s", terminal.ErrSessionNotFound, id)
+	}
+	select {
+	case <-m.inner.Context().Done():
+		return terminal.ErrClosed
+	default:
+		return nil
+	}
+}
+
+func contextError(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
+}
+
+func IsClosed(err error) bool {
+	return errors.Is(err, terminal.ErrClosed) || errors.Is(err, session.ErrClosed)
+}

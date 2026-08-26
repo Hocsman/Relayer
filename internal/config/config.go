@@ -30,9 +30,26 @@ type Result struct {
 	Version  int
 	Legacy   bool
 	Backend  string
+	Sessions SessionPolicy
 	Agents   []agent.Spec
 	Patterns []intercept.Pattern
 	Created  bool
+}
+
+// SessionPolicy controls ownership of detached backend sessions. PTY sessions
+// are always process-owned and therefore ignore persistence settings.
+type SessionPolicy struct {
+	PersistOnExit    bool `yaml:"persist_on_exit"`
+	CleanupOnSuccess bool `yaml:"cleanup_on_success"`
+}
+
+type configuredSessionPolicy struct {
+	PersistOnExit    *bool `yaml:"persist_on_exit,omitempty"`
+	CleanupOnSuccess *bool `yaml:"cleanup_on_success,omitempty"`
+}
+
+func defaultSessionPolicy() SessionPolicy {
+	return SessionPolicy{CleanupOnSuccess: true}
 }
 
 // ConfigPattern is the strict YAML representation exposed to users.
@@ -50,10 +67,11 @@ type legacyFile struct {
 // an explicitly empty agents list, which is valid and asks the application to
 // provide its historical fallback agents.
 type versionOneFile struct {
-	Version           *int               `yaml:"version"`
-	Backend           *string            `yaml:"backend"`
-	Agents            *[]configuredAgent `yaml:"agents"`
-	InterceptPatterns *[]ConfigPattern   `yaml:"intercept_patterns"`
+	Version           *int                     `yaml:"version"`
+	Backend           *string                  `yaml:"backend"`
+	Sessions          *configuredSessionPolicy `yaml:"sessions,omitempty"`
+	Agents            *[]configuredAgent       `yaml:"agents"`
+	InterceptPatterns *[]ConfigPattern         `yaml:"intercept_patterns"`
 }
 
 type configuredAgent struct {
@@ -71,6 +89,7 @@ type decodedFile struct {
 	Version  int
 	Legacy   bool
 	Backend  string
+	Sessions SessionPolicy
 	Agents   []configuredAgent
 	Patterns []ConfigPattern
 }
@@ -121,6 +140,7 @@ func Load(path string) (Result, error) {
 		Version:  configured.Version,
 		Legacy:   configured.Legacy,
 		Backend:  configured.Backend,
+		Sessions: configured.Sessions,
 		Agents:   agents,
 		Patterns: patterns,
 		Created:  created,
@@ -147,6 +167,7 @@ func createDefault(path string) (bool, error) {
 	payload, err := yaml.Marshal(versionOneFile{
 		Version:           &version,
 		Backend:           &backend,
+		Sessions:          configuredSessionPolicyPointer(defaultSessionPolicy()),
 		Agents:            &agents,
 		InterceptPatterns: &configured,
 	})
@@ -193,6 +214,17 @@ func createDefault(path string) (bool, error) {
 		return createExclusively(path, payload, err)
 	}
 	return true, nil
+}
+
+func configuredSessionPolicyPointer(policy SessionPolicy) *configuredSessionPolicy {
+	return &configuredSessionPolicy{
+		PersistOnExit:    boolPointer(policy.PersistOnExit),
+		CleanupOnSuccess: boolPointer(policy.CleanupOnSuccess),
+	}
+}
+
+func boolPointer(value bool) *bool {
+	return &value
 }
 
 func createExclusively(path string, payload []byte, linkErr error) (bool, error) {
@@ -244,6 +276,7 @@ func decode(data []byte) (decodedFile, error) {
 		return decodedFile{
 			Legacy:   true,
 			Backend:  agent.BackendPTY,
+			Sessions: defaultSessionPolicy(),
 			Patterns: direct,
 		}, nil
 	case yaml.MappingNode:
@@ -262,6 +295,7 @@ func decode(data []byte) (decodedFile, error) {
 		return decodedFile{
 			Legacy:   true,
 			Backend:  agent.BackendPTY,
+			Sessions: defaultSessionPolicy(),
 			Patterns: wrapped.InterceptPatterns,
 		}, nil
 	default:
@@ -291,8 +325,14 @@ func decodeVersionOne(data []byte, root *yaml.Node) (decodedFile, error) {
 		return decodedFile{}, errors.New("backend manquant")
 	}
 	backend := strings.TrimSpace(*configured.Backend)
-	if backend != agent.BackendPTY {
-		return decodedFile{}, fmt.Errorf("backend %q non pris en charge (attendu: %s)", *configured.Backend, agent.BackendPTY)
+	if !agent.IsSupportedBackend(backend) {
+		return decodedFile{}, fmt.Errorf(
+			"backend %q non pris en charge (attendus: %s, %s ou %s)",
+			*configured.Backend,
+			agent.BackendPTY,
+			agent.BackendTmux,
+			agent.BackendAuto,
+		)
 	}
 	if configured.Agents == nil {
 		return decodedFile{}, errors.New("agents manquant")
@@ -303,10 +343,20 @@ func decodeVersionOne(data []byte, root *yaml.Node) (decodedFile, error) {
 	if configured.InterceptPatterns == nil {
 		return decodedFile{}, errors.New("intercept_patterns manquant")
 	}
+	sessionPolicy := defaultSessionPolicy()
+	if configured.Sessions != nil {
+		if configured.Sessions.PersistOnExit != nil {
+			sessionPolicy.PersistOnExit = *configured.Sessions.PersistOnExit
+		}
+		if configured.Sessions.CleanupOnSuccess != nil {
+			sessionPolicy.CleanupOnSuccess = *configured.Sessions.CleanupOnSuccess
+		}
+	}
 
 	return decodedFile{
 		Version:  *configured.Version,
 		Backend:  backend,
+		Sessions: sessionPolicy,
 		Agents:   append([]configuredAgent(nil), (*configured.Agents)...),
 		Patterns: append([]ConfigPattern(nil), (*configured.InterceptPatterns)...),
 	}, nil
@@ -367,12 +417,33 @@ func validateVersionOneNode(root *yaml.Node) error {
 			if err := requireScalar(value, "!!str", "backend doit être une chaîne YAML"); err != nil {
 				return err
 			}
+		case "sessions":
+			if err := validateSessionPolicyNode(value); err != nil {
+				return err
+			}
 		case "agents":
 			if err := validateAgentNode(value); err != nil {
 				return err
 			}
 		case "intercept_patterns":
 			if err := validatePatternNode(value); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateSessionPolicyNode(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return errors.New("sessions doit être un objet YAML")
+	}
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		name := node.Content[index].Value
+		value := dereferenceAlias(node.Content[index+1])
+		switch name {
+		case "persist_on_exit", "cleanup_on_success":
+			if err := requireScalar(value, "!!bool", "sessions."+name+" doit être un booléen YAML"); err != nil {
 				return err
 			}
 		}

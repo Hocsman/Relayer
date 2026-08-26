@@ -79,6 +79,32 @@ func TestValidateSpecPreservesShellAndAcceptsAbsoluteCwd(t *testing.T) {
 	}
 }
 
+func TestValidateSpecAcceptsAndNormalizesEveryBackendSelector(t *testing.T) {
+	for _, backend := range []string{BackendPTY, BackendTmux, BackendAuto} {
+		t.Run("default "+backend, func(t *testing.T) {
+			got, err := ValidateSpec(validCommandSpec(), t.TempDir(), "  "+backend+"  ")
+			if err != nil {
+				t.Fatalf("ValidateSpec default backend %q: %v", backend, err)
+			}
+			if got.Backend != backend {
+				t.Fatalf("normalized default backend = %q, want %q", got.Backend, backend)
+			}
+		})
+
+		t.Run("explicit "+backend, func(t *testing.T) {
+			spec := validCommandSpec()
+			spec.Backend = "  " + backend + "  "
+			got, err := ValidateSpec(spec, t.TempDir(), BackendPTY)
+			if err != nil {
+				t.Fatalf("ValidateSpec explicit backend %q: %v", backend, err)
+			}
+			if got.Backend != backend {
+				t.Fatalf("normalized explicit backend = %q, want %q", got.Backend, backend)
+			}
+		})
+	}
+}
+
 func TestValidateSpecRejectsInvalidCoreFields(t *testing.T) {
 	valid := validCommandSpec()
 	tests := []struct {

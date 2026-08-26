@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -105,6 +106,7 @@ func (m *Model) renderAgentPane(cell Cell) string {
 	}
 	title := lipgloss.NewStyle().Foreground(agentColor(index)).Bold(true).Render(focusMarker+pane.name) + "  " +
 		lipgloss.NewStyle().Foreground(statusColor).Render("● "+status)
+	title += "  " + lipgloss.NewStyle().Foreground(colorMuted).Render("["+strings.ToUpper(pane.backend)+"]")
 	if pane.shell {
 		title += "  " + lipgloss.NewStyle().Foreground(colorMuted).Render("SHELL")
 	}
@@ -128,9 +130,18 @@ func (m *Model) renderSupervisorPane(outer Rect) string {
 			title += "  →  " + m.panes[paneIndex].name
 		}
 	}
-	title += fmt.Sprintf("  •  PAGE %d/%d", m.layout.Page+1, m.layout.PageCount)
+	title += fmt.Sprintf(
+		"  •  BACKEND %s  •  PAGE %d/%d",
+		m.backendLabel(),
+		m.layout.Page+1,
+		m.layout.PageCount,
+	)
+	enterHelp := "Entrée: répondre"
+	if m.hasBackend("tmux") {
+		enterHelp = "Entrée: ouvrir/répondre • Ctrl+B puis D: revenir à Relayer"
+	}
 	help := lipgloss.NewStyle().Foreground(colorMuted).MaxWidth(innerWidth).MaxHeight(1).Render(
-		"Ctrl+←/→: focus • Ctrl+PgUp/PgDn: page • ↑/↓, PgUp/PgDn, molette: historique • Ctrl+C: quitter",
+		enterHelp + " • Ctrl+←/→: focus • Ctrl+PgUp/PgDn: page • ↑/↓, PgUp/PgDn, molette: historique • Ctrl+C: quitter",
 	)
 	titleColor := colorMuted
 	if intercepting {
@@ -141,4 +152,13 @@ func (m *Model) renderSupervisorPane(outer Rect) string {
 		m.supervisor.View() + "\n" +
 		m.input.View() + "\n" + help
 	return style.Width(innerWidth).Height(innerHeight).Render(content)
+}
+
+func (m *Model) hasBackend(name string) bool {
+	for _, pane := range m.panes {
+		if strings.EqualFold(pane.backend, name) {
+			return true
+		}
+	}
+	return false
 }

@@ -15,7 +15,8 @@ Stop paying per-token API fees to orchestrate AI agents. Run `claude` (Claude Pr
 ## ✨ Features
 
 - **Zero API Costs:** Uses standard CLI interfaces, meaning it leverages your flat-rate subscriptions (Claude Pro, Copilot) or local hardware (Ollama, Llama 3.2).
-- **Human-in-the-Loop Interception:** PTY-based stdout monitoring automatically detects interactive prompts (`[y/N]`, `password:`) and safely pauses the workflow for human input.
+- **Human-in-the-Loop Interception:** Bounded terminal-output monitoring automatically detects interactive prompts (`[y/N]`, `password:`) and safely pauses the workflow for human input.
+- **Optional Native tmux Sessions:** Keep the lightweight PTY backend, or run each agent in an isolated detached tmux session and attach to its full terminal on demand.
 - **Beautiful TUI:** Powered by the Elm-inspired [Bubble Tea](https://github.com/charmbracelet/bubbletea) framework for a smooth, glitch-free multi-pane terminal experience.
 - **Single Binary:** Written in Go. No Python environments, no heavy dependencies. Just download and run.
 
@@ -49,6 +50,8 @@ Terminal controls:
 - `Ctrl+PageUp` / `Ctrl+PageDown`: move between agent pages.
 - `Up` / `Down`, `PageUp` / `PageDown`, or the mouse wheel: scroll the focused pane's retained history.
 - `Enter`: send a requested human response to the blocked agent.
+- `Enter` on an idle tmux agent: suspend Relayer and open that agent's native interactive session.
+- `Ctrl+B`, then `D`: detach from tmux and return to Relayer; output, status, pending prompts, and size are reconciled automatically.
 - `Ctrl+C`: stop the sessions and quit.
 
 The `--pane1` and `--pane2` flags are retained for compatibility but are deprecated. When provided, they override configured agents 1 and 2 respectively. Their values are parsed as direct argv—quotes and backslash escaping group arguments, but shell expansion is not performed:
@@ -61,17 +64,51 @@ An explicitly empty flag, such as `--pane1=`, selects the built-in mock for that
 
 ## ⚙️ How it Works (The Architecture)
 
-Relayer allocates pseudo-terminals (PTY) for each CLI tool, tricking them into believing they are attached to a real interactive terminal. A background Go engine continuously strips ANSI codes and parses the output using regex patterns. When a blocking pattern is matched, it triggers an event in the Bubble Tea UI, highlighting the pane and awaiting your manual keystroke to relay back to the agent.
+Relayer exposes one neutral, context-aware terminal backend contract. The built-in PTY implementation keeps the original lightweight behavior. The optional tmux implementation creates one detached, Relayer-owned session per agent. Bubble Tea never constructs tmux commands, and the interception engine never imports tmux-specific code.
+
+```text
+config.yaml / CLI compatibility flags
+                  │
+                  ▼
+        backend selector (pty/tmux/auto)
+                  │
+          ┌───────┴────────┐
+          ▼                ▼
+     PTY backend      tmux backend
+     master fd        detached session + private FIFO
+          └───────┬────────┘
+                  ▼
+      ANSI sanitizer → regex interceptor → bounded Ring Buffer
+                  │                         │
+                  └──── typed events ───────┘
+                              │
+                              ▼
+                  Bubble Tea TUI / supervisor
+                              │ Enter on tmux agent
+                              ▼
+                  tea.ExecProcess(tmux attach-session)
+                              │ Ctrl+B, D
+                              ▼
+                  snapshot + prompt + size resynchronization
+```
+
+Detached tmux output is streamed with `pipe-pane` into a private FIFO inside a `0700` runtime directory. Relayer reads that stream continuously—without an aggressive output polling loop—and retains only the configured in-memory Ring Buffer. A low-frequency status probe detects attachment state and process exit; after an interactive detach, only the current pane tail is captured to reconcile a prompt without duplicating scrollback.
+
+Direct agent arguments are never concatenated into a tmux shell command. Relayer writes the exact argv, working directory, and merged environment to a temporary `0600` JSON specification. The generated tmux command contains only internally generated, POSIX-quoted helper paths. The helper decodes and unlinks the specification before the start gate is released, then replaces itself with the requested process. Explicit `shell:` configurations remain intentionally interpreted by `/bin/sh -c`.
 
 The code is split into focused internal packages: `config` owns strict YAML loading, `agent` validates execution specifications, `buffer` bounds retained output, `intercept` detects prompts independently of Bubble Tea, `session` exclusively owns PTYs and process lifecycles, and `tui` renders typed session events through a narrow backend interface. Unix-specific shell and process-group behavior is isolated in `internal/platform` behind build tags. The root `main.go` remains a compatibility entrypoint; `cmd/relayer` is the canonical command.
 
 ## 🛠️ Configuration
 
-Schema version 1 configures the PTY backend, agents, and interception patterns together:
+Schema version 1 configures the terminal backend, session retention, agents, and interception patterns together:
 
 ```yaml
 version: 1
-backend: pty
+backend: auto
+
+sessions:
+  persist_on_exit: false
+  cleanup_on_success: true
 
 agents:
   - id: claude-backend
@@ -82,7 +119,7 @@ agents:
       - "Work only in this repository"
     cwd: .
     adapter: generic
-    backend: pty
+    backend: auto
     env:
       RELAYER_PROFILE: "backend"
 
@@ -91,7 +128,7 @@ agents:
     shell: 'echo "Starting local reviewer" && exec ollama run llama3.2'
     cwd: .
     adapter: generic
-    backend: pty
+    backend: tmux
     env:
       OLLAMA_HOST: "http://127.0.0.1:11434"
 
@@ -107,11 +144,38 @@ Each agent must define exactly one execution mode:
 - `command` is an exact argv list. Relayer passes every element directly to the executable without an implicit shell, word splitting, variable or command expansion, globbing, pipes, or redirection. For example, an item containing spaces remains one argument.
 - `shell` is the explicit alternative for scripts that require shell syntax. It is passed verbatim to the platform shell—currently `/bin/sh -c` on supported Unix systems—so metacharacters such as `&&`, pipes, redirections, variables, and substitutions are interpreted.
 
-A relative `cwd` is resolved from the directory containing the selected configuration file. `env` is merged with Relayer's inherited environment without duplicate keys; agent values take precedence, and `TERM` defaults to `xterm-256color`. Environment values, including sensitive credentials, are never written to Relayer's logs.
+A relative `cwd` is resolved from the directory containing the selected configuration file. `env` is merged with Relayer's inherited environment without duplicate keys and agent values take precedence. PTY sessions default `TERM` to `xterm-256color`; tmux sessions preserve the fresh `TERM`, `TMUX`, and `TMUX_PANE` metadata supplied by tmux. Environment values, including sensitive credentials, are never written to Relayer's logs.
 
-The current implementation supports only the `pty` backend and the `generic` adapter, both globally and per agent. An empty `agents: []` list activates the two built-in mocks. Agent IDs must be unique, and a version 1 file may define at most eight agents.
+Backend selectors are available globally and per agent:
+
+- `pty` preserves the original pseudo-terminal process manager.
+- `tmux` requires the `tmux` executable and fails before starting any agent when it is unavailable.
+- `auto` selects tmux when it is installed and otherwise falls back to PTY with a visible warning.
+
+Mixed concrete backends are supported in one run. The interface and startup logs show the effective backend of every agent; `auto` is always resolved before startup. The only adapter currently implemented is `generic`.
+
+With `persist_on_exit: false`, shutdown destroys only sessions created and still owned by this Relayer run. With `persist_on_exit: true`, unfinished tmux sessions remain after Relayer exits. `cleanup_on_success: true` removes a tmux session after a confirmed zero exit code; failed sessions remain inspectable until the normal ownership policy applies. Relayer never calls `tmux kill-server`.
+
+An empty `agents: []` list activates the two built-in mocks. Agent IDs must be unique, and a version 1 file may define at most eight agents.
 
 Use an alternate file with `./relayer --config path/to/config.yaml`. If the selected file does not exist, Relayer creates a version 1 default without overwriting an existing user file. Legacy pattern-only files remain readable in both forms: a direct YAML list or an `intercept_patterns` wrapper; because they contain no agents, they use the two-mock fallback unless deprecated CLI overrides are supplied.
+
+### Manual tmux smoke test
+
+1. Install tmux and verify `tmux -V` succeeds.
+2. Set `backend: tmux`, keep `agents: []`, then run `./relayer --config config.yaml`.
+3. Confirm both mocks stream 20 lines and raise the overwrite interception.
+4. Answer one prompt from the supervisor and confirm that agent completes.
+5. Focus the other tmux pane and press `Enter`; interact with it directly, then press `Ctrl+B`, followed by `D`.
+6. Confirm Relayer returns, restores the pane dimensions, refreshes output/status, and does not repeat an already answered prompt.
+7. Repeat once with `persist_on_exit: true`; quit Relayer and inspect the remaining `relayer-*` session with `tmux list-sessions`. Remove that test session manually when finished.
+
+### Known limitations
+
+- The supported runtime targets are Linux, macOS, and WSL. Native Windows terminal execution is not implemented.
+- Bubble Tea viewports show a sanitized, bounded output stream; they are not VT100 emulators. Full-screen TUIs are used through the tmux attachment path.
+- tmux is an optional external dependency and must be installed when `backend: tmux` is selected.
+- Relayer monitoring stops after the Relayer process exits, even when tmux sessions are intentionally persisted.
 
 ## 🤝 Contributing
 

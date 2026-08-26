@@ -2,6 +2,8 @@
 // typed events. It deliberately has no dependency on Bubble Tea.
 package session
 
+import "github.com/Hocsman/Relayer/internal/terminal"
+
 // Event is emitted by Manager for asynchronous session state changes.
 // The unexported marker keeps the event set closed while allowing consumers to
 // use type switches over the exported concrete types.
@@ -44,10 +46,6 @@ type Error struct {
 
 func (Error) sessionEvent() {}
 
-// Info is the immutable session metadata needed by higher layers.
-type Info struct {
-	ID             string
-	Name           string
-	DisplayCommand string
-	Shell          bool
-}
+// Info remains an alias for compatibility with the original PTY API while
+// every backend now shares terminal.Info.
+type Info = terminal.Info

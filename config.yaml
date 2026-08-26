@@ -1,6 +1,9 @@
 # Configuration de Relayer; agents: [] active les deux mocks.
 version: 1
 backend: pty
+sessions:
+  persist_on_exit: false
+  cleanup_on_success: true
 agents: []
 intercept_patterns:
   - pattern: '(?i)overwrite.*\[y/n\]'

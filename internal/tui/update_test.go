@@ -233,7 +233,7 @@ func TestSessionEventsRefreshOutputExitAndError(t *testing.T) {
 		t.Fatalf("output event did not refresh pane: %q", application.panes[0].viewport.View())
 	}
 	application, _ = updateModel(t, application, session.Error{SessionID: "agent-a", Err: errFakeBackend})
-	if !strings.Contains(strings.Join(application.logs, "\n"), "Erreur PTY") {
+	if !strings.Contains(strings.Join(application.logs, "\n"), "Erreur terminal") {
 		t.Fatal("session error was not logged")
 	}
 	application, _ = updateModel(t, application, session.Exited{SessionID: "agent-a"})

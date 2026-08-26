@@ -34,6 +34,7 @@ type agentPane struct {
 	sessionID string
 	name      string
 	command   string
+	backend   string
 	shell     bool
 	viewport  viewport.Model
 	blocked   bool
@@ -54,14 +55,20 @@ type Model struct {
 	input      textinput.Model
 	logs       []string
 
-	width        int
-	height       int
-	layout       Geometry
-	page         int
-	focus        FocusTarget
-	pending      []string
-	inputTarget  string
-	writePending bool
+	width         int
+	height        int
+	layout        Geometry
+	page          int
+	focus         FocusTarget
+	pending       []string
+	inputTarget   string
+	writePending  bool
+	attachPending string
+	execProcess   execProcessFunc
+
+	resizeGeneration uint64
+	resizeInFlight   bool
+	resizeRequests   []resizeRequest
 }
 
 // NewModel builds a ready-to-run Bubble Tea model around one to eight existing
@@ -108,25 +115,44 @@ func NewModel(
 		input:       input,
 		focus:       FocusTarget{Kind: FocusAgent, AgentID: panes[0].ID},
 		inputTarget: "",
+		execProcess: tea.ExecProcess,
 	}
 	for index, pane := range panes {
 		name := pane.Name
 		if strings.TrimSpace(name) == "" {
 			name = pane.ID
 		}
+		backendName := strings.ToLower(strings.TrimSpace(pane.Backend))
+		if backendName == "" {
+			if named, ok := backend.(interface{ Name() string }); ok {
+				backendName = strings.ToLower(strings.TrimSpace(named.Name()))
+			}
+		}
+		if backendName == "" {
+			backendName = "pty"
+		}
 		result.panes[index] = agentPane{
 			sessionID: pane.ID,
 			name:      name,
 			command:   pane.Command,
+			backend:   backendName,
 			shell:     pane.Shell,
 			viewport:  viewport.New(1, 1),
 		}
 	}
-	result.appendLog(fmt.Sprintf("Relayer démarré avec %d session(s) PTY", len(panes)))
+	result.appendLog(fmt.Sprintf(
+		"Relayer démarré avec %d session(s) • backend %s",
+		len(panes),
+		result.backendLabel(),
+	))
 	for _, message := range startupLogs {
 		result.appendLog(message)
 	}
-	result.resize(initialWidth, initialHeight)
+	// The application already starts every terminal at this exact geometry.
+	// A production context-aware backend waits for Bubble Tea's authoritative
+	// WindowSizeMsg before scheduling an asynchronous resize batch; legacy/test
+	// backends retain their synchronous initialization behavior.
+	_ = result.resize(initialWidth, initialHeight, false)
 	return result, nil
 }
 
@@ -248,6 +274,24 @@ func (m *Model) hasBlockedPane() bool {
 		}
 	}
 	return false
+}
+
+func (m *Model) backendLabel() string {
+	names := make([]string, 0, len(m.panes))
+	for _, pane := range m.panes {
+		name := strings.ToUpper(pane.backend)
+		found := false
+		for _, existing := range names {
+			if existing == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			names = append(names, name)
+		}
+	}
+	return strings.Join(names, "/")
 }
 
 func (m *Model) setPage(page int) {

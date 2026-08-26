@@ -10,9 +10,13 @@ import (
 	"os"
 
 	"github.com/Hocsman/Relayer/internal/app"
+	"github.com/Hocsman/Relayer/internal/tmuxbackend"
 )
 
 func main() {
+	if handled, exitCode := tmuxbackend.HelperMain(os.Args[1:], os.Stderr); handled {
+		os.Exit(exitCode)
+	}
 	if err := app.Run(os.Args[1:], os.Stderr); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return

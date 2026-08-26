@@ -1,6 +1,9 @@
 package tui
 
-import "github.com/charmbracelet/bubbles/viewport"
+import (
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 const (
 	minTerminalWidth  = 30
@@ -172,7 +175,7 @@ func resizeViewport(target *viewport.Model, width, height int) {
 	target.SetYOffset(previousOffset)
 }
 
-func (m *Model) resize(width, height int) {
+func (m *Model) resize(width, height int, scheduleContextual bool) tea.Cmd {
 	m.width = maxInt(1, width)
 	m.height = maxInt(1, height)
 	m.page = clampInt(m.page, 0, pageCount(len(m.panes))-1)
@@ -189,15 +192,48 @@ func (m *Model) resize(width, height int) {
 	)
 	m.input.Width = m.layout.InputWidth
 
+	requests := make([]resizeRequest, len(m.panes))
 	for index := range m.panes {
-		if err := m.backend.Resize(
-			m.panes[index].sessionID,
-			m.panes[index].viewport.Width,
-			m.panes[index].viewport.Height,
-		); err != nil && m.backend.Context().Err() == nil {
-			m.appendLog("Redimensionnement de " + m.panes[index].name + " impossible: " + err.Error())
+		requests[index] = resizeRequest{
+			SessionID: m.panes[index].sessionID,
+			Name:      m.panes[index].name,
+			Columns:   m.panes[index].viewport.Width,
+			Rows:      m.panes[index].viewport.Height,
 		}
 	}
+
+	if contextual, ok := m.backend.(ContextResizeBackend); ok {
+		if !scheduleContextual {
+			return nil
+		}
+		m.resizeGeneration++
+		m.resizeRequests = requests
+		if m.resizeInFlight {
+			return nil
+		}
+		return m.startResize(contextual)
+	}
+
+	for _, request := range requests {
+		if err := m.backend.Resize(
+			request.SessionID,
+			request.Columns,
+			request.Rows,
+		); err != nil && m.backend.Context().Err() == nil {
+			m.appendLog("Redimensionnement de " + request.Name + " impossible: " + err.Error())
+		}
+	}
+	return nil
+}
+
+func (m *Model) startResize(backend ContextResizeBackend) tea.Cmd {
+	m.resizeInFlight = true
+	return resizeSessions(
+		m.backend.Context(),
+		backend,
+		m.resizeGeneration,
+		m.resizeRequests,
+	)
 }
 
 func pageCount(agentCount int) int {

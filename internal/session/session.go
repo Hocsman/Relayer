@@ -3,7 +3,6 @@ package session
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	"os/exec"
 	"sync"
@@ -33,6 +32,9 @@ type processSession struct {
 	cancel      context.CancelFunc
 	interceptor *intercept.Interceptor
 	done        chan struct{}
+	resultMu    sync.RWMutex
+	exited      bool
+	waitErr     error
 
 	fileMu       sync.RWMutex
 	master       *os.File
@@ -40,7 +42,28 @@ type processSession struct {
 	stopOnce     sync.Once
 }
 
-func (s *processSession) write(input string) error {
+func (s *processSession) setResult(err error) {
+	s.resultMu.Lock()
+	s.exited = true
+	s.waitErr = err
+	s.resultMu.Unlock()
+}
+
+func (s *processSession) result() (bool, error, *int) {
+	s.resultMu.RLock()
+	defer s.resultMu.RUnlock()
+	if !s.exited {
+		return false, nil, nil
+	}
+	var exitCode *int
+	if s.cmd != nil && s.cmd.ProcessState != nil {
+		code := s.cmd.ProcessState.ExitCode()
+		exitCode = &code
+	}
+	return true, s.waitErr, exitCode
+}
+
+func (s *processSession) write(input []byte) error {
 	s.fileMu.RLock()
 	master := s.master
 	s.fileMu.RUnlock()
@@ -50,7 +73,7 @@ func (s *processSession) write(input string) error {
 
 	// os.File permits Close concurrently with Write. Do not retain fileMu while
 	// writing: a saturated PTY must be unblocked by Close during shutdown.
-	_, err := io.WriteString(master, input)
+	_, err := master.Write(input)
 	return err
 }
 

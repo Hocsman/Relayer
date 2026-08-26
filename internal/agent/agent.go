@@ -12,9 +12,12 @@ import (
 )
 
 const (
-	// BackendPTY is the interactive pseudo-terminal backend supported by the
-	// current Relayer runtime.
+	// BackendPTY selects Relayer's built-in pseudo-terminal implementation.
 	BackendPTY = "pty"
+	// BackendTmux selects detached tmux sessions with an interactive attach path.
+	BackendTmux = "tmux"
+	// BackendAuto prefers tmux when it is available and falls back to PTY.
+	BackendAuto = "auto"
 
 	// AdapterGeneric selects the built-in prompt adapter that works with any
 	// command-line program.
@@ -109,8 +112,14 @@ func ValidateSpec(spec Spec, baseDir, defaultBackend string) (Spec, error) {
 	if backend == "" {
 		backend = strings.TrimSpace(defaultBackend)
 	}
-	if backend != BackendPTY {
-		return Spec{}, fmt.Errorf("unsupported backend %q: only %q is available", backend, BackendPTY)
+	if !IsSupportedBackend(backend) {
+		return Spec{}, fmt.Errorf(
+			"unsupported backend %q: expected %q, %q or %q",
+			backend,
+			BackendPTY,
+			BackendTmux,
+			BackendAuto,
+		)
 	}
 	normalized.Backend = backend
 
@@ -146,6 +155,17 @@ func ValidateSpec(spec Spec, baseDir, defaultBackend string) (Spec, error) {
 	}
 	normalized.Cwd = workingDirectory
 	return normalized, nil
+}
+
+// IsSupportedBackend reports whether name is a backend selector understood by
+// Relayer. BackendAuto is a selector rather than a concrete runtime backend.
+func IsSupportedBackend(name string) bool {
+	switch strings.TrimSpace(name) {
+	case BackendPTY, BackendTmux, BackendAuto:
+		return true
+	default:
+		return false
+	}
 }
 
 // ValidateAll validates every specification and rejects identifiers that only

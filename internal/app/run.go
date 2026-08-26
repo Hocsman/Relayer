@@ -5,14 +5,18 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/session"
+	"github.com/Hocsman/Relayer/internal/terminal"
 	"github.com/Hocsman/Relayer/internal/tui"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/creack/pty"
@@ -26,6 +30,10 @@ const (
 // Run parses the public CLI, initializes the process owner and starts Bubble
 // Tea. It never returns while sessions are still owned by the manager.
 func Run(arguments []string, diagnostics io.Writer) error {
+	return run(arguments, diagnostics, productionBackendDependencies())
+}
+
+func run(arguments []string, diagnostics io.Writer, dependencies backendDependencies) (returnErr error) {
 	if diagnostics == nil {
 		diagnostics = io.Discard
 	}
@@ -46,25 +54,44 @@ func Run(arguments []string, diagnostics io.Writer) error {
 	if err != nil {
 		return err
 	}
+	backendSelection, err := resolveAgentBackends(resolution.Specs, dependencies.lookup)
+	if err != nil {
+		return err
+	}
+	resolution.Specs = backendSelection.Specs
+	resolution.Warnings = append(resolution.Warnings, backendSelection.Warnings...)
 	for _, warning := range resolution.Warnings {
 		fmt.Fprintln(diagnostics, warning)
 	}
 	initialWidth, initialHeight := initialTerminalSize()
 
 	events := make(chan session.Event, defaultEventCapacity)
-	manager, err := session.NewManager(
+	router, err := buildBackendRouter(
 		context.Background(),
 		events,
 		configuration.Patterns,
 		defaultRingCapacity,
+		backendSelection,
+		configuration.Sessions,
+		dependencies,
 	)
 	if err != nil {
 		return err
 	}
-	defer manager.Close()
+	defer func() {
+		closeContext, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		if closeErr := router.Close(closeContext); closeErr != nil {
+			if returnErr == nil {
+				returnErr = fmt.Errorf("fermeture des backends: %w", closeErr)
+			} else {
+				returnErr = errors.Join(returnErr, fmt.Errorf("fermeture des backends: %w", closeErr))
+			}
+		}
+	}()
 
 	panes, infos, err := startAgentSessions(
-		manager,
+		router,
 		resolution.Specs,
 		initialWidth,
 		initialHeight,
@@ -75,7 +102,7 @@ func Run(arguments []string, diagnostics io.Writer) error {
 
 	startupLogs := buildStartupLogs(configuration, resolution, infos, options.configPath)
 	application, err := tui.NewModel(
-		manager,
+		&tuiBackendAdapter{router: router},
 		events,
 		panes,
 		initialWidth,
@@ -95,8 +122,8 @@ func Run(arguments []string, diagnostics io.Writer) error {
 }
 
 type sessionStarter interface {
-	Start(spec agent.Spec, columns, rows int) (session.Info, error)
-	Close()
+	Start(context.Context, agent.Spec, terminal.Size) (terminal.Info, error)
+	Close(context.Context) error
 }
 
 // startAgentSessions makes partial startup transactional: once an owner has
@@ -118,9 +145,15 @@ func startAgentSessions(
 			len(specs),
 			index,
 		)
-		info, startErr := owner.Start(spec, columns, rows)
+		info, startErr := owner.Start(
+			context.Background(),
+			spec,
+			terminal.Size{Columns: columns, Rows: rows},
+		)
 		if startErr != nil {
-			owner.Close()
+			closeContext, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+			_ = owner.Close(closeContext)
+			cancel()
 			return nil, nil, fmt.Errorf("démarrage de l'agent %q: %w", spec.ID, startErr)
 		}
 		infos = append(infos, info)
@@ -128,6 +161,7 @@ func startAgentSessions(
 			ID:      info.ID,
 			Name:    info.Name,
 			Command: paneDisplayCommand(info),
+			Backend: info.Backend,
 			Shell:   info.Shell,
 		})
 	}
@@ -160,10 +194,36 @@ func buildStartupLogs(
 		}
 	}
 	logs = append(logs,
-		fmt.Sprintf("%d agent(s) PTY démarré(s)", len(infos)),
+		fmt.Sprintf("%d agent(s) démarré(s) via %s", len(infos), effectiveBackendLabel(infos)),
 		fmt.Sprintf("%d patterns chargés depuis %s", len(configuration.Patterns), configPath),
 	)
+	if strings.Contains(strings.ToLower(effectiveBackendLabel(infos)), agent.BackendTmux) {
+		logs = append(logs, fmt.Sprintf(
+			"Sessions tmux: persist_on_exit=%t, cleanup_on_success=%t",
+			configuration.Sessions.PersistOnExit,
+			configuration.Sessions.CleanupOnSuccess,
+		))
+	}
 	return logs
+}
+
+func effectiveBackendLabel(infos []session.Info) string {
+	set := make(map[string]struct{})
+	for _, info := range infos {
+		name := strings.ToUpper(strings.TrimSpace(info.Backend))
+		if name != "" {
+			set[name] = struct{}{}
+		}
+	}
+	names := make([]string, 0, len(set))
+	for name := range set {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return "BACKEND INCONNU"
+	}
+	return strings.Join(names, "/")
 }
 
 func paneDisplayCommand(info session.Info) string {

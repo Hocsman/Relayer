@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -10,6 +11,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/session"
+	"github.com/Hocsman/Relayer/internal/terminal"
 )
 
 type fakeSessionStarter struct {
@@ -18,7 +20,7 @@ type fakeSessionStarter struct {
 	closeCalls int
 }
 
-func (f *fakeSessionStarter) Start(spec agent.Spec, _, _ int) (session.Info, error) {
+func (f *fakeSessionStarter) Start(_ context.Context, spec agent.Spec, _ terminal.Size) (terminal.Info, error) {
 	callIndex := len(f.startCalls)
 	f.startCalls = append(f.startCalls, spec)
 	if callIndex == f.failAt {
@@ -27,7 +29,10 @@ func (f *fakeSessionStarter) Start(spec agent.Spec, _, _ int) (session.Info, err
 	return session.Info{ID: spec.ID, Name: spec.Name, DisplayCommand: spec.Command[0]}, nil
 }
 
-func (f *fakeSessionStarter) Close() { f.closeCalls++ }
+func (f *fakeSessionStarter) Close(context.Context) error {
+	f.closeCalls++
+	return nil
+}
 
 func TestResolveAgentPlansPreservesConfiguredAgentsFromOneToEight(t *testing.T) {
 	for count := 1; count <= 8; count++ {

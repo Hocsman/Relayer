@@ -66,6 +66,12 @@ func (m *Manager) Context() context.Context {
 	return m.ctx
 }
 
+// Name identifies the concrete backend without exposing PTY implementation
+// details to the application or TUI.
+func (m *Manager) Name() string {
+	return agent.BackendPTY
+}
+
 func (m *Manager) emit(event Event, essential bool) bool {
 	if essential {
 		select {
@@ -154,6 +160,7 @@ func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 		ID:             sessionID,
 		Name:           normalized.Name,
 		DisplayCommand: displayCommand(normalized),
+		Backend:        agent.BackendPTY,
 		Shell:          shell,
 	}
 	session := &processSession{
@@ -191,6 +198,7 @@ func (m *Manager) readSession(session *processSession, master *os.File) {
 func (m *Manager) waitSession(session *processSession) {
 	defer m.wg.Done()
 	err := session.cmd.Wait() // The sole Wait call for a successfully started command.
+	session.setResult(err)
 
 	// The shell may exit while descendants still own the slave PTY.
 	platform.TerminateProcessGroup(session.cmd)
@@ -215,6 +223,16 @@ func (m *Manager) waitSession(session *processSession) {
 	}
 }
 
+// Result returns a stable lifecycle snapshot once Wait has completed.
+func (m *Manager) Result(sessionID string) (exited bool, waitErr error, exitCode *int, err error) {
+	session, err := m.session(sessionID)
+	if err != nil {
+		return false, nil, nil, err
+	}
+	exited, waitErr, exitCode = session.result()
+	return exited, waitErr, exitCode, nil
+}
+
 func (m *Manager) session(sessionID string) (*processSession, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -227,6 +245,13 @@ func (m *Manager) session(sessionID string) (*processSession, error) {
 }
 
 func (m *Manager) SendInput(sessionID string, value string) error {
+	return m.SendData(sessionID, []byte(value+"\r"))
+}
+
+// SendData acknowledges the current interception and writes bytes exactly as
+// supplied. Higher layers decide whether an Enter key (usually carriage
+// return) should be appended.
+func (m *Manager) SendData(sessionID string, data []byte) error {
 	session, err := m.session(sessionID)
 	if err != nil {
 		return err
@@ -235,10 +260,21 @@ func (m *Manager) SendInput(sessionID string, value string) error {
 	// Rearm first so a second prompt emitted immediately after the write cannot
 	// be discarded as a duplicate of the first one.
 	session.interceptor.Acknowledge()
-	if err := session.write(value + "\r"); err != nil {
+	if err := session.write(data); err != nil {
 		session.interceptor.Reblock()
 		return err
 	}
+	return nil
+}
+
+// Stop terminates one owned session without affecting its siblings.
+func (m *Manager) Stop(sessionID string) error {
+	session, err := m.session(sessionID)
+	if err != nil {
+		return err
+	}
+	session.requestStop()
+	session.waitForStop()
 	return nil
 }
 

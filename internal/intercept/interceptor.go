@@ -84,7 +84,19 @@ func New(patterns []Pattern, capacity int, hooks Hooks) (*Interceptor, error) {
 func (i *Interceptor) Run(ctx context.Context, reader io.Reader) error {
 	readBuffer := make([]byte, 4096)
 	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
 		count, err := reader.Read(readBuffer)
+		select {
+		case <-ctx.Done():
+			// A backend may write a private wake byte to unblock a FIFO/PTY
+			// during cancellation. Never retain or inspect that byte.
+			return nil
+		default:
+		}
 		if count > 0 {
 			i.Consume(readBuffer[:count])
 		}
