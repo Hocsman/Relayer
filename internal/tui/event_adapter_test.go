@@ -44,9 +44,9 @@ func TestAdapterEventAcceptsNewOccurrenceWithSameSignatureAndIgnoresDelayedResol
 	application.input.SetValue("Y")
 	application, delivery := updateModel(t, application, tea.KeyMsg{Type: tea.KeyEnter})
 	application, _ = updateModel(t, application, executeCommand(t, delivery))
-	if !application.eventResolved(first.Event.ID) || application.panes[0].blocked || application.inputTarget != "" {
+	if !application.eventResolved(first.Event.SessionID, first.Event.ID) || application.panes[0].blocked || application.inputTarget != "" {
 		t.Fatalf("resolved first occurrence state = resolved %t blocked %t target %q",
-			application.eventResolved(first.Event.ID),
+			application.eventResolved(first.Event.SessionID, first.Event.ID),
 			application.panes[0].blocked,
 			application.inputTarget,
 		)
@@ -105,7 +105,7 @@ func TestAdapterProcessExitClearsPendingStateAndIsIdempotent(t *testing.T) {
 			application.pending,
 		)
 	}
-	if !application.eventResolved(pending.Event.ID) {
+	if !application.eventResolved(pending.Event.SessionID, pending.Event.ID) {
 		t.Fatalf("process_exit did not resolve pending occurrence %q", pending.Event.ID)
 	}
 	logsAfterExit := len(application.logs)

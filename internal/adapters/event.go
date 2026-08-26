@@ -24,6 +24,7 @@ const (
 type RiskLevel string
 
 const (
+	RiskLow     RiskLevel = "low"
 	RiskUnknown RiskLevel = "unknown"
 	RiskHigh    RiskLevel = "high"
 )
@@ -101,10 +102,15 @@ func (e Event) Actionable() bool {
 }
 
 // Decision is deliberately limited to actions represented by current code.
-// Automatic approval/denial policies are outside this phase.
+// Adapters may reject allow or deny when they cannot encode the action
+// reliably; callers must then retain the pending event for human input.
 type Decision string
 
-const DecisionManual Decision = "manual"
+const (
+	DecisionManual Decision = "manual"
+	DecisionAllow  Decision = "allow"
+	DecisionDeny   Decision = "deny"
+)
 
 var (
 	ErrUnknownAdapter      = errors.New("adaptateur inconnu")

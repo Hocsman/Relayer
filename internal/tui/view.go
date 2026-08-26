@@ -89,7 +89,10 @@ func (m *Model) renderAgentPane(cell Cell) string {
 
 	status := "EN COURS"
 	statusColor := agentColor(index)
-	if pane.blocked {
+	if pane.policyFrozen {
+		status = "LIVRAISON INCERTAINE"
+		statusColor = colorBlocked
+	} else if pane.blocked {
 		status = "INTERVENTION REQUISE"
 		statusColor = colorBlocked
 	} else if pane.exited && pane.exitErr == nil {
@@ -111,6 +114,9 @@ func (m *Model) renderAgentPane(cell Cell) string {
 	if pane.shell {
 		title += "  " + lipgloss.NewStyle().Foreground(colorMuted).Render("SHELL")
 	}
+	if pane.policyTag != "" {
+		title += "  " + lipgloss.NewStyle().Foreground(statusColor).Render("POLICY "+pane.policyTag)
+	}
 	title = lipgloss.NewStyle().MaxWidth(innerWidth).MaxHeight(1).Render(title)
 	content := title + "\n" + pane.viewport.View()
 	return style.Width(innerWidth).Height(innerHeight).Render(content)
@@ -122,9 +128,17 @@ func (m *Model) renderSupervisorPane(outer Rect) string {
 	innerWidth := maxInt(1, outer.Width-style.GetHorizontalFrameSize())
 	innerHeight := maxInt(1, outer.Height-style.GetVerticalFrameSize())
 
-	title := "SUPERVISEUR  •  AUTOMATIQUE"
-	if intercepting {
+	title := "SUPERVISEUR  •  POLITIQUE " + strings.ToUpper(string(m.policyConfig.DefaultAction))
+	if m.policyConfig.DryRun {
+		title = "SUPERVISEUR  •  DRY RUN"
+	}
+	if m.hasFrozenPane() {
+		title = "SUPERVISEUR  •  LIVRAISON INCERTAINE  •  ARRÊT REQUIS"
+	} else if intercepting {
 		title = "SUPERVISEUR  •  ACTION HUMAINE REQUISE"
+		if m.policyConfig.DryRun {
+			title += "  •  DRY RUN"
+		}
 	}
 	if m.inputTarget != "" {
 		if paneIndex := m.paneIndex(m.inputTarget); paneIndex >= 0 {
@@ -158,6 +172,15 @@ func (m *Model) renderSupervisorPane(outer Rect) string {
 func (m *Model) hasBackend(name string) bool {
 	for _, pane := range m.panes {
 		if strings.EqualFold(pane.backend, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) hasFrozenPane() bool {
+	for index := range m.panes {
+		if m.panes[index].policyFrozen {
 			return true
 		}
 	}

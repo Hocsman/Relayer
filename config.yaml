@@ -4,6 +4,10 @@ backend: pty
 sessions:
   persist_on_exit: false
   cleanup_on_success: true
+policies:
+  default_action: ask
+  dry_run: false
+  rules: []
 agents: []
 intercept_patterns:
   - pattern: '(?i)overwrite.*\[y/n\]'

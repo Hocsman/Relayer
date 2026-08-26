@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
+	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -29,8 +30,25 @@ type fakeAttachBackend struct {
 	resyncEvent    session.Event
 	pendingEvent   *adapters.Event
 	attachCalls    []string
+	automaticCalls []string
 	resyncCalls    []resyncCall
 }
+
+type fakeAttachWithoutSnapshot struct {
+	*fakeBackend
+	attachCalls []string
+}
+
+func (b *fakeAttachWithoutSnapshot) Name() string { return "tmux" }
+
+func (b *fakeAttachWithoutSnapshot) AttachCommand(ctx context.Context, id string) (*exec.Cmd, error) {
+	b.mu.Lock()
+	b.attachCalls = append(b.attachCalls, id)
+	b.mu.Unlock()
+	return exec.CommandContext(ctx, "tmux", "attach-session", "-t", id), nil
+}
+
+func (b *fakeAttachWithoutSnapshot) Resync(context.Context, string, int, int) error { return nil }
 
 func newFakeAttachBackend(events chan session.Event) *fakeAttachBackend {
 	return &fakeAttachBackend{
@@ -83,10 +101,31 @@ func (b *fakeAttachBackend) PendingEvent(_ context.Context, _ string) (*adapters
 	return &copy, nil
 }
 
+func (b *fakeAttachBackend) SendAutomaticDecision(
+	_ string,
+	event adapters.Event,
+	_ adapters.Decision,
+) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.automaticCalls = append(b.automaticCalls, event.ID)
+	if b.pendingEvent == nil || b.pendingEvent.ID != event.ID {
+		return adapters.ErrEventMismatch
+	}
+	b.pendingEvent = nil
+	return nil
+}
+
 func (b *fakeAttachBackend) attachSnapshot() ([]string, []resyncCall) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return append([]string(nil), b.attachCalls...), append([]resyncCall(nil), b.resyncCalls...)
+}
+
+func (b *fakeAttachBackend) automaticSnapshot() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.automaticCalls...)
 }
 
 func TestEnterOnTmuxAgentExecutesAttachAndResynchronizes(t *testing.T) {
@@ -131,11 +170,14 @@ func TestEnterOnTmuxAgentExecutesAttachAndResynchronizes(t *testing.T) {
 		t.Fatalf("attach callback returned %T", returned)
 	}
 	application, resync := updateModel(t, application, returned)
-	if resync == nil || application.attachPending != "" {
+	if resync == nil || application.attachPending != "tmux-agent" {
 		t.Fatalf("return state = resync %v pending %q", resync != nil, application.attachPending)
 	}
 	resynced := executeCommand(t, resync)
 	application, _ = updateModel(t, application, resynced)
+	if application.attachPending != "" {
+		t.Fatalf("resync left attach pending = %q", application.attachPending)
+	}
 	_, resyncCalls := backend.attachSnapshot()
 	wantColumns, wantRows := AgentViewportSize(100, 30, 1, 0)
 	if len(resyncCalls) != 1 || resyncCalls[0] != (resyncCall{id: "tmux-agent", columns: wantColumns, rows: wantRows}) {
@@ -154,6 +196,146 @@ func TestEnterOnTmuxAgentExecutesAttachAndResynchronizes(t *testing.T) {
 	application, _ = updateModel(t, application, eventMessage)
 	if application.inputTarget != "tmux-agent" || !application.panes[0].blocked || !application.input.Focused() {
 		t.Fatalf("resynced prompt state = target %q blocked %t focused %t", application.inputTarget, application.panes[0].blocked, application.input.Focused())
+	}
+}
+
+func TestPolicyFrozenTmuxAgentRefusesAttach(t *testing.T) {
+	events := make(chan session.Event, 1)
+	backend := newFakeAttachBackend(events)
+	t.Cleanup(backend.cancel)
+	application, err := NewModel(
+		backend,
+		events,
+		[]Pane{{ID: "tmux-agent", Name: "Tmux Agent", Backend: "tmux"}},
+		100,
+		30,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	application.panes[0].policyFrozen = true
+	application.panes[0].policyTag = "LIVRAISON INCERTAINE"
+
+	application, command := updateModel(t, application, tea.KeyMsg{Type: tea.KeyEnter})
+	if command != nil {
+		t.Fatal("frozen pane returned an attach command")
+	}
+	attachCalls, _ := backend.attachSnapshot()
+	if len(attachCalls) != 0 {
+		t.Fatalf("AttachCommand calls = %#v, want none", attachCalls)
+	}
+	if application.attachPending != "" {
+		t.Fatalf("attach pending = %q", application.attachPending)
+	}
+	logs := strings.Join(application.logs, "\n")
+	if !strings.Contains(logs, "arrêt requis") {
+		t.Fatalf("frozen attach refusal was not logged safely:\n%s", logs)
+	}
+}
+
+func TestAutomaticDecisionInFlightRefusesTmuxAttach(t *testing.T) {
+	events := make(chan session.Event, 1)
+	backend := newFakeAttachBackend(events)
+	t.Cleanup(backend.cancel)
+	application, err := NewModel(
+		backend,
+		events,
+		[]Pane{{ID: "tmux-agent", Name: "Tmux Agent", Backend: "tmux"}},
+		100,
+		30,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := semanticEventKey("tmux-agent", "event-1")
+	application.automaticBySession[key.sessionID] = key
+
+	application, command := updateModel(t, application, tea.KeyMsg{Type: tea.KeyEnter})
+	if command != nil {
+		t.Fatal("automatic decision in flight returned an attach command")
+	}
+	attachCalls, _ := backend.attachSnapshot()
+	if len(attachCalls) != 0 {
+		t.Fatalf("AttachCommand calls = %#v, want none", attachCalls)
+	}
+	if application.attachPending != "" {
+		t.Fatalf("attach pending = %q", application.attachPending)
+	}
+	logs := strings.Join(application.logs, "\n")
+	if !strings.Contains(logs, "décision automatique en cours") {
+		t.Fatalf("in-flight attach refusal was not logged safely:\n%s", logs)
+	}
+}
+
+func TestManualDecisionInFlightRefusesTmuxAttach(t *testing.T) {
+	events := make(chan session.Event, 1)
+	backend := newFakeAttachBackend(events)
+	t.Cleanup(backend.cancel)
+	application, err := NewModel(
+		backend,
+		events,
+		[]Pane{
+			{ID: "pty-agent", Name: "PTY Agent", Backend: "pty"},
+			{ID: "tmux-agent", Name: "Tmux Agent", Backend: "tmux"},
+		},
+		100,
+		30,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detected := testAdapterEvent("pty-agent", "confirmation", "PTY prompt", false)
+	pending := detected.Event.Clone()
+	backend.pendingEvent = &pending
+	application, _ = updateModel(t, application, detected)
+	application.input.SetValue("Y")
+	application, delivery := updateModel(t, application, tea.KeyMsg{Type: tea.KeyEnter})
+	if delivery == nil || !application.writePending {
+		t.Fatalf("manual delivery state = command %v pending %t", delivery != nil, application.writePending)
+	}
+	application.focus = FocusTarget{Kind: FocusAgent, AgentID: "tmux-agent"}
+	application, command := updateModel(t, application, tea.KeyMsg{Type: tea.KeyEnter})
+	if command != nil {
+		t.Fatal("manual decision in flight returned an attach command")
+	}
+	attachCalls, _ := backend.attachSnapshot()
+	if len(attachCalls) != 0 {
+		t.Fatalf("AttachCommand calls = %#v, want none", attachCalls)
+	}
+	if !strings.Contains(strings.Join(application.logs, "\n"), "réponse manuelle en cours") {
+		t.Fatal("manual in-flight attach refusal was not logged")
+	}
+}
+
+func TestTmuxAttachRequiresEventSnapshots(t *testing.T) {
+	backend := &fakeAttachWithoutSnapshot{fakeBackend: newFakeBackend()}
+	t.Cleanup(backend.cancel)
+	application, err := NewModel(
+		backend,
+		make(chan session.Event, 1),
+		[]Pane{{ID: "tmux-agent", Name: "Tmux Agent", Backend: "tmux"}},
+		100,
+		30,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	application, command := updateModel(t, application, tea.KeyMsg{Type: tea.KeyEnter})
+	if command != nil {
+		t.Fatal("backend without snapshots returned an attach command")
+	}
+	backend.mu.Lock()
+	attachCalls := append([]string(nil), backend.attachCalls...)
+	backend.mu.Unlock()
+	if len(attachCalls) != 0 {
+		t.Fatalf("AttachCommand calls = %#v, want none", attachCalls)
+	}
+	if !strings.Contains(strings.Join(application.logs, "\n"), "snapshot d'événement indisponible") {
+		t.Fatal("missing snapshot capability was not reported")
 	}
 }
 
@@ -183,6 +365,9 @@ func TestAttachFailureStillResynchronizesAndReportsErrors(t *testing.T) {
 	if !strings.Contains(logs, "detach failed") || !strings.Contains(logs, "capture failed") {
 		t.Fatalf("attachment/resync errors are not visible:\n%s", logs)
 	}
+	if !application.panes[0].policyFrozen || application.attachPending != "" {
+		t.Fatalf("failed resync state = frozen %t pending %q", application.panes[0].policyFrozen, application.attachPending)
+	}
 }
 
 func TestAttachResyncClearsPromptEventsAnsweredInsideTmux(t *testing.T) {
@@ -206,21 +391,23 @@ func TestAttachResyncClearsPromptEventsAnsweredInsideTmux(t *testing.T) {
 
 	application, attach := updateModel(t, application, tea.KeyMsg{Type: tea.KeyEnter})
 	application, resync := updateModel(t, application, executeCommand(t, attach))
+	if application.attachPending != "tmux-agent" {
+		t.Fatalf("attach phase ended before resync: %q", application.attachPending)
+	}
 	stale := testAdapterEvent("tmux-agent", "password", "queued before attach", true)
 	backend.mu.Lock()
 	copy := stale.Event.Clone()
 	backend.pendingEvent = &copy
 	backend.mu.Unlock()
 	application, _ = updateModel(t, application, stale)
-	application.input.SetValue("must-be-erased")
-	if !application.panes[0].blocked {
-		t.Fatal("pre-resync prompt was not represented")
+	if application.panes[0].blocked || application.inputTarget != "" {
+		t.Fatal("pre-resync stale prompt was allowed to reach the supervisor")
 	}
 
 	// Resync observes that the prompt was answered directly in tmux and makes
 	// its empty cached state authoritative over the queued event.
 	application, _ = updateModel(t, application, executeCommand(t, resync))
-	if application.panes[0].blocked || application.inputTarget != "" || application.input.Value() != "" {
+	if application.panes[0].blocked || application.inputTarget != "" || application.input.Value() != "" || application.attachPending != "" {
 		t.Fatalf("stale prompt survived resync: blocked=%t target=%q value=%q",
 			application.panes[0].blocked, application.inputTarget, application.input.Value())
 	}
@@ -229,6 +416,67 @@ func TestAttachResyncClearsPromptEventsAnsweredInsideTmux(t *testing.T) {
 	application, _ = updateModel(t, application, stale)
 	if application.panes[0].blocked || application.inputTarget != "" {
 		t.Fatal("late stale prompt reblocked the pane")
+	}
+}
+
+func TestQueuedEventDuringAttachUsesOnlyResynchronizedPendingOccurrence(t *testing.T) {
+	events := make(chan session.Event, 2)
+	backend := newFakeAttachBackend(events)
+	t.Cleanup(backend.cancel)
+	engine, err := policy.New(policy.Config{
+		DefaultAction: policy.ActionAsk,
+		Rules: []policy.Rule{{
+			Name: "allow-low-risk-confirmation",
+			Match: policy.Match{
+				EventTypes: []adapters.EventType{adapters.EventConfirmation},
+			},
+			Action: policy.ActionAllow,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	application, err := NewModelWithPolicy(
+		backend,
+		events,
+		[]Pane{{ID: "tmux-agent", Name: "Tmux Agent", Backend: "tmux", Adapter: adapters.GenericID}},
+		100,
+		30,
+		nil,
+		engine,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	application.execProcess = func(_ *exec.Cmd, callback tea.ExecCallback) tea.Cmd {
+		return func() tea.Msg { return callback(nil) }
+	}
+
+	application, attach := updateModel(t, application, tea.KeyMsg{Type: tea.KeyEnter})
+	application, resync := updateModel(t, application, executeCommand(t, attach))
+	stale := testAdapterEvent("tmux-agent", "confirmation", "stale prompt", false)
+	stale.Event.ID = "event-stale"
+	stale.Event.Risk = adapters.RiskLow
+	backend.mu.Lock()
+	copy := stale.Event.Clone()
+	backend.pendingEvent = &copy
+	backend.mu.Unlock()
+	application, command := updateModel(t, application, stale)
+	if command != nil || len(backend.automaticSnapshot()) != 0 {
+		t.Fatal("queued stale event triggered automation during attach/resync")
+	}
+
+	fresh := testAdapterEvent("tmux-agent", "confirmation", "fresh prompt", false)
+	fresh.Event.ID = "event-fresh"
+	fresh.Event.Risk = adapters.RiskLow
+	backend.resyncEvent = fresh
+	application, automatic := updateModel(t, application, executeCommand(t, resync))
+	if automatic == nil || application.attachPending != "" {
+		t.Fatalf("resynchronized event state = command %v pending %q", automatic != nil, application.attachPending)
+	}
+	application, _ = updateModel(t, application, executeCommand(t, automatic))
+	if got := backend.automaticSnapshot(); len(got) != 1 || got[0] != "event-fresh" {
+		t.Fatalf("automatic decisions = %#v, want only event-fresh", got)
 	}
 }
 
@@ -275,7 +523,10 @@ func TestPendingPromptEnterTakesPriorityOverAttachAndPTYNavigation(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	application, _ = updateModel(t, application, testAdapterEvent("pty-agent", "confirmation", "PTY prompt", false))
+	detected := testAdapterEvent("pty-agent", "confirmation", "PTY prompt", false)
+	pending := detected.Event.Clone()
+	backend.pendingEvent = &pending
+	application, _ = updateModel(t, application, detected)
 	application.input.SetValue("Y")
 	// Deliberately move focus onto the tmux agent. The waiting response must
 	// still win over attachment when Enter is pressed.

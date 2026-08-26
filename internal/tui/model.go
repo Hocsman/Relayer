@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
+	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -43,14 +44,30 @@ type agentPane struct {
 	prompt    adapters.Event
 	exited    bool
 	exitErr   error
+	policyTag string
+	// policyFrozen prevents a second write after a transport error that may
+	// have occurred after partial or complete delivery.
+	policyFrozen bool
+}
+
+type eventKey struct {
+	sessionID string
+	eventID   string
+}
+
+type automaticAttempt struct {
+	event      adapters.Event
+	evaluation policy.Evaluation
 }
 
 // Model is Relayer's Bubble Tea model. It uses a pointer receiver deliberately:
 // viewport and pane slices must retain one identity as the number of agents and
 // the visible page change.
 type Model struct {
-	backend Backend
-	events  <-chan session.Event
+	backend      Backend
+	events       <-chan session.Event
+	policy       PolicyEvaluator
+	policyConfig policy.Config
 
 	panes      []agentPane
 	supervisor viewport.Model
@@ -72,8 +89,11 @@ type Model struct {
 	resizeInFlight   bool
 	resizeRequests   []resizeRequest
 
-	resolvedEventIDs   map[string]struct{}
-	resolvedEventOrder []string
+	resolvedEventIDs   map[eventKey]struct{}
+	resolvedEventOrder []eventKey
+	automaticInFlight  map[eventKey]automaticAttempt
+	automaticBySession map[string]eventKey
+	deferredEvents     map[string]adapters.Event
 }
 
 // NewModel builds a ready-to-run Bubble Tea model around one to eight existing
@@ -86,8 +106,37 @@ func NewModel(
 	initialHeight int,
 	startupLogs []string,
 ) (*Model, error) {
+	defaultPolicy, err := policy.New(policy.DefaultConfig())
+	if err != nil {
+		return nil, err
+	}
+	return NewModelWithPolicy(
+		backend,
+		events,
+		panes,
+		initialWidth,
+		initialHeight,
+		startupLogs,
+		defaultPolicy,
+	)
+}
+
+// NewModelWithPolicy adds pure policy evaluation while keeping NewModel's
+// historical, safe ask-by-default behavior for existing callers.
+func NewModelWithPolicy(
+	backend Backend,
+	events <-chan session.Event,
+	panes []Pane,
+	initialWidth int,
+	initialHeight int,
+	startupLogs []string,
+	evaluator PolicyEvaluator,
+) (*Model, error) {
 	if backend == nil {
 		return nil, errors.New("backend TUI nil")
+	}
+	if evaluator == nil {
+		return nil, errors.New("moteur de politique TUI nil")
 	}
 	if len(panes) < 1 || len(panes) > maxAgentCount {
 		return nil, fmt.Errorf("la TUI exige entre 1 et %d agents (reçu: %d)", maxAgentCount, len(panes))
@@ -113,15 +162,20 @@ func NewModel(
 	setInputInterceptionStyle(&input, false)
 
 	result := &Model{
-		backend:          backend,
-		events:           events,
-		panes:            make([]agentPane, len(panes)),
-		supervisor:       viewport.New(1, 1),
-		input:            input,
-		focus:            FocusTarget{Kind: FocusAgent, AgentID: panes[0].ID},
-		inputTarget:      "",
-		execProcess:      tea.ExecProcess,
-		resolvedEventIDs: make(map[string]struct{}),
+		backend:            backend,
+		events:             events,
+		policy:             evaluator,
+		policyConfig:       evaluator.Config(),
+		panes:              make([]agentPane, len(panes)),
+		supervisor:         viewport.New(1, 1),
+		input:              input,
+		focus:              FocusTarget{Kind: FocusAgent, AgentID: panes[0].ID},
+		inputTarget:        "",
+		execProcess:        tea.ExecProcess,
+		resolvedEventIDs:   make(map[eventKey]struct{}),
+		automaticInFlight:  make(map[eventKey]automaticAttempt),
+		automaticBySession: make(map[string]eventKey),
+		deferredEvents:     make(map[string]adapters.Event),
 	}
 	for index, pane := range panes {
 		name := pane.Name
@@ -167,18 +221,27 @@ func NewModel(
 	return result, nil
 }
 
-func (m *Model) eventResolved(eventID string) bool {
-	_, resolved := m.resolvedEventIDs[eventID]
-	return eventID != "" && resolved
+func semanticEventKey(sessionID, eventID string) eventKey {
+	return eventKey{
+		sessionID: strings.ToLower(strings.TrimSpace(sessionID)),
+		eventID:   strings.TrimSpace(eventID),
+	}
 }
 
-func (m *Model) rememberResolved(eventID string) {
-	if eventID == "" || m.eventResolved(eventID) {
+func (m *Model) eventResolved(sessionID, eventID string) bool {
+	key := semanticEventKey(sessionID, eventID)
+	_, resolved := m.resolvedEventIDs[key]
+	return key.sessionID != "" && key.eventID != "" && resolved
+}
+
+func (m *Model) rememberResolved(sessionID, eventID string) {
+	key := semanticEventKey(sessionID, eventID)
+	if key.sessionID == "" || key.eventID == "" || m.eventResolved(sessionID, eventID) {
 		return
 	}
 	const retainedResolvedEvents = 256
-	m.resolvedEventIDs[eventID] = struct{}{}
-	m.resolvedEventOrder = append(m.resolvedEventOrder, eventID)
+	m.resolvedEventIDs[key] = struct{}{}
+	m.resolvedEventOrder = append(m.resolvedEventOrder, key)
 	if len(m.resolvedEventOrder) <= retainedResolvedEvents {
 		return
 	}
@@ -229,7 +292,7 @@ func (m *Model) activateNextPrompt() tea.Cmd {
 	m.setPage(targetIndex / maxAgentsPerPage)
 	m.focus = FocusTarget{Kind: FocusSupervisor}
 	target := &m.panes[targetIndex]
-	if target.prompt.Sensitive {
+	if requiresSecretHandling(target.prompt) {
 		m.input.EchoMode = textinput.EchoPassword
 		m.input.EchoCharacter = '•'
 	} else {

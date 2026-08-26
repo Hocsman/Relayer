@@ -148,8 +148,10 @@ func TestGenericEncodeDecision(t *testing.T) {
 			}
 		})
 	}
-	if got, err := adapter.EncodeDecision(actionable, Decision("approve"), "Y"); !errors.Is(err, ErrDecisionUnsupported) || got != nil {
-		t.Fatalf("unsupported decision = %v, %v", got, err)
+	for _, decision := range []Decision{DecisionAllow, DecisionDeny, Decision("approve")} {
+		if got, err := adapter.EncodeDecision(actionable, decision, "Y"); !errors.Is(err, ErrDecisionUnsupported) || got != nil {
+			t.Fatalf("unsupported decision %q = %v, %v", decision, got, err)
+		}
 	}
 	if got, err := adapter.EncodeDecision(Event{Type: EventProcessExit}, DecisionManual, "Y"); !errors.Is(err, ErrDecisionUnsupported) || got != nil {
 		t.Fatalf("non-actionable event decision = %v, %v", got, err)

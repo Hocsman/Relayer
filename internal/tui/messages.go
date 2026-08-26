@@ -2,11 +2,13 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"sync"
 	"time"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
+	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -17,6 +19,21 @@ type inputDeliveredMsg struct {
 	SessionID string
 	Event     adapters.Event
 	Err       error
+}
+
+var (
+	errAutomaticDecisionBackendUnavailable = errors.New("backend de décision automatique indisponible")
+	errDecisionBackendUnavailable          = errors.New("backend de décision manuelle indisponible")
+	errEventSnapshotBackendUnavailable     = errors.New("backend de snapshot d'événement indisponible")
+)
+
+type automaticDecisionFinishedMsg struct {
+	SessionID    string
+	Event        adapters.Event
+	Evaluation   policy.Evaluation
+	Err          error
+	Pending      *adapters.Event
+	PendingKnown bool
 }
 
 type backendStoppedMsg struct{}
@@ -82,10 +99,49 @@ func deliverInput(
 			SessionID: sessionID,
 			Event:     event.Clone(),
 		}
-		if decisions, ok := backend.(DecisionBackend); ok {
-			message.Err = decisions.SendDecision(sessionID, event, value)
+		decisions, ok := backend.(DecisionBackend)
+		if !ok {
+			// A raw write cannot prove which pending occurrence it resolves and
+			// would bypass adapter-specific encoding. Keep the event pending so
+			// the user can retry through a capable backend instead.
+			message.Err = errDecisionBackendUnavailable
+			return message
+		}
+		message.Err = decisions.SendDecision(sessionID, event, value)
+		return message
+	}
+}
+
+func deliverAutomaticDecision(
+	backend Backend,
+	event adapters.Event,
+	evaluation policy.Evaluation,
+	decision adapters.Decision,
+) tea.Cmd {
+	return func() tea.Msg {
+		message := automaticDecisionFinishedMsg{
+			SessionID:  event.SessionID,
+			Event:      event.Clone(),
+			Evaluation: evaluation,
+		}
+		automatic, ok := backend.(AutomaticDecisionBackend)
+		if !ok {
+			message.Err = errAutomaticDecisionBackendUnavailable
 		} else {
-			message.Err = backend.SendInput(sessionID, value)
+			message.Err = automatic.SendAutomaticDecision(event.SessionID, event.Clone(), decision)
+		}
+		if message.Err == nil {
+			return message
+		}
+		if snapshots, ok := backend.(EventSnapshotBackend); ok {
+			pending, err := snapshots.PendingEvent(backend.Context(), event.SessionID)
+			if err == nil {
+				message.PendingKnown = true
+				if pending != nil {
+					copy := pending.Clone()
+					message.Pending = &copy
+				}
+			}
 		}
 		return message
 	}
@@ -102,13 +158,13 @@ func resyncAttachedSession(
 		if err := backend.Resync(ctx, sessionID, columns, rows); err != nil {
 			return resyncFinishedMsg{SessionID: sessionID, Err: err}
 		}
-		var pending *adapters.Event
-		if snapshots, ok := backend.(EventSnapshotBackend); ok {
-			var err error
-			pending, err = snapshots.PendingEvent(ctx, sessionID)
-			if err != nil {
-				return resyncFinishedMsg{SessionID: sessionID, Err: err}
-			}
+		snapshots, ok := backend.(EventSnapshotBackend)
+		if !ok {
+			return resyncFinishedMsg{SessionID: sessionID, Err: errEventSnapshotBackendUnavailable}
+		}
+		pending, err := snapshots.PendingEvent(ctx, sessionID)
+		if err != nil {
+			return resyncFinishedMsg{SessionID: sessionID, Err: err}
 		}
 		return resyncFinishedMsg{
 			SessionID: sessionID,

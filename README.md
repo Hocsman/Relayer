@@ -16,6 +16,7 @@ Stop paying per-token API fees to orchestrate AI agents. Run `claude` (Claude Pr
 
 - **Zero API Costs:** Uses standard CLI interfaces, meaning it leverages your flat-rate subscriptions (Claude Pro, Copilot) or local hardware (Ollama, Llama 3.2).
 - **Human-in-the-Loop Interception:** Bounded terminal-output monitoring automatically detects interactive prompts (`[y/N]`, `password:`) and safely pauses the workflow for human input.
+- **Deterministic Policies:** Ordered `allow` / `ask` / `deny` rules evaluate detected events with a safe `ask` fallback and an observable dry-run mode.
 - **Optional Native tmux Sessions:** Keep the lightweight PTY backend, or run each agent in an isolated detached tmux session and attach to its full terminal on demand.
 - **Beautiful TUI:** Powered by the Elm-inspired [Bubble Tea](https://github.com/charmbracelet/bubbletea) framework for a smooth, glitch-free multi-pane terminal experience.
 - **Single Binary:** Written in Go. No Python environments, no heavy dependencies. Just download and run.
@@ -92,6 +93,10 @@ config.yaml / CLI compatibility flags
                     └──── Event ─────────┘
                               │
                               ▼
+                  deterministic policy engine
+                    allow / ask / deny
+                              │
+                              ▼
                   Bubble Tea TUI / supervisor
                               │ Enter on tmux agent
                               ▼
@@ -115,7 +120,7 @@ Terminal bytes, normalized detection text, rendered viewport history, and audit 
 - `claude` and `codex` are experimental, unimplemented registry placeholders. Explicitly selecting either one fails before a terminal backend starts. When the adapter is omitted, their executable names currently fall back to `generic`; Relayer does not claim tool-specific support.
 - Vendor-specific detection rules will only be added together with anonymized, verified terminal fixtures. The current synthetic generic fixtures live in `internal/adapters/testdata/generic`; the Claude and Codex fixture directories contain policy notes only, not fabricated transcripts.
 
-Events describe observations and pending human actions. They do not automatically approve, deny, or apply policies; this release keeps every actionable decision manual.
+Events describe observations and pending human actions. The policy engine evaluates only those detected occurrences; it cannot retroactively stop an operation that already ran. An automatic decision is delivered only through the adapter that produced the exact pending event. If that adapter cannot encode the decision reliably, Relayer falls back to `ask`.
 
 ## 🛠️ Configuration
 
@@ -128,6 +133,16 @@ backend: auto
 sessions:
   persist_on_exit: false
   cleanup_on_success: true
+
+policies:
+  default_action: ask
+  dry_run: false
+  rules:
+    - name: ask-overwrite
+      match:
+        event_types: [confirmation]
+        text_regex: '(?i)overwrite'
+      action: ask
 
 agents:
   - id: claude-backend
@@ -157,6 +172,53 @@ intercept_patterns:
   - pattern: '(?i)do you want to continue'
     description: "Generic CLI pause"
 ```
+
+The supported policy fields are deliberately limited:
+
+- `default_action`: `allow`, `ask`, or `deny`; omitted configurations safely default to `ask`.
+- `dry_run`: boolean. Rules are evaluated and displayed, but every effective action becomes `ask` and no automatic encoding or delivery is attempted.
+- `rules`: an ordered list. Every rule requires a unique, non-empty `name`, a non-empty `match`, and an `action`.
+- `match.event_types`: one or more implemented actionable types: `confirmation` or `credential`.
+- `match.text_regex`: a Go regular expression compiled at startup and applied only to the event summary and matched prompt fragment, not to unbounded terminal history.
+- `match.agent_ids`: configured agent IDs, compared case-insensitively and validated before any agent starts.
+- `match.risk_levels`: `low`, `unknown`, or `high`.
+- `match.sensitive`: a boolean selector. Setting it to `false` never declassifies an event that the adapter marked sensitive or credential-bearing.
+
+Matchers inside one rule use AND semantics; values inside a list use OR semantics. Rules retain YAML order and the first matching rule wins. With no match, `default_action` applies. Sensitive and `credential` events always become `ask`. Automatic `allow` additionally requires an explicit `low` risk event. Invalid configuration stops startup, and runtime uncertainty never becomes an implicit allow. If a transport reports an error after delivery may have begun, Relayer freezes that pane instead of sending a second response that could reach the following prompt.
+
+The bundled `generic` adapter intentionally encodes manual input only. It never invents a `Y`, `N`, or tool-specific refusal, so its automatic `allow` and `deny` evaluations fall back to `ask`. The policy engine and delivery path are tested with explicit encoder adapters, but no Claude or Codex encoder is claimed.
+
+Three valid policy examples are shown below. The `allow` and `deny` examples become automatic only when a future or custom tested adapter emits the matching event and explicitly supports that encoding:
+
+```yaml
+policies:
+  default_action: ask
+  dry_run: false
+  rules:
+    - name: allow-low-risk-reviewer-check
+      match:
+        event_types: [confirmation]
+        agent_ids: [reviewer]
+        risk_levels: [low]
+        sensitive: false
+        text_regex: '(?i)(go test|npm test|pytest)'
+      action: allow
+
+    - name: deny-high-risk-release-confirmation
+      match:
+        event_types: [confirmation]
+        agent_ids: [release]
+        risk_levels: [high]
+        sensitive: false
+      action: deny
+
+    - name: always-ask-for-credentials
+      match:
+        event_types: [credential]
+      action: ask
+```
+
+Do not put passwords, tokens, OTP values, response bytes, or other secrets in policy YAML. Rules describe event metadata only.
 
 Each agent must define exactly one execution mode:
 
@@ -195,6 +257,14 @@ Use an alternate file with `./relayer --config path/to/config.yaml`. If the sele
 - Bubble Tea viewports show a sanitized, bounded output stream; they are not VT100 emulators. Full-screen TUIs are used through the tmux attachment path.
 - tmux is an optional external dependency and must be installed when `backend: tmux` is selected.
 - Relayer monitoring stops after the Relayer process exits, even when tmux sessions are intentionally persisted.
+
+### Policy security model
+
+Relayer can approve or refuse only a prompt that an adapter has detected while the underlying CLI is still waiting for input, and only when that adapter can encode the selected action. A `deny` sends an adapter-defined refusal; it does not kill the process. `ask` is the safe default and remains mandatory for sensitive input.
+
+Relayer cannot block commands, file writes, network requests, or other effects that happened before a prompt was observed. Output-based rules can miss an event, and terminal output can be ambiguous or adversarial. Direct interaction during a native tmux attach is outside policy enforcement. Relayer is therefore not a sandbox, a system firewall, an authorization boundary, or a replacement for OS-level isolation and permissions.
+
+Use `dry_run: true` to review proposed rule matches before enabling automation. The supervisor marks dry-run evaluations clearly and retains only bounded terminal output plus whitelisted policy metadata; it does not log prompt matches, arbitrary event metadata, encoded decision bytes, or manual secret input.
 
 ## 🤝 Contributing
 

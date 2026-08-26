@@ -173,8 +173,30 @@ func (r *backendRouter) PendingEvent(ctx context.Context, id string) (*adapters.
 }
 
 func (r *backendRouter) SendDecision(ctx context.Context, id string, event adapters.Event, manualInput string) error {
+	return r.ApplyDecision(ctx, id, event, adapters.DecisionManual, manualInput)
+}
+
+// ApplyDecision resolves the canonical pending occurrence again immediately
+// before encoding and delivery. This CAS boundary prevents a stale policy or
+// UI result from acknowledging a newer prompt from the same session.
+func (r *backendRouter) ApplyDecision(
+	ctx context.Context,
+	id string,
+	event adapters.Event,
+	decision adapters.Decision,
+	manualInput string,
+) error {
 	if r.adapters == nil {
 		return errors.New("registry d'adaptateurs indisponible")
+	}
+	switch decision {
+	case adapters.DecisionManual:
+	case adapters.DecisionAllow, adapters.DecisionDeny:
+		if manualInput != "" {
+			return errors.New("une décision automatique ne peut pas contenir de saisie manuelle")
+		}
+	default:
+		return fmt.Errorf("%w: %q", adapters.ErrDecisionUnsupported, decision)
 	}
 	if strings.TrimSpace(event.ID) == "" {
 		return fmt.Errorf("%w: identifiant d'événement vide", adapters.ErrEventMismatch)
@@ -208,7 +230,7 @@ func (r *backendRouter) SendDecision(ctx context.Context, id string, event adapt
 	if err != nil {
 		return err
 	}
-	data, err := adapter.EncodeDecision(canonical, adapters.DecisionManual, manualInput)
+	data, err := adapter.EncodeDecision(canonical, decision, manualInput)
 	if err != nil {
 		return err
 	}
@@ -358,6 +380,14 @@ func (a *tuiBackendAdapter) SendInput(id, value string) error {
 
 func (a *tuiBackendAdapter) SendDecision(id string, event adapters.Event, value string) error {
 	return a.router.SendDecision(a.router.Context(), id, event, value)
+}
+
+func (a *tuiBackendAdapter) SendAutomaticDecision(
+	id string,
+	event adapters.Event,
+	decision adapters.Decision,
+) error {
+	return a.router.ApplyDecision(a.router.Context(), id, event, decision, "")
 }
 
 func (a *tuiBackendAdapter) Resize(id string, columns, rows int) error {

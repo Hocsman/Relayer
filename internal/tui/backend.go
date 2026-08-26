@@ -10,6 +10,7 @@ import (
 	"os/exec"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
+	"github.com/Hocsman/Relayer/internal/policy"
 )
 
 // Backend is the process/session boundary consumed by the TUI.
@@ -25,6 +26,20 @@ type Backend interface {
 // that produced the exact event occurrence.
 type DecisionBackend interface {
 	SendDecision(id string, event adapters.Event, manualInput string) error
+}
+
+// AutomaticDecisionBackend encodes a semantic allow/deny decision with the
+// adapter that produced event and delivers it through the backend's exact
+// occurrence-ID CAS path. Implementations must never invent terminal bytes.
+type AutomaticDecisionBackend interface {
+	SendAutomaticDecision(id string, event adapters.Event, decision adapters.Decision) error
+}
+
+// PolicyEvaluator is deliberately pure. Bubble Tea owns orchestration state
+// while policy.Engine decides whether an actionable occurrence is automatic.
+type PolicyEvaluator interface {
+	Evaluate(adapters.Event) policy.Evaluation
+	Config() policy.Config
 }
 
 // ContextResizeBackend is an optional non-blocking resize capability used by

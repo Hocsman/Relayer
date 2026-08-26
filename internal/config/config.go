@@ -13,8 +13,10 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/intercept"
+	"github.com/Hocsman/Relayer/internal/policy"
 	"gopkg.in/yaml.v3"
 )
 
@@ -33,6 +35,7 @@ type Result struct {
 	Sessions SessionPolicy
 	Agents   []agent.Spec
 	Patterns []intercept.Pattern
+	Policies policy.Config
 	Created  bool
 }
 
@@ -70,8 +73,29 @@ type versionOneFile struct {
 	Version           *int                     `yaml:"version"`
 	Backend           *string                  `yaml:"backend"`
 	Sessions          *configuredSessionPolicy `yaml:"sessions,omitempty"`
+	Policies          *configuredPolicies      `yaml:"policies,omitempty"`
 	Agents            *[]configuredAgent       `yaml:"agents"`
 	InterceptPatterns *[]ConfigPattern         `yaml:"intercept_patterns"`
+}
+
+type configuredPolicies struct {
+	DefaultAction *string                 `yaml:"default_action,omitempty"`
+	DryRun        *bool                   `yaml:"dry_run,omitempty"`
+	Rules         *[]configuredPolicyRule `yaml:"rules,omitempty"`
+}
+
+type configuredPolicyRule struct {
+	Name   *string                `yaml:"name"`
+	Match  *configuredPolicyMatch `yaml:"match"`
+	Action *string                `yaml:"action"`
+}
+
+type configuredPolicyMatch struct {
+	EventTypes *[]string `yaml:"event_types,omitempty"`
+	TextRegex  *string   `yaml:"text_regex,omitempty"`
+	AgentIDs   *[]string `yaml:"agent_ids,omitempty"`
+	RiskLevels *[]string `yaml:"risk_levels,omitempty"`
+	Sensitive  *bool     `yaml:"sensitive,omitempty"`
 }
 
 type configuredAgent struct {
@@ -92,6 +116,7 @@ type decodedFile struct {
 	Sessions SessionPolicy
 	Agents   []configuredAgent
 	Patterns []ConfigPattern
+	Policies policy.Config
 }
 
 // Load reads path before any PTY is started. It accepts both a direct list and
@@ -143,6 +168,7 @@ func Load(path string) (Result, error) {
 		Sessions: configured.Sessions,
 		Agents:   agents,
 		Patterns: patterns,
+		Policies: configured.Policies,
 		Created:  created,
 	}, nil
 }
@@ -164,10 +190,12 @@ func createDefault(path string) (bool, error) {
 	version := CurrentVersion
 	backend := agent.BackendPTY
 	agents := []configuredAgent{}
+	defaultPolicies := configuredPoliciesFrom(policy.DefaultConfig())
 	payload, err := yaml.Marshal(versionOneFile{
 		Version:           &version,
 		Backend:           &backend,
 		Sessions:          configuredSessionPolicyPointer(defaultSessionPolicy()),
+		Policies:          &defaultPolicies,
 		Agents:            &agents,
 		InterceptPatterns: &configured,
 	})
@@ -227,6 +255,109 @@ func boolPointer(value bool) *bool {
 	return &value
 }
 
+func stringPointer(value string) *string {
+	return &value
+}
+
+func configuredPoliciesFrom(configuration policy.Config) configuredPolicies {
+	defaultAction := string(configuration.DefaultAction)
+	dryRun := configuration.DryRun
+	rules := make([]configuredPolicyRule, 0, len(configuration.Rules))
+	for _, rule := range configuration.Rules {
+		name := rule.Name
+		action := string(rule.Action)
+		match := configuredPolicyMatch{Sensitive: rule.Match.Sensitive}
+		if len(rule.Match.EventTypes) > 0 {
+			values := make([]string, len(rule.Match.EventTypes))
+			for index, value := range rule.Match.EventTypes {
+				values[index] = string(value)
+			}
+			match.EventTypes = &values
+		}
+		if rule.Match.TextRegex != "" {
+			match.TextRegex = stringPointer(rule.Match.TextRegex)
+		}
+		if len(rule.Match.AgentIDs) > 0 {
+			values := append([]string(nil), rule.Match.AgentIDs...)
+			match.AgentIDs = &values
+		}
+		if len(rule.Match.RiskLevels) > 0 {
+			values := make([]string, len(rule.Match.RiskLevels))
+			for index, value := range rule.Match.RiskLevels {
+				values[index] = string(value)
+			}
+			match.RiskLevels = &values
+		}
+		rules = append(rules, configuredPolicyRule{
+			Name:   &name,
+			Match:  &match,
+			Action: &action,
+		})
+	}
+	return configuredPolicies{
+		DefaultAction: &defaultAction,
+		DryRun:        &dryRun,
+		Rules:         &rules,
+	}
+}
+
+func decodePolicies(configured *configuredPolicies) (policy.Config, error) {
+	result := policy.DefaultConfig()
+	if configured == nil {
+		return result, nil
+	}
+	if configured.DefaultAction != nil {
+		result.DefaultAction = policy.Action(strings.ToLower(strings.TrimSpace(*configured.DefaultAction)))
+	}
+	if configured.DryRun != nil {
+		result.DryRun = *configured.DryRun
+	}
+	if configured.Rules == nil {
+		return result, nil
+	}
+	result.Rules = make([]policy.Rule, 0, len(*configured.Rules))
+	for index, configuredRule := range *configured.Rules {
+		if configuredRule.Name == nil {
+			return policy.Config{}, fmt.Errorf("policies.rules[%d].name manquant", index)
+		}
+		if configuredRule.Match == nil {
+			return policy.Config{}, fmt.Errorf("policies.rules[%d].match manquant", index)
+		}
+		if configuredRule.Action == nil {
+			return policy.Config{}, fmt.Errorf("policies.rules[%d].action manquante", index)
+		}
+		configuredMatch := configuredRule.Match
+		match := policy.Match{Sensitive: configuredMatch.Sensitive}
+		if configuredMatch.EventTypes != nil {
+			match.EventTypes = make([]adapters.EventType, len(*configuredMatch.EventTypes))
+			for valueIndex, value := range *configuredMatch.EventTypes {
+				match.EventTypes[valueIndex] = adapters.EventType(strings.ToLower(strings.TrimSpace(value)))
+			}
+		}
+		if configuredMatch.TextRegex != nil {
+			if strings.TrimSpace(*configuredMatch.TextRegex) == "" {
+				return policy.Config{}, fmt.Errorf("policies.rules[%d].match.text_regex ne peut pas être vide", index)
+			}
+			match.TextRegex = *configuredMatch.TextRegex
+		}
+		if configuredMatch.AgentIDs != nil {
+			match.AgentIDs = append([]string(nil), (*configuredMatch.AgentIDs)...)
+		}
+		if configuredMatch.RiskLevels != nil {
+			match.RiskLevels = make([]adapters.RiskLevel, len(*configuredMatch.RiskLevels))
+			for valueIndex, value := range *configuredMatch.RiskLevels {
+				match.RiskLevels[valueIndex] = adapters.RiskLevel(strings.ToLower(strings.TrimSpace(value)))
+			}
+		}
+		result.Rules = append(result.Rules, policy.Rule{
+			Name:   *configuredRule.Name,
+			Match:  match,
+			Action: policy.Action(strings.ToLower(strings.TrimSpace(*configuredRule.Action))),
+		})
+	}
+	return result, nil
+}
+
 func createExclusively(path string, payload []byte, linkErr error) (bool, error) {
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if errors.Is(err, os.ErrExist) {
@@ -278,6 +409,7 @@ func decode(data []byte) (decodedFile, error) {
 			Backend:  agent.BackendPTY,
 			Sessions: defaultSessionPolicy(),
 			Patterns: direct,
+			Policies: policy.DefaultConfig(),
 		}, nil
 	case yaml.MappingNode:
 		if mappingHasKey(root, "version") {
@@ -297,6 +429,7 @@ func decode(data []byte) (decodedFile, error) {
 			Backend:  agent.BackendPTY,
 			Sessions: defaultSessionPolicy(),
 			Patterns: wrapped.InterceptPatterns,
+			Policies: policy.DefaultConfig(),
 		}, nil
 	default:
 		return decodedFile{}, errors.New("la racine YAML doit être une liste ou un objet de configuration")
@@ -352,6 +485,13 @@ func decodeVersionOne(data []byte, root *yaml.Node) (decodedFile, error) {
 			sessionPolicy.CleanupOnSuccess = *configured.Sessions.CleanupOnSuccess
 		}
 	}
+	configuredPolicy, err := decodePolicies(configured.Policies)
+	if err != nil {
+		return decodedFile{}, err
+	}
+	if _, err := policy.New(configuredPolicy); err != nil {
+		return decodedFile{}, fmt.Errorf("policies invalides: %w", err)
+	}
 
 	return decodedFile{
 		Version:  *configured.Version,
@@ -359,6 +499,7 @@ func decodeVersionOne(data []byte, root *yaml.Node) (decodedFile, error) {
 		Sessions: sessionPolicy,
 		Agents:   append([]configuredAgent(nil), (*configured.Agents)...),
 		Patterns: append([]ConfigPattern(nil), (*configured.InterceptPatterns)...),
+		Policies: configuredPolicy,
 	}, nil
 }
 
@@ -421,6 +562,10 @@ func validateVersionOneNode(root *yaml.Node) error {
 			if err := validateSessionPolicyNode(value); err != nil {
 				return err
 			}
+		case "policies":
+			if err := validatePoliciesNode(value); err != nil {
+				return err
+			}
 		case "agents":
 			if err := validateAgentNode(value); err != nil {
 				return err
@@ -428,6 +573,94 @@ func validateVersionOneNode(root *yaml.Node) error {
 		case "intercept_patterns":
 			if err := validatePatternNode(value); err != nil {
 				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validatePoliciesNode(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return errors.New("policies doit être un objet YAML")
+	}
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		name := node.Content[index].Value
+		value := dereferenceAlias(node.Content[index+1])
+		switch name {
+		case "default_action":
+			if err := requireScalar(value, "!!str", "policies.default_action doit être une chaîne YAML"); err != nil {
+				return err
+			}
+		case "dry_run":
+			if err := requireScalar(value, "!!bool", "policies.dry_run doit être un booléen YAML"); err != nil {
+				return err
+			}
+		case "rules":
+			if value.Kind != yaml.SequenceNode {
+				return errors.New("policies.rules doit être une liste YAML")
+			}
+			for ruleIndex, rawRule := range value.Content {
+				if err := validatePolicyRuleNode(dereferenceAlias(rawRule), ruleIndex); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validatePolicyRuleNode(node *yaml.Node, index int) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("policies.rules[%d] doit être un objet YAML", index)
+	}
+	for fieldIndex := 0; fieldIndex+1 < len(node.Content); fieldIndex += 2 {
+		name := node.Content[fieldIndex].Value
+		value := dereferenceAlias(node.Content[fieldIndex+1])
+		switch name {
+		case "name", "action":
+			if err := requireScalar(value, "!!str", fmt.Sprintf("policies.rules[%d].%s doit être une chaîne YAML", index, name)); err != nil {
+				return err
+			}
+		case "match":
+			if err := validatePolicyMatchNode(value, index); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validatePolicyMatchNode(node *yaml.Node, ruleIndex int) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("policies.rules[%d].match doit être un objet YAML", ruleIndex)
+	}
+	for fieldIndex := 0; fieldIndex+1 < len(node.Content); fieldIndex += 2 {
+		name := node.Content[fieldIndex].Value
+		value := dereferenceAlias(node.Content[fieldIndex+1])
+		switch name {
+		case "text_regex":
+			if err := requireScalar(value, "!!str", fmt.Sprintf("policies.rules[%d].match.text_regex doit être une chaîne YAML", ruleIndex)); err != nil {
+				return err
+			}
+		case "sensitive":
+			if err := requireScalar(value, "!!bool", fmt.Sprintf("policies.rules[%d].match.sensitive doit être un booléen YAML", ruleIndex)); err != nil {
+				return err
+			}
+		case "event_types", "agent_ids", "risk_levels":
+			if value.Kind != yaml.SequenceNode {
+				return fmt.Errorf("policies.rules[%d].match.%s doit être une liste YAML", ruleIndex, name)
+			}
+			if len(value.Content) == 0 {
+				return fmt.Errorf("policies.rules[%d].match.%s ne peut pas être vide", ruleIndex, name)
+			}
+			for elementIndex, element := range value.Content {
+				if err := requireScalar(
+					dereferenceAlias(element),
+					"!!str",
+					fmt.Sprintf("policies.rules[%d].match.%s[%d] doit être une chaîne YAML", ruleIndex, name, elementIndex),
+				); err != nil {
+					return err
+				}
 			}
 		}
 	}

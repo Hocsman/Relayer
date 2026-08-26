@@ -64,6 +64,10 @@ func (b *fakeBackend) SendInput(id string, value string) error {
 	return b.inputError
 }
 
+func (b *fakeBackend) SendDecision(id string, _ adapters.Event, value string) error {
+	return b.SendInput(id, value)
+}
+
 func (b *fakeBackend) Resize(id string, columns, rows int) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()

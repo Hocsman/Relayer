@@ -1,9 +1,13 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
+	"strings"
+	"unicode"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
+	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -83,50 +87,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			commands = append(commands, m.applyProcessExit(observed))
 			break
 		}
-		if !observed.Actionable() || m.eventResolved(observed.ID) {
-			break
-		}
-		if paneIndex := m.paneIndex(observed.SessionID); paneIndex >= 0 {
-			if snapshots, ok := m.backend.(EventSnapshotBackend); ok && m.panes[paneIndex].backend == "tmux" {
-				current, snapshotErr := snapshots.PendingEvent(m.backend.Context(), observed.SessionID)
-				if snapshotErr == nil && current == nil {
-					// A decision or attach resync resolved this occurrence before
-					// its queued channel event reached Bubble Tea.
-					m.rememberResolved(observed.ID)
-					break
-				}
-				if snapshotErr == nil {
-					observed = current.Clone()
-					if m.eventResolved(observed.ID) {
-						break
-					}
-				}
-			}
-			m.refreshPaneOutput(paneIndex)
-			if m.panes[paneIndex].exited {
-				break
-			}
-			if m.panes[paneIndex].blocked && m.panes[paneIndex].prompt.ID == observed.ID {
-				break
-			}
-			if !m.panes[paneIndex].blocked {
-				m.panes[paneIndex].blocked = true
-				m.panes[paneIndex].prompt = observed.Clone()
-				m.pending = append(m.pending, observed.SessionID)
-				reason := observed.Summary
-				if observed.Sensitive {
-					reason = "saisie sensible requise"
-				}
-				m.appendLog(fmt.Sprintf(
-					"%s attend une intervention humaine (%s)",
-					m.panes[paneIndex].name,
-					reason,
-				))
-			}
-			if m.inputTarget == "" && !m.writePending {
-				commands = append(commands, m.activateNextPrompt())
-			}
-		}
+		commands = append(commands, m.handleActionableEvent(observed))
 	case session.Exited:
 		if paneIndex := m.paneIndex(msg.SessionID); paneIndex >= 0 {
 			// Legacy producers may still emit Exited beside the canonical
@@ -135,6 +96,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if m.panes[paneIndex].exited {
 				break
 			}
+			m.clearAutomaticState(msg.SessionID)
 			m.refreshPaneOutput(paneIndex)
 			m.panes[paneIndex].exited = true
 			m.panes[paneIndex].exitErr = msg.Err
@@ -146,7 +108,9 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			wasInputTarget := m.inputTarget == msg.SessionID
 			m.removePending(msg.SessionID)
 			m.panes[paneIndex].blocked = false
-			m.rememberResolved(m.panes[paneIndex].prompt.ID)
+			m.panes[paneIndex].policyFrozen = false
+			m.panes[paneIndex].policyTag = ""
+			m.rememberResolved(msg.SessionID, m.panes[paneIndex].prompt.ID)
 			m.panes[paneIndex].prompt = adapters.Event{}
 			if wasInputTarget {
 				m.inputTarget = ""
@@ -166,22 +130,26 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		if msg.Err != nil {
-			m.appendLog(fmt.Sprintf("Échec de l'envoi à %s: %v", m.panes[paneIndex].name, msg.Err))
+			m.panes[paneIndex].policyTag = "ASK REQUISE"
+			m.appendLog(fmt.Sprintf("Échec de l'envoi à %s (réponse non acquittée)", m.panes[paneIndex].name))
 			if !m.panes[paneIndex].exited && !m.panes[paneIndex].blocked {
 				m.panes[paneIndex].blocked = true
 				m.panes[paneIndex].prompt = msg.Event.Clone()
 				m.prependPending(msg.SessionID)
 			}
 		} else {
-			m.rememberResolved(msg.Event.ID)
+			m.panes[paneIndex].policyTag = "ASK APPLIQUÉE"
+			m.rememberResolved(msg.SessionID, msg.Event.ID)
 		}
 		commands = append(commands, m.activateNextPrompt())
+	case automaticDecisionFinishedMsg:
+		commands = append(commands, m.applyAutomaticDecisionResult(msg))
 	case attachFinishedMsg:
-		if m.attachPending == msg.SessionID {
-			m.attachPending = ""
-		}
 		paneIndex := m.paneIndex(msg.SessionID)
 		if paneIndex < 0 {
+			if m.attachInProgress(msg.SessionID) {
+				m.attachPending = ""
+			}
 			break
 		}
 		if msg.Err != nil {
@@ -192,6 +160,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		attachable, ok := m.backend.(AttachableBackend)
 		if !ok {
 			m.appendLog("Resynchronisation tmux impossible: backend incompatible")
+			m.attachPending = ""
+			commands = append(commands, m.freezeResyncFailure(paneIndex))
 			break
 		}
 		commands = append(commands, resyncAttachedSession(
@@ -204,11 +174,18 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case resyncFinishedMsg:
 		paneIndex := m.paneIndex(msg.SessionID)
 		if paneIndex < 0 {
+			if m.attachInProgress(msg.SessionID) {
+				m.attachPending = ""
+			}
 			break
+		}
+		if m.attachInProgress(msg.SessionID) {
+			m.attachPending = ""
 		}
 		m.refreshPaneOutput(paneIndex)
 		if msg.Err != nil {
 			m.appendLog(fmt.Sprintf("Resynchronisation de %s impossible: %v", m.panes[paneIndex].name, msg.Err))
+			commands = append(commands, m.freezeResyncFailure(paneIndex))
 		} else {
 			commands = append(commands, m.reconcileEvent(msg.SessionID, msg.Pending))
 			m.appendLog(fmt.Sprintf("%s resynchronisé (sortie, état, prompts et taille)", m.panes[paneIndex].name))
@@ -232,15 +209,435 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	return m, batchCommands(commands...)
 }
 
+func (m *Model) handleActionableEvent(observed adapters.Event) tea.Cmd {
+	if !observed.Actionable() || m.eventResolved(observed.SessionID, observed.ID) {
+		return nil
+	}
+	paneIndex := m.paneIndex(observed.SessionID)
+	if paneIndex < 0 || m.panes[paneIndex].exited {
+		return nil
+	}
+	if m.panes[paneIndex].policyFrozen {
+		m.refreshPaneOutput(paneIndex)
+		return nil
+	}
+	if m.attachInProgress(observed.SessionID) {
+		// Events emitted before or during an interactive tmux attachment can be
+		// stale because the human may answer directly in tmux. Only the
+		// authoritative snapshot read after Resync may drive policy evaluation.
+		m.refreshPaneOutput(paneIndex)
+		return nil
+	}
+
+	// PendingEvent is an in-memory authoritative snapshot for both PTY and
+	// tmux. Consulting it prevents a delayed channel event from resurrecting an
+	// occurrence after the bounded resolved-ID cache evicts it.
+	snapshotKnown := false
+	if snapshots, ok := m.backend.(EventSnapshotBackend); ok {
+		current, err := snapshots.PendingEvent(m.backend.Context(), observed.SessionID)
+		if err == nil {
+			snapshotKnown = true
+			if current == nil {
+				m.rememberResolved(observed.SessionID, observed.ID)
+				return nil
+			}
+			observed = current.Clone()
+			observed.SessionID = m.panes[paneIndex].sessionID
+			if m.eventResolved(observed.SessionID, observed.ID) {
+				return nil
+			}
+		}
+	}
+
+	sessionKey := semanticEventKey(observed.SessionID, observed.ID).sessionID
+	if active, exists := m.automaticBySession[sessionKey]; exists {
+		if active == semanticEventKey(observed.SessionID, observed.ID) {
+			return nil
+		}
+		m.deferredEvents[sessionKey] = observed.Clone()
+		return nil
+	}
+
+	evaluation := m.policy.Evaluate(observed.Clone())
+	if requiresHumanSafety(observed) {
+		evaluation.Action = policy.ActionAsk
+		evaluation.Automatic = false
+		evaluation.Reason = policy.ReasonSensitive
+	}
+	if m.policyConfig.DryRun || evaluation.DryRun {
+		evaluation.Action = policy.ActionAsk
+		evaluation.Automatic = false
+		evaluation.DryRun = true
+		if evaluation.Reason != policy.ReasonSensitive && evaluation.Reason != policy.ReasonRisk {
+			evaluation.Reason = policy.ReasonDryRun
+		}
+	}
+
+	decision, automatic := automaticDecision(evaluation)
+	if !automatic || !snapshotKnown && m.backendSupportsSnapshots() {
+		status := "ask"
+		if evaluation.DryRun {
+			status = "dry_run"
+		} else if !snapshotKnown && m.backendSupportsSnapshots() {
+			status = "snapshot_unavailable"
+		}
+		return m.queueHumanEvent(observed, evaluation, status)
+	}
+
+	key := semanticEventKey(observed.SessionID, observed.ID)
+	m.automaticInFlight[key] = automaticAttempt{event: observed.Clone(), evaluation: evaluation}
+	m.automaticBySession[sessionKey] = key
+	m.panes[paneIndex].policyTag = "AUTO EN COURS"
+	m.appendPolicyLog(paneIndex, observed, evaluation, "in_flight")
+	return deliverAutomaticDecision(m.backend, observed, evaluation, decision)
+}
+
+func (m *Model) backendSupportsSnapshots() bool {
+	_, ok := m.backend.(EventSnapshotBackend)
+	return ok
+}
+
+func automaticDecision(evaluation policy.Evaluation) (adapters.Decision, bool) {
+	if !evaluation.Automatic {
+		return "", false
+	}
+	switch evaluation.Action {
+	case policy.ActionAllow:
+		return adapters.DecisionAllow, true
+	case policy.ActionDeny:
+		return adapters.DecisionDeny, true
+	default:
+		return "", false
+	}
+}
+
+func (m *Model) queueHumanEvent(event adapters.Event, evaluation policy.Evaluation, status string) tea.Cmd {
+	paneIndex := m.paneIndex(event.SessionID)
+	if paneIndex < 0 || m.panes[paneIndex].exited || m.eventResolved(event.SessionID, event.ID) {
+		return nil
+	}
+	target := &m.panes[paneIndex]
+	if target.blocked && target.prompt.ID == event.ID {
+		return nil
+	}
+	if target.blocked && target.prompt.ID != "" {
+		m.rememberResolved(event.SessionID, target.prompt.ID)
+		if m.inputTarget == event.SessionID {
+			m.inputTarget = ""
+			m.input.Reset()
+			m.input.Blur()
+			setInputInterceptionStyle(&m.input, false)
+		}
+	}
+
+	m.refreshPaneOutput(paneIndex)
+	target.blocked = true
+	target.prompt = event.Clone()
+	target.policyTag = humanPolicyTag(evaluation, status)
+	m.removePending(event.SessionID)
+	m.pending = append(m.pending, event.SessionID)
+	m.appendPolicyLog(paneIndex, event, evaluation, status)
+	reason := "confirmation requise"
+	if requiresSecretHandling(event) {
+		reason = "saisie sensible requise"
+	}
+	m.appendLog(fmt.Sprintf("%s attend une intervention humaine (%s)", target.name, reason))
+	if m.inputTarget == "" && !m.writePending {
+		return m.activateNextPrompt()
+	}
+	return nil
+}
+
+func humanPolicyTag(evaluation policy.Evaluation, status string) string {
+	if evaluation.DryRun || status == "dry_run" {
+		return "DRY RUN • ASK"
+	}
+	if strings.HasPrefix(status, "fallback_") || status == "snapshot_unavailable" {
+		return "AUTO → ASK"
+	}
+	return "ASK"
+}
+
+func (m *Model) applyAutomaticDecisionResult(message automaticDecisionFinishedMsg) tea.Cmd {
+	key := semanticEventKey(message.SessionID, message.Event.ID)
+	attempt, exists := m.automaticInFlight[key]
+	if !exists {
+		return nil
+	}
+	sessionKey := key.sessionID
+	if active, activeExists := m.automaticBySession[sessionKey]; !activeExists || active != key {
+		return nil
+	}
+	delete(m.automaticInFlight, key)
+	delete(m.automaticBySession, sessionKey)
+
+	paneIndex := m.paneIndex(message.SessionID)
+	if paneIndex < 0 || m.panes[paneIndex].exited {
+		delete(m.deferredEvents, sessionKey)
+		return nil
+	}
+	if message.Err == nil {
+		m.rememberResolved(message.SessionID, message.Event.ID)
+		m.panes[paneIndex].policyTag = "AUTO APPLIQUÉE"
+		m.appendPolicyLog(paneIndex, attempt.event, attempt.evaluation, "applied")
+		if deferred, ok := m.deferredEvents[sessionKey]; ok {
+			delete(m.deferredEvents, sessionKey)
+			return m.handleActionableEvent(deferred)
+		}
+		return nil
+	}
+
+	status := automaticFailureStatus(message.Err)
+	m.panes[paneIndex].policyTag = "AUTO → ASK"
+	m.appendPolicyLog(paneIndex, attempt.event, attempt.evaluation, status)
+	delete(m.deferredEvents, sessionKey)
+	if status == "delivery_uncertain" {
+		candidate := attempt.event.Clone()
+		if message.Pending != nil {
+			candidate = message.Pending.Clone()
+			candidate.SessionID = message.SessionID
+		}
+		return m.freezePolicyDelivery(paneIndex, candidate)
+	}
+	if message.PendingKnown && message.Pending == nil {
+		m.rememberResolved(message.SessionID, message.Event.ID)
+		m.panes[paneIndex].policyTag = "AUTO NON APPLIQUÉE"
+		return nil
+	}
+	candidate := attempt.event.Clone()
+	if message.Pending != nil {
+		candidate = message.Pending.Clone()
+		candidate.SessionID = message.SessionID
+	}
+	fallback := attempt.evaluation
+	if candidate.ID != attempt.event.ID {
+		fallback = m.policy.Evaluate(candidate.Clone())
+	}
+	fallback.Action = policy.ActionAsk
+	fallback.Automatic = false
+	if status == "stale" && candidate.ID == attempt.event.ID {
+		return m.freezePolicyDelivery(paneIndex, candidate)
+	}
+	return m.queueHumanEvent(candidate, fallback, "fallback_"+status)
+}
+
+func (m *Model) freezePolicyDelivery(paneIndex int, event adapters.Event) tea.Cmd {
+	if paneIndex < 0 || paneIndex >= len(m.panes) || m.panes[paneIndex].exited {
+		return nil
+	}
+	target := &m.panes[paneIndex]
+	target.policyFrozen = true
+	target.policyTag = "LIVRAISON INCERTAINE"
+	target.blocked = true
+	target.prompt = event.Clone()
+	m.removePending(target.sessionID)
+	if m.inputTarget == target.sessionID {
+		m.inputTarget = ""
+		m.input.Reset()
+		m.input.Blur()
+		setInputInterceptionStyle(&m.input, false)
+	}
+	m.appendLog(fmt.Sprintf(
+		"Politique • agent=%s • status=delivery_uncertain • aucune nouvelle réponse envoyée • arrêt ou reprise contrôlée requis",
+		safePolicyField(target.name),
+	))
+	if m.inputTarget == "" && !m.writePending {
+		return m.activateNextPrompt()
+	}
+	return nil
+}
+
+func (m *Model) freezeResyncFailure(paneIndex int) tea.Cmd {
+	if paneIndex < 0 || paneIndex >= len(m.panes) || m.panes[paneIndex].exited {
+		return nil
+	}
+	target := &m.panes[paneIndex]
+	target.policyFrozen = true
+	target.policyTag = "ÉTAT TMUX INCERTAIN"
+	target.blocked = true
+	target.prompt = adapters.Event{}
+	m.removePending(target.sessionID)
+	if m.inputTarget == target.sessionID {
+		m.inputTarget = ""
+		m.input.Reset()
+		m.input.Blur()
+		setInputInterceptionStyle(&m.input, false)
+	}
+	m.appendLog(fmt.Sprintf(
+		"Politique • agent=%s • status=resync_failed • aucune décision envoyée • arrêt requis",
+		safePolicyField(target.name),
+	))
+	if m.inputTarget == "" && !m.writePending {
+		return m.activateNextPrompt()
+	}
+	return nil
+}
+
+func automaticFailureStatus(err error) string {
+	switch {
+	case errors.Is(err, adapters.ErrDecisionUnsupported), errors.Is(err, errAutomaticDecisionBackendUnavailable):
+		return "unsupported"
+	case errors.Is(err, adapters.ErrEventMismatch):
+		return "stale"
+	default:
+		// Once delivery has been attempted, an arbitrary transport error cannot
+		// prove whether the target consumed the bytes. Reconcile the exact
+		// pending occurrence and ask instead of retrying automatically.
+		return "delivery_uncertain"
+	}
+}
+
+func (m *Model) clearAutomaticState(sessionID string) {
+	sessionKey := semanticEventKey(sessionID, "unused").sessionID
+	if key, exists := m.automaticBySession[sessionKey]; exists {
+		delete(m.automaticInFlight, key)
+		delete(m.automaticBySession, sessionKey)
+	}
+	delete(m.deferredEvents, sessionKey)
+}
+
+func requiresHumanSafety(event adapters.Event) bool {
+	return event.Sensitive || event.Type == adapters.EventCredential
+}
+
+func requiresSecretHandling(event adapters.Event) bool {
+	return requiresHumanSafety(event) || event.Risk == adapters.RiskHigh
+}
+
+func (m *Model) appendPolicyLog(
+	paneIndex int,
+	event adapters.Event,
+	evaluation policy.Evaluation,
+	status string,
+) {
+	mode := "enforce"
+	if m.policyConfig.DryRun || evaluation.DryRun {
+		mode = "dry_run"
+	}
+	rule := evaluation.RuleName
+	if strings.TrimSpace(rule) == "" {
+		rule = "default"
+	}
+	risk := event.Risk
+	if risk == "" {
+		risk = adapters.RiskUnknown
+	}
+	m.appendLog(fmt.Sprintf(
+		"Politique • agent=%s • adapter=%s • type=%s • risk=%s • summary=%s • rule=%s • proposed=%s • effective=%s • automatic=%t • mode=%s • status=%s • reason=%s",
+		safePolicyField(m.panes[paneIndex].name),
+		safePolicyField(m.panes[paneIndex].adapter),
+		safeEventType(event.Type),
+		safeRisk(risk),
+		safeEventSummary(event),
+		safePolicyField(rule),
+		safeAction(evaluation.ProposedAction),
+		safeAction(evaluation.Action),
+		evaluation.Automatic,
+		mode,
+		safePolicyField(status),
+		safeReason(evaluation.Reason),
+	))
+}
+
+func safeEventType(value adapters.EventType) string {
+	switch value {
+	case adapters.EventConfirmation, adapters.EventCredential, adapters.EventProcessExit:
+		return string(value)
+	default:
+		return "unknown"
+	}
+}
+
+func safeRisk(value adapters.RiskLevel) string {
+	switch value {
+	case adapters.RiskLow, adapters.RiskUnknown, adapters.RiskHigh:
+		return string(value)
+	default:
+		return string(adapters.RiskUnknown)
+	}
+}
+
+func safeAction(value policy.Action) string {
+	switch value {
+	case policy.ActionAllow, policy.ActionAsk, policy.ActionDeny:
+		return string(value)
+	default:
+		return "unknown"
+	}
+}
+
+func safeReason(value string) string {
+	switch value {
+	case policy.ReasonDefault,
+		policy.ReasonRule,
+		policy.ReasonInvalidEvent,
+		policy.ReasonNonActionable,
+		policy.ReasonSensitive,
+		policy.ReasonRisk,
+		policy.ReasonDryRun,
+		policy.ReasonNoEngine:
+		return value
+	default:
+		return "unknown"
+	}
+}
+
+func safeEventSummary(event adapters.Event) string {
+	if requiresSecretHandling(event) {
+		return "sensitive_event"
+	}
+	value := strings.Map(func(character rune) rune {
+		if unicode.IsControl(character) {
+			return ' '
+		}
+		return character
+	}, event.Summary)
+	value = strings.Join(strings.Fields(value), " ")
+	if value == "" {
+		return "-"
+	}
+	characters := []rune(value)
+	const maximumLength = 80
+	if len(characters) > maximumLength {
+		characters = characters[:maximumLength]
+	}
+	return string(characters)
+}
+
+func safePolicyField(value string) string {
+	value = strings.Map(func(character rune) rune {
+		if unicode.IsControl(character) {
+			return ' '
+		}
+		return character
+	}, value)
+	value = strings.Join(strings.Fields(value), "_")
+	if value == "" {
+		return "-"
+	}
+	characters := []rune(value)
+	const maximumLength = 64
+	if len(characters) > maximumLength {
+		characters = characters[:maximumLength]
+	}
+	return string(characters)
+}
+
 func (m *Model) reconcileEvent(sessionID string, pending *adapters.Event) tea.Cmd {
 	paneIndex := m.paneIndex(sessionID)
 	if paneIndex < 0 {
+		return nil
+	}
+	if m.panes[paneIndex].policyFrozen {
+		// A cached pending snapshot cannot prove whether a prior transport write
+		// was consumed. Keep the pane frozen until exit or restart.
 		return nil
 	}
 	wasInputTarget := m.inputTarget == sessionID
 	previousID := m.panes[paneIndex].prompt.ID
 	m.removePending(sessionID)
 	m.panes[paneIndex].blocked = false
+	m.panes[paneIndex].policyTag = ""
 	m.panes[paneIndex].prompt = adapters.Event{}
 	if wasInputTarget {
 		m.inputTarget = ""
@@ -248,14 +645,12 @@ func (m *Model) reconcileEvent(sessionID string, pending *adapters.Event) tea.Cm
 		m.input.Blur()
 		setInputInterceptionStyle(&m.input, false)
 	}
-	if pending != nil && !m.panes[paneIndex].exited && !m.eventResolved(pending.ID) {
+	if pending != nil && !m.panes[paneIndex].exited && !m.eventResolved(sessionID, pending.ID) {
 		current := pending.Clone()
 		current.SessionID = sessionID
-		m.panes[paneIndex].blocked = true
-		m.panes[paneIndex].prompt = current
-		m.pending = append(m.pending, sessionID)
+		return m.handleActionableEvent(current)
 	} else {
-		m.rememberResolved(previousID)
+		m.rememberResolved(sessionID, previousID)
 	}
 	if m.inputTarget == "" && !m.writePending {
 		return m.activateNextPrompt()
@@ -282,6 +677,7 @@ func (m *Model) submitInput() tea.Cmd {
 	m.input.Blur()
 	setInputInterceptionStyle(&m.input, false)
 	m.writePending = true
+	m.panes[paneIndex].policyTag = "ASK EN COURS"
 	m.appendLog(fmt.Sprintf("Réponse transmise à %s", m.panes[paneIndex].name))
 	return deliverInput(m.backend, targetID, value, event)
 }
@@ -291,14 +687,17 @@ func (m *Model) applyProcessExit(event adapters.Event) tea.Cmd {
 	if paneIndex < 0 || m.panes[paneIndex].exited {
 		return nil
 	}
+	m.clearAutomaticState(event.SessionID)
 	m.refreshPaneOutput(paneIndex)
 	m.panes[paneIndex].exited = true
 	if event.Metadata["failed"] == "true" {
 		m.panes[paneIndex].exitErr = fmt.Errorf("processus terminé avec erreur")
 	}
-	m.rememberResolved(m.panes[paneIndex].prompt.ID)
+	m.rememberResolved(event.SessionID, m.panes[paneIndex].prompt.ID)
 	m.removePending(event.SessionID)
 	m.panes[paneIndex].blocked = false
+	m.panes[paneIndex].policyFrozen = false
+	m.panes[paneIndex].policyTag = ""
 	m.panes[paneIndex].prompt = adapters.Event{}
 	if m.inputTarget == event.SessionID {
 		m.inputTarget = ""
@@ -322,12 +721,29 @@ func (m *Model) beginAttach(paneIndex int) tea.Cmd {
 	if pane.backend != "tmux" {
 		return nil
 	}
+	if pane.policyFrozen {
+		m.appendLog(fmt.Sprintf("Attachement de %s refusé: livraison de politique incertaine; arrêt requis", pane.name))
+		return nil
+	}
+	if m.writePending {
+		m.appendLog(fmt.Sprintf("Attachement de %s différé: réponse manuelle en cours", pane.name))
+		return nil
+	}
+	sessionKey := semanticEventKey(pane.sessionID, "unused").sessionID
+	if _, automatic := m.automaticBySession[sessionKey]; automatic {
+		m.appendLog(fmt.Sprintf("Attachement de %s différé: décision automatique en cours", pane.name))
+		return nil
+	}
 	if m.attachPending != "" {
 		return nil
 	}
 	attachable, ok := m.backend.(AttachableBackend)
 	if !ok {
 		m.appendLog(fmt.Sprintf("Attachement de %s impossible: backend tmux incompatible", pane.name))
+		return nil
+	}
+	if _, ok := m.backend.(EventSnapshotBackend); !ok {
+		m.appendLog(fmt.Sprintf("Attachement de %s impossible: snapshot d'événement indisponible", pane.name))
 		return nil
 	}
 	command, err := attachable.AttachCommand(m.backend.Context(), pane.sessionID)
@@ -349,6 +765,15 @@ func (m *Model) beginAttach(paneIndex int) tea.Cmd {
 	return executor(command, func(err error) tea.Msg {
 		return attachFinishedMsg{SessionID: sessionID, Err: err}
 	})
+}
+
+func (m *Model) attachInProgress(sessionID string) bool {
+	if m.attachPending == "" {
+		return false
+	}
+	want := semanticEventKey(sessionID, "unused").sessionID
+	active := semanticEventKey(m.attachPending, "unused").sessionID
+	return want != "" && want == active
 }
 
 func isViewportNavigationKey(message tea.KeyMsg) bool {

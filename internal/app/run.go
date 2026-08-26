@@ -16,6 +16,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/config"
+	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/terminal"
 	"github.com/Hocsman/Relayer/internal/tui"
@@ -53,6 +54,13 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 	}
 	resolution, err := resolveAgentPlans(configuration, options, workingDirectory)
 	if err != nil {
+		return err
+	}
+	policyEngine, err := policy.New(configuration.Policies)
+	if err != nil {
+		return fmt.Errorf("initialisation des politiques: %w", err)
+	}
+	if err := validatePolicyAgentIDs(policyEngine.Config(), resolution.Specs); err != nil {
 		return err
 	}
 	registry, err := adapters.NewRegistry(configuration.Patterns)
@@ -110,13 +118,14 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 	}
 
 	startupLogs := buildStartupLogs(configuration, resolution, infos, options.configPath)
-	application, err := tui.NewModel(
+	application, err := tui.NewModelWithPolicy(
 		&tuiBackendAdapter{router: router},
 		events,
 		panes,
 		initialWidth,
 		initialHeight,
 		startupLogs,
+		policyEngine,
 	)
 	if err != nil {
 		return err
@@ -128,6 +137,26 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 	)
 	_, err = program.Run()
 	return err
+}
+
+func validatePolicyAgentIDs(configuration policy.Config, specs []agent.Spec) error {
+	agentIDs := make(map[string]struct{}, len(specs))
+	for _, spec := range specs {
+		agentIDs[strings.ToLower(strings.TrimSpace(spec.ID))] = struct{}{}
+	}
+	for _, rule := range configuration.Rules {
+		for _, configuredID := range rule.Match.AgentIDs {
+			id := strings.ToLower(strings.TrimSpace(configuredID))
+			if _, exists := agentIDs[id]; !exists {
+				return fmt.Errorf(
+					"politique %q: agent_id inconnu %q",
+					rule.Name,
+					configuredID,
+				)
+			}
+		}
+	}
+	return nil
 }
 
 type sessionStarter interface {
@@ -207,6 +236,12 @@ func buildStartupLogs(
 		fmt.Sprintf("%d agent(s) démarré(s) via %s", len(infos), effectiveBackendLabel(infos)),
 		fmt.Sprintf("Adaptateur(s) actif(s): %s", effectiveAdapterLabel(infos)),
 		fmt.Sprintf("%d patterns chargés depuis %s", len(configuration.Patterns), configPath),
+		fmt.Sprintf(
+			"Politiques: default_action=%s, dry_run=%t, %d règle(s)",
+			configuration.Policies.DefaultAction,
+			configuration.Policies.DryRun,
+			len(configuration.Policies.Rules),
+		),
 	)
 	if strings.Contains(strings.ToLower(effectiveBackendLabel(infos)), agent.BackendTmux) {
 		logs = append(logs, fmt.Sprintf(
