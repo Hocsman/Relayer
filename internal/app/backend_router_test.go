@@ -484,6 +484,28 @@ func TestBackendRouterCloseRetriesEveryBackendThatStillFails(t *testing.T) {
 	}
 }
 
+func TestBackendRouterCloseStatusRemainsPerConcreteBackend(t *testing.T) {
+	ptyBackend := newRouterFakeBackend(agent.BackendPTY)
+	tmuxBackend := newRouterFakeBackend(agent.BackendTmux)
+	tmuxBackend.closeErr = errors.New("tmux cleanup failed")
+	router, err := newBackendRouter(context.Background(), ptyBackend, tmuxBackend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := router.Close(context.Background()); err == nil {
+		t.Fatal("mixed close error was lost")
+	}
+	if succeeded, known := router.backendCloseStatus(agent.BackendPTY); !known || !succeeded {
+		t.Fatalf("PTY close status = succeeded %t known %t", succeeded, known)
+	}
+	if succeeded, known := router.backendCloseStatus(agent.BackendTmux); !known || succeeded {
+		t.Fatalf("tmux close status = succeeded %t known %t", succeeded, known)
+	}
+	if succeeded, known := router.backendCloseStatus("missing"); known || succeeded {
+		t.Fatalf("missing close status = succeeded %t known %t", succeeded, known)
+	}
+}
+
 func TestBackendRouterCloseRetriesOnlyFlakyBackendUntilItSucceeds(t *testing.T) {
 	flakyErr := errors.New("temporary tmux close failure")
 	pty := newRouterFakeBackend(agent.BackendPTY)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
+	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/ptybackend"
 	"github.com/Hocsman/Relayer/internal/session"
@@ -19,14 +20,18 @@ import (
 type executableLookup func(string) (string, error)
 
 type backendDependencies struct {
-	lookup  executableLookup
-	newPTY  func(context.Context, chan<- session.Event, *adapters.Registry, int) (terminal.Backend, error)
-	newTmux func(context.Context, chan<- session.Event, *adapters.Registry, int, tmuxbackend.Options) (terminal.Backend, error)
+	lookup   executableLookup
+	newAudit func(audit.Config) (*audit.Recorder, error)
+	newPTY   func(context.Context, chan<- session.Event, *adapters.Registry, int) (terminal.Backend, error)
+	newTmux  func(context.Context, chan<- session.Event, *adapters.Registry, int, tmuxbackend.Options) (terminal.Backend, error)
 }
 
 func productionBackendDependencies() backendDependencies {
 	return backendDependencies{
 		lookup: exec.LookPath,
+		newAudit: func(configuration audit.Config) (*audit.Recorder, error) {
+			return audit.Open(configuration)
+		},
 		newPTY: func(
 			ctx context.Context,
 			events chan<- session.Event,

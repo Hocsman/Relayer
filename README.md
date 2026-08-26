@@ -17,6 +17,7 @@ Stop paying per-token API fees to orchestrate AI agents. Run `claude` (Claude Pr
 - **Zero API Costs:** Uses standard CLI interfaces, meaning it leverages your flat-rate subscriptions (Claude Pro, Copilot) or local hardware (Ollama, Llama 3.2).
 - **Human-in-the-Loop Interception:** Bounded terminal-output monitoring automatically detects interactive prompts (`[y/N]`, `password:`) and safely pauses the workflow for human input.
 - **Deterministic Policies:** Ordered `allow` / `ask` / `deny` rules evaluate detected events with a safe `ask` fallback and an observable dry-run mode.
+- **Secure Local Audit:** Optional JSONL lifecycle and decision records use private files, bounded rotation, synchronous flushes, and mandatory secret redaction.
 - **Optional Native tmux Sessions:** Keep the lightweight PTY backend, or run each agent in an isolated detached tmux session and attach to its full terminal on demand.
 - **Beautiful TUI:** Powered by the Elm-inspired [Bubble Tea](https://github.com/charmbracelet/bubbletea) framework for a smooth, glitch-free multi-pane terminal experience.
 - **Single Binary:** Written in Go. No Python environments, no heavy dependencies. Just download and run.
@@ -144,6 +145,13 @@ policies:
         text_regex: '(?i)overwrite'
       action: ask
 
+audit:
+  enabled: true
+  mode: metadata
+  path: ""
+  max_file_size_mb: 10
+  max_files: 5
+
 agents:
   - id: claude-backend
     name: Claude Backend
@@ -219,6 +227,8 @@ policies:
 ```
 
 Do not put passwords, tokens, OTP values, response bytes, or other secrets in policy YAML. Rules describe event metadata only.
+
+The optional `audit` block writes structured local JSON Lines without terminal output or human input. `metadata` records only closed lifecycle and policy fields; `detailed` additionally permits bounded summaries and metadata but still applies mandatory redaction. An empty path uses the user's private configuration directory, `max_files` includes the active file, and configurations without an audit block remain disabled for compatibility. Newly generated configurations enable `metadata` mode explicitly. See [Secure local audit logging](docs/audit.md) for the complete schema, permissions, rotation, redaction rules, anonymized examples, and confidentiality limits.
 
 Each agent must define exactly one execution mode:
 

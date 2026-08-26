@@ -57,8 +57,9 @@ type resizeRequest struct {
 }
 
 type resizeFailure struct {
-	Name string
-	Err  error
+	SessionID string
+	Name      string
+	Err       error
 }
 
 type resizeFinishedMsg struct {
@@ -93,11 +94,19 @@ func deliverInput(
 	sessionID string,
 	value string,
 	event adapters.Event,
+	gates ...*deliveryGate,
 ) tea.Cmd {
 	return func() tea.Msg {
 		message := inputDeliveredMsg{
 			SessionID: sessionID,
 			Event:     event.Clone(),
+		}
+		if len(gates) > 0 {
+			if !gates[0].beginOperation() {
+				message.Err = errAuditUnavailable
+				return message
+			}
+			defer gates[0].endOperation()
 		}
 		decisions, ok := backend.(DecisionBackend)
 		if !ok {
@@ -117,12 +126,20 @@ func deliverAutomaticDecision(
 	event adapters.Event,
 	evaluation policy.Evaluation,
 	decision adapters.Decision,
+	gates ...*deliveryGate,
 ) tea.Cmd {
 	return func() tea.Msg {
 		message := automaticDecisionFinishedMsg{
 			SessionID:  event.SessionID,
 			Event:      event.Clone(),
 			Evaluation: evaluation,
+		}
+		if len(gates) > 0 {
+			if !gates[0].beginOperation() {
+				message.Err = errAuditUnavailable
+				return message
+			}
+			defer gates[0].endOperation()
 		}
 		automatic, ok := backend.(AutomaticDecisionBackend)
 		if !ok {
@@ -210,7 +227,11 @@ func resizeSessions(
 		failures := make([]resizeFailure, 0)
 		for index, err := range errorsByIndex {
 			if err != nil {
-				failures = append(failures, resizeFailure{Name: copied[index].Name, Err: err})
+				failures = append(failures, resizeFailure{
+					SessionID: copied[index].SessionID,
+					Name:      copied[index].Name,
+					Err:       err,
+				})
 			}
 		}
 		return resizeFinishedMsg{Generation: generation, Failures: failures}

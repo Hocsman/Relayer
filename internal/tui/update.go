@@ -7,6 +7,7 @@ import (
 	"unicode"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
+	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
 	tea "github.com/charmbracelet/bubbletea"
@@ -121,12 +122,31 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case session.Error:
 		if paneIndex := m.paneIndex(msg.SessionID); paneIndex >= 0 {
+			m.recordBackendError(paneIndex, "backend_event")
 			m.appendLog(fmt.Sprintf("Erreur terminal de %s: %v", m.panes[paneIndex].name, msg.Err))
 		}
 	case inputDeliveredMsg:
 		m.writePending = false
 		paneIndex := m.paneIndex(msg.SessionID)
 		if paneIndex < 0 {
+			break
+		}
+		outcome := audit.OutcomeSucceeded
+		reason := "delivery_succeeded"
+		if msg.Err != nil {
+			outcome = audit.OutcomeFailed
+			reason = "delivery_failed"
+		}
+		if !m.recordDelivery(
+			paneIndex,
+			msg.Event,
+			audit.DecisionAsk,
+			audit.DecisionByHuman,
+			outcome,
+			reason,
+		) {
+			// Delivery has already been attempted. Never retry after losing the
+			// synchronized audit boundary, regardless of the transport result.
 			break
 		}
 		if msg.Err != nil {
@@ -149,18 +169,35 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if paneIndex < 0 {
 			if m.attachInProgress(msg.SessionID) {
 				m.attachPending = ""
+				m.attachFinishedAudited = false
+				m.attachReturned = false
 			}
 			break
 		}
+		if !m.attachInProgress(msg.SessionID) || m.attachReturned {
+			break
+		}
+		m.attachReturned = true
 		if msg.Err != nil {
+			// Even if this post-attach write fails, Resync remains mandatory: it
+			// reconciles lifecycle/prompt state but cannot send a decision.
+			m.recordAttach(paneIndex, audit.KindAttachFinished, audit.OutcomeFailed, "attach_client_failed")
+			m.attachFinishedAudited = true
 			m.appendLog(fmt.Sprintf("Session tmux %s interrompue: %v", m.panes[paneIndex].name, msg.Err))
 		} else {
 			m.appendLog(fmt.Sprintf("Retour de la session tmux %s", m.panes[paneIndex].name))
 		}
 		attachable, ok := m.backend.(AttachableBackend)
 		if !ok {
+			if !m.attachFinishedAudited {
+				m.recordAttach(paneIndex, audit.KindAttachFinished, audit.OutcomeFailed, "attach_resync_backend_missing")
+				m.attachFinishedAudited = true
+			}
+			m.recordBackendError(paneIndex, "attach_resync_backend_missing")
 			m.appendLog("Resynchronisation tmux impossible: backend incompatible")
 			m.attachPending = ""
+			m.attachFinishedAudited = false
+			m.attachReturned = false
 			commands = append(commands, m.freezeResyncFailure(paneIndex))
 			break
 		}
@@ -176,24 +213,38 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if paneIndex < 0 {
 			if m.attachInProgress(msg.SessionID) {
 				m.attachPending = ""
+				m.attachFinishedAudited = false
+				m.attachReturned = false
 			}
 			break
 		}
-		if m.attachInProgress(msg.SessionID) {
-			m.attachPending = ""
+		if !m.attachInProgress(msg.SessionID) || !m.attachReturned {
+			break
 		}
+		m.attachPending = ""
 		m.refreshPaneOutput(paneIndex)
 		if msg.Err != nil {
+			if !m.attachFinishedAudited {
+				m.recordAttach(paneIndex, audit.KindAttachFinished, audit.OutcomeFailed, "detach_resync_failed")
+			}
+			m.recordBackendError(paneIndex, "detach_resync_failed")
 			m.appendLog(fmt.Sprintf("Resynchronisation de %s impossible: %v", m.panes[paneIndex].name, msg.Err))
 			commands = append(commands, m.freezeResyncFailure(paneIndex))
 		} else {
+			if !m.attachFinishedAudited {
+				m.recordAttach(paneIndex, audit.KindAttachFinished, audit.OutcomeSucceeded, "detach_resynced")
+			}
 			commands = append(commands, m.reconcileEvent(msg.SessionID, msg.Pending))
 			m.appendLog(fmt.Sprintf("%s resynchronisé (sortie, état, prompts et taille)", m.panes[paneIndex].name))
 		}
+		m.attachFinishedAudited = false
+		m.attachReturned = false
 	case resizeFinishedMsg:
 		m.resizeInFlight = false
 		if m.backend.Context().Err() == nil {
 			for _, failure := range msg.Failures {
+				paneIndex := m.paneIndex(failure.SessionID)
+				m.recordBackendError(paneIndex, "resize_failed")
 				m.appendLog("Redimensionnement de " + failure.Name + " impossible: " + failure.Err.Error())
 			}
 		}
@@ -210,7 +261,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleActionableEvent(observed adapters.Event) tea.Cmd {
-	if !observed.Actionable() || m.eventResolved(observed.SessionID, observed.ID) {
+	if m.auditUnavailable || !observed.Actionable() || m.eventResolved(observed.SessionID, observed.ID) {
 		return nil
 	}
 	paneIndex := m.paneIndex(observed.SessionID)
@@ -246,6 +297,8 @@ func (m *Model) handleActionableEvent(observed adapters.Event) tea.Cmd {
 			if m.eventResolved(observed.SessionID, observed.ID) {
 				return nil
 			}
+		} else if !m.recordBackendError(paneIndex, "pending_snapshot_failed") {
+			return nil
 		}
 	}
 
@@ -257,7 +310,15 @@ func (m *Model) handleActionableEvent(observed adapters.Event) tea.Cmd {
 		m.deferredEvents[sessionKey] = observed.Clone()
 		return nil
 	}
+	if m.panes[paneIndex].blocked && m.panes[paneIndex].prompt.ID == observed.ID {
+		return nil
+	}
 
+	// Only the canonical occurrence from PendingEvent reaches the audit. This
+	// keeps delayed channel duplicates and superseded prompts out of the trail.
+	if !m.recordEventDetected(paneIndex, observed) {
+		return nil
+	}
 	evaluation := m.policy.Evaluate(observed.Clone())
 	if requiresHumanSafety(observed) {
 		evaluation.Action = policy.ActionAsk
@@ -272,24 +333,37 @@ func (m *Model) handleActionableEvent(observed adapters.Event) tea.Cmd {
 			evaluation.Reason = policy.ReasonDryRun
 		}
 	}
+	snapshotUnavailable := !snapshotKnown && m.backendSupportsSnapshots()
+	if snapshotUnavailable {
+		// Without the authoritative occurrence snapshot, a configured allow or
+		// deny is not an effective automatic decision.
+		evaluation.Action = policy.ActionAsk
+		evaluation.Automatic = false
+	}
+	if !m.recordPolicyEvaluation(paneIndex, observed, evaluation) {
+		return nil
+	}
 
 	decision, automatic := automaticDecision(evaluation)
-	if !automatic || !snapshotKnown && m.backendSupportsSnapshots() {
+	if !automatic || snapshotUnavailable {
 		status := "ask"
 		if evaluation.DryRun {
 			status = "dry_run"
-		} else if !snapshotKnown && m.backendSupportsSnapshots() {
+		} else if snapshotUnavailable {
 			status = "snapshot_unavailable"
 		}
 		return m.queueHumanEvent(observed, evaluation, status)
 	}
 
+	if !m.recordDecision(paneIndex, observed, decisionForAdapter(decision), audit.DecisionByPolicy) {
+		return nil
+	}
 	key := semanticEventKey(observed.SessionID, observed.ID)
 	m.automaticInFlight[key] = automaticAttempt{event: observed.Clone(), evaluation: evaluation}
 	m.automaticBySession[sessionKey] = key
 	m.panes[paneIndex].policyTag = "AUTO EN COURS"
 	m.appendPolicyLog(paneIndex, observed, evaluation, "in_flight")
-	return deliverAutomaticDecision(m.backend, observed, evaluation, decision)
+	return deliverAutomaticDecision(m.backend, observed, evaluation, decision, m.auditGate)
 }
 
 func (m *Model) backendSupportsSnapshots() bool {
@@ -312,6 +386,9 @@ func automaticDecision(evaluation policy.Evaluation) (adapters.Decision, bool) {
 }
 
 func (m *Model) queueHumanEvent(event adapters.Event, evaluation policy.Evaluation, status string) tea.Cmd {
+	if m.auditUnavailable {
+		return nil
+	}
 	paneIndex := m.paneIndex(event.SessionID)
 	if paneIndex < 0 || m.panes[paneIndex].exited || m.eventResolved(event.SessionID, event.ID) {
 		return nil
@@ -368,6 +445,24 @@ func (m *Model) applyAutomaticDecisionResult(message automaticDecisionFinishedMs
 	if active, activeExists := m.automaticBySession[sessionKey]; !activeExists || active != key {
 		return nil
 	}
+	decision, _ := automaticDecision(attempt.evaluation)
+	outcome := audit.OutcomeSucceeded
+	reason := "delivery_succeeded"
+	if message.Err != nil {
+		outcome, reason = automaticDeliveryAudit(message.Err)
+	}
+	if !m.recordDelivery(
+		m.paneIndex(message.SessionID),
+		attempt.event,
+		decisionForAdapter(decision),
+		audit.DecisionByPolicy,
+		outcome,
+		reason,
+	) {
+		// The backend call has already returned. Losing audit durability here
+		// makes any retry unsafe, even when the error looks recoverable.
+		return nil
+	}
 	delete(m.automaticInFlight, key)
 	delete(m.automaticBySession, sessionKey)
 
@@ -415,6 +510,12 @@ func (m *Model) applyAutomaticDecisionResult(message automaticDecisionFinishedMs
 	}
 	fallback.Action = policy.ActionAsk
 	fallback.Automatic = false
+	if candidate.ID != attempt.event.ID {
+		if !m.recordEventDetected(paneIndex, candidate) ||
+			!m.recordPolicyEvaluation(paneIndex, candidate, fallback) {
+			return nil
+		}
+	}
 	if status == "stale" && candidate.ID == attempt.event.ID {
 		return m.freezePolicyDelivery(paneIndex, candidate)
 	}
@@ -448,6 +549,9 @@ func (m *Model) freezePolicyDelivery(paneIndex int, event adapters.Event) tea.Cm
 }
 
 func (m *Model) freezeResyncFailure(paneIndex int) tea.Cmd {
+	if m.auditUnavailable {
+		return nil
+	}
 	if paneIndex < 0 || paneIndex >= len(m.panes) || m.panes[paneIndex].exited {
 		return nil
 	}
@@ -659,12 +763,20 @@ func (m *Model) reconcileEvent(sessionID string, pending *adapters.Event) tea.Cm
 }
 
 func (m *Model) submitInput() tea.Cmd {
+	if m.auditUnavailable {
+		m.input.Reset()
+		m.input.Blur()
+		return nil
+	}
 	paneIndex := m.paneIndex(m.inputTarget)
 	if paneIndex < 0 {
 		return nil
 	}
 	targetID := m.inputTarget
 	event := m.panes[paneIndex].prompt.Clone()
+	if !m.recordDecision(paneIndex, event, audit.DecisionAsk, audit.DecisionByHuman) {
+		return nil
+	}
 	value := m.input.Value()
 
 	// Clear the old waiting state before the asynchronous write. This lets an
@@ -679,7 +791,7 @@ func (m *Model) submitInput() tea.Cmd {
 	m.writePending = true
 	m.panes[paneIndex].policyTag = "ASK EN COURS"
 	m.appendLog(fmt.Sprintf("Réponse transmise à %s", m.panes[paneIndex].name))
-	return deliverInput(m.backend, targetID, value, event)
+	return deliverInput(m.backend, targetID, value, event, m.auditGate)
 }
 
 func (m *Model) applyProcessExit(event adapters.Event) tea.Cmd {
@@ -687,6 +799,9 @@ func (m *Model) applyProcessExit(event adapters.Event) tea.Cmd {
 	if paneIndex < 0 || m.panes[paneIndex].exited {
 		return nil
 	}
+	// The canonical adapter event is the only source of a session_finished
+	// fact. Legacy Exited messages only reduce UI state and never duplicate it.
+	m.recordProcessExit(paneIndex, event)
 	m.clearAutomaticState(event.SessionID)
 	m.refreshPaneOutput(paneIndex)
 	m.panes[paneIndex].exited = true
@@ -721,6 +836,9 @@ func (m *Model) beginAttach(paneIndex int) tea.Cmd {
 	if pane.backend != "tmux" {
 		return nil
 	}
+	if m.auditUnavailable {
+		return nil
+	}
 	if pane.policyFrozen {
 		m.appendLog(fmt.Sprintf("Attachement de %s refusé: livraison de politique incertaine; arrêt requis", pane.name))
 		return nil
@@ -739,32 +857,48 @@ func (m *Model) beginAttach(paneIndex int) tea.Cmd {
 	}
 	attachable, ok := m.backend.(AttachableBackend)
 	if !ok {
+		m.recordBackendError(paneIndex, "attach_backend_incompatible")
 		m.appendLog(fmt.Sprintf("Attachement de %s impossible: backend tmux incompatible", pane.name))
 		return nil
 	}
 	if _, ok := m.backend.(EventSnapshotBackend); !ok {
+		m.recordBackendError(paneIndex, "attach_snapshot_unavailable")
 		m.appendLog(fmt.Sprintf("Attachement de %s impossible: snapshot d'événement indisponible", pane.name))
+		return nil
+	}
+	if !m.recordAttach(paneIndex, audit.KindAttachStarted, audit.OutcomeStarted, "attach_requested") {
 		return nil
 	}
 	command, err := attachable.AttachCommand(m.backend.Context(), pane.sessionID)
 	if err != nil {
+		m.recordAttachFailure(paneIndex, "attach_command_failed")
 		m.appendLog(fmt.Sprintf("Attachement de %s impossible: %v", pane.name, err))
 		return nil
 	}
 	if command == nil {
+		m.recordAttachFailure(paneIndex, "attach_command_empty")
 		m.appendLog(fmt.Sprintf("Attachement de %s impossible: commande vide", pane.name))
 		return nil
 	}
 	sessionID := pane.sessionID
 	m.attachPending = sessionID
+	m.attachFinishedAudited = false
+	m.attachReturned = false
 	m.appendLog(fmt.Sprintf("Ouverture interactive de %s via tmux", pane.name))
 	executor := m.execProcess
 	if executor == nil {
 		executor = tea.ExecProcess
 	}
-	return executor(command, func(err error) tea.Msg {
+	execute := executor(command, func(err error) tea.Msg {
 		return attachFinishedMsg{SessionID: sessionID, Err: err}
 	})
+	return func() tea.Msg {
+		if !m.auditGate.beginOperation() {
+			return attachFinishedMsg{SessionID: sessionID, Err: errAuditUnavailable}
+		}
+		defer m.auditGate.endOperation()
+		return execute()
+	}
 }
 
 func (m *Model) attachInProgress(sessionID string) bool {

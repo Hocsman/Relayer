@@ -15,6 +15,7 @@ import (
 
 	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
+	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
@@ -80,6 +81,33 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 	for _, warning := range resolution.Warnings {
 		fmt.Fprintln(diagnostics, warning)
 	}
+	auditor, err := initializeAudit(configuration.Audit, dependencies)
+	if err != nil {
+		return fmt.Errorf("initialisation du journal d'audit: %w", err)
+	}
+	defer func() {
+		outcome := audit.OutcomeSucceeded
+		if returnErr != nil {
+			outcome = audit.OutcomeFailed
+		}
+		if recordErr := auditor.Record(audit.Entry{
+			Kind:       audit.KindRunFinished,
+			DecisionBy: audit.DecisionBySystem,
+			Outcome:    outcome,
+		}); recordErr != nil {
+			joinRunError(&returnErr, "écriture de la fin du run dans l'audit", recordErr)
+		}
+		if closeErr := auditor.Close(); closeErr != nil {
+			joinRunError(&returnErr, "fermeture du journal d'audit", closeErr)
+		}
+	}()
+	if err := auditor.Record(audit.Entry{
+		Kind:       audit.KindRunStarted,
+		DecisionBy: audit.DecisionBySystem,
+		Outcome:    audit.OutcomeStarted,
+	}); err != nil {
+		return fmt.Errorf("écriture du démarrage du run dans l'audit: %w", err)
+	}
 	initialWidth, initialHeight := initialTerminalSize()
 
 	events := make(chan session.Event, defaultEventCapacity)
@@ -93,32 +121,102 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 		dependencies,
 	)
 	if err != nil {
+		if recordErr := auditor.Record(audit.Entry{
+			Kind:       audit.KindBackendError,
+			DecisionBy: audit.DecisionBySystem,
+			Outcome:    audit.OutcomeFailed,
+			Reason:     "backend_initialization_failed",
+		}); recordErr != nil {
+			return errors.Join(err, fmt.Errorf("audit de l'échec du backend: %w", recordErr))
+		}
 		return err
 	}
+	startedInfos := make([]session.Info, 0, len(resolution.Specs))
 	defer func() {
+		for _, info := range startedInfos {
+			if recordErr := auditor.Record(audit.Entry{
+				Kind:       audit.KindSupervisionFinished,
+				SessionID:  info.ID,
+				AgentID:    info.ID,
+				Backend:    info.Backend,
+				Adapter:    info.Adapter,
+				DecisionBy: audit.DecisionBySystem,
+				Outcome:    audit.OutcomeFinished,
+				Reason:     "supervision_ended",
+			}); recordErr != nil {
+				joinRunError(&returnErr, "écriture de la fin de supervision dans l'audit", recordErr)
+			}
+		}
 		closeContext, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
-		if closeErr := router.Close(closeContext); closeErr != nil {
-			if returnErr == nil {
-				returnErr = fmt.Errorf("fermeture des backends: %w", closeErr)
-			} else {
-				returnErr = errors.Join(returnErr, fmt.Errorf("fermeture des backends: %w", closeErr))
+		closeErr := router.Close(closeContext)
+		if closeErr != nil {
+			joinRunError(&returnErr, "fermeture des backends", closeErr)
+		}
+		for _, info := range startedInfos {
+			closed, known := router.backendCloseStatus(info.Backend)
+			cleanupOutcome, cleanupReason := auditCleanupResult(
+				info,
+				configuration.Sessions,
+				closed,
+				known,
+			)
+			if recordErr := auditor.Record(audit.Entry{
+				Kind:       audit.KindSessionCleanup,
+				SessionID:  info.ID,
+				AgentID:    info.ID,
+				Backend:    info.Backend,
+				Adapter:    info.Adapter,
+				DecisionBy: audit.DecisionBySystem,
+				Outcome:    cleanupOutcome,
+				Reason:     cleanupReason,
+			}); recordErr != nil {
+				joinRunError(&returnErr, "écriture du nettoyage des sessions dans l'audit", recordErr)
 			}
 		}
 	}()
 
-	panes, infos, err := startAgentSessions(
+	panes, infos, err := startAgentSessionsObserved(
 		router,
 		resolution.Specs,
 		initialWidth,
 		initialHeight,
+		func(spec agent.Spec, info session.Info) error {
+			startedInfos = append(startedInfos, info)
+			return auditor.Record(audit.Entry{
+				Kind:       audit.KindSessionStarted,
+				SessionID:  info.ID,
+				AgentID:    spec.ID,
+				Backend:    info.Backend,
+				Adapter:    info.Adapter,
+				DecisionBy: audit.DecisionBySystem,
+				Outcome:    audit.OutcomeStarted,
+			})
+		},
 	)
 	if err != nil {
+		if recordErr := auditor.Record(audit.Entry{
+			Kind:       audit.KindBackendError,
+			DecisionBy: audit.DecisionBySystem,
+			Outcome:    audit.OutcomeFailed,
+			Reason:     "session_start_failed",
+		}); recordErr != nil {
+			return errors.Join(err, fmt.Errorf("audit de l'échec de démarrage: %w", recordErr))
+		}
 		return err
 	}
 
 	startupLogs := buildStartupLogs(configuration, resolution, infos, options.configPath)
-	application, err := tui.NewModelWithPolicy(
+	if auditor.Enabled() {
+		startupLogs = append(startupLogs, fmt.Sprintf(
+			"Audit local: mode=%s, fichier=%s",
+			configuration.Audit.Mode,
+			auditor.Path(),
+		))
+	} else {
+		startupLogs = append(startupLogs, "Audit local désactivé")
+	}
+	application, err := tui.NewModelWithPolicyAndAudit(
 		&tuiBackendAdapter{router: router},
 		events,
 		panes,
@@ -126,6 +224,7 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 		initialHeight,
 		startupLogs,
 		policyEngine,
+		auditor,
 	)
 	if err != nil {
 		return err
@@ -137,6 +236,54 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 	)
 	_, err = program.Run()
 	return err
+}
+
+func initializeAudit(configuration audit.Config, dependencies backendDependencies) (*audit.Recorder, error) {
+	if dependencies.newAudit != nil {
+		recorder, err := dependencies.newAudit(configuration)
+		if err != nil {
+			return nil, err
+		}
+		if recorder == nil {
+			return nil, errors.New("fabrique d'audit ayant retourné un enregistreur nil")
+		}
+		return recorder, nil
+	}
+	if configuration.Enabled && configuration.Mode != audit.ModeOff {
+		return nil, errors.New("fabrique d'audit indisponible")
+	}
+	return audit.NewRecorder(configuration, nil, nil, nil)
+}
+
+func joinRunError(target *error, operation string, err error) {
+	if err == nil {
+		return
+	}
+	wrapped := fmt.Errorf("%s: %w", operation, err)
+	if *target == nil {
+		*target = wrapped
+		return
+	}
+	*target = errors.Join(*target, wrapped)
+}
+
+func auditCleanupResult(
+	info session.Info,
+	sessionPolicy config.SessionPolicy,
+	closed bool,
+	known bool,
+) (audit.Outcome, string) {
+	if !known || !closed {
+		// Backend.Close is aggregate: without a per-session result, never claim
+		// that this particular session was removed, persisted, or failed.
+		return audit.OutcomeUnknown, "backend_cleanup_incomplete"
+	}
+	if strings.EqualFold(info.Backend, agent.BackendTmux) && sessionPolicy.PersistOnExit {
+		// This records the configured intent only; it does not assert that a
+		// process which may already have exited is still alive.
+		return audit.OutcomeSkipped, "persistence_requested"
+	}
+	return audit.OutcomeSucceeded, "backend_cleanup_completed"
 }
 
 func validatePolicyAgentIDs(configuration policy.Config, specs []agent.Spec) error {
@@ -174,6 +321,18 @@ func startAgentSessions(
 	initialWidth int,
 	initialHeight int,
 ) ([]tui.Pane, []session.Info, error) {
+	return startAgentSessionsObserved(owner, specs, initialWidth, initialHeight, nil)
+}
+
+type sessionStartedObserver func(agent.Spec, session.Info) error
+
+func startAgentSessionsObserved(
+	owner sessionStarter,
+	specs []agent.Spec,
+	initialWidth int,
+	initialHeight int,
+	observer sessionStartedObserver,
+) ([]tui.Pane, []session.Info, error) {
 	panes := make([]tui.Pane, 0, len(specs))
 	infos := make([]session.Info, 0, len(specs))
 	for index, spec := range specs {
@@ -193,6 +352,14 @@ func startAgentSessions(
 			_ = owner.Close(closeContext)
 			cancel()
 			return nil, nil, fmt.Errorf("démarrage de l'agent %q: %w", spec.ID, startErr)
+		}
+		if observer != nil {
+			if observeErr := observer(spec, info); observeErr != nil {
+				closeContext, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+				_ = owner.Close(closeContext)
+				cancel()
+				return nil, nil, fmt.Errorf("audit du démarrage de l'agent %q: %w", spec.ID, observeErr)
+			}
 		}
 		infos = append(infos, info)
 		panes = append(panes, tui.Pane{

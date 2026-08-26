@@ -214,12 +214,13 @@ func (m *Model) resize(width, height int, scheduleContextual bool) tea.Cmd {
 		return m.startResize(contextual)
 	}
 
-	for _, request := range requests {
+	for index, request := range requests {
 		if err := m.backend.Resize(
 			request.SessionID,
 			request.Columns,
 			request.Rows,
 		); err != nil && m.backend.Context().Err() == nil {
+			m.recordBackendError(index, "resize_failed")
 			m.appendLog("Redimensionnement de " + request.Name + " impossible: " + err.Error())
 		}
 	}

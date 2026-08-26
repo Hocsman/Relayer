@@ -8,6 +8,12 @@ policies:
   default_action: ask
   dry_run: false
   rules: []
+audit:
+  enabled: true
+  mode: metadata
+  path: ""
+  max_file_size_mb: 10
+  max_files: 5
 agents: []
 intercept_patterns:
   - pattern: '(?i)overwrite.*\[y/n\]'

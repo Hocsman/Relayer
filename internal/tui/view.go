@@ -83,13 +83,16 @@ func (m *Model) renderAgentArea() string {
 func (m *Model) renderAgentPane(cell Cell) string {
 	index := cell.AgentIndex
 	pane := m.panes[index]
-	style := agentPanelStyle(index, pane.blocked)
+	style := agentPanelStyle(index, pane.blocked || m.auditUnavailable)
 	innerWidth := maxInt(1, cell.Outer.Width-style.GetHorizontalFrameSize())
 	innerHeight := maxInt(1, cell.Outer.Height-style.GetVerticalFrameSize())
 
 	status := "EN COURS"
 	statusColor := agentColor(index)
-	if pane.policyFrozen {
+	if m.auditUnavailable && !pane.exited {
+		status = "AUDIT INDISPONIBLE"
+		statusColor = colorBlocked
+	} else if pane.policyFrozen {
 		status = "LIVRAISON INCERTAINE"
 		statusColor = colorBlocked
 	} else if pane.blocked {
@@ -123,7 +126,7 @@ func (m *Model) renderAgentPane(cell Cell) string {
 }
 
 func (m *Model) renderSupervisorPane(outer Rect) string {
-	intercepting := m.hasBlockedPane()
+	intercepting := m.hasBlockedPane() || m.auditUnavailable
 	style := supervisorPanelStyle(intercepting)
 	innerWidth := maxInt(1, outer.Width-style.GetHorizontalFrameSize())
 	innerHeight := maxInt(1, outer.Height-style.GetVerticalFrameSize())
@@ -132,7 +135,9 @@ func (m *Model) renderSupervisorPane(outer Rect) string {
 	if m.policyConfig.DryRun {
 		title = "SUPERVISEUR  •  DRY RUN"
 	}
-	if m.hasFrozenPane() {
+	if m.auditUnavailable {
+		title = "SUPERVISEUR  •  AUDIT INDISPONIBLE  •  ARRÊT REQUIS"
+	} else if m.hasFrozenPane() {
 		title = "SUPERVISEUR  •  LIVRAISON INCERTAINE  •  ARRÊT REQUIS"
 	} else if intercepting {
 		title = "SUPERVISEUR  •  ACTION HUMAINE REQUISE"

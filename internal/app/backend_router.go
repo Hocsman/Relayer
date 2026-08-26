@@ -326,6 +326,19 @@ func (r *backendRouter) Close(ctx context.Context) error {
 	return closeErr
 }
 
+// backendCloseStatus reports the last durable Close outcome for one concrete
+// backend. It lets the audit trail remain conservative in mixed PTY/tmux runs
+// instead of projecting one backend failure onto every session.
+func (r *backendRouter) backendCloseStatus(name string) (succeeded bool, known bool) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if _, exists := r.backends[name]; !exists {
+		return false, false
+	}
+	return r.closedBackends[name], true
+}
+
 func (r *backendRouter) BeginShutdown() {
 	r.cancel()
 	r.mu.RLock()

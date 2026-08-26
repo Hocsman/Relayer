@@ -15,6 +15,7 @@ import (
 
 	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
+	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/intercept"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"gopkg.in/yaml.v3"
@@ -36,6 +37,7 @@ type Result struct {
 	Agents   []agent.Spec
 	Patterns []intercept.Pattern
 	Policies policy.Config
+	Audit    audit.Config
 	Created  bool
 }
 
@@ -74,6 +76,7 @@ type versionOneFile struct {
 	Backend           *string                  `yaml:"backend"`
 	Sessions          *configuredSessionPolicy `yaml:"sessions,omitempty"`
 	Policies          *configuredPolicies      `yaml:"policies,omitempty"`
+	Audit             *configuredAudit         `yaml:"audit,omitempty"`
 	Agents            *[]configuredAgent       `yaml:"agents"`
 	InterceptPatterns *[]ConfigPattern         `yaml:"intercept_patterns"`
 }
@@ -82,6 +85,14 @@ type configuredPolicies struct {
 	DefaultAction *string                 `yaml:"default_action,omitempty"`
 	DryRun        *bool                   `yaml:"dry_run,omitempty"`
 	Rules         *[]configuredPolicyRule `yaml:"rules,omitempty"`
+}
+
+type configuredAudit struct {
+	Enabled       *bool   `yaml:"enabled,omitempty"`
+	Mode          *string `yaml:"mode,omitempty"`
+	Path          *string `yaml:"path,omitempty"`
+	MaxFileSizeMB *int    `yaml:"max_file_size_mb,omitempty"`
+	MaxFiles      *int    `yaml:"max_files,omitempty"`
 }
 
 type configuredPolicyRule struct {
@@ -117,6 +128,7 @@ type decodedFile struct {
 	Agents   []configuredAgent
 	Patterns []ConfigPattern
 	Policies policy.Config
+	Audit    audit.Config
 }
 
 // Load reads path before any PTY is started. It accepts both a direct list and
@@ -159,6 +171,9 @@ func Load(path string) (Result, error) {
 		if err != nil {
 			return Result{}, fmt.Errorf("configuration %s invalide: %w", path, err)
 		}
+		if configured.Audit.Path != "" && !filepath.IsAbs(configured.Audit.Path) {
+			configured.Audit.Path = filepath.Join(baseDir, configured.Audit.Path)
+		}
 	}
 
 	return Result{
@@ -169,6 +184,7 @@ func Load(path string) (Result, error) {
 		Agents:   agents,
 		Patterns: patterns,
 		Policies: configured.Policies,
+		Audit:    configured.Audit,
 		Created:  created,
 	}, nil
 }
@@ -191,11 +207,13 @@ func createDefault(path string) (bool, error) {
 	backend := agent.BackendPTY
 	agents := []configuredAgent{}
 	defaultPolicies := configuredPoliciesFrom(policy.DefaultConfig())
+	defaultAudit := configuredAuditFrom(audit.DefaultConfig())
 	payload, err := yaml.Marshal(versionOneFile{
 		Version:           &version,
 		Backend:           &backend,
 		Sessions:          configuredSessionPolicyPointer(defaultSessionPolicy()),
 		Policies:          &defaultPolicies,
+		Audit:             &defaultAudit,
 		Agents:            &agents,
 		InterceptPatterns: &configured,
 	})
@@ -242,6 +260,22 @@ func createDefault(path string) (bool, error) {
 		return createExclusively(path, payload, err)
 	}
 	return true, nil
+}
+
+func configuredAuditFrom(configuration audit.Config) configuredAudit {
+	mode := string(configuration.Mode)
+	path := configuration.Path
+	return configuredAudit{
+		Enabled:       boolPointer(configuration.Enabled),
+		Mode:          &mode,
+		Path:          &path,
+		MaxFileSizeMB: intPointer(configuration.MaxFileSizeMB),
+		MaxFiles:      intPointer(configuration.MaxFiles),
+	}
+}
+
+func intPointer(value int) *int {
+	return &value
 }
 
 func configuredSessionPolicyPointer(policy SessionPolicy) *configuredSessionPolicy {
@@ -358,6 +392,39 @@ func decodePolicies(configured *configuredPolicies) (policy.Config, error) {
 	return result, nil
 }
 
+func decodeAudit(configured *configuredAudit) (audit.Config, error) {
+	if configured == nil {
+		return disabledAuditConfig(), nil
+	}
+	result := audit.DefaultConfig()
+	if configured.Enabled != nil {
+		result.Enabled = *configured.Enabled
+	}
+	if configured.Mode != nil {
+		result.Mode = audit.Mode(strings.ToLower(strings.TrimSpace(*configured.Mode)))
+	}
+	if configured.Path != nil {
+		result.Path = strings.TrimSpace(*configured.Path)
+	}
+	if configured.MaxFileSizeMB != nil {
+		result.MaxFileSizeMB = *configured.MaxFileSizeMB
+	}
+	if configured.MaxFiles != nil {
+		result.MaxFiles = *configured.MaxFiles
+	}
+	if err := audit.Validate(result); err != nil {
+		return audit.Config{}, fmt.Errorf("audit invalide: %w", err)
+	}
+	return result, nil
+}
+
+func disabledAuditConfig() audit.Config {
+	result := audit.DefaultConfig()
+	result.Enabled = false
+	result.Mode = audit.ModeOff
+	return result
+}
+
 func createExclusively(path string, payload []byte, linkErr error) (bool, error) {
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if errors.Is(err, os.ErrExist) {
@@ -410,6 +477,7 @@ func decode(data []byte) (decodedFile, error) {
 			Sessions: defaultSessionPolicy(),
 			Patterns: direct,
 			Policies: policy.DefaultConfig(),
+			Audit:    disabledAuditConfig(),
 		}, nil
 	case yaml.MappingNode:
 		if mappingHasKey(root, "version") {
@@ -430,6 +498,7 @@ func decode(data []byte) (decodedFile, error) {
 			Sessions: defaultSessionPolicy(),
 			Patterns: wrapped.InterceptPatterns,
 			Policies: policy.DefaultConfig(),
+			Audit:    disabledAuditConfig(),
 		}, nil
 	default:
 		return decodedFile{}, errors.New("la racine YAML doit être une liste ou un objet de configuration")
@@ -492,6 +561,10 @@ func decodeVersionOne(data []byte, root *yaml.Node) (decodedFile, error) {
 	if _, err := policy.New(configuredPolicy); err != nil {
 		return decodedFile{}, fmt.Errorf("policies invalides: %w", err)
 	}
+	configuredAudit, err := decodeAudit(configured.Audit)
+	if err != nil {
+		return decodedFile{}, err
+	}
 
 	return decodedFile{
 		Version:  *configured.Version,
@@ -500,6 +573,7 @@ func decodeVersionOne(data []byte, root *yaml.Node) (decodedFile, error) {
 		Agents:   append([]configuredAgent(nil), (*configured.Agents)...),
 		Patterns: append([]ConfigPattern(nil), (*configured.InterceptPatterns)...),
 		Policies: configuredPolicy,
+		Audit:    configuredAudit,
 	}, nil
 }
 
@@ -566,12 +640,41 @@ func validateVersionOneNode(root *yaml.Node) error {
 			if err := validatePoliciesNode(value); err != nil {
 				return err
 			}
+		case "audit":
+			if err := validateAuditNode(value); err != nil {
+				return err
+			}
 		case "agents":
 			if err := validateAgentNode(value); err != nil {
 				return err
 			}
 		case "intercept_patterns":
 			if err := validatePatternNode(value); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateAuditNode(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return errors.New("audit doit être un objet YAML")
+	}
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		name := node.Content[index].Value
+		value := dereferenceAlias(node.Content[index+1])
+		switch name {
+		case "enabled":
+			if err := requireScalar(value, "!!bool", "audit.enabled doit être un booléen YAML"); err != nil {
+				return err
+			}
+		case "mode", "path":
+			if err := requireScalar(value, "!!str", "audit."+name+" doit être une chaîne YAML"); err != nil {
+				return err
+			}
+		case "max_file_size_mb", "max_files":
+			if err := requireScalar(value, "!!int", "audit."+name+" doit être un entier YAML"); err != nil {
 				return err
 			}
 		}

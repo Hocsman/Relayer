@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
+	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -68,6 +69,11 @@ type Model struct {
 	events       <-chan session.Event
 	policy       PolicyEvaluator
 	policyConfig policy.Config
+	auditor      *audit.Recorder
+	auditGate    *deliveryGate
+	// auditUnavailable is terminal for this Model. Once a synchronous audit
+	// write fails, no further decision or attachment may reach a backend.
+	auditUnavailable bool
 
 	panes      []agentPane
 	supervisor viewport.Model
@@ -83,7 +89,11 @@ type Model struct {
 	inputTarget   string
 	writePending  bool
 	attachPending string
-	execProcess   execProcessFunc
+	// attachFinishedAudited prevents a failed terminal client followed by a
+	// Resync callback from producing two terminal records for one attachment.
+	attachFinishedAudited bool
+	attachReturned        bool
+	execProcess           execProcessFunc
 
 	resizeGeneration uint64
 	resizeInFlight   bool
@@ -132,11 +142,43 @@ func NewModelWithPolicy(
 	startupLogs []string,
 	evaluator PolicyEvaluator,
 ) (*Model, error) {
+	auditor, err := newDisabledAuditRecorder()
+	if err != nil {
+		return nil, err
+	}
+	return NewModelWithPolicyAndAudit(
+		backend,
+		events,
+		panes,
+		initialWidth,
+		initialHeight,
+		startupLogs,
+		evaluator,
+		auditor,
+	)
+}
+
+// NewModelWithPolicyAndAudit enables the synchronous local audit trail. The
+// caller retains ownership of auditor and must close it after Bubble Tea and
+// the backends have completed their lifecycle.
+func NewModelWithPolicyAndAudit(
+	backend Backend,
+	events <-chan session.Event,
+	panes []Pane,
+	initialWidth int,
+	initialHeight int,
+	startupLogs []string,
+	evaluator PolicyEvaluator,
+	auditor *audit.Recorder,
+) (*Model, error) {
 	if backend == nil {
 		return nil, errors.New("backend TUI nil")
 	}
 	if evaluator == nil {
 		return nil, errors.New("moteur de politique TUI nil")
+	}
+	if auditor == nil {
+		return nil, errors.New("enregistreur d'audit TUI nil")
 	}
 	if len(panes) < 1 || len(panes) > maxAgentCount {
 		return nil, fmt.Errorf("la TUI exige entre 1 et %d agents (reçu: %d)", maxAgentCount, len(panes))
@@ -166,6 +208,8 @@ func NewModelWithPolicy(
 		events:             events,
 		policy:             evaluator,
 		policyConfig:       evaluator.Config(),
+		auditor:            auditor,
+		auditGate:          newDeliveryGate(),
 		panes:              make([]agentPane, len(panes)),
 		supervisor:         viewport.New(1, 1),
 		input:              input,
@@ -271,6 +315,14 @@ func (m *Model) focusedPaneIndex() int {
 }
 
 func (m *Model) activateNextPrompt() tea.Cmd {
+	if m.auditUnavailable {
+		m.pending = nil
+		m.inputTarget = ""
+		m.input.Reset()
+		m.input.Blur()
+		setInputInterceptionStyle(&m.input, false)
+		return nil
+	}
 	for len(m.pending) > 0 && m.paneIndex(m.pending[0]) < 0 {
 		m.pending = m.pending[1:]
 	}
