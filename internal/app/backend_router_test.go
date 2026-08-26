@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/terminal"
 )
@@ -29,6 +30,49 @@ type routerResizeCall struct {
 	size terminal.Size
 }
 
+type routerEventSendCall struct {
+	id      string
+	eventID string
+	data    []byte
+}
+
+type routerEventBackend struct {
+	*routerFakeBackend
+	eventSends []routerEventSendCall
+}
+
+type routerPendingBackend struct{ *routerFakeBackend }
+
+func (b *routerPendingBackend) PendingEvent(_ context.Context, _ string) (*adapters.Event, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.pending == nil {
+		return nil, nil
+	}
+	clone := b.pending.Clone()
+	return &clone, nil
+}
+
+func (b *routerEventBackend) PendingEvent(_ context.Context, id string) (*adapters.Event, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.pending == nil {
+		return nil, nil
+	}
+	pending := b.pending.Clone()
+	pending.SessionID = id
+	return &pending, nil
+}
+
+func (b *routerEventBackend) SendEvent(_ context.Context, id, eventID string, data []byte) error {
+	b.mu.Lock()
+	b.eventSends = append(b.eventSends, routerEventSendCall{
+		id: id, eventID: eventID, data: append([]byte(nil), data...),
+	})
+	b.mu.Unlock()
+	return nil
+}
+
 type routerFakeBackend struct {
 	mu sync.Mutex
 
@@ -38,6 +82,7 @@ type routerFakeBackend struct {
 	attachErr       error
 	closeErr        error
 	closeErrors     []error
+	pending         *adapters.Event
 	starts          []routerStartCall
 	sends           []routerSendCall
 	resizes         []routerResizeCall
@@ -144,7 +189,12 @@ func (b *routerFakeBackend) Snapshot(_ context.Context, id string) (terminal.Sna
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.snapshots = append(b.snapshots, id)
-	return terminal.Snapshot{ID: id, Running: true, Output: b.name + " output"}, nil
+	var pending *adapters.Event
+	if b.pending != nil {
+		clone := b.pending.Clone()
+		pending = &clone
+	}
+	return terminal.Snapshot{ID: id, Running: true, Output: b.name + " output", Pending: pending}, nil
 }
 
 func (b *routerFakeBackend) AttachCommand(_ context.Context, id string) (*exec.Cmd, error) {
@@ -254,6 +304,94 @@ func TestBackendRouterSendCopiesExactBytes(t *testing.T) {
 	backend.mu.Unlock()
 	if !reflect.DeepEqual(got, []byte{'Y', 0, '\n'}) {
 		t.Fatalf("backend received %v after caller mutation", got)
+	}
+}
+
+func TestBackendRouterEncodesAndAtomicallyRoutesExactEventDecision(t *testing.T) {
+	backend := &routerEventBackend{routerFakeBackend: newRouterFakeBackend(agent.BackendPTY)}
+	router, err := newBackendRouter(context.Background(), backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router.adapters, err = adapters.NewRegistry(adapters.DefaultPatterns())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	if _, err := router.Start(context.Background(), agent.Spec{
+		ID: "decision", Name: "Decision", Command: []string{"runner"}, Backend: agent.BackendPTY,
+	}, terminal.Size{}); err != nil {
+		t.Fatal(err)
+	}
+
+	event := adapters.Event{
+		ID: "evt-decision-1", SessionID: "decision", Adapter: adapters.GenericID,
+		Type: adapters.EventConfirmation,
+	}
+	stored := event.Clone()
+	backend.pending = &stored
+	emptyID := event.Clone()
+	emptyID.ID = ""
+	if err := router.SendDecision(context.Background(), "DECISION", emptyID, "secret"); !errors.Is(err, adapters.ErrEventMismatch) {
+		t.Fatalf("empty event ID error = %v", err)
+	}
+	presented := event.Clone()
+	presented.Adapter = "not-authoritative"
+	presented.Type = adapters.EventProcessExit
+	if err := router.SendDecision(context.Background(), "DECISION", presented, "Y"); err != nil {
+		t.Fatalf("SendDecision: %v", err)
+	}
+	backend.mu.Lock()
+	calls := append([]routerEventSendCall(nil), backend.eventSends...)
+	backend.mu.Unlock()
+	if len(calls) != 1 || calls[0].id != "DECISION" || calls[0].eventID != event.ID ||
+		!reflect.DeepEqual(calls[0].data, []byte("Y\r")) {
+		t.Fatalf("event sends = %#v", calls)
+	}
+
+	wrongSession := event.Clone()
+	wrongSession.SessionID = "another-agent"
+	if err := router.SendDecision(context.Background(), "decision", wrongSession, "secret"); !errors.Is(err, adapters.ErrEventMismatch) {
+		t.Fatalf("cross-session decision error = %v", err)
+	}
+	backend.mu.Lock()
+	callCount := len(backend.eventSends)
+	backend.mu.Unlock()
+	if callCount != 1 {
+		t.Fatalf("cross-session decision reached backend: %#v", backend.eventSends)
+	}
+}
+
+func TestBackendRouterRefusesDecisionWithoutAtomicEventSender(t *testing.T) {
+	backend := &routerPendingBackend{routerFakeBackend: newRouterFakeBackend(agent.BackendPTY)}
+	backend.pending = &adapters.Event{
+		ID: "evt-legacy", SessionID: "legacy", Adapter: adapters.GenericID, Type: adapters.EventConfirmation,
+	}
+	router, err := newBackendRouter(context.Background(), backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router.adapters, err = adapters.NewRegistry(adapters.DefaultPatterns())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	if _, err := router.Start(context.Background(), agent.Spec{
+		ID: "legacy", Name: "Legacy", Command: []string{"runner"}, Backend: agent.BackendPTY,
+	}, terminal.Size{}); err != nil {
+		t.Fatal(err)
+	}
+	err = router.SendDecision(context.Background(), "legacy", adapters.Event{
+		ID: "evt-legacy", SessionID: "legacy", Adapter: adapters.GenericID, Type: adapters.EventConfirmation,
+	}, "Y")
+	if !errors.Is(err, terminal.ErrUnsupported) {
+		t.Fatalf("non-atomic decision error = %v", err)
+	}
+	backend.mu.Lock()
+	sends := len(backend.sends)
+	backend.mu.Unlock()
+	if sends != 0 {
+		t.Fatalf("non-atomic decision used raw Send %d time(s)", sends)
 	}
 }
 

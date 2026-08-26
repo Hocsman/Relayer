@@ -78,9 +78,18 @@ config.yaml / CLI compatibility flags
      master fd        detached session + private FIFO
           └───────┬────────┘
                   ▼
-      ANSI sanitizer → regex interceptor → bounded Ring Buffer
-                  │                         │
-                  └──── typed events ───────┘
+               transient raw terminal bytes
+                              │
+                              ▼
+             ANSI sanitizer / CR normalization
+                    │                    │
+                    ▼                    ▼
+       bounded detection window   bounded render Ring Buffer
+                    │                    │
+                    ▼                    │
+          per-session Adapter            │
+                    │                    │
+                    └──── Event ─────────┘
                               │
                               ▼
                   Bubble Tea TUI / supervisor
@@ -96,7 +105,17 @@ Detached tmux output is streamed with `pipe-pane` into a private FIFO inside a `
 
 Direct agent arguments are never concatenated into a tmux shell command. Relayer writes the exact argv, working directory, and merged environment to a temporary `0600` JSON specification. The generated tmux command contains only internally generated, POSIX-quoted helper paths. The helper decodes and unlinks the specification before the start gate is released, then replaces itself with the requested process. Explicit `shell:` configurations remain intentionally interpreted by `/bin/sh -c`.
 
-The code is split into focused internal packages: `config` owns strict YAML loading, `agent` validates execution specifications, `buffer` bounds retained output, `intercept` detects prompts independently of Bubble Tea, `session` exclusively owns PTYs and process lifecycles, and `tui` renders typed session events through a narrow backend interface. Unix-specific shell and process-group behavior is isolated in `internal/platform` behind build tags. The root `main.go` remains a compatibility entrypoint; `cmd/relayer` is the canonical command.
+The code is split into focused internal packages: `config` owns strict YAML loading, `agent` validates execution specifications, `buffer` bounds retained output, `adapters` turns normalized terminal text into backend-neutral events, `session` exclusively owns PTYs and process lifecycles, and `tui` renders typed session events through a narrow backend interface. `intercept` remains a compatibility facade for the original API; regex detection itself has a single owner, `GenericRegexAdapter`. Unix-specific shell and process-group behavior is isolated in `internal/platform` behind build tags. The root `main.go` remains a compatibility entrypoint; `cmd/relayer` is the canonical command.
+
+Terminal bytes, normalized detection text, rendered viewport history, and audit metadata have separate lifetimes. Raw bytes are processed and discarded, the detection window and viewport history are bounded independently, and semantic events contain only the metadata needed to route a human decision. Sensitive prompt matches and manual input are never added to supervisor logs.
+
+### Agent adapters
+
+- `generic` is the only stable, implemented adapter. It preserves `intercept_patterns`, detects prompts split across chunks or ANSI sequences, classifies credential input, and assigns a stable ID to each occurrence so repeated tmux snapshots, resizes, and attach/resume cycles do not duplicate a prompt.
+- `claude` and `codex` are experimental, unimplemented registry placeholders. Explicitly selecting either one fails before a terminal backend starts. When the adapter is omitted, their executable names currently fall back to `generic`; Relayer does not claim tool-specific support.
+- Vendor-specific detection rules will only be added together with anonymized, verified terminal fixtures. The current synthetic generic fixtures live in `internal/adapters/testdata/generic`; the Claude and Codex fixture directories contain policy notes only, not fabricated transcripts.
+
+Events describe observations and pending human actions. They do not automatically approve, deny, or apply policies; this release keeps every actionable decision manual.
 
 ## 🛠️ Configuration
 
@@ -152,7 +171,7 @@ Backend selectors are available globally and per agent:
 - `tmux` requires the `tmux` executable and fails before starting any agent when it is unavailable.
 - `auto` selects tmux when it is installed and otherwise falls back to PTY with a visible warning.
 
-Mixed concrete backends are supported in one run. The interface and startup logs show the effective backend of every agent; `auto` is always resolved before startup. The only adapter currently implemented is `generic`.
+Mixed concrete backends are supported in one run. The interface and startup logs show the effective backend and adapter of every agent; `auto` is always resolved before startup. The optional `adapter` key defaults through the registry to the stable `generic` fallback. The names `claude` and `codex` are reserved experimental placeholders and cannot be selected as working adapters yet.
 
 With `persist_on_exit: false`, shutdown destroys only sessions created and still owned by this Relayer run. With `persist_on_exit: true`, unfinished tmux sessions remain after Relayer exits. `cleanup_on_success: true` removes a tmux session after a confirmed zero exit code; failed sessions remain inspectable until the normal ownership policy applies. Relayer never calls `tmux kill-server`.
 

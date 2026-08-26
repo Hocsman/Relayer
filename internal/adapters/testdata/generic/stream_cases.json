@@ -1,0 +1,63 @@
+[
+  {
+    "name": "prompt split across ansi chunks",
+    "chunks": ["\u001b[3", "1mOver", "write report? [Y", "/n]\u001b[0", "m"],
+    "want_events": 1,
+    "want_type": "confirmation",
+    "want_match": "Overwrite report? [Y/n]",
+    "want_output": "Overwrite report? [Y/n]"
+  },
+  {
+    "name": "carriage return rewrites active line",
+    "chunks": ["phase 10%\rphase 70%\rOverwrite draft? [Y/n]"],
+    "want_events": 1,
+    "want_type": "confirmation",
+    "want_match": "Overwrite draft? [Y/n]",
+    "want_output": "phase 10%\nphase 70%\nOverwrite draft? [Y/n]"
+  },
+  {
+    "name": "carriage return erases transient prompt shaped text",
+    "chunks": ["Overwrite stale draft? [Y/n]\rstatus complete"],
+    "want_events": 0,
+    "want_output": "Overwrite stale draft? [Y/n]\nstatus complete"
+  },
+  {
+    "name": "completed block quote is documentation",
+    "chunks": ["> Documentation example: Overwrite draft? [Y/n]\n"],
+    "want_events": 0,
+    "want_output": "> Documentation example: Overwrite draft? [Y/n]\n"
+  },
+  {
+    "name": "inline quotation is documentation",
+    "chunks": ["The guide says \"Overwrite draft? [Y/n]\"\n"],
+    "want_events": 0,
+    "want_output": "The guide says \"Overwrite draft? [Y/n]\"\n"
+  },
+  {
+    "name": "prefixed previous log is historical",
+    "chunks": ["previous: Overwrite archived draft? [Y/n]\n"],
+    "want_events": 0,
+    "want_output": "previous: Overwrite archived draft? [Y/n]\n"
+  },
+  {
+    "name": "prompt shaped text before completed work is historical",
+    "chunks": ["Overwrite archived draft? [Y/n]\nanswer recorded\nwork complete\n"],
+    "want_events": 0,
+    "want_output": "Overwrite archived draft? [Y/n]\nanswer recorded\nwork complete\n"
+  },
+  {
+    "name": "fenced example is not actionable",
+    "chunks": ["```text\n", "Overwrite sample? [Y/n]", "\n```\n"],
+    "want_events": 0,
+    "want_output": "```text\nOverwrite sample? [Y/n]\n```\n"
+  },
+  {
+    "name": "credential label is sensitive",
+    "chunks": ["Password:"],
+    "want_events": 1,
+    "want_type": "credential",
+    "want_match": "Password:",
+    "want_sensitive": true,
+    "want_output": "Password:"
+  }
+]

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
-	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/terminal"
 )
 
@@ -28,6 +28,7 @@ type backendRouter struct {
 
 	closeMu        sync.Mutex
 	closedBackends map[string]bool
+	adapters       *adapters.Registry
 }
 
 var _ terminal.Backend = (*backendRouter)(nil)
@@ -159,19 +160,62 @@ func (r *backendRouter) Output(id string) (string, error) {
 	return snapshot.Output, err
 }
 
-func (r *backendRouter) PendingPrompt(ctx context.Context, id string) (*terminal.Prompt, error) {
+func (r *backendRouter) PendingEvent(ctx context.Context, id string) (*adapters.Event, error) {
 	backend, err := r.backendFor(id)
 	if err != nil {
 		return nil, err
 	}
 	ctx = effectiveContext(ctx, r.ctx)
-	if provider, ok := backend.(interface {
-		PendingPrompt(context.Context, string) (*terminal.Prompt, error)
-	}); ok {
-		return provider.PendingPrompt(ctx, id)
+	if provider, ok := backend.(terminal.PendingEventProvider); ok {
+		return provider.PendingEvent(ctx, id)
 	}
-	snapshot, err := backend.Snapshot(ctx, id)
-	return snapshot.Prompt, err
+	return nil, fmt.Errorf("%w: backend %s sans snapshot d'événement en cache", terminal.ErrUnsupported, backend.Name())
+}
+
+func (r *backendRouter) SendDecision(ctx context.Context, id string, event adapters.Event, manualInput string) error {
+	if r.adapters == nil {
+		return errors.New("registry d'adaptateurs indisponible")
+	}
+	if strings.TrimSpace(event.ID) == "" {
+		return fmt.Errorf("%w: identifiant d'événement vide", adapters.ErrEventMismatch)
+	}
+	if !strings.EqualFold(strings.TrimSpace(event.SessionID), strings.TrimSpace(id)) {
+		return fmt.Errorf("%w: événement %q destiné à la session %q, pas %q",
+			adapters.ErrEventMismatch, event.ID, event.SessionID, id)
+	}
+	backend, err := r.backendFor(id)
+	if err != nil {
+		return err
+	}
+	ctx = effectiveContext(ctx, r.ctx)
+	provider, ok := backend.(terminal.PendingEventProvider)
+	if !ok {
+		return fmt.Errorf("%w: backend %s sans snapshot d'événement en cache", terminal.ErrUnsupported, backend.Name())
+	}
+	pending, err := provider.PendingEvent(ctx, id)
+	if err != nil {
+		return err
+	}
+	if pending == nil || pending.ID != event.ID {
+		currentID := ""
+		if pending != nil {
+			currentID = pending.ID
+		}
+		return fmt.Errorf("%w: reçu %q, attendu %q", adapters.ErrEventMismatch, event.ID, currentID)
+	}
+	canonical := pending.Clone()
+	adapter, _, err := r.adapters.Resolve(canonical.Adapter, "")
+	if err != nil {
+		return err
+	}
+	data, err := adapter.EncodeDecision(canonical, adapters.DecisionManual, manualInput)
+	if err != nil {
+		return err
+	}
+	if sender, ok := backend.(terminal.EventSender); ok {
+		return sender.SendEvent(ctx, id, canonical.ID, data)
+	}
+	return fmt.Errorf("%w: backend %s sans livraison d'événement atomique", terminal.ErrUnsupported, backend.Name())
 }
 
 func (r *backendRouter) AttachCommand(ctx context.Context, id string) (*exec.Cmd, error) {
@@ -312,6 +356,10 @@ func (a *tuiBackendAdapter) SendInput(id, value string) error {
 	return a.router.Send(a.router.Context(), id, []byte(value+"\r"))
 }
 
+func (a *tuiBackendAdapter) SendDecision(id string, event adapters.Event, value string) error {
+	return a.router.SendDecision(a.router.Context(), id, event, value)
+}
+
 func (a *tuiBackendAdapter) Resize(id string, columns, rows int) error {
 	return a.router.Resize(a.router.Context(), id, terminal.Size{Columns: columns, Rows: rows})
 }
@@ -328,16 +376,6 @@ func (a *tuiBackendAdapter) Resync(ctx context.Context, id string, columns, rows
 	return a.router.Resync(ctx, id, columns, rows)
 }
 
-func (a *tuiBackendAdapter) PendingPrompt(ctx context.Context, id string) (*session.PromptDetected, error) {
-	prompt, err := a.router.PendingPrompt(ctx, id)
-	if err != nil || prompt == nil {
-		return nil, err
-	}
-	return &session.PromptDetected{
-		SessionID:   id,
-		Pattern:     prompt.Pattern,
-		Description: prompt.Description,
-		Match:       prompt.Match,
-		Sensitive:   prompt.Sensitive,
-	}, nil
+func (a *tuiBackendAdapter) PendingEvent(ctx context.Context, id string) (*adapters.Event, error) {
+	return a.router.PendingEvent(ctx, id)
 }

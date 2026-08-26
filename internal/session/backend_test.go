@@ -2,12 +2,46 @@ package session
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/intercept"
 )
+
+func TestNewManagerWithRegistryRejectsNilAndExplicitUnknownAdapters(t *testing.T) {
+	if _, err := NewManagerWithRegistry(context.Background(), make(chan Event, 1), nil, 1024); err == nil {
+		t.Fatal("NewManagerWithRegistry accepted a nil registry")
+	}
+	registry, err := adapters.NewRegistry(nil)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	manager, err := NewManagerWithRegistry(context.Background(), make(chan Event, 8), registry, 1024)
+	if err != nil {
+		t.Fatalf("NewManagerWithRegistry: %v", err)
+	}
+	defer manager.Close()
+	for _, test := range []struct {
+		adapter string
+		want    error
+	}{
+		{adapter: "missing", want: adapters.ErrUnknownAdapter},
+		{adapter: "claude", want: adapters.ErrAdapterUnavailable},
+	} {
+		_, startErr := manager.Start(agent.Spec{
+			ID:      "adapter-" + test.adapter,
+			Name:    "adapter " + test.adapter,
+			Command: []string{"this-executable-must-never-be-started"},
+			Adapter: test.adapter,
+		}, 80, 24)
+		if !errors.Is(startErr, test.want) {
+			t.Fatalf("Start adapter %q error = %v, want %v", test.adapter, startErr, test.want)
+		}
+	}
+}
 
 func TestPTYManagerRejectsTmuxSelectorsBeforeLaunchingAProcess(t *testing.T) {
 	events := make(chan Event, 1)

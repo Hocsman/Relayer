@@ -101,15 +101,15 @@ func TestTmuxIntegrationLifecyclePromptInputAndExternalSessionIsolation(t *testi
 		t.Fatalf("Start: %v", err)
 	}
 	prompt := contractWaitForPrompt(t, events, info.ID)
-	if prompt.Pattern != "overwrite" {
+	if prompt.Metadata["pattern"] != "overwrite" {
 		t.Fatalf("prompt = %#v", prompt)
 	}
-	if err := manager.Send(context.Background(), info.ID, []byte("Y\r")); err != nil {
-		t.Fatalf("Send: %v", err)
+	if err := manager.SendEvent(context.Background(), info.ID, prompt.ID, []byte("Y\r")); err != nil {
+		t.Fatalf("SendEvent: %v", err)
 	}
 	exited := waitForExitEvent(t, events, info.ID)
-	if exited.Err != nil {
-		t.Fatalf("agent exited with %v", exited.Err)
+	if exited.Metadata["failed"] == "true" {
+		t.Fatalf("agent emitted a failed process_exit: %#v", exited)
 	}
 	output, err := manager.Output(info.ID)
 	if err != nil || !strings.Contains(output, "answer=Y") {

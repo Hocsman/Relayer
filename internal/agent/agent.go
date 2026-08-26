@@ -25,6 +25,7 @@ const (
 )
 
 var environmentNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var adapterNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
 // Spec describes one agent process. Command contains an executable followed by
 // its arguments, while Shell contains a script interpreted by the platform
@@ -124,11 +125,8 @@ func ValidateSpec(spec Spec, baseDir, defaultBackend string) (Spec, error) {
 	normalized.Backend = backend
 
 	adapter := strings.TrimSpace(normalized.Adapter)
-	if adapter == "" {
-		adapter = AdapterGeneric
-	}
-	if adapter != AdapterGeneric {
-		return Spec{}, fmt.Errorf("unsupported adapter %q: only %q is available", adapter, AdapterGeneric)
+	if adapter != "" && !adapterNamePattern.MatchString(adapter) {
+		return Spec{}, fmt.Errorf("invalid adapter name %q", adapter)
 	}
 	normalized.Adapter = adapter
 

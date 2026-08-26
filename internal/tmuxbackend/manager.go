@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/intercept"
 	"github.com/Hocsman/Relayer/internal/session"
@@ -41,7 +42,7 @@ type Manager struct {
 	persistOnExit    bool
 	cleanupOnSuccess bool
 	pollInterval     time.Duration
-	patterns         []intercept.Pattern
+	registry         *adapters.Registry
 	ringCapacity     int
 
 	mu       sync.RWMutex
@@ -58,6 +59,8 @@ type Manager struct {
 }
 
 var _ terminal.Backend = (*Manager)(nil)
+var _ terminal.EventSender = (*Manager)(nil)
+var _ terminal.PendingEventProvider = (*Manager)(nil)
 
 // NewManager verifies tmux before creating any session and allocates a private
 // 0700 runtime directory for specs and FIFO transports.
@@ -68,11 +71,31 @@ func NewManager(
 	ringCapacity int,
 	options Options,
 ) (*Manager, error) {
+	registry, err := adapters.NewRegistry(patterns)
+	if err != nil {
+		return nil, err
+	}
+	return NewManagerWithRegistry(parent, events, registry, ringCapacity, options)
+}
+
+// NewManagerWithRegistry is the production constructor. Each Start resolves
+// an independent adapter instance from registry before any tmux process is
+// created; the legacy constructor above only translates intercept_patterns.
+func NewManagerWithRegistry(
+	parent context.Context,
+	events chan<- session.Event,
+	registry *adapters.Registry,
+	ringCapacity int,
+	options Options,
+) (*Manager, error) {
 	if err := ensurePlatformSupport(); err != nil {
 		return nil, err
 	}
 	if events == nil {
 		return nil, errors.New("canal d'événements tmux nil")
+	}
+	if registry == nil {
+		return nil, errors.New("registry d'adaptateurs tmux nil")
 	}
 	if parent == nil {
 		parent = context.Background()
@@ -82,9 +105,6 @@ func NewManager(
 	}
 	if options.CaptureLimit > 0 && options.CaptureLimit < ringCapacity {
 		ringCapacity = options.CaptureLimit
-	}
-	if _, err := intercept.New(patterns, ringCapacity, intercept.Hooks{}); err != nil {
-		return nil, err
 	}
 	runner := options.Runner
 	if runner == nil {
@@ -149,7 +169,7 @@ func NewManager(
 		persistOnExit:    options.PersistOnExit,
 		cleanupOnSuccess: options.CleanupOnSuccess,
 		pollInterval:     pollInterval,
-		patterns:         append([]intercept.Pattern(nil), patterns...),
+		registry:         registry,
 		ringCapacity:     ringCapacity,
 		sessions:         make(map[string]*managedSession),
 		operationsIdle:   closedSignal(),
@@ -234,6 +254,14 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 		return terminal.Info{}, fmt.Errorf("backend concret %q invalide pour tmux", normalized.Backend)
 	}
 	size = size.Normalize()
+	executable := ""
+	if len(normalized.Command) > 0 {
+		executable = normalized.Command[0]
+	}
+	resolvedAdapter, adapterDescriptor, err := m.registry.Resolve(normalized.Adapter, executable)
+	if err != nil {
+		return terminal.Info{}, fmt.Errorf("résolution de l'adaptateur %q: %w", normalized.Adapter, err)
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -293,6 +321,7 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 				ID:      normalized.ID,
 				Name:    normalized.Name,
 				Backend: agent.BackendTmux,
+				Adapter: adapterDescriptor.ID,
 			},
 			tmuxName:     tmuxName,
 			sessionID:    identity.sessionID,
@@ -360,6 +389,7 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 		DisplayCommand: displayCommand(normalized),
 		Shell:          normalized.Shell != "",
 		Backend:        agent.BackendTmux,
+		Adapter:        adapterDescriptor.ID,
 	}
 	sessionCtx, sessionCancel := context.WithCancel(m.ctx)
 	managed := &managedSession{
@@ -379,25 +409,24 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 			Status:  StatusDetached,
 			Running: true,
 		},
+		appliedSize: size,
+		sizeKnown:   true,
 	}
-	managed.interceptor, err = intercept.New(m.patterns, m.ringCapacity, intercept.Hooks{
-		OnOutput: func() {
-			managed.outputObserved()
-			m.emit(session.OutputAvailable{SessionID: normalized.ID}, false)
-		},
-		OnPrompt: func(detection intercept.Detection) {
-			prompt := session.PromptDetected{
-				SessionID:   normalized.ID,
-				Pattern:     detection.Pattern,
-				Description: detection.Description,
-				Match:       detection.Match,
-				Sensitive:   detection.Sensitive,
-			}
-			if !managed.setPrompt(prompt) {
-				m.emit(prompt, true)
-			}
-		},
-	})
+	managed.processor, err = adapters.NewProcessor(
+		resolvedAdapter,
+		adapters.NewDetectionState(normalized.ID, normalized.ID, adapterDescriptor.ID),
+		m.ringCapacity,
+		adapters.Hooks{
+			OnOutput: func() {
+				managed.outputObserved()
+				m.emit(session.OutputAvailable{SessionID: normalized.ID}, false)
+			},
+			OnEvent: func(event adapters.Event) {
+				if managed.claimAdapterEvent(event) {
+					m.emit(session.AdapterEvent{Event: event.Clone()}, true)
+				}
+			},
+		})
 	if err != nil {
 		sessionCancel()
 		return terminal.Info{}, err
@@ -448,7 +477,7 @@ func (m *Manager) emit(event session.Event, essential bool) bool {
 
 func (m *Manager) readOutput(target *managedSession, output *os.File) {
 	defer m.wg.Done()
-	err := target.interceptor.Run(target.ctx, output)
+	err := target.processor.Run(target.ctx, output)
 	m.emit(session.OutputAvailable{SessionID: target.info.ID}, true)
 	if err != nil && target.ctx.Err() == nil && !errors.Is(err, os.ErrClosed) && !errors.Is(err, io.EOF) {
 		m.emit(session.Error{SessionID: target.info.ID, Err: err}, true)
@@ -521,7 +550,7 @@ func (m *Manager) handleMissingTarget(target *managedSession, cause error) {
 	if target.finish() {
 		missing := fmt.Errorf("%w: %v", ErrSessionNotFound, cause)
 		m.emit(session.Error{SessionID: target.info.ID, Err: missing}, true)
-		m.emit(session.Exited{SessionID: target.info.ID, Err: missing}, true)
+		m.emit(session.AdapterEvent{Event: target.processExitEvent(snapshot)}, true)
 	}
 	target.closeTransport()
 }
@@ -531,11 +560,7 @@ func (m *Manager) finishSession(target *managedSession, snapshot Snapshot) {
 	if !target.finish() {
 		return
 	}
-	var exitErr error
-	if snapshot.ExitCode != nil && *snapshot.ExitCode != 0 {
-		exitErr = &ExitError{Code: *snapshot.ExitCode}
-	}
-	m.emit(session.Exited{SessionID: target.info.ID, Err: exitErr}, true)
+	m.emit(session.AdapterEvent{Event: target.processExitEvent(snapshot)}, true)
 	if m.cleanupOnSuccess && snapshot.ExitCode != nil && *snapshot.ExitCode == 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 		err := m.killSession(ctx, target)
@@ -567,37 +592,10 @@ func (m *Manager) Output(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if target.interceptor == nil {
+	if target.processor == nil {
 		return "", nil
 	}
-	return target.interceptor.Output(), nil
-}
-
-// PendingPrompt returns the cached interception state without invoking tmux.
-// The TUI uses it to discard prompt events queued before an interactive
-// attachment was resynchronized.
-func (m *Manager) PendingPrompt(ctx context.Context, id string) (*terminal.Prompt, error) {
-	if ctx != nil {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-	}
-	target, err := m.session(id)
-	if err != nil {
-		return nil, err
-	}
-	prompt := target.prompt()
-	if prompt == nil {
-		return nil, nil
-	}
-	return &terminal.Prompt{
-		Pattern:     prompt.Pattern,
-		Description: prompt.Description,
-		Match:       prompt.Match,
-		Sensitive:   prompt.Sensitive,
-	}, nil
+	return target.processor.Output(), nil
 }
 
 func (m *Manager) Done(id string) (<-chan struct{}, error) {
@@ -613,6 +611,13 @@ func (m *Manager) SendInput(id, value string) error {
 }
 
 func (m *Manager) Send(ctx context.Context, id string, data []byte) error {
+	return m.SendEvent(ctx, id, "", data)
+}
+
+// SendEvent serializes an exact event decision with terminal delivery. The
+// Processor clears the pending occurrence only after tmux accepted the bytes;
+// an empty eventID preserves the legacy raw Send contract.
+func (m *Manager) SendEvent(ctx context.Context, id, eventID string, data []byte) error {
 	operationCtx, finishOperation, err := m.beginOperation(ctx)
 	if err != nil {
 		return err
@@ -629,24 +634,24 @@ func (m *Manager) Send(ctx context.Context, id string, data []byte) error {
 	}
 	target.inputMu.Lock()
 	defer target.inputMu.Unlock()
+	target.interactionMu.Lock()
+	defer target.interactionMu.Unlock()
+
+	err = target.processor.Resolve(eventID, func() error {
+		return m.sendBytes(ctx, target, data)
+	})
+	if errors.Is(err, adapters.ErrProcessorTerminated) {
+		return ErrClosed
+	}
+	return err
+}
+
+func (m *Manager) sendBytes(ctx context.Context, target *managedSession, data []byte) error {
 	if _, err := m.verifyPane(ctx, target); err != nil {
 		return err
 	}
-
 	bufferName := target.tmuxName + "-" + shortHash(target.ownerToken) + "-input"
-	wasBlocked := target.interceptor.IsBlocked()
-	pendingPrompt := target.prompt()
-	if wasBlocked {
-		target.interceptor.Acknowledge()
-		target.clearPrompt()
-	}
 	if _, err := m.runInput(ctx, data, "load-buffer", "-b", bufferName, "-"); err != nil {
-		if wasBlocked {
-			target.interceptor.Reblock()
-			if pendingPrompt != nil {
-				target.setPrompt(*pendingPrompt)
-			}
-		}
 		return err
 	}
 	m.trackSecretBuffer(bufferName)
@@ -654,12 +659,6 @@ func (m *Manager) Send(ctx context.Context, id string, data []byte) error {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), commandTimeout)
 		cleanupErr := m.deleteSecretBuffer(cleanupCtx, bufferName)
 		cleanupCancel()
-		if wasBlocked {
-			target.interceptor.Reblock()
-			if pendingPrompt != nil {
-				target.setPrompt(*pendingPrompt)
-			}
-		}
 		if cleanupErr != nil {
 			return errors.Join(err, fmt.Errorf("suppression du buffer tmux privé: %w", cleanupErr))
 		}
@@ -717,6 +716,11 @@ func (m *Manager) resize(ctx context.Context, id string, size terminal.Size) err
 		return nil
 	}
 	size = size.Normalize()
+	target.resizeMu.Lock()
+	defer target.resizeMu.Unlock()
+	if target.sizeApplied(size) {
+		return nil
+	}
 	windowID, err := m.verifyPane(ctx, target)
 	if err != nil {
 		return err
@@ -725,6 +729,9 @@ func (m *Manager) resize(ctx context.Context, id string, size terminal.Size) err
 		"resize-window", "-t", windowID,
 		"-x", strconv.Itoa(size.Columns), "-y", strconv.Itoa(size.Rows),
 	)
+	if err == nil {
+		target.recordAppliedSize(size)
+	}
 	return err
 }
 
@@ -749,6 +756,23 @@ func (m *Manager) Snapshot(ctx context.Context, id string) (terminal.Snapshot, e
 	}
 	target.updateState(snapshot)
 	return target.snapshot(), nil
+}
+
+// PendingEvent returns cached processor state only. In particular, it never
+// starts a tmux subprocess from Bubble Tea's Update path.
+func (m *Manager) PendingEvent(ctx context.Context, id string) (*adapters.Event, error) {
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+	}
+	target, err := m.session(id)
+	if err != nil {
+		return nil, err
+	}
+	return target.pendingEvent(), nil
 }
 
 func (m *Manager) inspect(ctx context.Context, target *managedSession) (terminal.Snapshot, error) {
@@ -912,12 +936,17 @@ func (m *Manager) AttachCommand(ctx context.Context, id string) (*exec.Cmd, erro
 	if !target.isPresent() {
 		return nil, fmt.Errorf("%w: %q", ErrSessionNotFound, id)
 	}
-	if err := m.verifySession(operationCtx, target); err != nil {
-		return nil, err
-	}
 	attachCtx, cancelAttach := context.WithCancel(attachParent)
 	stopManagerCancellation := context.AfterFunc(m.ctx, cancelAttach)
-	target.beginAttach(cancelAttach, stopManagerCancellation)
+	if !target.beginAttach(cancelAttach, stopManagerCancellation) {
+		stopManagerCancellation()
+		cancelAttach()
+		return nil, errors.New("attachement tmux déjà actif")
+	}
+	if err := m.verifySession(operationCtx, target); err != nil {
+		target.endAttach()
+		return nil, err
+	}
 	command := m.runner.Command(attachCtx, CommandSpec{
 		Path: m.tmuxPath,
 		Args: []string{"attach-session", "-t", target.sessionID},
@@ -929,9 +958,9 @@ func (m *Manager) AttachCommand(ctx context.Context, id string) (*exec.Cmd, erro
 	return command, nil
 }
 
-// Resync suppresses prompt events while tea.ExecProcess owns the terminal,
-// then scans only the current last pane line. A prompt answered inside tmux is
-// therefore not re-emitted merely because it remains in scrollback.
+// Resync suppresses live adapter events while the real terminal is attached,
+// then atomically reconciles the Processor against the current active pane
+// line. Event occurrence IDs provide deduplication across output and snapshots.
 func (m *Manager) Resync(ctx context.Context, id string, columns, rows int) error {
 	operationCtx, finishOperation, err := m.beginOperation(ctx)
 	if err != nil {
@@ -948,7 +977,10 @@ func (m *Manager) Resync(ctx context.Context, id string, columns, rows int) erro
 	if err := m.resize(ctx, id, terminal.Size{Columns: columns, Rows: rows}); err != nil {
 		return err
 	}
-	var current *session.PromptDetected
+	var (
+		currentSnapshot terminal.Snapshot
+		raw             []byte
+	)
 	if target.isPresent() {
 		snapshot, inspectErr := m.inspect(ctx, target)
 		if inspectErr != nil {
@@ -956,26 +988,30 @@ func (m *Manager) Resync(ctx context.Context, id string, columns, rows int) erro
 		}
 		target.updateState(snapshot)
 		if snapshot.Running {
-			current, err = m.currentPrompt(ctx, target)
+			raw, err = m.capturePaneTail(ctx, target)
 			if err != nil {
 				return err
 			}
-		} else {
-			m.finishSession(target, snapshot)
 		}
+		currentSnapshot = snapshot
 	}
-	target.interceptor.Acknowledge()
-	target.clearPrompt()
-	if current != nil {
-		target.interceptor.Reblock()
-		target.setPrompt(*current)
-		m.emit(*current, true)
+	target.interactionMu.Lock()
+	pending, _, err := target.processor.ReconcileSnapshot(raw)
+	target.interactionMu.Unlock()
+	if err != nil {
+		return err
+	}
+	if pending != nil && target.claimAdapterEvent(*pending) {
+		m.emit(session.AdapterEvent{Event: pending.Clone()}, true)
+	}
+	if currentSnapshot.ID != "" && !currentSnapshot.Running {
+		m.finishSession(target, currentSnapshot)
 	}
 	m.emit(session.OutputAvailable{SessionID: id}, true)
 	return nil
 }
 
-func (m *Manager) currentPrompt(ctx context.Context, target *managedSession) (*session.PromptDetected, error) {
+func (m *Manager) capturePaneTail(ctx context.Context, target *managedSession) ([]byte, error) {
 	if _, err := m.verifyPane(ctx, target); err != nil {
 		return nil, err
 	}
@@ -985,34 +1021,7 @@ func (m *Manager) currentPrompt(ctx context.Context, target *managedSession) (*s
 	if err != nil {
 		return nil, err
 	}
-	trimmed := strings.TrimRight(string(output), " \t\r\n")
-	if trimmed == "" {
-		return nil, nil
-	}
-	if index := strings.LastIndexByte(trimmed, '\n'); index >= 0 {
-		trimmed = trimmed[index+1:]
-	}
-	var detection *intercept.Detection
-	probe, err := intercept.New(m.patterns, 16*1024, intercept.Hooks{
-		OnPrompt: func(found intercept.Detection) {
-			copy := found
-			detection = &copy
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-	probe.Consume([]byte(trimmed))
-	if detection == nil {
-		return nil, nil
-	}
-	return &session.PromptDetected{
-		SessionID:   target.info.ID,
-		Pattern:     detection.Pattern,
-		Description: detection.Description,
-		Match:       detection.Match,
-		Sensitive:   detection.Sensitive,
-	}, nil
+	return output, nil
 }
 
 func (m *Manager) Stop(ctx context.Context, id string) error {
@@ -1033,13 +1042,14 @@ func (m *Manager) Stop(ctx context.Context, id string) error {
 	if err := m.killSession(ctx, target); err != nil {
 		return err
 	}
-	target.updateState(terminal.Snapshot{
+	stopped := terminal.Snapshot{
 		ID:      target.info.ID,
 		Status:  terminal.StatusExited,
 		Running: false,
-	})
+	}
+	target.updateState(stopped)
 	if target.finish() {
-		m.emit(session.Exited{SessionID: target.info.ID}, true)
+		m.emit(session.AdapterEvent{Event: target.processExitEvent(stopped)}, true)
 	}
 	target.closeTransport()
 	return nil

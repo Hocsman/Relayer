@@ -2,7 +2,10 @@
 // typed events. It deliberately has no dependency on Bubble Tea.
 package session
 
-import "github.com/Hocsman/Relayer/internal/terminal"
+import (
+	"github.com/Hocsman/Relayer/internal/adapters"
+	"github.com/Hocsman/Relayer/internal/terminal"
+)
 
 // Event is emitted by Manager for asynchronous session state changes.
 // The unexported marker keeps the event set closed while allowing consumers to
@@ -19,18 +22,16 @@ type OutputAvailable struct {
 
 func (OutputAvailable) sessionEvent() {}
 
-// PromptDetected reports an interactive prompt that requires human input.
-type PromptDetected struct {
-	SessionID   string
-	Pattern     string
-	Description string
-	Match       string
-	Sensitive   bool
+// AdapterEvent carries the single backend-neutral semantic representation
+// produced by an adapter or by a real session lifecycle transition.
+type AdapterEvent struct {
+	Event adapters.Event
 }
 
-func (PromptDetected) sessionEvent() {}
+func (AdapterEvent) sessionEvent() {}
 
-// Exited reports the result of the single Wait call for a session process.
+// Exited is retained for source compatibility. Managers now publish a real
+// AdapterEvent with type process_exit instead of emitting this legacy value.
 type Exited struct {
 	SessionID string
 	Err       error

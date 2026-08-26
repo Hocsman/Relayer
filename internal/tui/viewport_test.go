@@ -114,9 +114,7 @@ func TestSupervisorViewportHandlesPageKeysWhileInputFocused(t *testing.T) {
 	for index := 0; index < 80; index++ {
 		application.appendLog(fmt.Sprintf("supervisor event %03d", index))
 	}
-	application, _ = updateModel(t, application, session.PromptDetected{
-		SessionID: "agent-a", Pattern: "confirmation", Description: "manual approval",
-	})
+	application, _ = updateModel(t, application, testAdapterEvent("agent-a", "confirmation", "manual approval", false))
 	if application.focus.Kind != FocusSupervisor || application.inputTarget != "agent-a" || !application.supervisor.AtBottom() {
 		t.Fatal("supervisor prompt precondition failed")
 	}

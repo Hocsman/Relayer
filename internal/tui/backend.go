@@ -9,7 +9,7 @@ import (
 	"context"
 	"os/exec"
 
-	"github.com/Hocsman/Relayer/internal/session"
+	"github.com/Hocsman/Relayer/internal/adapters"
 )
 
 // Backend is the process/session boundary consumed by the TUI.
@@ -19,6 +19,12 @@ type Backend interface {
 	SendInput(id string, value string) error
 	Resize(id string, columns, rows int) error
 	BeginShutdown()
+}
+
+// DecisionBackend encodes and delivers a manual decision through the adapter
+// that produced the exact event occurrence.
+type DecisionBackend interface {
+	SendDecision(id string, event adapters.Event, manualInput string) error
 }
 
 // ContextResizeBackend is an optional non-blocking resize capability used by
@@ -43,8 +49,8 @@ type AttachableBackend interface {
 // authoritative over events that may have been queued while Bubble Tea was
 // suspended by tea.ExecProcess. Implementations must return cached state and
 // must not run an external command from Bubble Tea's Update call.
-type PromptSnapshotBackend interface {
-	PendingPrompt(context.Context, string) (*session.PromptDetected, error)
+type EventSnapshotBackend interface {
+	PendingEvent(context.Context, string) (*adapters.Event, error)
 }
 
 // Pane describes one agent already started by the caller.
@@ -53,5 +59,6 @@ type Pane struct {
 	Name    string
 	Command string
 	Backend string
+	Adapter string
 	Shell   bool
 }

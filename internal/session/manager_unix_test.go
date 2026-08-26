@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/intercept"
 	"github.com/Hocsman/Relayer/internal/platform"
@@ -68,16 +69,20 @@ func TestManagerLifecyclePromptResizeInputAndFinalOutput(t *testing.T) {
 				if event.SessionID == info.ID {
 					latestOutput, _ = manager.Output(info.ID)
 				}
-			case PromptDetected:
-				if event.SessionID == info.ID {
+			case AdapterEvent:
+				if event.Event.SessionID != info.ID {
+					continue
+				}
+				if event.Event.Type == adapters.EventProcessExit {
+					t.Fatalf("session exited before input: %#v", event.Event)
+				}
+				if event.Event.Actionable() {
 					promptSeen = true
-					if event.Pattern != "overwrite" || !strings.Contains(event.Match, "Overwrite? [Y/n]") {
+					if event.Event.Type != adapters.EventConfirmation ||
+						event.Event.Metadata["pattern"] != "overwrite" ||
+						!strings.Contains(event.Event.Match, "Overwrite? [Y/n]") {
 						t.Fatalf("unexpected prompt event: %#v", event)
 					}
-				}
-			case Exited:
-				if event.SessionID == info.ID {
-					t.Fatalf("session exited before input: %v", event.Err)
 				}
 			case Error:
 				if event.SessionID == info.ID {
@@ -93,8 +98,8 @@ func TestManagerLifecyclePromptResizeInputAndFinalOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("looking up internal session: %v", err)
 	}
-	if !session.interceptor.IsBlocked() {
-		t.Fatal("interceptor is not blocked after PromptDetected")
+	if !session.processor.IsBlocked() {
+		t.Fatal("processor is not blocked after AdapterEvent")
 	}
 	if err := manager.Resize(info.ID, 73, 19); err != nil {
 		t.Fatalf("Resize returned an error: %v", err)
@@ -103,8 +108,8 @@ func TestManagerLifecyclePromptResizeInputAndFinalOutput(t *testing.T) {
 	if err := manager.SendInput(info.ID, "yes"); err != nil {
 		t.Fatalf("SendInput returned an error: %v", err)
 	}
-	if session.interceptor.IsBlocked() {
-		t.Fatal("SendInput did not rearm the interceptor")
+	if session.processor.IsBlocked() {
+		t.Fatal("SendInput did not resolve the adapter event")
 	}
 
 	exited := false
@@ -116,19 +121,20 @@ func TestManagerLifecyclePromptResizeInputAndFinalOutput(t *testing.T) {
 				if event.SessionID == info.ID {
 					latestOutput, _ = manager.Output(info.ID)
 				}
-			case Exited:
-				if event.SessionID != info.ID {
+			case AdapterEvent:
+				if event.Event.SessionID != info.ID || event.Event.Type != adapters.EventProcessExit {
 					continue
 				}
-				// The lifecycle API promises Done before Exited.
+				// The lifecycle API promises Done before process_exit.
 				select {
 				case <-done:
 				default:
-					t.Fatal("Done is still open when Exited was emitted")
+					t.Fatal("Done is still open when process_exit was emitted")
 				}
 				latestOutput, _ = manager.Output(info.ID)
-				if event.Err != nil {
-					t.Fatalf("session exited with an error: %v; output: %q", event.Err, latestOutput)
+				_, waitErr, _, resultErr := manager.Result(info.ID)
+				if resultErr != nil || waitErr != nil {
+					t.Fatalf("session exit result = (%v, %v); output: %q", waitErr, resultErr, latestOutput)
 				}
 				exited = true
 			case Error:
@@ -330,8 +336,9 @@ func TestManagerCoalescesOutputButNeverDropsPrompt(t *testing.T) {
 	}
 	select {
 	case queued := <-events:
-		prompt, ok := queued.(PromptDetected)
-		if !ok || prompt.SessionID != info.ID || prompt.Pattern != "overwrite" {
+		prompt, ok := queued.(AdapterEvent)
+		if !ok || prompt.Event.SessionID != info.ID ||
+			prompt.Event.Metadata["pattern"] != "overwrite" {
 			t.Fatalf("essential prompt event = %#v", queued)
 		}
 	case <-time.After(time.Second):

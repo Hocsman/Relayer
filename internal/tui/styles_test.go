@@ -61,9 +61,9 @@ func TestPromptSwitchesRenderedBordersAndFocusesInput(t *testing.T) {
 		t.Fatal("normal supervisor border is not rounded")
 	}
 
-	application, _ = updateModel(t, application, session.PromptDetected{
-		SessionID: "agent-a", Pattern: "confirmation", Description: "human confirmation", Match: "Continue? [Y/n]",
-	})
+	prompt := testAdapterEvent("agent-a", "confirmation", "human confirmation", false)
+	prompt.Event.Match = "Continue? [Y/n]"
+	application, _ = updateModel(t, application, prompt)
 	if !application.input.Focused() || application.focus.Kind != FocusSupervisor || application.inputTarget != "agent-a" {
 		t.Fatalf("prompt did not focus supervisor input")
 	}
@@ -83,9 +83,9 @@ func TestPromptSwitchesRenderedBordersAndFocusesInput(t *testing.T) {
 func TestViewOccupiesWholeTerminalInEveryVisualState(t *testing.T) {
 	application, _, _ := newModelHarness(t)
 	assertFullTerminalView(t, application)
-	application, _ = updateModel(t, application, session.PromptDetected{
-		SessionID: "agent-b", Pattern: "password", Description: "credential required", Match: "Password:", Sensitive: true,
-	})
+	prompt := testAdapterEvent("agent-b", "password", "credential required", true)
+	prompt.Event.Match = "Password:"
+	application, _ = updateModel(t, application, prompt)
 	assertFullTerminalView(t, application)
 	application, _ = updateModel(t, application, tea.WindowSizeMsg{Width: 29, Height: 9})
 	assertFullTerminalView(t, application)

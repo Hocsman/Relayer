@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/session"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -14,7 +15,7 @@ type execProcessFunc func(*exec.Cmd, tea.ExecCallback) tea.Cmd
 
 type inputDeliveredMsg struct {
 	SessionID string
-	Prompt    session.PromptDetected
+	Event     adapters.Event
 	Err       error
 }
 
@@ -27,7 +28,7 @@ type attachFinishedMsg struct {
 
 type resyncFinishedMsg struct {
 	SessionID string
-	Prompt    *session.PromptDetected
+	Pending   *adapters.Event
 	Err       error
 }
 
@@ -74,14 +75,19 @@ func deliverInput(
 	backend Backend,
 	sessionID string,
 	value string,
-	prompt session.PromptDetected,
+	event adapters.Event,
 ) tea.Cmd {
 	return func() tea.Msg {
-		return inputDeliveredMsg{
+		message := inputDeliveredMsg{
 			SessionID: sessionID,
-			Prompt:    prompt,
-			Err:       backend.SendInput(sessionID, value),
+			Event:     event.Clone(),
 		}
+		if decisions, ok := backend.(DecisionBackend); ok {
+			message.Err = decisions.SendDecision(sessionID, event, value)
+		} else {
+			message.Err = backend.SendInput(sessionID, value)
+		}
+		return message
 	}
 }
 
@@ -96,17 +102,17 @@ func resyncAttachedSession(
 		if err := backend.Resync(ctx, sessionID, columns, rows); err != nil {
 			return resyncFinishedMsg{SessionID: sessionID, Err: err}
 		}
-		var prompt *session.PromptDetected
-		if snapshots, ok := backend.(PromptSnapshotBackend); ok {
+		var pending *adapters.Event
+		if snapshots, ok := backend.(EventSnapshotBackend); ok {
 			var err error
-			prompt, err = snapshots.PendingPrompt(ctx, sessionID)
+			pending, err = snapshots.PendingEvent(ctx, sessionID)
 			if err != nil {
 				return resyncFinishedMsg{SessionID: sessionID, Err: err}
 			}
 		}
 		return resyncFinishedMsg{
 			SessionID: sessionID,
-			Prompt:    prompt,
+			Pending:   pending,
 		}
 	}
 }

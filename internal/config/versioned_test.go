@@ -31,7 +31,7 @@ func TestLoadVersionOneAcceptsEveryAgentCountFromOneThroughEight(t *testing.T) {
 				if configured.ID != fmt.Sprintf("agent-%d", index+1) || configured.Name != fmt.Sprintf("Agent %d", index+1) {
 					t.Fatalf("agent %d identity = %#v", index, configured)
 				}
-				if configured.Backend != agent.BackendPTY || configured.Adapter != agent.AdapterGeneric {
+				if configured.Backend != agent.BackendPTY || configured.Adapter != "" {
 					t.Fatalf("agent %d defaults = backend %q adapter %q", index, configured.Backend, configured.Adapter)
 				}
 			}
@@ -188,13 +188,13 @@ func TestLoadVersionOneRejectsAgentSemanticErrors(t *testing.T) {
 			wantMessage: "unsupported backend",
 		},
 		{
-			name: "unsupported adapter",
+			name: "invalid adapter identifier",
 			agents: `
   - id: adapter
     name: Adapter
     command: [runner]
-    adapter: claude`,
-			wantMessage: "unsupported adapter",
+    adapter: "Bad Adapter!"`,
+			wantMessage: "invalid adapter name",
 		},
 	}
 

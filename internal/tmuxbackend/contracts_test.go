@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/terminal"
 )
@@ -58,7 +59,7 @@ func TestManagerFIFOInterceptionFailedInputReblockAndRearm(t *testing.T) {
 		}
 	}
 	first := contractWaitForPrompt(t, events, info.ID)
-	if first.Pattern != "overwrite" || first.Match != "Overwrite? [Y/n]" {
+	if first.Metadata["pattern"] != "overwrite" || first.Match != "Overwrite? [Y/n]" {
 		t.Fatalf("first prompt = %#v", first)
 	}
 	if output, outputErr := manager.Output(info.ID); outputErr != nil || output != "Overwrite? [Y/n]" {
@@ -67,44 +68,44 @@ func TestManagerFIFOInterceptionFailedInputReblockAndRearm(t *testing.T) {
 
 	deliveryFailure := errors.New("planned load-buffer failure")
 	runner.setFailure("load-buffer", deliveryFailure)
-	if err := manager.SendInput(info.ID, "first-secret"); !errors.Is(err, deliveryFailure) {
-		t.Fatalf("failed SendInput error = %v", err)
+	if err := manager.SendEvent(context.Background(), info.ID, first.ID, []byte("first-secret\r")); !errors.Is(err, deliveryFailure) {
+		t.Fatalf("failed SendEvent error = %v", err)
 	}
-	if !target.interceptor.IsBlocked() {
-		t.Fatal("failed delivery did not restore interceptor blocked state")
+	if !target.processor.IsBlocked() {
+		t.Fatal("failed delivery did not retain Processor blocked state")
 	}
-	pending, err := manager.PendingPrompt(context.Background(), info.ID)
-	if err != nil || pending == nil || pending.Pattern != "overwrite" {
-		t.Fatalf("prompt was not restored after failed delivery: prompt %#v error %v", pending, err)
+	pending := target.processor.Pending()
+	if pending == nil || pending.ID != first.ID || pending.Metadata["pattern"] != "overwrite" {
+		t.Fatalf("event was not retained after failed delivery: %#v", pending)
 	}
 
 	runner.setFailure("load-buffer", nil)
-	if err := manager.SendInput(info.ID, "Y"); err != nil {
-		t.Fatalf("successful SendInput: %v", err)
+	if err := manager.SendEvent(context.Background(), info.ID, first.ID, []byte("Y\r")); err != nil {
+		t.Fatalf("successful SendEvent: %v", err)
 	}
 	loads := runner.callsFor("load-buffer")
 	if len(loads) != 2 || string(loads[1].Stdin) != "Y\r" {
 		t.Fatalf("load-buffer calls = %#v, want final exact Y\\r on stdin", loads)
 	}
-	if target.interceptor.IsBlocked() {
-		t.Fatal("successful delivery left interceptor blocked")
+	if target.processor.IsBlocked() {
+		t.Fatal("successful delivery left Processor blocked")
 	}
-	if pending, err := manager.PendingPrompt(context.Background(), info.ID); err != nil || pending != nil {
-		t.Fatalf("successful delivery retained prompt %#v, error %v", pending, err)
+	if pending := target.processor.Pending(); pending != nil {
+		t.Fatalf("successful delivery retained event %#v", pending)
 	}
 
 	if _, err := writer.Write([]byte("\r\nOVERWRITE second? [y/n]")); err != nil {
 		t.Fatalf("write second prompt: %v", err)
 	}
 	second := contractWaitForPrompt(t, events, info.ID)
-	if second.Pattern != "overwrite" || second.Match != "OVERWRITE second? [y/n]" {
+	if second.Metadata["pattern"] != "overwrite" || second.Match != "OVERWRITE second? [y/n]" || second.ID == first.ID {
 		t.Fatalf("rearmed prompt = %#v", second)
 	}
 	snapshot, err := manager.Snapshot(context.Background(), info.ID)
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if snapshot.Prompt == nil || snapshot.Prompt.Pattern != "overwrite" || !strings.Contains(snapshot.Output, "OVERWRITE second? [y/n]") {
+	if snapshot.Pending == nil || snapshot.Pending.ID != second.ID || snapshot.Pending.Metadata["pattern"] != "overwrite" || !strings.Contains(snapshot.Output, "OVERWRITE second? [y/n]") {
 		t.Fatalf("snapshot did not reconcile prompt/output: %#v", snapshot)
 	}
 }
@@ -165,8 +166,8 @@ func TestManagerStopEmitsExitedAndLeavesStoppedSnapshot(t *testing.T) {
 		t.Fatalf("Stop: %v", err)
 	}
 	exited := waitForExitEvent(t, events, info.ID)
-	if exited.Err != nil {
-		t.Fatalf("explicit Stop emitted an error exit: %v", exited.Err)
+	if exited.Metadata["failed"] == "true" {
+		t.Fatalf("explicit Stop emitted a failed process_exit: %#v", exited)
 	}
 	select {
 	case <-done:
@@ -277,15 +278,16 @@ func TestMergedLaunchEnvironmentIsFreshAndExcludesOnlyImplicitTmuxMetadata(t *te
 	}
 }
 
-func contractWaitForPrompt(t *testing.T, events <-chan session.Event, id string) session.PromptDetected {
+func contractWaitForPrompt(t *testing.T, events <-chan session.Event, id string) adapters.Event {
 	t.Helper()
 	timer := time.NewTimer(3 * time.Second)
 	defer timer.Stop()
 	for {
 		select {
 		case event := <-events:
-			if prompt, ok := event.(session.PromptDetected); ok && prompt.SessionID == id {
-				return prompt
+			if adapterEvent, ok := event.(session.AdapterEvent); ok &&
+				adapterEvent.Event.SessionID == id && adapterEvent.Event.Actionable() {
+				return adapterEvent.Event
 			}
 		case <-timer.C:
 			t.Fatalf("timed out waiting for prompt event for %q", id)

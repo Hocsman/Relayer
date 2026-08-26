@@ -107,6 +107,7 @@ func (m *Model) renderAgentPane(cell Cell) string {
 	title := lipgloss.NewStyle().Foreground(agentColor(index)).Bold(true).Render(focusMarker+pane.name) + "  " +
 		lipgloss.NewStyle().Foreground(statusColor).Render("● "+status)
 	title += "  " + lipgloss.NewStyle().Foreground(colorMuted).Render("["+strings.ToUpper(pane.backend)+"]")
+	title += "  " + lipgloss.NewStyle().Foreground(colorMuted).Render("ADAPTER "+strings.ToUpper(pane.adapter))
 	if pane.shell {
 		title += "  " + lipgloss.NewStyle().Foreground(colorMuted).Render("SHELL")
 	}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/intercept"
 	"github.com/Hocsman/Relayer/internal/session"
@@ -24,6 +25,8 @@ type Manager struct {
 }
 
 var _ terminal.Backend = (*Manager)(nil)
+var _ terminal.EventSender = (*Manager)(nil)
+var _ terminal.PendingEventProvider = (*Manager)(nil)
 
 func New(
 	parent context.Context,
@@ -31,7 +34,22 @@ func New(
 	patterns []intercept.Pattern,
 	ringCapacity int,
 ) (*Manager, error) {
-	inner, err := session.NewManager(parent, events, patterns, ringCapacity)
+	registry, err := adapters.NewRegistry(patterns)
+	if err != nil {
+		return nil, err
+	}
+	return NewWithRegistry(parent, events, registry, ringCapacity)
+}
+
+// NewWithRegistry constructs a PTY backend using the application adapter
+// registry. New remains the source-compatible legacy-pattern wrapper.
+func NewWithRegistry(
+	parent context.Context,
+	events chan<- session.Event,
+	registry *adapters.Registry,
+	ringCapacity int,
+) (*Manager, error) {
+	inner, err := session.NewManagerWithRegistry(parent, events, registry, ringCapacity)
 	if err != nil {
 		return nil, err
 	}
@@ -57,15 +75,22 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 		Name:           info.Name,
 		DisplayCommand: info.DisplayCommand,
 		Backend:        agent.BackendPTY,
+		Adapter:        info.Adapter,
 		Shell:          info.Shell,
 	}, nil
 }
 
 func (m *Manager) Send(ctx context.Context, id terminal.SessionID, data []byte) error {
+	return m.SendEvent(ctx, id, "", data)
+}
+
+// SendEvent resolves one pending adapter event and transmits data exactly as
+// supplied. An empty eventID preserves the historical Send behavior.
+func (m *Manager) SendEvent(ctx context.Context, id terminal.SessionID, eventID string, data []byte) error {
 	if err := m.check(ctx, id); err != nil {
 		return err
 	}
-	if err := m.inner.SendData(id, data); err != nil {
+	if err := m.inner.SendDataForEvent(id, eventID, data); err != nil {
 		return &terminal.OperationError{Backend: m.Name(), Operation: "send", SessionID: id, Err: err}
 	}
 	return nil
@@ -101,16 +126,39 @@ func (m *Manager) Snapshot(ctx context.Context, id terminal.SessionID) (terminal
 			status = terminal.StatusFailed
 		}
 	}
+	pending, err := m.inner.PendingEvent(id)
+	if err != nil {
+		return terminal.Snapshot{}, &terminal.OperationError{Backend: m.Name(), Operation: "snapshot", SessionID: id, Err: err}
+	}
+	if exited {
+		// A completed process cannot accept a human decision even if its final
+		// output happened to look like a prompt while the PTY was draining.
+		pending = nil
+	}
+	revision, err := m.inner.Revision(id)
+	if err != nil {
+		return terminal.Snapshot{}, &terminal.OperationError{Backend: m.Name(), Operation: "snapshot", SessionID: id, Err: err}
+	}
 	return terminal.Snapshot{
 		ID:       id,
 		Status:   status,
 		Running:  !exited,
 		ExitCode: exitCode,
 		Output:   output,
+		Pending:  pending,
+		Revision: revision,
 	}, nil
 }
 
-// Output returns the interceptor's in-memory ring without any process query.
+// PendingEvent returns cached adapter state without performing terminal I/O.
+func (m *Manager) PendingEvent(ctx context.Context, id terminal.SessionID) (*adapters.Event, error) {
+	if err := m.check(ctx, id); err != nil {
+		return nil, err
+	}
+	return m.inner.PendingEvent(id)
+}
+
+// Output returns the processor's in-memory ring without any process query.
 func (m *Manager) Output(id string) (string, error) {
 	if err := m.check(context.Background(), id); err != nil {
 		return "", err

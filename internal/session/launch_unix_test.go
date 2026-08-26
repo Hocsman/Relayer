@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 )
 
@@ -241,10 +242,11 @@ func waitForOutputAndExit(
 				if event.SessionID == sessionID {
 					latest, _ = manager.Output(sessionID)
 				}
-			case Exited:
-				if event.SessionID == sessionID {
-					if event.Err != nil {
-						t.Fatalf("session %q exited with error: %v; output: %q", sessionID, event.Err, latest)
+			case AdapterEvent:
+				if event.Event.SessionID == sessionID && event.Event.Type == adapters.EventProcessExit {
+					_, waitErr, _, resultErr := manager.Result(sessionID)
+					if resultErr != nil || waitErr != nil {
+						t.Fatalf("session %q exit result = (%v, %v); output: %q", sessionID, waitErr, resultErr, latest)
 					}
 					exited = true
 					latest, _ = manager.Output(sessionID)

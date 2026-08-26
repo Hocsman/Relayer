@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/session"
 )
@@ -208,7 +209,7 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 		}
 	}
 
-	var detected session.PromptDetected
+	var detected adapters.Event
 	promptSeen := false
 	for !promptSeen {
 		select {
@@ -218,15 +219,13 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 				if msg.SessionID == startedAgent.ID {
 					refreshOutput()
 				}
-			case session.PromptDetected:
-				if msg.SessionID == startedAgent.ID {
-					detected = msg
+			case session.AdapterEvent:
+				if msg.Event.SessionID == startedAgent.ID && msg.Event.Actionable() {
+					detected = msg.Event
 					promptSeen = true
 					refreshOutput()
-				}
-			case session.Exited:
-				if msg.SessionID == startedAgent.ID {
-					t.Fatalf("mock exited before validation prompt: %v", msg.Err)
+				} else if msg.Event.SessionID == startedAgent.ID && msg.Event.Type == adapters.EventProcessExit {
+					t.Fatalf("mock exited before validation prompt: %#v", msg.Event.Metadata)
 				}
 			case session.Error:
 				if msg.SessionID == startedAgent.ID {
@@ -238,8 +237,8 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 		}
 	}
 
-	if detected.Pattern != "overwrite" {
-		t.Fatalf("detected pattern = %q, want overwrite", detected.Pattern)
+	if detected.Metadata["pattern"] != "overwrite" {
+		t.Fatalf("detected pattern = %q, want overwrite", detected.Metadata["pattern"])
 	}
 	if !strings.Contains(detected.Match, "Overwrite file? [Y/n]") {
 		t.Fatalf("detected match = %q", detected.Match)
@@ -276,7 +275,7 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 		)
 	}
 
-	if err := manager.SendInput(startedAgent.ID, "Y"); err != nil {
+	if err := manager.SendDataForEvent(startedAgent.ID, detected.ID, []byte("Y\r")); err != nil {
 		t.Fatalf("sending mock validation: %v", err)
 	}
 
@@ -290,11 +289,11 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 				if msg.SessionID == startedAgent.ID {
 					refreshOutput()
 				}
-			case session.Exited:
-				if msg.SessionID == startedAgent.ID {
+			case session.AdapterEvent:
+				if msg.Event.SessionID == startedAgent.ID && msg.Event.Type == adapters.EventProcessExit {
 					refreshOutput()
-					if msg.Err != nil {
-						t.Fatalf("mock exited with an error: %v; output: %q", msg.Err, latestOutput)
+					if msg.Event.Metadata["failed"] == "true" {
+						t.Fatalf("mock exited with an error: %#v; output: %q", msg.Event.Metadata, latestOutput)
 					}
 					exited = true
 				}

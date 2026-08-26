@@ -80,7 +80,7 @@ func TestFocusTraversesEightAgentsAndPages(t *testing.T) {
 
 func TestPromptQueuePreservesImmediateSecondPrompt(t *testing.T) {
 	application, _, _ := newModelHarness(t)
-	first := session.PromptDetected{SessionID: "agent-a", Pattern: "confirmation", Description: "first prompt"}
+	first := testAdapterEvent("agent-a", "confirmation", "first prompt", false)
 	application, _ = updateModel(t, application, first)
 	application.input.SetValue("yes")
 
@@ -89,7 +89,7 @@ func TestPromptQueuePreservesImmediateSecondPrompt(t *testing.T) {
 	if !application.writePending || application.inputTarget != "" || application.panes[0].blocked {
 		t.Fatalf("old prompt was not cleared before delivery")
 	}
-	second := session.PromptDetected{SessionID: "agent-a", Pattern: "confirmation", Description: "second prompt"}
+	second := testAdapterEvent("agent-a", "confirmation", "second prompt", false)
 	application, _ = updateModel(t, application, second)
 	if !application.panes[0].blocked || application.inputTarget != "" {
 		t.Fatal("second prompt should be queued while first write is in flight")
@@ -103,7 +103,7 @@ func TestPromptQueuePreservesImmediateSecondPrompt(t *testing.T) {
 	if application.inputTarget != "agent-a" || !application.panes[0].blocked {
 		t.Fatal("second prompt was lost when first delivery completed")
 	}
-	if application.panes[0].prompt.Description != "second prompt" {
+	if application.panes[0].prompt.Summary != "second prompt" {
 		t.Fatalf("active prompt = %#v", application.panes[0].prompt)
 	}
 }
@@ -115,9 +115,7 @@ func TestPromptOnHiddenPageOpensThatPageAndQueuesByStableID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	application, _ = updateModel(t, application, session.PromptDetected{
-		SessionID: "agent-7", Pattern: "confirmation", Description: "hidden prompt",
-	})
+	application, _ = updateModel(t, application, testAdapterEvent("agent-7", "confirmation", "hidden prompt", false))
 	if application.page != 1 || application.focus.Kind != FocusSupervisor || application.inputTarget != "agent-7" {
 		t.Fatalf("hidden prompt state = page %d focus %#v target %q", application.page, application.focus, application.inputTarget)
 	}
@@ -136,12 +134,8 @@ func TestPromptQueueAdvancesAcrossPagesAfterDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	application, _ = updateModel(t, application, session.PromptDetected{
-		SessionID: "agent-2", Pattern: "confirmation", Description: "first page prompt",
-	})
-	application, _ = updateModel(t, application, session.PromptDetected{
-		SessionID: "agent-7", Pattern: "confirmation", Description: "second page prompt",
-	})
+	application, _ = updateModel(t, application, testAdapterEvent("agent-2", "confirmation", "first page prompt", false))
+	application, _ = updateModel(t, application, testAdapterEvent("agent-7", "confirmation", "second page prompt", false))
 	if application.inputTarget != "agent-2" || application.page != 0 {
 		t.Fatalf("second prompt disrupted active target: target %q page %d", application.inputTarget, application.page)
 	}
@@ -160,9 +154,7 @@ func TestPromptQueueAdvancesAcrossPagesAfterDelivery(t *testing.T) {
 func TestPasswordClearedBeforeDeliveryAndBeforeAdvancingAfterExit(t *testing.T) {
 	t.Run("delivery", func(t *testing.T) {
 		application, backend, _ := newModelHarness(t)
-		application, _ = updateModel(t, application, session.PromptDetected{
-			SessionID: "agent-a", Pattern: "password", Description: "password prompt", Sensitive: true,
-		})
+		application, _ = updateModel(t, application, testAdapterEvent("agent-a", "password", "password prompt", true))
 		application.input.SetValue("top-secret")
 		if strings.Contains(application.View(), "top-secret") {
 			t.Fatal("sensitive input is visible in the rendered TUI")
@@ -187,13 +179,9 @@ func TestPasswordClearedBeforeDeliveryAndBeforeAdvancingAfterExit(t *testing.T) 
 
 	t.Run("target exits", func(t *testing.T) {
 		application, _, _ := newModelHarness(t)
-		application, _ = updateModel(t, application, session.PromptDetected{
-			SessionID: "agent-a", Pattern: "password", Description: "password prompt", Sensitive: true,
-		})
+		application, _ = updateModel(t, application, testAdapterEvent("agent-a", "password", "password prompt", true))
 		application.input.SetValue("top-secret")
-		application, _ = updateModel(t, application, session.PromptDetected{
-			SessionID: "agent-b", Pattern: "confirmation", Description: "next prompt",
-		})
+		application, _ = updateModel(t, application, testAdapterEvent("agent-b", "confirmation", "next prompt", false))
 		application, _ = updateModel(t, application, session.Exited{SessionID: "agent-a"})
 		if got := application.input.Value(); got != "" {
 			t.Fatalf("password survived target exit: %q", got)
@@ -207,7 +195,7 @@ func TestPasswordClearedBeforeDeliveryAndBeforeAdvancingAfterExit(t *testing.T) 
 func TestDeliveryErrorRequeuesPromptWithoutRestoringSecret(t *testing.T) {
 	application, backend, _ := newModelHarness(t)
 	backend.inputError = errFakeBackend
-	prompt := session.PromptDetected{SessionID: "agent-a", Pattern: "password", Description: "credential", Sensitive: true}
+	prompt := testAdapterEvent("agent-a", "password", "credential", true)
 	application, _ = updateModel(t, application, prompt)
 	application.input.SetValue("secret")
 	application, command := updateModel(t, application, tea.KeyMsg{Type: tea.KeyEnter})

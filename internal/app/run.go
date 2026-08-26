@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/session"
@@ -54,6 +55,14 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 	if err != nil {
 		return err
 	}
+	registry, err := adapters.NewRegistry(configuration.Patterns)
+	if err != nil {
+		return fmt.Errorf("initialisation des adaptateurs: %w", err)
+	}
+	resolution.Specs, err = resolveAgentAdapters(resolution.Specs, registry)
+	if err != nil {
+		return err
+	}
 	backendSelection, err := resolveAgentBackends(resolution.Specs, dependencies.lookup)
 	if err != nil {
 		return err
@@ -69,7 +78,7 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 	router, err := buildBackendRouter(
 		context.Background(),
 		events,
-		configuration.Patterns,
+		registry,
 		defaultRingCapacity,
 		backendSelection,
 		configuration.Sessions,
@@ -162,6 +171,7 @@ func startAgentSessions(
 			Name:    info.Name,
 			Command: paneDisplayCommand(info),
 			Backend: info.Backend,
+			Adapter: info.Adapter,
 			Shell:   info.Shell,
 		})
 	}
@@ -195,6 +205,7 @@ func buildStartupLogs(
 	}
 	logs = append(logs,
 		fmt.Sprintf("%d agent(s) démarré(s) via %s", len(infos), effectiveBackendLabel(infos)),
+		fmt.Sprintf("Adaptateur(s) actif(s): %s", effectiveAdapterLabel(infos)),
 		fmt.Sprintf("%d patterns chargés depuis %s", len(configuration.Patterns), configPath),
 	)
 	if strings.Contains(strings.ToLower(effectiveBackendLabel(infos)), agent.BackendTmux) {
@@ -205,6 +216,25 @@ func buildStartupLogs(
 		))
 	}
 	return logs
+}
+
+func effectiveAdapterLabel(infos []session.Info) string {
+	set := make(map[string]struct{})
+	for _, info := range infos {
+		name := strings.ToUpper(strings.TrimSpace(info.Adapter))
+		if name != "" {
+			set[name] = struct{}{}
+		}
+	}
+	names := make([]string, 0, len(set))
+	for name := range set {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return "INCONNU"
+	}
+	return strings.Join(names, "/")
 }
 
 func effectiveBackendLabel(infos []session.Info) string {

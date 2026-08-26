@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/config"
-	"github.com/Hocsman/Relayer/internal/intercept"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/terminal"
 	"github.com/Hocsman/Relayer/internal/tmuxbackend"
@@ -181,16 +181,16 @@ func TestBuildBackendRouterPTYOnlyNeverConstructsTmux(t *testing.T) {
 	router, err := buildBackendRouter(
 		context.Background(),
 		make(chan session.Event, 1),
-		[]intercept.Pattern{{Name: "gate", Description: "gate", Expression: "continue"}},
+		mustBackendTestRegistry(t),
 		4096,
 		backendResolution{NeedsPTY: true},
 		config.SessionPolicy{PersistOnExit: true, CleanupOnSuccess: false},
 		backendDependencies{
-			newPTY: func(context.Context, chan<- session.Event, []intercept.Pattern, int) (terminal.Backend, error) {
+			newPTY: func(context.Context, chan<- session.Event, *adapters.Registry, int) (terminal.Backend, error) {
 				ptyCalls++
 				return pty, nil
 			},
-			newTmux: func(context.Context, chan<- session.Event, []intercept.Pattern, int, tmuxbackend.Options) (terminal.Backend, error) {
+			newTmux: func(context.Context, chan<- session.Event, *adapters.Registry, int, tmuxbackend.Options) (terminal.Backend, error) {
 				t.Fatal("tmux factory called for a PTY-only selection")
 				return nil, nil
 			},
@@ -213,16 +213,16 @@ func TestBuildBackendRouterPassesTmuxPathPolicyAndCaptureLimit(t *testing.T) {
 	router, err := buildBackendRouter(
 		context.Background(),
 		make(chan session.Event, 1),
-		[]intercept.Pattern{{Name: "gate", Description: "gate", Expression: "continue"}},
+		mustBackendTestRegistry(t),
 		8192,
 		backendResolution{NeedsTmux: true, TmuxPath: "/resolved/bin/tmux"},
 		config.SessionPolicy{PersistOnExit: true, CleanupOnSuccess: false},
 		backendDependencies{
-			newPTY: func(context.Context, chan<- session.Event, []intercept.Pattern, int) (terminal.Backend, error) {
+			newPTY: func(context.Context, chan<- session.Event, *adapters.Registry, int) (terminal.Backend, error) {
 				t.Fatal("PTY factory called for a tmux-only selection")
 				return nil, nil
 			},
-			newTmux: func(_ context.Context, _ chan<- session.Event, _ []intercept.Pattern, capacity int, options tmuxbackend.Options) (terminal.Backend, error) {
+			newTmux: func(_ context.Context, _ chan<- session.Event, _ *adapters.Registry, capacity int, options tmuxbackend.Options) (terminal.Backend, error) {
 				if capacity != 8192 {
 					t.Fatalf("tmux ring capacity = %d, want 8192", capacity)
 				}
@@ -246,15 +246,15 @@ func TestBuildBackendRouterRollsBackPTYWhenTmuxConstructionFails(t *testing.T) {
 	router, err := buildBackendRouter(
 		context.Background(),
 		make(chan session.Event, 1),
-		nil,
+		mustBackendTestRegistry(t),
 		1024,
 		backendResolution{NeedsPTY: true, NeedsTmux: true, TmuxPath: "/fake/tmux"},
 		config.SessionPolicy{},
 		backendDependencies{
-			newPTY: func(context.Context, chan<- session.Event, []intercept.Pattern, int) (terminal.Backend, error) {
+			newPTY: func(context.Context, chan<- session.Event, *adapters.Registry, int) (terminal.Backend, error) {
 				return pty, nil
 			},
-			newTmux: func(context.Context, chan<- session.Event, []intercept.Pattern, int, tmuxbackend.Options) (terminal.Backend, error) {
+			newTmux: func(context.Context, chan<- session.Event, *adapters.Registry, int, tmuxbackend.Options) (terminal.Backend, error) {
 				return nil, tmuxFailure
 			},
 		},
@@ -311,11 +311,11 @@ func TestRunExplicitTmuxAbsenceFailsBeforeAnyBackendConstruction(t *testing.T) {
 	var diagnostics strings.Builder
 	err := run([]string{"--config", path}, &diagnostics, backendDependencies{
 		lookup: func(string) (string, error) { return "", errors.New("tmux is absent") },
-		newPTY: func(context.Context, chan<- session.Event, []intercept.Pattern, int) (terminal.Backend, error) {
+		newPTY: func(context.Context, chan<- session.Event, *adapters.Registry, int) (terminal.Backend, error) {
 			constructed++
 			return newRouterFakeBackend(agent.BackendPTY), nil
 		},
-		newTmux: func(context.Context, chan<- session.Event, []intercept.Pattern, int, tmuxbackend.Options) (terminal.Backend, error) {
+		newTmux: func(context.Context, chan<- session.Event, *adapters.Registry, int, tmuxbackend.Options) (terminal.Backend, error) {
 			constructed++
 			return newRouterFakeBackend(agent.BackendTmux), nil
 		},
@@ -337,10 +337,10 @@ func TestRunAutoAbsenceSelectsPTYAndReportsFallbackBeforeStartup(t *testing.T) {
 	var diagnostics strings.Builder
 	err := run([]string{"--config", path}, &diagnostics, backendDependencies{
 		lookup: func(string) (string, error) { return "", errors.New("tmux is absent") },
-		newPTY: func(context.Context, chan<- session.Event, []intercept.Pattern, int) (terminal.Backend, error) {
+		newPTY: func(context.Context, chan<- session.Event, *adapters.Registry, int) (terminal.Backend, error) {
 			return pty, nil
 		},
-		newTmux: func(context.Context, chan<- session.Event, []intercept.Pattern, int, tmuxbackend.Options) (terminal.Backend, error) {
+		newTmux: func(context.Context, chan<- session.Event, *adapters.Registry, int, tmuxbackend.Options) (terminal.Backend, error) {
 			tmuxConstructed = true
 			return newRouterFakeBackend(agent.BackendTmux), nil
 		},
@@ -372,11 +372,11 @@ func TestRunAutoAvailabilitySelectsTmuxAndPassesSessionPolicy(t *testing.T) {
 	var diagnostics strings.Builder
 	err := run([]string{"--config", path}, &diagnostics, backendDependencies{
 		lookup: func(string) (string, error) { return "/resolved/tmux", nil },
-		newPTY: func(context.Context, chan<- session.Event, []intercept.Pattern, int) (terminal.Backend, error) {
+		newPTY: func(context.Context, chan<- session.Event, *adapters.Registry, int) (terminal.Backend, error) {
 			ptyConstructed = true
 			return newRouterFakeBackend(agent.BackendPTY), nil
 		},
-		newTmux: func(_ context.Context, _ chan<- session.Event, _ []intercept.Pattern, _ int, options tmuxbackend.Options) (terminal.Backend, error) {
+		newTmux: func(_ context.Context, _ chan<- session.Event, _ *adapters.Registry, _ int, options tmuxbackend.Options) (terminal.Backend, error) {
 			captured = options
 			return tmux, nil
 		},
@@ -446,4 +446,15 @@ func backendTestSpecs(backends ...string) []agent.Spec {
 		}
 	}
 	return result
+}
+
+func mustBackendTestRegistry(t *testing.T) *adapters.Registry {
+	t.Helper()
+	registry, err := adapters.NewRegistry([]adapters.Pattern{{
+		Name: "gate", Description: "gate", Expression: "continue",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return registry
 }

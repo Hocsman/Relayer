@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/intercept"
 	"github.com/Hocsman/Relayer/internal/session"
@@ -380,9 +381,6 @@ func TestManagerRejectsTmuxOperationsAfterShutdownWithoutNewCommands(t *testing.
 			// Bounded local state remains readable for the final TUI refresh.
 			if _, err := manager.Output(info.ID); err != nil {
 				t.Fatalf("cached Output after shutdown: %v", err)
-			}
-			if _, err := manager.PendingPrompt(context.Background(), info.ID); err != nil {
-				t.Fatalf("cached PendingPrompt after shutdown: %v", err)
 			}
 			if _, err := manager.Done(info.ID); err != nil {
 				t.Fatalf("Done after shutdown: %v", err)
@@ -844,15 +842,16 @@ func optionValue(arguments []string, option string) string {
 	return ""
 }
 
-func waitForExitEvent(t *testing.T, events <-chan session.Event, id string) session.Exited {
+func waitForExitEvent(t *testing.T, events <-chan session.Event, id string) adapters.Event {
 	t.Helper()
 	deadline := time.NewTimer(3 * time.Second)
 	defer deadline.Stop()
 	for {
 		select {
 		case event := <-events:
-			if exited, ok := event.(session.Exited); ok && exited.SessionID == id {
-				return exited
+			if adapterEvent, ok := event.(session.AdapterEvent); ok &&
+				adapterEvent.Event.SessionID == id && adapterEvent.Event.Type == adapters.EventProcessExit {
+				return adapterEvent.Event
 			}
 		case <-deadline.C:
 			t.Fatalf("timed out waiting for exit event for %s", id)

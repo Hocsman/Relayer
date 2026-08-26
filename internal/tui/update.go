@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/session"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -76,18 +77,28 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if paneIndex := m.paneIndex(msg.SessionID); paneIndex >= 0 {
 			m.refreshPaneOutput(paneIndex)
 		}
-	case session.PromptDetected:
-		if paneIndex := m.paneIndex(msg.SessionID); paneIndex >= 0 {
-			if m.panes[paneIndex].backend == "tmux" {
-				if snapshots, ok := m.backend.(PromptSnapshotBackend); ok {
-					current, snapshotErr := snapshots.PendingPrompt(m.backend.Context(), msg.SessionID)
-					if snapshotErr == nil && current == nil {
-						// This event was queued before a completed attach resync and
-						// no longer represents a prompt awaiting input.
+	case session.AdapterEvent:
+		observed := msg.Event.Clone()
+		if observed.Type == adapters.EventProcessExit {
+			commands = append(commands, m.applyProcessExit(observed))
+			break
+		}
+		if !observed.Actionable() || m.eventResolved(observed.ID) {
+			break
+		}
+		if paneIndex := m.paneIndex(observed.SessionID); paneIndex >= 0 {
+			if snapshots, ok := m.backend.(EventSnapshotBackend); ok && m.panes[paneIndex].backend == "tmux" {
+				current, snapshotErr := snapshots.PendingEvent(m.backend.Context(), observed.SessionID)
+				if snapshotErr == nil && current == nil {
+					// A decision or attach resync resolved this occurrence before
+					// its queued channel event reached Bubble Tea.
+					m.rememberResolved(observed.ID)
+					break
+				}
+				if snapshotErr == nil {
+					observed = current.Clone()
+					if m.eventResolved(observed.ID) {
 						break
-					}
-					if snapshotErr == nil {
-						msg = *current
 					}
 				}
 			}
@@ -95,14 +106,21 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if m.panes[paneIndex].exited {
 				break
 			}
+			if m.panes[paneIndex].blocked && m.panes[paneIndex].prompt.ID == observed.ID {
+				break
+			}
 			if !m.panes[paneIndex].blocked {
 				m.panes[paneIndex].blocked = true
-				m.panes[paneIndex].prompt = msg
-				m.pending = append(m.pending, msg.SessionID)
+				m.panes[paneIndex].prompt = observed.Clone()
+				m.pending = append(m.pending, observed.SessionID)
+				reason := observed.Summary
+				if observed.Sensitive {
+					reason = "saisie sensible requise"
+				}
 				m.appendLog(fmt.Sprintf(
 					"%s attend une intervention humaine (%s)",
 					m.panes[paneIndex].name,
-					msg.Description,
+					reason,
 				))
 			}
 			if m.inputTarget == "" && !m.writePending {
@@ -111,6 +129,12 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case session.Exited:
 		if paneIndex := m.paneIndex(msg.SessionID); paneIndex >= 0 {
+			// Legacy producers may still emit Exited beside the canonical
+			// process_exit adapter event. Treat the latter as authoritative and
+			// never duplicate lifecycle logs or queue transitions.
+			if m.panes[paneIndex].exited {
+				break
+			}
 			m.refreshPaneOutput(paneIndex)
 			m.panes[paneIndex].exited = true
 			m.panes[paneIndex].exitErr = msg.Err
@@ -122,7 +146,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			wasInputTarget := m.inputTarget == msg.SessionID
 			m.removePending(msg.SessionID)
 			m.panes[paneIndex].blocked = false
-			m.panes[paneIndex].prompt = session.PromptDetected{}
+			m.rememberResolved(m.panes[paneIndex].prompt.ID)
+			m.panes[paneIndex].prompt = adapters.Event{}
 			if wasInputTarget {
 				m.inputTarget = ""
 				// In particular, never carry a password into the next agent.
@@ -144,9 +169,11 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.appendLog(fmt.Sprintf("Échec de l'envoi à %s: %v", m.panes[paneIndex].name, msg.Err))
 			if !m.panes[paneIndex].exited && !m.panes[paneIndex].blocked {
 				m.panes[paneIndex].blocked = true
-				m.panes[paneIndex].prompt = msg.Prompt
+				m.panes[paneIndex].prompt = msg.Event.Clone()
 				m.prependPending(msg.SessionID)
 			}
+		} else {
+			m.rememberResolved(msg.Event.ID)
 		}
 		commands = append(commands, m.activateNextPrompt())
 	case attachFinishedMsg:
@@ -183,7 +210,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			m.appendLog(fmt.Sprintf("Resynchronisation de %s impossible: %v", m.panes[paneIndex].name, msg.Err))
 		} else {
-			commands = append(commands, m.reconcilePrompt(msg.SessionID, msg.Prompt))
+			commands = append(commands, m.reconcileEvent(msg.SessionID, msg.Pending))
 			m.appendLog(fmt.Sprintf("%s resynchronisé (sortie, état, prompts et taille)", m.panes[paneIndex].name))
 		}
 	case resizeFinishedMsg:
@@ -205,27 +232,30 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	return m, batchCommands(commands...)
 }
 
-func (m *Model) reconcilePrompt(sessionID string, prompt *session.PromptDetected) tea.Cmd {
+func (m *Model) reconcileEvent(sessionID string, pending *adapters.Event) tea.Cmd {
 	paneIndex := m.paneIndex(sessionID)
 	if paneIndex < 0 {
 		return nil
 	}
 	wasInputTarget := m.inputTarget == sessionID
+	previousID := m.panes[paneIndex].prompt.ID
 	m.removePending(sessionID)
 	m.panes[paneIndex].blocked = false
-	m.panes[paneIndex].prompt = session.PromptDetected{}
+	m.panes[paneIndex].prompt = adapters.Event{}
 	if wasInputTarget {
 		m.inputTarget = ""
 		m.input.Reset()
 		m.input.Blur()
 		setInputInterceptionStyle(&m.input, false)
 	}
-	if prompt != nil && !m.panes[paneIndex].exited {
-		current := *prompt
+	if pending != nil && !m.panes[paneIndex].exited && !m.eventResolved(pending.ID) {
+		current := pending.Clone()
 		current.SessionID = sessionID
 		m.panes[paneIndex].blocked = true
 		m.panes[paneIndex].prompt = current
 		m.pending = append(m.pending, sessionID)
+	} else {
+		m.rememberResolved(previousID)
 	}
 	if m.inputTarget == "" && !m.writePending {
 		return m.activateNextPrompt()
@@ -239,13 +269,13 @@ func (m *Model) submitInput() tea.Cmd {
 		return nil
 	}
 	targetID := m.inputTarget
-	prompt := m.panes[paneIndex].prompt
+	event := m.panes[paneIndex].prompt.Clone()
 	value := m.input.Value()
 
 	// Clear the old waiting state before the asynchronous write. This lets an
 	// immediate second prompt from this session enter the queue.
 	m.panes[paneIndex].blocked = false
-	m.panes[paneIndex].prompt = session.PromptDetected{}
+	m.panes[paneIndex].prompt = adapters.Event{}
 	m.removePending(targetID)
 	m.inputTarget = ""
 	m.input.Reset()
@@ -253,7 +283,38 @@ func (m *Model) submitInput() tea.Cmd {
 	setInputInterceptionStyle(&m.input, false)
 	m.writePending = true
 	m.appendLog(fmt.Sprintf("Réponse transmise à %s", m.panes[paneIndex].name))
-	return deliverInput(m.backend, targetID, value, prompt)
+	return deliverInput(m.backend, targetID, value, event)
+}
+
+func (m *Model) applyProcessExit(event adapters.Event) tea.Cmd {
+	paneIndex := m.paneIndex(event.SessionID)
+	if paneIndex < 0 || m.panes[paneIndex].exited {
+		return nil
+	}
+	m.refreshPaneOutput(paneIndex)
+	m.panes[paneIndex].exited = true
+	if event.Metadata["failed"] == "true" {
+		m.panes[paneIndex].exitErr = fmt.Errorf("processus terminé avec erreur")
+	}
+	m.rememberResolved(m.panes[paneIndex].prompt.ID)
+	m.removePending(event.SessionID)
+	m.panes[paneIndex].blocked = false
+	m.panes[paneIndex].prompt = adapters.Event{}
+	if m.inputTarget == event.SessionID {
+		m.inputTarget = ""
+		m.input.Reset()
+		m.input.Blur()
+		setInputInterceptionStyle(&m.input, false)
+	}
+	summary := event.Summary
+	if summary == "" {
+		summary = "processus terminé"
+	}
+	m.appendLog(fmt.Sprintf("%s: %s", m.panes[paneIndex].name, summary))
+	if m.inputTarget == "" && !m.writePending {
+		return m.activateNextPrompt()
+	}
+	return nil
 }
 
 func (m *Model) beginAttach(paneIndex int) tea.Cmd {

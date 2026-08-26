@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Hocsman/Relayer/internal/intercept"
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/platform"
 	"github.com/creack/pty"
 )
@@ -24,17 +24,17 @@ const (
 )
 
 // processSession is deliberately private: Manager remains the only owner of
-// process handles, PTY descriptors, and interceptor state.
+// process handles, PTY descriptors, and adapter processor state.
 type processSession struct {
-	info        Info
-	cmd         *exec.Cmd
-	ctx         context.Context
-	cancel      context.CancelFunc
-	interceptor *intercept.Interceptor
-	done        chan struct{}
-	resultMu    sync.RWMutex
-	exited      bool
-	waitErr     error
+	info      Info
+	cmd       *exec.Cmd
+	ctx       context.Context
+	cancel    context.CancelFunc
+	processor *adapters.Processor
+	done      chan struct{}
+	resultMu  sync.RWMutex
+	exited    bool
+	waitErr   error
 
 	fileMu       sync.RWMutex
 	master       *os.File

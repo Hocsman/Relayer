@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/session"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -26,7 +27,7 @@ type fakeAttachBackend struct {
 	resyncErr      error
 	resyncedOutput string
 	resyncEvent    session.Event
-	pendingPrompt  *session.PromptDetected
+	pendingEvent   *adapters.Event
 	attachCalls    []string
 	resyncCalls    []resyncCall
 }
@@ -60,10 +61,10 @@ func (b *fakeAttachBackend) Resync(_ context.Context, id string, columns, rows i
 	}
 	err := b.resyncErr
 	event := b.resyncEvent
-	b.pendingPrompt = nil
-	if detected, ok := event.(session.PromptDetected); ok {
-		copy := detected
-		b.pendingPrompt = &copy
+	b.pendingEvent = nil
+	if detected, ok := event.(session.AdapterEvent); ok {
+		copy := detected.Event.Clone()
+		b.pendingEvent = &copy
 	}
 	b.mu.Unlock()
 	if event != nil {
@@ -72,13 +73,13 @@ func (b *fakeAttachBackend) Resync(_ context.Context, id string, columns, rows i
 	return err
 }
 
-func (b *fakeAttachBackend) PendingPrompt(_ context.Context, _ string) (*session.PromptDetected, error) {
+func (b *fakeAttachBackend) PendingEvent(_ context.Context, _ string) (*adapters.Event, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.pendingPrompt == nil {
+	if b.pendingEvent == nil {
 		return nil, nil
 	}
-	copy := *b.pendingPrompt
+	copy := b.pendingEvent.Clone()
 	return &copy, nil
 }
 
@@ -94,9 +95,7 @@ func TestEnterOnTmuxAgentExecutesAttachAndResynchronizes(t *testing.T) {
 	t.Cleanup(backend.cancel)
 	backend.setOutput("tmux-agent", "before attach")
 	backend.resyncedOutput = "after detach"
-	backend.resyncEvent = session.PromptDetected{
-		SessionID: "tmux-agent", Pattern: "confirmation", Description: "resynced prompt",
-	}
+	backend.resyncEvent = testAdapterEvent("tmux-agent", "confirmation", "resynced prompt", false)
 	application, err := NewModel(
 		backend,
 		events,
@@ -207,12 +206,10 @@ func TestAttachResyncClearsPromptEventsAnsweredInsideTmux(t *testing.T) {
 
 	application, attach := updateModel(t, application, tea.KeyMsg{Type: tea.KeyEnter})
 	application, resync := updateModel(t, application, executeCommand(t, attach))
-	stale := session.PromptDetected{
-		SessionID: "tmux-agent", Pattern: "password", Description: "queued before attach", Sensitive: true,
-	}
+	stale := testAdapterEvent("tmux-agent", "password", "queued before attach", true)
 	backend.mu.Lock()
-	copy := stale
-	backend.pendingPrompt = &copy
+	copy := stale.Event.Clone()
+	backend.pendingEvent = &copy
 	backend.mu.Unlock()
 	application, _ = updateModel(t, application, stale)
 	application.input.SetValue("must-be-erased")
@@ -278,9 +275,7 @@ func TestPendingPromptEnterTakesPriorityOverAttachAndPTYNavigation(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	application, _ = updateModel(t, application, session.PromptDetected{
-		SessionID: "pty-agent", Pattern: "confirmation", Description: "PTY prompt",
-	})
+	application, _ = updateModel(t, application, testAdapterEvent("pty-agent", "confirmation", "PTY prompt", false))
 	application.input.SetValue("Y")
 	// Deliberately move focus onto the tmux agent. The waiting response must
 	// still win over attachment when Enter is pressed.

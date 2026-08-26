@@ -7,9 +7,9 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/config"
-	"github.com/Hocsman/Relayer/internal/intercept"
 	"github.com/Hocsman/Relayer/internal/ptybackend"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/terminal"
@@ -20,8 +20,8 @@ type executableLookup func(string) (string, error)
 
 type backendDependencies struct {
 	lookup  executableLookup
-	newPTY  func(context.Context, chan<- session.Event, []intercept.Pattern, int) (terminal.Backend, error)
-	newTmux func(context.Context, chan<- session.Event, []intercept.Pattern, int, tmuxbackend.Options) (terminal.Backend, error)
+	newPTY  func(context.Context, chan<- session.Event, *adapters.Registry, int) (terminal.Backend, error)
+	newTmux func(context.Context, chan<- session.Event, *adapters.Registry, int, tmuxbackend.Options) (terminal.Backend, error)
 }
 
 func productionBackendDependencies() backendDependencies {
@@ -30,21 +30,41 @@ func productionBackendDependencies() backendDependencies {
 		newPTY: func(
 			ctx context.Context,
 			events chan<- session.Event,
-			patterns []intercept.Pattern,
+			registry *adapters.Registry,
 			ringCapacity int,
 		) (terminal.Backend, error) {
-			return ptybackend.New(ctx, events, patterns, ringCapacity)
+			return ptybackend.NewWithRegistry(ctx, events, registry, ringCapacity)
 		},
 		newTmux: func(
 			ctx context.Context,
 			events chan<- session.Event,
-			patterns []intercept.Pattern,
+			registry *adapters.Registry,
 			ringCapacity int,
 			options tmuxbackend.Options,
 		) (terminal.Backend, error) {
-			return tmuxbackend.NewManager(ctx, events, patterns, ringCapacity, options)
+			return tmuxbackend.NewManagerWithRegistry(ctx, events, registry, ringCapacity, options)
 		},
 	}
+}
+
+// resolveAgentAdapters makes every runtime spec concrete before any terminal
+// backend is constructed. Explicit experimental placeholders fail clearly;
+// executable-name detection only selects implementations present in Registry.
+func resolveAgentAdapters(specs []agent.Spec, registry *adapters.Registry) ([]agent.Spec, error) {
+	resolved := cloneAgentSpecs(specs)
+	for index := range resolved {
+		spec := &resolved[index]
+		executable := ""
+		if len(spec.Command) > 0 {
+			executable = spec.Command[0]
+		}
+		adapter, _, err := registry.Resolve(spec.Adapter, executable)
+		if err != nil {
+			return nil, fmt.Errorf("adaptateur de l'agent %q: %w", spec.ID, err)
+		}
+		spec.Adapter = adapter.ID()
+	}
+	return resolved, nil
 }
 
 type backendResolution struct {
@@ -143,7 +163,7 @@ func cloneAgentSpecs(specs []agent.Spec) []agent.Spec {
 func buildBackendRouter(
 	parent context.Context,
 	events chan<- session.Event,
-	patterns []intercept.Pattern,
+	registry *adapters.Registry,
 	ringCapacity int,
 	selection backendResolution,
 	policy config.SessionPolicy,
@@ -166,14 +186,14 @@ func buildBackendRouter(
 		}
 	}
 	if selection.NeedsPTY {
-		backend, err := dependencies.newPTY(parent, events, patterns, ringCapacity)
+		backend, err := dependencies.newPTY(parent, events, registry, ringCapacity)
 		if err != nil {
 			return nil, fmt.Errorf("initialisation du backend PTY: %w", err)
 		}
 		created = append(created, backend)
 	}
 	if selection.NeedsTmux {
-		backend, err := dependencies.newTmux(parent, events, patterns, ringCapacity, tmuxbackend.Options{
+		backend, err := dependencies.newTmux(parent, events, registry, ringCapacity, tmuxbackend.Options{
 			TmuxPath:         selection.TmuxPath,
 			PersistOnExit:    policy.PersistOnExit,
 			CleanupOnSuccess: policy.CleanupOnSuccess,
@@ -193,5 +213,6 @@ func buildBackendRouter(
 		rollback()
 		return nil, err
 	}
+	router.adapters = registry
 	return router, nil
 }

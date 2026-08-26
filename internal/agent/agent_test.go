@@ -41,7 +41,7 @@ func TestValidateSpecNormalizesCommandAndMakesDeepCopies(t *testing.T) {
 	if got.Cwd != workingDirectory {
 		t.Fatalf("relative cwd resolved to %q, want %q", got.Cwd, workingDirectory)
 	}
-	if got.Backend != BackendPTY || got.Adapter != AdapterGeneric {
+	if got.Backend != BackendPTY || got.Adapter != "" {
 		t.Fatalf("defaults not applied: backend=%q adapter=%q", got.Backend, got.Adapter)
 	}
 
@@ -117,7 +117,7 @@ func TestValidateSpecRejectsInvalidCoreFields(t *testing.T) {
 		{name: "command and shell", mutate: func(spec *Spec) { spec.Shell = "echo duplicate" }},
 		{name: "blank command executable", mutate: func(spec *Spec) { spec.Command[0] = "  " }},
 		{name: "unsupported backend", mutate: func(spec *Spec) { spec.Backend = "pipe" }},
-		{name: "unsupported adapter", mutate: func(spec *Spec) { spec.Adapter = "claude" }},
+		{name: "invalid adapter name", mutate: func(spec *Spec) { spec.Adapter = "Bad Adapter!" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -127,6 +127,18 @@ func TestValidateSpecRejectsInvalidCoreFields(t *testing.T) {
 				t.Fatal("ValidateSpec unexpectedly succeeded")
 			}
 		})
+	}
+}
+
+func TestValidateSpecDefersKnownAdapterResolutionToRegistry(t *testing.T) {
+	spec := validCommandSpec()
+	spec.Adapter = "claude"
+	got, err := ValidateSpec(spec, t.TempDir(), BackendPTY)
+	if err != nil {
+		t.Fatalf("ValidateSpec rejected a syntactically valid registry identifier: %v", err)
+	}
+	if got.Adapter != "claude" {
+		t.Fatalf("adapter = %q, want claude", got.Adapter)
 	}
 }
 

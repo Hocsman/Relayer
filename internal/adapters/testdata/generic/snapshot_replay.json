@@ -1,0 +1,6 @@
+{
+  "old_log": "previous: Overwrite archived file? [Y/n]\noperation completed\n",
+  "prompt": "Overwrite current file? [Y/n]",
+  "cleared": "decision recorded\nready for next operation",
+  "same_new_prompt": "Overwrite current file? [Y/n]"
+}

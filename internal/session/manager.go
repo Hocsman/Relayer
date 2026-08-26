@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/intercept"
 	"github.com/Hocsman/Relayer/internal/platform"
@@ -28,7 +29,7 @@ type Manager struct {
 	mu           sync.RWMutex
 	sessions     map[string]*processSession
 	closed       bool
-	patterns     []intercept.Pattern
+	registry     *adapters.Registry
 	ringCapacity int
 	wg           sync.WaitGroup
 	closeOnce    sync.Once
@@ -41,14 +42,33 @@ func NewManager(
 	patterns []intercept.Pattern,
 	ringCapacity int,
 ) (*Manager, error) {
+	registry, err := adapters.NewRegistry(patterns)
+	if err != nil {
+		return nil, err
+	}
+	return NewManagerWithRegistry(parent, events, registry, ringCapacity)
+}
+
+// NewManagerWithRegistry creates a PTY owner around the application adapter
+// registry. The registry is validated before any process can start and creates
+// independent adapter state for every session.
+func NewManagerWithRegistry(
+	parent context.Context,
+	events chan<- Event,
+	registry *adapters.Registry,
+	ringCapacity int,
+) (*Manager, error) {
 	if parent == nil {
 		parent = context.Background()
 	}
 	if events == nil {
 		return nil, errors.New("canal d'événements de session nil")
 	}
-	if _, err := intercept.New(patterns, ringCapacity, intercept.Hooks{}); err != nil {
-		return nil, err
+	if registry == nil {
+		return nil, errors.New("registry d'adaptateurs nil")
+	}
+	if _, _, err := registry.Resolve(adapters.GenericID, ""); err != nil {
+		return nil, fmt.Errorf("registry d'adaptateurs invalide: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(parent)
@@ -57,7 +77,7 @@ func NewManager(
 		cancel:       cancel,
 		events:       events,
 		sessions:     make(map[string]*processSession),
-		patterns:     append([]intercept.Pattern(nil), patterns...),
+		registry:     registry,
 		ringCapacity: ringCapacity,
 	}, nil
 }
@@ -102,6 +122,15 @@ func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 	if normalized.Backend != agent.BackendPTY {
 		return Info{}, fmt.Errorf("backend %q non pris en charge par le gestionnaire PTY", normalized.Backend)
 	}
+	executable := ""
+	if normalized.Shell == "" && len(normalized.Command) > 0 {
+		executable = normalized.Command[0]
+	}
+	selectedAdapter, descriptor, err := m.registry.Resolve(normalized.Adapter, executable)
+	if err != nil {
+		return Info{}, fmt.Errorf("résolution de l'adaptateur de %s: %w", normalized.Name, err)
+	}
+	normalized.Adapter = descriptor.ID
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -120,6 +149,41 @@ func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 		sessionCancel()
 		return Info{}, fmt.Errorf("préparation de %s: %w", normalized.Name, err)
 	}
+	sessionID := normalized.ID
+	info := Info{
+		ID:             sessionID,
+		Name:           normalized.Name,
+		DisplayCommand: displayCommand(normalized),
+		Backend:        agent.BackendPTY,
+		Adapter:        descriptor.ID,
+		Shell:          shell,
+	}
+	session := &processSession{
+		info:   info,
+		cmd:    cmd,
+		ctx:    sessionCtx,
+		cancel: sessionCancel,
+		done:   make(chan struct{}),
+	}
+	processor, err := adapters.NewProcessor(
+		selectedAdapter,
+		adapters.NewDetectionState(sessionID, normalized.ID, descriptor.ID),
+		m.ringCapacity,
+		adapters.Hooks{
+			OnOutput: func() {
+				m.emit(OutputAvailable{SessionID: sessionID}, false)
+			},
+			OnEvent: func(event adapters.Event) {
+				m.emit(AdapterEvent{Event: event.Clone()}, true)
+			},
+		},
+	)
+	if err != nil {
+		sessionCancel()
+		return Info{}, err
+	}
+	session.processor = processor
+
 	master, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Rows: uint16(clamp(rows, 1, 65535)),
 		Cols: uint16(clamp(columns, 1, 65535)),
@@ -128,50 +192,7 @@ func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 		sessionCancel()
 		return Info{}, fmt.Errorf("démarrage de %s: %w", normalized.Name, err)
 	}
-
-	sessionID := normalized.ID
-	interceptor, err := intercept.New(
-		m.patterns,
-		m.ringCapacity,
-		intercept.Hooks{
-			OnOutput: func() {
-				m.emit(OutputAvailable{SessionID: sessionID}, false)
-			},
-			OnPrompt: func(detection intercept.Detection) {
-				m.emit(PromptDetected{
-					SessionID:   sessionID,
-					Pattern:     detection.Pattern,
-					Description: detection.Description,
-					Match:       detection.Match,
-					Sensitive:   detection.Sensitive,
-				}, true)
-			},
-		},
-	)
-	if err != nil {
-		_ = master.Close()
-		sessionCancel()
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-		return Info{}, err
-	}
-
-	info := Info{
-		ID:             sessionID,
-		Name:           normalized.Name,
-		DisplayCommand: displayCommand(normalized),
-		Backend:        agent.BackendPTY,
-		Shell:          shell,
-	}
-	session := &processSession{
-		info:        info,
-		cmd:         cmd,
-		ctx:         sessionCtx,
-		cancel:      sessionCancel,
-		interceptor: interceptor,
-		done:        make(chan struct{}),
-		master:      master,
-	}
+	session.master = master
 	m.sessions[sessionID] = session
 
 	m.wg.Add(2)
@@ -186,7 +207,7 @@ func (m *Manager) readSession(session *processSession, master *os.File) {
 	defer m.wg.Done()
 	defer session.closePTY()
 
-	err := session.interceptor.Run(session.ctx, master)
+	err := session.processor.Run(session.ctx, master)
 	// This essential final invalidation exposes a last chunk even when earlier
 	// non-essential output events were coalesced.
 	m.emit(OutputAvailable{SessionID: session.info.ID}, true)
@@ -219,7 +240,7 @@ func (m *Manager) waitSession(session *processSession) {
 
 	close(session.done)
 	if m.ctx.Err() == nil {
-		m.emit(Exited{SessionID: session.info.ID, Err: err}, true)
+		m.emit(AdapterEvent{Event: newProcessExitEvent(session, err)}, true)
 	}
 }
 
@@ -248,23 +269,25 @@ func (m *Manager) SendInput(sessionID string, value string) error {
 	return m.SendData(sessionID, []byte(value+"\r"))
 }
 
-// SendData acknowledges the current interception and writes bytes exactly as
-// supplied. Higher layers decide whether an Enter key (usually carriage
-// return) should be appended.
+// SendData is the compatibility path for callers that do not yet retain the
+// actionable event ID. It still uses Processor.Resolve so acknowledgement only
+// happens after the exact bytes have been delivered successfully.
 func (m *Manager) SendData(sessionID string, data []byte) error {
+	return m.SendDataForEvent(sessionID, "", data)
+}
+
+// SendDataForEvent atomically validates the pending occurrence, delivers the
+// exact bytes and acknowledges only after a successful write.
+func (m *Manager) SendDataForEvent(sessionID, eventID string, data []byte) error {
 	session, err := m.session(sessionID)
 	if err != nil {
 		return err
 	}
-
-	// Rearm first so a second prompt emitted immediately after the write cannot
-	// be discarded as a duplicate of the first one.
-	session.interceptor.Acknowledge()
-	if err := session.write(data); err != nil {
-		session.interceptor.Reblock()
-		return err
+	err = session.processor.Resolve(eventID, func() error { return session.write(data) })
+	if errors.Is(err, adapters.ErrProcessorTerminated) {
+		return ErrClosed
 	}
-	return nil
+	return err
 }
 
 // Stop terminates one owned session without affecting its siblings.
@@ -283,12 +306,31 @@ func (m *Manager) Output(sessionID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return session.interceptor.Output(), nil
+	return session.processor.Output(), nil
+}
+
+// PendingEvent returns an independent copy of the actionable occurrence still
+// awaiting a decision, if any.
+func (m *Manager) PendingEvent(sessionID string) (*adapters.Event, error) {
+	session, err := m.session(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return session.processor.Pending(), nil
+}
+
+// Revision is the latest semantic event occurrence sequence for the session.
+func (m *Manager) Revision(sessionID string) (uint64, error) {
+	session, err := m.session(sessionID)
+	if err != nil {
+		return 0, err
+	}
+	return session.processor.Revision(), nil
 }
 
 // Done exposes lifecycle completion without leaking the underlying process or
-// PTY descriptor. The channel is closed before the corresponding Exited event
-// is emitted.
+// PTY descriptor. The channel is closed before the corresponding process_exit
+// AdapterEvent is emitted.
 func (m *Manager) Done(sessionID string) (<-chan struct{}, error) {
 	session, err := m.session(sessionID)
 	if err != nil {
@@ -395,4 +437,13 @@ func displayCommand(spec agent.Spec) string {
 		parts[index] = strconv.Quote(argument)
 	}
 	return strings.Join(parts, " ")
+}
+
+func newProcessExitEvent(session *processSession, waitErr error) adapters.Event {
+	var exitCode *int
+	if session.cmd != nil && session.cmd.ProcessState != nil {
+		code := session.cmd.ProcessState.ExitCode()
+		exitCode = &code
+	}
+	return session.processor.NewProcessExitEvent(exitCode, waitErr != nil)
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os/exec"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 )
 
@@ -47,16 +48,8 @@ type Info struct {
 	Name           string
 	DisplayCommand string
 	Backend        string
+	Adapter        string
 	Shell          bool
-}
-
-// Prompt is the backend-neutral representation of an interception still
-// awaiting acknowledgement.
-type Prompt struct {
-	Pattern     string
-	Description string
-	Match       string
-	Sensitive   bool
 }
 
 // Snapshot reconciles bounded output, process status and a possible prompt
@@ -68,7 +61,8 @@ type Snapshot struct {
 	Attached bool
 	ExitCode *int
 	Output   string
-	Prompt   *Prompt
+	Pending  *adapters.Event
+	Revision uint64
 }
 
 var (
@@ -110,6 +104,19 @@ type Backend interface {
 	AttachCommand(context.Context, SessionID) (*exec.Cmd, error)
 	Stop(context.Context, SessionID) error
 	Close(context.Context) error
+}
+
+// EventSender atomically delivers a decision for the exact pending event.
+// Implementations acknowledge eventID only after data is written successfully.
+type EventSender interface {
+	SendEvent(context.Context, SessionID, string, []byte) error
+}
+
+// PendingEventProvider returns only cached semantic state. Implementations must
+// not query a process or spawn an external command; Bubble Tea uses this path
+// while reducing an already-delivered event.
+type PendingEventProvider interface {
+	PendingEvent(context.Context, SessionID) (*adapters.Event, error)
 }
 
 func clamp(value, minimum, maximum int) int {

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -35,10 +36,11 @@ type agentPane struct {
 	name      string
 	command   string
 	backend   string
+	adapter   string
 	shell     bool
 	viewport  viewport.Model
 	blocked   bool
-	prompt    session.PromptDetected
+	prompt    adapters.Event
 	exited    bool
 	exitErr   error
 }
@@ -69,6 +71,9 @@ type Model struct {
 	resizeGeneration uint64
 	resizeInFlight   bool
 	resizeRequests   []resizeRequest
+
+	resolvedEventIDs   map[string]struct{}
+	resolvedEventOrder []string
 }
 
 // NewModel builds a ready-to-run Bubble Tea model around one to eight existing
@@ -108,14 +113,15 @@ func NewModel(
 	setInputInterceptionStyle(&input, false)
 
 	result := &Model{
-		backend:     backend,
-		events:      events,
-		panes:       make([]agentPane, len(panes)),
-		supervisor:  viewport.New(1, 1),
-		input:       input,
-		focus:       FocusTarget{Kind: FocusAgent, AgentID: panes[0].ID},
-		inputTarget: "",
-		execProcess: tea.ExecProcess,
+		backend:          backend,
+		events:           events,
+		panes:            make([]agentPane, len(panes)),
+		supervisor:       viewport.New(1, 1),
+		input:            input,
+		focus:            FocusTarget{Kind: FocusAgent, AgentID: panes[0].ID},
+		inputTarget:      "",
+		execProcess:      tea.ExecProcess,
+		resolvedEventIDs: make(map[string]struct{}),
 	}
 	for index, pane := range panes {
 		name := pane.Name
@@ -131,11 +137,16 @@ func NewModel(
 		if backendName == "" {
 			backendName = "pty"
 		}
+		adapterName := strings.ToLower(strings.TrimSpace(pane.Adapter))
+		if adapterName == "" {
+			adapterName = adapters.GenericID
+		}
 		result.panes[index] = agentPane{
 			sessionID: pane.ID,
 			name:      name,
 			command:   pane.Command,
 			backend:   backendName,
+			adapter:   adapterName,
 			shell:     pane.Shell,
 			viewport:  viewport.New(1, 1),
 		}
@@ -154,6 +165,26 @@ func NewModel(
 	// backends retain their synchronous initialization behavior.
 	_ = result.resize(initialWidth, initialHeight, false)
 	return result, nil
+}
+
+func (m *Model) eventResolved(eventID string) bool {
+	_, resolved := m.resolvedEventIDs[eventID]
+	return eventID != "" && resolved
+}
+
+func (m *Model) rememberResolved(eventID string) {
+	if eventID == "" || m.eventResolved(eventID) {
+		return
+	}
+	const retainedResolvedEvents = 256
+	m.resolvedEventIDs[eventID] = struct{}{}
+	m.resolvedEventOrder = append(m.resolvedEventOrder, eventID)
+	if len(m.resolvedEventOrder) <= retainedResolvedEvents {
+		return
+	}
+	oldest := m.resolvedEventOrder[0]
+	m.resolvedEventOrder = m.resolvedEventOrder[1:]
+	delete(m.resolvedEventIDs, oldest)
 }
 
 func (m *Model) Init() tea.Cmd {

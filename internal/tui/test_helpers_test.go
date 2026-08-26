@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/session"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -187,3 +189,28 @@ func mouseLeftClick(x, y int) tea.MouseMsg {
 }
 
 var errFakeBackend = errors.New("fake backend error")
+
+var testEventSequence uint64
+
+func testAdapterEvent(sessionID, pattern, summary string, sensitive bool) session.AdapterEvent {
+	sequence := atomic.AddUint64(&testEventSequence, 1)
+	eventType := adapters.EventConfirmation
+	risk := adapters.RiskUnknown
+	if sensitive {
+		eventType = adapters.EventCredential
+		risk = adapters.RiskHigh
+	}
+	return session.AdapterEvent{Event: adapters.Event{
+		ID:        fmt.Sprintf("test-event-%d", sequence),
+		Signature: fmt.Sprintf("%s:%s", sessionID, pattern),
+		Sequence:  sequence,
+		SessionID: sessionID,
+		AgentID:   sessionID,
+		Adapter:   adapters.GenericID,
+		Type:      eventType,
+		Summary:   summary,
+		Sensitive: sensitive,
+		Risk:      risk,
+		Metadata:  map[string]string{"pattern": pattern},
+	}}
+}
