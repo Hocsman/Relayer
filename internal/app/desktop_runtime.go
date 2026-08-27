@@ -45,15 +45,16 @@ type DesktopSession struct {
 
 // DesktopMetadata contains non-sensitive run settings suitable for a GUI.
 type DesktopMetadata struct {
-	RunID         string `json:"runID"`
-	ConfigPath    string `json:"configPath"`
-	Backend       string `json:"backend"`
-	PolicyAction  string `json:"policyAction"`
-	PolicyDryRun  bool   `json:"policyDryRun"`
-	AuditEnabled  bool   `json:"auditEnabled"`
-	AuditMode     string `json:"auditMode"`
-	AuditPath     string `json:"auditPath,omitempty"`
-	Configuration bool   `json:"configurationCreated"`
+	RunID          string `json:"runID"`
+	ConfigPath     string `json:"configPath"`
+	ConfigRevision string `json:"-"`
+	Backend        string `json:"backend"`
+	PolicyAction   string `json:"policyAction"`
+	PolicyDryRun   bool   `json:"policyDryRun"`
+	AuditEnabled   bool   `json:"auditEnabled"`
+	AuditMode      string `json:"auditMode"`
+	AuditPath      string `json:"auditPath,omitempty"`
+	Configuration  bool   `json:"configurationCreated"`
 }
 
 // DesktopRuntime owns one complete Relayer run without assuming a terminal
@@ -304,14 +305,15 @@ func (r *DesktopRuntime) Metadata() DesktopMetadata {
 		return DesktopMetadata{}
 	}
 	metadata := DesktopMetadata{
-		RunID:         r.auditor.RunID(),
-		ConfigPath:    r.configPath,
-		Backend:       effectiveBackendLabel(r.infos),
-		PolicyAction:  string(r.configuration.Policies.DefaultAction),
-		PolicyDryRun:  r.configuration.Policies.DryRun,
-		AuditEnabled:  r.auditor != nil && r.auditor.Enabled(),
-		AuditMode:     string(r.configuration.Audit.Mode),
-		Configuration: r.configuration.Created,
+		RunID:          r.auditor.RunID(),
+		ConfigPath:     r.configPath,
+		ConfigRevision: r.configuration.Revision,
+		Backend:        effectiveBackendLabel(r.infos),
+		PolicyAction:   string(r.configuration.Policies.DefaultAction),
+		PolicyDryRun:   r.configuration.Policies.DryRun,
+		AuditEnabled:   r.auditor != nil && r.auditor.Enabled(),
+		AuditMode:      string(r.configuration.Audit.Mode),
+		Configuration:  r.configuration.Created,
 	}
 	if metadata.AuditEnabled {
 		metadata.AuditPath = r.auditor.Path()

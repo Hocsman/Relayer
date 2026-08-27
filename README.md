@@ -37,7 +37,8 @@ and network behavior.
   permissions, bounded fields, and mandatory redaction.
 - Two deterministic Bash mock agents when `agents: []` is configured.
 - An optional source-built Wails desktop GUI for macOS and Linux; the TUI
-  remains fully available.
+  remains fully available. Its local agent picker can prepare one to eight
+  Claude Code, Codex CLI, MiMo Code, or custom CLI launch profiles.
 
 Relayer is not a sandbox, a policy enforcement boundary, a terminal emulator,
 or a substitute for reviewing an agent's work. See the
@@ -104,6 +105,12 @@ with an explicit `PATH` when required.
 
 Agent panels display bounded, ANSI-stripped text snapshots, not a full VT/ANSI
 terminal. The Bubble Tea TUI and its native tmux attach workflow are preserved.
+Use **Agents** in the top bar to configure exact argv, working directory, and
+backend. Existing argv values are never sent to the WebView: replacing a
+command requires re-entering its complete vector. Saved profiles take effect
+the next time the application starts; this alpha does not hot-restart a run.
+Historical configuration shapes are shown read-only until migrated to
+`version: 1`.
 See the [desktop GUI guide](docs/gui.md) for prerequisites, configuration,
 build commands, platform status, and rendering limitations.
 

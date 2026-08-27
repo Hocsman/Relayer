@@ -21,6 +21,11 @@ and Codex descriptors have no implementation, launching an executable named
 `claude` or `codex` with no explicit adapter uses generic detection. Relayer
 does not claim a vendor-aware integration in that case.
 
+The desktop catalogue's Claude Code, Codex CLI, and MiMo Code entries are
+launch profiles only. They resolve an executable and literal argv into an
+agent specification; they do not change this adapter status or claim
+product-specific prompt compatibility.
+
 An unknown explicit ID and an unimplemented explicit placeholder are both
 configuration errors before a terminal backend starts.
 

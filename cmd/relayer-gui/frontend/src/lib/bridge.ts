@@ -1,8 +1,10 @@
 import type {
   AppState,
+  AgentProfilesView,
   BridgeEventMap,
   BridgeEventName,
   RelayerBridge,
+  SaveAgentProfilesRequest,
 } from "../types/relayer";
 
 type NativeMethod<TArgs extends unknown[], TResult> = (...args: TArgs) => Promise<TResult>;
@@ -12,6 +14,8 @@ interface NativeBindings {
   SubmitDecision: NativeMethod<[string, string, string], void>;
   ResizeSession: NativeMethod<[string, number, number], void>;
   StopSession: NativeMethod<[string], void>;
+  GetAgentProfiles: NativeMethod<[], AgentProfilesView>;
+  SaveAgentProfiles: NativeMethod<[SaveAgentProfilesRequest], AgentProfilesView>;
   Shutdown: NativeMethod<[], void>;
 }
 
@@ -40,6 +44,8 @@ function resolveBindings(): NativeBindings {
     typeof candidate.SubmitDecision !== "function" ||
     typeof candidate.ResizeSession !== "function" ||
     typeof candidate.StopSession !== "function" ||
+    typeof candidate.GetAgentProfiles !== "function" ||
+    typeof candidate.SaveAgentProfiles !== "function" ||
     typeof candidate.Shutdown !== "function"
   ) {
     throw new Error("Le bridge natif Relayer n'est pas disponible.");
@@ -67,6 +73,8 @@ export function createWailsBridge(): RelayerBridge {
     resizeSession: (sessionID, columns, rows) =>
       bindings.ResizeSession(sessionID, columns, rows),
     stopSession: (sessionID) => bindings.StopSession(sessionID),
+    getAgentProfiles: () => bindings.GetAgentProfiles(),
+    saveAgentProfiles: (request) => bindings.SaveAgentProfiles(request),
     shutdown: () => bindings.Shutdown(),
     on<K extends BridgeEventName>(
       event: K,

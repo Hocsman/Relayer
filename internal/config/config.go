@@ -30,8 +30,12 @@ const (
 // Result describes the effective interception configuration and whether the
 // loader had to create the file during this call.
 type Result struct {
-	Version  int
-	Legacy   bool
+	Version int
+	Legacy  bool
+	// Revision is a content hash used internally for optimistic file updates.
+	// It must not be exposed to an untrusted UI when the file may contain
+	// environment values; desktop bridges exchange an opaque random token.
+	Revision string
 	Backend  string
 	Sessions SessionPolicy
 	Agents   []agent.Spec
@@ -179,6 +183,7 @@ func Load(path string) (Result, error) {
 	return Result{
 		Version:  configured.Version,
 		Legacy:   configured.Legacy,
+		Revision: contentRevision(data),
 		Backend:  configured.Backend,
 		Sessions: configured.Sessions,
 		Agents:   agents,

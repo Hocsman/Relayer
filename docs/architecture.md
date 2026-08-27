@@ -67,6 +67,18 @@ and environment overrides, adapter selection, and backend selection.
 The app uses IDs, not screen positions, for backend routing and event
 correlation. Display names are not stable identifiers.
 
+`internal/toolcatalog` is an optional launch-profile layer used by the desktop
+configuration UI. It maps a small declarative catalogue or an explicit custom
+argv into the same `agent.Spec`; it never owns a process, chooses a model,
+handles authentication, or changes an adapter/backend. Executable discovery is
+a passive, injectable `PATH` lookup and does not run `--version`.
+
+GUI profile saves replace only the YAML `agents` node under an opaque revision
+token and a bounded per-file/inter-process lock. Validation is repeated in Go,
+the publication is an atomic same-directory rename, and stale or uncertain
+results force a reload. The running desktop engine is deliberately not
+restarted: the saved revision becomes active on the next application launch.
+
 ## Terminal abstraction and routing
 
 `internal/terminal.Backend` is the context-aware boundary used by the app. Its

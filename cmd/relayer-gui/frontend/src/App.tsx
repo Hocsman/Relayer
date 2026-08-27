@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AgentGrid } from "./components/AgentGrid";
+import { AgentSettingsPanel } from "./components/AgentSettingsPanel";
 import { DecisionModal } from "./components/DecisionModal";
 import { SupervisorPanel } from "./components/SupervisorPanel";
 import { TopBar } from "./components/TopBar";
@@ -8,13 +9,24 @@ import { supervisionEventKey } from "./lib/eventKey";
 import type { RelayerBridge } from "./types/relayer";
 
 export function App({ bridge }: { bridge: RelayerBridge }) {
-  const { state, submitDecision, resizeSession, stopSession, shutdown } = useRelayer(bridge);
+  const {
+    state,
+    submitDecision,
+    resizeSession,
+    stopSession,
+    shutdown,
+  } = useRelayer(bridge);
   const [selectedEventKey, setSelectedEventKey] = useState<string>();
   const [modalOpen, setModalOpen] = useState(false);
+  const [agentsOpen, setAgentsOpen] = useState(false);
   const seenEvents = useRef(new Set<string>());
 
   useEffect(() => {
     const pending = state.app?.pendingEvents ?? [];
+    if (agentsOpen) {
+      setModalOpen(false);
+      return;
+    }
     if (pending.length === 0) {
       setSelectedEventKey(undefined);
       setModalOpen(false);
@@ -39,7 +51,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
       setSelectedEventKey(key);
       setModalOpen(true);
     }
-  }, [state.app?.pendingEvents, selectedEventKey]);
+  }, [agentsOpen, state.app?.pendingEvents, selectedEventKey]);
 
   if (state.connection === "loading" || !state.app) {
     if (state.connection === "failed") {
@@ -62,7 +74,11 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
 
   return (
     <div className="application-shell">
-      <TopBar state={state.app} onShutdown={shutdown} />
+      <TopBar
+        state={state.app}
+        onOpenAgents={() => setAgentsOpen(true)}
+        onShutdown={shutdown}
+      />
       <main className="workspace">
         <AgentGrid
           agents={state.app.agents}
@@ -79,12 +95,18 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
         />
       </main>
       <DecisionModal
-        event={modalOpen ? selectedEvent : undefined}
+        event={!agentsOpen && modalOpen ? selectedEvent : undefined}
         agent={selectedAgent}
         queueSize={state.app.pendingEvents.length}
         onClose={() => setModalOpen(false)}
         onSubmit={submitDecision}
       />
+      {agentsOpen && (
+        <AgentSettingsPanel
+          bridge={bridge}
+          onClose={() => setAgentsOpen(false)}
+        />
+      )}
     </div>
   );
 }

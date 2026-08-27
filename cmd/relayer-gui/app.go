@@ -18,6 +18,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/terminal"
+	"github.com/Hocsman/Relayer/internal/toolcatalog"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -85,12 +86,20 @@ type App struct {
 	auditFailed   bool
 	shuttingDown  bool
 	startupErr    error
+	configPath    string
 
 	deliveryMu        sync.Mutex
 	deliveryAvailable bool
 	deliveryWG        sync.WaitGroup
 
 	eventWG sync.WaitGroup
+
+	profilesMu            sync.Mutex
+	activeConfigRevision  string
+	profileRevisionHash   string
+	profileRevisionToken  string
+	profileDetector       toolcatalog.Detector
+	profileTokenGenerator func() (string, error)
 
 	shutdownOnce sync.Once
 	shutdownDone chan struct{}
@@ -106,16 +115,18 @@ func NewApp() *App {
 			Agents:        []AgentState{},
 			PendingEvents: []SupervisionEvent{},
 		},
-		agentIndex:        make(map[string]int),
-		pending:           make(map[eventKey]pendingEvent),
-		ingesting:         make(map[eventKey]struct{}),
-		resolved:          make(map[eventKey]struct{}),
-		inFlight:          make(map[string]eventKey),
-		outputRunning:     make(map[string]bool),
-		outputDirty:       make(map[string]bool),
-		frozen:            make(map[string]bool),
-		deliveryAvailable: true,
-		shutdownDone:      make(chan struct{}),
+		agentIndex:            make(map[string]int),
+		pending:               make(map[eventKey]pendingEvent),
+		ingesting:             make(map[eventKey]struct{}),
+		resolved:              make(map[eventKey]struct{}),
+		inFlight:              make(map[string]eventKey),
+		outputRunning:         make(map[string]bool),
+		outputDirty:           make(map[string]bool),
+		frozen:                make(map[string]bool),
+		deliveryAvailable:     true,
+		shutdownDone:          make(chan struct{}),
+		profileDetector:       toolcatalog.DefaultDetector(),
+		profileTokenGenerator: newOpaqueProfileToken,
 	}
 }
 
@@ -132,6 +143,9 @@ func (a *App) startup(ctx context.Context) {
 		a.failStartup(errors.New(safeDisplayError(err)))
 		return
 	}
+	a.profilesMu.Lock()
+	a.configPath = configPath
+	a.profilesMu.Unlock()
 	engine, err := appcore.NewDesktopRuntime(a.ctx, appcore.DesktopOptions{
 		ConfigPath: configPath,
 		InitialSize: terminal.Size{
@@ -145,6 +159,9 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 	a.engine = engine
+	a.profilesMu.Lock()
+	a.activeConfigRevision = engine.Metadata().ConfigRevision
+	a.profilesMu.Unlock()
 	a.initializeState(engine)
 	a.eventWG.Add(1)
 	go a.consumeEvents()

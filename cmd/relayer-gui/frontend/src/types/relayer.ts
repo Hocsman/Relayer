@@ -13,6 +13,17 @@ export type RiskLevel = "low" | "unknown" | "high";
 export type EventType = "confirmation" | "credential" | "process_exit";
 export type PolicyAction = "allow" | "ask" | "deny";
 export type DeliveryStatus = "pending" | "delivering" | "delivered" | "failed" | "uncertain";
+export type AgentPresetID = "claude-code" | "codex-cli" | "mimo-code" | "custom";
+export type AgentBackend = "auto" | "pty" | "tmux";
+export type AdapterStatus = "stable";
+export type InstallStatus = "unknown" | "installed" | "not_installed";
+export type ProfileReadOnlyReason =
+  | "advanced_shell"
+  | "advanced_environment"
+  | "advanced_adapter"
+  | "invalid_command"
+  | "legacy_profile_fields"
+  | "sensitive_arguments";
 
 export interface PolicyState {
   defaultAction: PolicyAction;
@@ -99,6 +110,61 @@ export interface SafeErrorEvent {
   timestamp: string;
 }
 
+// Agent settings deliberately exclude environment variables, provider
+// credentials, model selectors and shell snippets. Commands remain exact argv.
+export interface AgentCatalogEntry {
+  id: AgentPresetID;
+  name: string;
+  description: string;
+  installStatus: InstallStatus;
+  installed: boolean;
+  adapter: "generic";
+  adapterStatus: AdapterStatus;
+  defaultArgv: string[];
+  requiresCustomArgv: boolean;
+}
+
+export interface AgentProfile {
+  id: string;
+  name: string;
+  presetID: AgentPresetID;
+  cwd: string;
+  backend: AgentBackend;
+  argv?: string[];
+  executableLabel?: string;
+  argumentCount?: number;
+  locked: boolean;
+  readOnlyReason?: ProfileReadOnlyReason;
+  preserveOnSave?: boolean;
+}
+
+export interface AgentProfilesView {
+  configPath: string;
+  revision: string;
+  catalog: AgentCatalogEntry[];
+  profiles: AgentProfile[];
+  minProfiles: number;
+  maxProfiles: number;
+  restartRequired: boolean;
+  editable: boolean;
+  readOnlyReason?: "legacy_config";
+}
+
+export interface SaveAgentProfilesRequest {
+  expectedRevision: string;
+  profiles: AgentProfileInput[];
+}
+
+export interface AgentProfileInput {
+  id: string;
+  name: string;
+  presetID: AgentPresetID;
+  cwd: string;
+  backend: AgentBackend;
+  argv: string[];
+  preserve: boolean;
+}
+
 export type BridgeEventMap = {
   "relayer:snapshot": SnapshotEvent;
   "relayer:event": SupervisionEvent;
@@ -113,6 +179,8 @@ export interface RelayerBridge {
   submitDecision(sessionID: string, eventID: string, value: string): Promise<void>;
   resizeSession(sessionID: string, columns: number, rows: number): Promise<void>;
   stopSession(sessionID: string): Promise<void>;
+  getAgentProfiles(): Promise<AgentProfilesView>;
+  saveAgentProfiles(request: SaveAgentProfilesRequest): Promise<AgentProfilesView>;
   shutdown(): Promise<void>;
   on<K extends BridgeEventName>(event: K, listener: (payload: BridgeEventMap[K]) => void): () => void;
 }

@@ -133,6 +133,21 @@ Relayer exits; inspect it separately with tmux.
 
 ## Agents
 
+The alpha desktop GUI can edit the same `agents` sequence through its
+**Agents** panel. It offers launch presets for the local `claude`, `codex`, and
+`mimo` executables plus a Custom CLI form. These are argv conveniences, not
+vendor-specific adapters: every preset currently uses `generic` detection.
+DeepSeek or another provider/model remains configuration owned by the chosen
+CLI; Relayer does not infer a command, flag, credential, or model name.
+
+Existing command vectors are masked from the WebView and remain authoritative
+inside Go until the user explicitly replaces the entire argv. Shell commands,
+environment overrides, and non-generic adapters are read-only in the GUI and
+remain editable in YAML. A GUI save is applied on the next application launch,
+not to the currently running sessions. Legacy documents and profiles with
+historical IDs outside the form's conservative syntax remain read-only; Relayer
+does not migrate or normalize them silently.
+
 Each configured agent supports:
 
 ```yaml

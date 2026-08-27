@@ -1,4 +1,5 @@
 import type {
+  AgentProfilesView,
   AppState,
   BridgeEventMap,
   BridgeEventName,
@@ -34,8 +35,8 @@ function initialState(): AppState {
       {
         sessionID: "demo-b",
         agentID: "demo-b",
-        name: "Agent B · Local",
-        displayCommand: "ollama run llama3.2",
+        name: "Agent B · Codex",
+        displayCommand: "codex",
         backend: "tmux",
         adapter: "generic",
         status: "running",
@@ -46,6 +47,87 @@ function initialState(): AppState {
       },
     ],
     pendingEvents: [],
+  };
+}
+
+function initialProfiles(): AgentProfilesView {
+  return {
+    configPath: "/tmp/relayer-demo/config.yaml",
+    revision: "demo-1",
+    minProfiles: 1,
+    maxProfiles: 8,
+    restartRequired: false,
+    editable: true,
+    catalog: [
+      {
+        id: "claude-code",
+        name: "Claude Code",
+        description: "Assistant de développement en ligne de commande.",
+        installStatus: "installed",
+        installed: true,
+        adapter: "generic",
+        adapterStatus: "stable",
+        defaultArgv: ["claude"],
+        requiresCustomArgv: false,
+      },
+      {
+        id: "codex-cli",
+        name: "Codex CLI",
+        description: "Agent de code piloté depuis le terminal.",
+        installStatus: "installed",
+        installed: true,
+        adapter: "generic",
+        adapterStatus: "stable",
+        defaultArgv: ["codex"],
+        requiresCustomArgv: false,
+      },
+      {
+        id: "mimo-code",
+        name: "MiMo Code",
+        description: "CLI MiMo Code avec interception générique.",
+        installStatus: "not_installed",
+        installed: false,
+        adapter: "generic",
+        adapterStatus: "stable",
+        defaultArgv: ["mimo"],
+        requiresCustomArgv: false,
+      },
+      {
+        id: "custom",
+        name: "Custom",
+        description: "Commande locale sous forme d’arguments exacts.",
+        installStatus: "unknown",
+        installed: true,
+        adapter: "generic",
+        adapterStatus: "stable",
+        defaultArgv: [],
+        requiresCustomArgv: true,
+      },
+    ],
+    profiles: [
+      {
+        id: "demo-a",
+        name: "Agent A · Claude",
+        presetID: "claude-code",
+        cwd: "",
+        backend: "pty",
+        executableLabel: "claude",
+        argumentCount: 0,
+        locked: false,
+        preserveOnSave: true,
+      },
+      {
+        id: "demo-b",
+        name: "Agent B · Codex",
+        presetID: "codex-cli",
+        cwd: "",
+        backend: "tmux",
+        executableLabel: "codex",
+        argumentCount: 0,
+        locked: false,
+        preserveOnSave: true,
+      },
+    ],
   };
 }
 
@@ -75,6 +157,7 @@ function demoEvent(sessionID: string, sensitive: boolean): SupervisionEvent {
 // calls this function as a fallback when the native Wails bridge is missing.
 export function createDemoBridge(): RelayerBridge {
   let state = initialState();
+  let profiles = initialProfiles();
   const listeners = new Map<BridgeEventName, Set<Listener>>();
   const lineCounts = new Map(state.agents.map((agent) => [agent.sessionID, 0]));
 
@@ -158,6 +241,48 @@ export function createDemoBridge(): RelayerBridge {
       agent.exitCode = 130;
       state.pendingEvents = state.pendingEvents.filter((event) => event.sessionID !== sessionID);
       emit("relayer:status", { scope: "session", sessionID, status: "exited" });
+    },
+    async getAgentProfiles() {
+      return structuredClone(profiles);
+    },
+    async saveAgentProfiles(request) {
+      if (request.expectedRevision !== profiles.revision) {
+        throw new Error("Configuration de démonstration obsolète.");
+      }
+      const revision = Number.parseInt(profiles.revision.replace("demo-", ""), 10) + 1;
+      profiles = {
+        ...profiles,
+        revision: `demo-${revision}`,
+        profiles: request.profiles.map((input) => {
+          if (input.preserve) {
+            const existing = profiles.profiles.find(
+              (profile) => profile.id.toLocaleLowerCase() === input.id.toLocaleLowerCase(),
+            );
+            if (existing) {
+              return {
+                ...structuredClone(existing),
+                name: input.name,
+                cwd: input.cwd,
+                backend: input.backend,
+              };
+            }
+          }
+          return {
+            id: input.id,
+            name: input.name,
+            presetID: input.presetID,
+            cwd: input.cwd,
+            backend: input.backend,
+            argv: [...input.argv],
+            executableLabel: input.argv[0] || "",
+            argumentCount: Math.max(0, input.argv.length - 1),
+            locked: false,
+            preserveOnSave: false,
+          };
+        }),
+        restartRequired: true,
+      };
+      return structuredClone(profiles);
     },
     async shutdown() {
       window.clearInterval(timer);
