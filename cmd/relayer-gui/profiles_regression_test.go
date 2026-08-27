@@ -25,7 +25,7 @@ func TestSaveAgentProfilesAcceptsEveryCardinalityFromOneThroughEight(t *testing.
 			if err != nil {
 				t.Fatalf("GetAgentProfiles: %v", err)
 			}
-			updated, err := application.SaveAgentProfiles(SaveAgentProfilesRequest{
+			updated, err := saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
 				ExpectedRevision: view.Revision,
 				Profiles:         profileInputs(count, filepath.Dir(path)),
 			})
@@ -117,7 +117,7 @@ func TestLegacyConfigurationIsExposedAsReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read legacy config: %v", err)
 	}
-	_, saveErr := application.SaveAgentProfiles(SaveAgentProfilesRequest{
+	_, saveErr := saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
 		ExpectedRevision: view.Revision,
 		Profiles: []AgentProfileInput{{
 			ID: "agent", Name: "Agent", PresetID: "custom", Cwd: directory, Backend: "pty", Argv: []string{"runner"},
@@ -151,7 +151,7 @@ func TestSaveAgentProfilesPreservesUnchangedLegacyIdentifier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read before: %v", err)
 	}
-	updated, err := application.SaveAgentProfiles(SaveAgentProfilesRequest{
+	updated, err := saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
 		ExpectedRevision: view.Revision,
 		Profiles: []AgentProfileInput{{
 			ID: "Reviewer.V1", Name: "Reviewer", PresetID: "custom", Cwd: directory, Backend: "pty", Preserve: true,
@@ -187,7 +187,7 @@ func TestSaveAgentProfilesRejectsSecretLikePrefixesWithoutMutation(t *testing.T)
 			if err != nil {
 				t.Fatalf("read before: %v", err)
 			}
-			_, saveErr := application.SaveAgentProfiles(SaveAgentProfilesRequest{
+			_, saveErr := saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
 				ExpectedRevision: view.Revision,
 				Profiles: []AgentProfileInput{{
 					ID: "agent", Name: "Agent", PresetID: "custom", Cwd: filepath.Dir(path), Backend: "pty", Argv: []string{"runner", secretLike},
@@ -222,7 +222,7 @@ func TestSaveAgentProfilesEnforcesArgvBoundsInGo(t *testing.T) {
 		for index := 1; index < len(argv); index++ {
 			argv[index] = "argument"
 		}
-		if _, err := application.SaveAgentProfiles(SaveAgentProfilesRequest{
+		if _, err := saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
 			ExpectedRevision: view.Revision,
 			Profiles: []AgentProfileInput{{
 				ID: "agent", Name: "Agent", PresetID: "custom", Cwd: filepath.Dir(path), Backend: "pty", Argv: argv,
@@ -259,7 +259,7 @@ func TestSaveAgentProfilesEnforcesArgvBoundsInGo(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read before: %v", err)
 			}
-			_, saveErr := application.SaveAgentProfiles(SaveAgentProfilesRequest{
+			_, saveErr := saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
 				ExpectedRevision: view.Revision,
 				Profiles: []AgentProfileInput{{
 					ID: "agent", Name: "Agent", PresetID: "custom", Cwd: filepath.Dir(path), Backend: "pty", Argv: test.argv,
@@ -314,7 +314,7 @@ func TestSaveAgentProfilesCannotReplaceOrRemoveLockedProfile(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read before: %v", err)
 			}
-			_, saveErr := application.SaveAgentProfiles(SaveAgentProfilesRequest{
+			_, saveErr := saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
 				ExpectedRevision: view.Revision,
 				Profiles:         test.profiles(directory),
 			})
@@ -355,7 +355,7 @@ func TestSaveAgentProfilesTokenFailurePreservesRevisionAuthorityForRetry(t *test
 			ID: "agent", Name: "Agent", PresetID: "custom", Cwd: filepath.Dir(path), Backend: "pty", Argv: []string{"runner"},
 		}},
 	}
-	if _, saveErr := application.SaveAgentProfiles(request); !errors.Is(saveErr, errProfilesSave) {
+	if _, saveErr := saveAgentProfilesForTest(application, request); !errors.Is(saveErr, errProfilesSave) {
 		t.Fatalf("SaveAgentProfiles error = %v, want token-generation failure", saveErr)
 	}
 	after, err := os.ReadFile(path)
@@ -373,7 +373,7 @@ func TestSaveAgentProfilesTokenFailurePreservesRevisionAuthorityForRetry(t *test
 	if afterHash != beforeHash || afterToken != beforeToken {
 		t.Fatalf("token failure changed revision authority: hash %q -> %q, token %q -> %q", beforeHash, afterHash, beforeToken, afterToken)
 	}
-	updated, err := application.SaveAgentProfiles(request)
+	updated, err := saveAgentProfilesForTest(application, request)
 	if err != nil {
 		t.Fatalf("retry with original authority: %v", err)
 	}
@@ -403,7 +403,7 @@ func TestPreservedProfileKeepsOpaqueArgvAndRelativeWorkingDirectory(t *testing.T
 	if err != nil {
 		t.Fatalf("GetAgentProfiles: %v", err)
 	}
-	updated, err := application.SaveAgentProfiles(SaveAgentProfilesRequest{
+	updated, err := saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
 		ExpectedRevision: view.Revision,
 		Profiles: []AgentProfileInput{{
 			ID: "agent", Name: "Renamed", PresetID: "custom", Cwd: "workspace", Backend: "tmux", Preserve: true,
@@ -480,7 +480,7 @@ func TestConcurrentProfileSavesAcrossAppsHaveOneCASWinner(t *testing.T) {
 		go func() {
 			defer workers.Done()
 			<-start
-			_, saveErr := candidate.application.SaveAgentProfiles(candidate.request)
+			_, saveErr := saveAgentProfilesForTest(candidate.application, candidate.request)
 			results <- saveErr
 		}()
 	}
@@ -526,7 +526,7 @@ func TestSaveAgentProfilesLeavesActiveRunUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAgentProfiles: %v", err)
 	}
-	updated, err := application.SaveAgentProfiles(SaveAgentProfilesRequest{
+	updated, err := saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
 		ExpectedRevision: view.Revision,
 		Profiles: []AgentProfileInput{{
 			ID: "saved-agent", Name: "Saved Agent", PresetID: "custom", Cwd: directory, Backend: "pty", Argv: []string{"runner"},

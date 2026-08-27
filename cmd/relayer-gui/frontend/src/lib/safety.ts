@@ -37,6 +37,7 @@ export function safeError(error: unknown, fallback = "Une opération a échoué.
 
 export function sanitizeErrorEvent(event: SafeErrorEvent): SafeErrorEvent {
   return {
+    runID: event.runID,
     code: redactForDisplay(event.code || "unknown_error"),
     message: redactForDisplay(event.message || "Une erreur interne est survenue."),
     sessionID: event.sessionID,

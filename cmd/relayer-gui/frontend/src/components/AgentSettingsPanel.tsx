@@ -10,22 +10,42 @@ import type {
   AgentCatalogEntry,
   AgentProfile,
   AgentProfilesView,
+  LifecycleResult,
   RelayerBridge,
+  RunStatus,
+  SaveAgentProfilesAndRestartRequest,
+  SaveAgentProfilesRequest,
+  SupervisionEvent,
 } from "../types/relayer";
 
 interface AgentSettingsPanelProps {
   bridge: RelayerBridge;
+  runID: string;
+  runStatus: RunStatus;
+  pendingEvents: SupervisionEvent[];
+  onSave(runID: string, request: SaveAgentProfilesRequest): Promise<AgentProfilesView>;
+  onSaveAndRestart(request: SaveAgentProfilesAndRestartRequest): Promise<LifecycleResult>;
   onClose(): void;
 }
 
 type Notice = { tone: "success" | "warning"; text: string };
 
-export function AgentSettingsPanel({ bridge, onClose }: AgentSettingsPanelProps) {
+export function AgentSettingsPanel({
+  bridge,
+  runID,
+  runStatus,
+  pendingEvents,
+  onSave,
+  onSaveAndRestart,
+  onClose,
+}: AgentSettingsPanelProps) {
   const [view, setView] = useState<AgentProfilesView>();
   const [draft, setDraft] = useState<AgentProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [activating, setActivating] = useState(false);
   const [closeConfirmation, setCloseConfirmation] = useState(false);
+  const [restartConfirmation, setRestartConfirmation] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<Notice>();
 
@@ -39,7 +59,7 @@ export function AgentSettingsPanel({ bridge, onClose }: AgentSettingsPanelProps)
         if (loaded.restartRequired) {
           setNotice({
             tone: "warning",
-            text: "Configuration enregistrée — elle sera appliquée au prochain démarrage.",
+            text: "Configuration enregistrée — elle n’est pas encore active.",
           });
         }
         setLoading(false);
@@ -65,6 +85,9 @@ export function AgentSettingsPanel({ bridge, onClose }: AgentSettingsPanelProps)
   const dirty = view
     ? JSON.stringify(draft) !== JSON.stringify(view.profiles)
     : false;
+  const transitioning = ["starting", "restarting", "rollback", "stopping"].includes(runStatus);
+  const canActivate = runStatus === "idle" || runStatus === "running";
+  const busy = saving || activating || transitioning;
 
   const updateProfile = (index: number, next: AgentProfile) => {
     setDraft((current) => current.map((profile, profileIndex) =>
@@ -110,6 +133,7 @@ export function AgentSettingsPanel({ bridge, onClose }: AgentSettingsPanelProps)
   };
 
   const requestClose = () => {
+    if (busy) return;
     if (dirty && !closeConfirmation) {
       setCloseConfirmation(true);
       return;
@@ -118,12 +142,12 @@ export function AgentSettingsPanel({ bridge, onClose }: AgentSettingsPanelProps)
   };
 
   const save = async () => {
-    if (!view || !dirty || !validation.valid || saving) return;
+    if (!view || !dirty || !validation.valid || busy) return;
     setSaving(true);
     setError(undefined);
     setNotice(undefined);
     try {
-      const result = await bridge.saveAgentProfiles({
+      const result = await onSave(runID, {
         expectedRevision: view.revision,
         profiles: profilesForSave(draft),
       });
@@ -156,6 +180,63 @@ export function AgentSettingsPanel({ bridge, onClose }: AgentSettingsPanelProps)
     }
   };
 
+  const saveAndRestart = async () => {
+    if (!view || !validation.valid || !view.editable || !canActivate || busy) return;
+    setActivating(true);
+    setRestartConfirmation(false);
+    setCloseConfirmation(false);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      const result = await onSaveAndRestart({
+        expectedRunID: runID,
+        expectedRevision: view.revision,
+        profiles: profilesForSave(draft),
+      });
+      setView(result.profiles);
+      setDraft(cloneProfiles(result.profiles.profiles));
+      if (result.outcome === "rolled_back") {
+        setNotice({
+          tone: "warning",
+          text: "Le nouveau run n’a pas démarré. Le YAML précédent a été restauré et le plan antérieur a été relancé sous un nouveau run.",
+        });
+      } else {
+        setNotice({
+          tone: "success",
+          text: result.outcome === "started"
+            ? "Configuration enregistrée — agents démarrés."
+            : "Configuration enregistrée — agents redémarrés.",
+        });
+      }
+    } catch {
+      try {
+        const reloaded = await bridge.getAgentProfiles();
+        setView(reloaded);
+        setDraft(cloneProfiles(reloaded.profiles));
+      } catch {
+        // The lifecycle error below is deliberately complete without exposing
+        // a native error or any command/configuration value.
+      }
+      setError("Le changement de run a échoué. Les décisions restent bloquées tant que le moteur n’est pas revenu à un état sûr.");
+    } finally {
+      setActivating(false);
+    }
+  };
+
+  const requestSaveAndRestart = () => {
+    if (runStatus === "running") {
+      setRestartConfirmation(true);
+      return;
+    }
+    void saveAndRestart();
+  };
+
+  const activationLabel = activating
+    ? runStatus === "running" ? "Redémarrage…" : "Démarrage…"
+    : runStatus === "running"
+      ? dirty ? "Enregistrer et redémarrer" : "Redémarrer les agents"
+      : dirty ? "Enregistrer et démarrer" : "Démarrer les agents";
+
   return (
     <div className="agent-settings-layer">
       <section className="agent-settings" role="dialog" aria-modal="true" aria-labelledby="agents-title">
@@ -165,7 +246,7 @@ export function AgentSettingsPanel({ bridge, onClose }: AgentSettingsPanelProps)
             <h1 id="agents-title">Agents</h1>
             <p>Composez une équipe de 1 à 8 CLI avec des arguments exacts.</p>
           </div>
-          <button className="icon-button" type="button" onClick={requestClose} aria-label="Fermer les agents" autoFocus>
+          <button className="icon-button" type="button" onClick={requestClose} disabled={busy} aria-label="Fermer les agents" autoFocus>
             ×
           </button>
         </header>
@@ -183,7 +264,7 @@ export function AgentSettingsPanel({ bridge, onClose }: AgentSettingsPanelProps)
           </div>
         ) : (
           <>
-            <div className="agent-settings__content">
+            <fieldset className="agent-settings__content" disabled={busy} aria-busy={busy}>
               <Catalog
                 entries={view.catalog}
                 count={draft.length}
@@ -227,7 +308,7 @@ export function AgentSettingsPanel({ bridge, onClose }: AgentSettingsPanelProps)
                   ))}
                 </div>
               </section>
-            </div>
+            </fieldset>
 
             <footer className="agent-settings__footer">
               <div className="settings-footer__status">
@@ -237,7 +318,14 @@ export function AgentSettingsPanel({ bridge, onClose }: AgentSettingsPanelProps)
                 {notice && <strong className={`settings-notice settings-notice--${notice.tone}`}>{notice.text}</strong>}
                 {view.restartRequired && (
                   <span className="restart-guidance">
-                    Arrêtez les sessions depuis le dashboard, fermez Relayer, puis rouvrez l’application.
+                    {runStatus === "running"
+                      ? "Redémarrez les agents pour appliquer la configuration enregistrée."
+                      : "Démarrez les agents pour appliquer la configuration enregistrée."}
+                  </span>
+                )}
+                {runStatus === "failed" && runID !== "" && (
+                  <span className="restart-guidance">
+                    L’état de fermeture est incertain. Fermez Relayer et vérifiez les sessions locales avant un nouveau démarrage.
                   </span>
                 )}
               </div>
@@ -249,9 +337,9 @@ export function AgentSettingsPanel({ bridge, onClose }: AgentSettingsPanelProps)
                   </span>
                 )}
                 <button
-                  className="button button--primary"
+                  className="button button--ghost"
                   type="button"
-                  disabled={!view.editable || !dirty || !validation.valid || saving}
+                  disabled={!view.editable || !dirty || !validation.valid || busy}
                   onClick={() => {
                     setCloseConfirmation(false);
                     void save();
@@ -259,11 +347,53 @@ export function AgentSettingsPanel({ bridge, onClose }: AgentSettingsPanelProps)
                 >
                   {saving ? "Enregistrement…" : "Enregistrer"}
                 </button>
+                <button
+                  className="button button--primary"
+                  type="button"
+                  disabled={!view.editable || !validation.valid || !canActivate || busy}
+                  onClick={requestSaveAndRestart}
+                >
+                  {activationLabel}
+                </button>
               </div>
             </footer>
           </>
         )}
       </section>
+      {restartConfirmation && (
+        <div className="settings-confirmation-layer" role="presentation">
+          <section
+            className="lifecycle-confirmation"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="restart-run-title"
+          >
+            <span className="eyebrow">Remplacement du run courant</span>
+            <h2 id="restart-run-title">Redémarrer les agents ?</h2>
+            <p>
+              Les sessions supervisées seront strictement arrêtées. La persistance tmux est ignorée pour ce redémarrage explicite.
+              Les demandes en attente ne seront jamais transférées au nouveau run.
+            </p>
+            {pendingEvents.length > 0 && (
+              <strong className="lifecycle-confirmation__warning">
+                {pendingEvents.length} demande{pendingEvents.length > 1 ? "s" : ""} en attente,
+                dont {pendingEvents.filter((event) => event.deliveryStatus === "delivering").length} en cours de livraison.
+              </strong>
+            )}
+            <p>
+              Si le nouveau lancement échoue, Relayer tentera de relancer la configuration active précédente sous un nouveau runID.
+            </p>
+            <div className="lifecycle-confirmation__actions">
+              <button className="button button--ghost" type="button" onClick={() => setRestartConfirmation(false)}>
+                Annuler
+              </button>
+              <button className="button button--danger" type="button" disabled={busy} onClick={() => void saveAndRestart()}>
+                Redémarrer
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

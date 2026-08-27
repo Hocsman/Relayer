@@ -23,6 +23,9 @@ var (
 	ErrSessionNotFound = terminal.ErrSessionNotFound
 	ErrClosed          = terminal.ErrClosed
 	ErrUnsupported     = terminal.ErrUnsupported
+	// ErrStopUncertain means tmux accepted a termination attempt but Relayer
+	// could not confirm that the immutable owned session ID disappeared.
+	ErrStopUncertain = errors.New("arrêt de la session tmux non confirmé")
 )
 
 type Status = terminal.Status

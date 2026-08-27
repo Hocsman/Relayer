@@ -301,6 +301,31 @@ func initializeAudit(configuration audit.Config, dependencies backendDependencie
 	return audit.NewRecorder(configuration, nil, nil, nil)
 }
 
+func initializeAuditForRun(configuration audit.Config, dependencies backendDependencies, runID string) (*audit.Recorder, error) {
+	if strings.TrimSpace(runID) == "" {
+		return nil, errors.New("run_id du runtime desktop vide")
+	}
+	if dependencies.newAuditForRun != nil {
+		recorder, err := dependencies.newAuditForRun(configuration, runID)
+		if err != nil {
+			return nil, err
+		}
+		if recorder == nil {
+			return nil, errors.New("fabrique d'audit desktop ayant retourné un enregistreur nil")
+		}
+		return recorder, nil
+	}
+	if dependencies.newAudit != nil {
+		// Test dependencies predating externally reserved run IDs remain usable,
+		// but production always supplies newAuditForRun.
+		return initializeAudit(configuration, dependencies)
+	}
+	if configuration.Enabled && configuration.Mode != audit.ModeOff {
+		return nil, errors.New("fabrique d'audit desktop indisponible")
+	}
+	return audit.Open(configuration, audit.WithRunID(runID))
+}
+
 func joinRunError(target *error, operation string, err error) {
 	if err == nil {
 		return

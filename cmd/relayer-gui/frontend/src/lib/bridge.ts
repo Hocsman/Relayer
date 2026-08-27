@@ -3,20 +3,26 @@ import type {
   AgentProfilesView,
   BridgeEventMap,
   BridgeEventName,
+  LifecycleResult,
   RelayerBridge,
   SaveAgentProfilesRequest,
+  SaveAgentProfilesAndRestartRequest,
 } from "../types/relayer";
 
 type NativeMethod<TArgs extends unknown[], TResult> = (...args: TArgs) => Promise<TResult>;
 
 interface NativeBindings {
   GetState: NativeMethod<[], AppState>;
-  SubmitDecision: NativeMethod<[string, string, string], void>;
-  ResizeSession: NativeMethod<[string, number, number], void>;
-  StopSession: NativeMethod<[string], void>;
+  SubmitDecision: NativeMethod<[string, string, string, string], void>;
+  ResizeSession: NativeMethod<[string, string, number, number], void>;
+  StopSession: NativeMethod<[string, string], void>;
   GetAgentProfiles: NativeMethod<[], AgentProfilesView>;
-  SaveAgentProfiles: NativeMethod<[SaveAgentProfilesRequest], AgentProfilesView>;
-  Shutdown: NativeMethod<[], void>;
+  SaveAgentProfiles: NativeMethod<[string, SaveAgentProfilesRequest], AgentProfilesView>;
+  SaveAgentProfilesAndRestart: NativeMethod<
+    [SaveAgentProfilesAndRestartRequest],
+    LifecycleResult
+  >;
+  StopRun: NativeMethod<[string], AppState>;
 }
 
 interface WailsRuntime {
@@ -46,7 +52,8 @@ function resolveBindings(): NativeBindings {
     typeof candidate.StopSession !== "function" ||
     typeof candidate.GetAgentProfiles !== "function" ||
     typeof candidate.SaveAgentProfiles !== "function" ||
-    typeof candidate.Shutdown !== "function"
+    typeof candidate.SaveAgentProfilesAndRestart !== "function" ||
+    typeof candidate.StopRun !== "function"
   ) {
     throw new Error("Le bridge natif Relayer n'est pas disponible.");
   }
@@ -68,14 +75,16 @@ export function createWailsBridge(): RelayerBridge {
 
   return {
     getState: () => bindings.GetState(),
-    submitDecision: (sessionID, eventID, value) =>
-      bindings.SubmitDecision(sessionID, eventID, value),
-    resizeSession: (sessionID, columns, rows) =>
-      bindings.ResizeSession(sessionID, columns, rows),
-    stopSession: (sessionID) => bindings.StopSession(sessionID),
+    submitDecision: (runID, sessionID, eventID, value) =>
+      bindings.SubmitDecision(runID, sessionID, eventID, value),
+    resizeSession: (runID, sessionID, columns, rows) =>
+      bindings.ResizeSession(runID, sessionID, columns, rows),
+    stopSession: (runID, sessionID) => bindings.StopSession(runID, sessionID),
     getAgentProfiles: () => bindings.GetAgentProfiles(),
-    saveAgentProfiles: (request) => bindings.SaveAgentProfiles(request),
-    shutdown: () => bindings.Shutdown(),
+    saveAgentProfiles: (runID, request) => bindings.SaveAgentProfiles(runID, request),
+    saveAgentProfilesAndRestart: (request) =>
+      bindings.SaveAgentProfilesAndRestart(request),
+    stopRun: (runID) => bindings.StopRun(runID),
     on<K extends BridgeEventName>(
       event: K,
       listener: (payload: BridgeEventMap[K]) => void,

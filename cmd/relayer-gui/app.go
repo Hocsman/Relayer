@@ -37,6 +37,7 @@ var (
 	errDecisionInFlight  = errors.New("Une décision est déjà en cours pour cet agent.")
 	errDeliveryUncertain = errors.New("L'état de livraison est indéterminé; arrêtez la session avant toute nouvelle saisie.")
 	errRuntimeStopped    = errors.New("Le moteur Relayer est arrêté.")
+	errRunStale          = errors.New("Ce run Relayer n'est plus actif.")
 )
 
 type eventKey struct {
@@ -61,16 +62,34 @@ type desktopEngine interface {
 	Stop(context.Context, string) error
 	RecordAudit(audit.Entry) error
 	BeginShutdown(context.Context) error
+	BeginRestart(context.Context) error
 	Close(context.Context) error
+}
+
+type runGeneration struct {
+	id         string
+	generation uint64
+	ctx        context.Context
+	cancel     context.CancelFunc
+	engine     desktopEngine
+	plan       *appcore.DesktopPlan
 }
 
 // App is the narrow Wails bridge. The browser receives display-safe DTOs and
 // stable operation identifiers; semantic events and decisions remain in Go.
 type App struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	engine desktopEngine
+	ctx    context.Context // Wails window lifecycle, never a per-run context.
+	engine desktopEngine   // compatibility alias for the active generation.
+	active *runGeneration
 	emitFn func(context.Context, string, ...interface{})
+
+	lifecycleMu      sync.Mutex
+	nextGeneration   uint64
+	finalShutdown    bool
+	lifecycleBlocked bool
+	prepareEngine    func(appcore.DesktopOptions) (*appcore.DesktopPlan, error)
+	startEngine      func(context.Context, *appcore.DesktopPlan, string) (desktopEngine, error)
+	runIDGenerator   func() (string, error)
 
 	mu            sync.RWMutex
 	state         AppState
@@ -109,7 +128,7 @@ type App struct {
 func NewApp() *App {
 	return &App{
 		state: AppState{
-			RunStatus:     "starting",
+			RunStatus:     "idle",
 			Policy:        PolicyState{DefaultAction: "ask"},
 			Audit:         AuditState{Status: "disabled", Mode: "off"},
 			Agents:        []AgentState{},
@@ -127,16 +146,17 @@ func NewApp() *App {
 		shutdownDone:          make(chan struct{}),
 		profileDetector:       toolcatalog.DefaultDetector(),
 		profileTokenGenerator: newOpaqueProfileToken,
+		prepareEngine:         appcore.PrepareDesktopRuntime,
+		startEngine: func(ctx context.Context, plan *appcore.DesktopPlan, runID string) (desktopEngine, error) {
+			return appcore.StartDesktopRuntime(ctx, plan, runID)
+		},
+		runIDGenerator: newOpaqueProfileToken,
 	}
 }
 
 func (a *App) startup(ctx context.Context) {
-	a.ctx, a.cancel = context.WithCancel(ctx)
+	a.ctx = ctx
 	a.emitFn = wailsruntime.EventsEmit
-	if !desktopAgentExecutionSupported() {
-		a.failStartup(errors.New(desktopUnsupportedReason()))
-		return
-	}
 
 	configPath, err := desktopConfigPath()
 	if err != nil {
@@ -146,25 +166,9 @@ func (a *App) startup(ctx context.Context) {
 	a.profilesMu.Lock()
 	a.configPath = configPath
 	a.profilesMu.Unlock()
-	engine, err := appcore.NewDesktopRuntime(a.ctx, appcore.DesktopOptions{
-		ConfigPath: configPath,
-		InitialSize: terminal.Size{
-			Columns: 120,
-			Rows:    32,
-		},
-		Diagnostics: os.Stderr,
-	})
-	if err != nil {
-		a.failStartup(errors.New(safeDisplayError(err)))
-		return
-	}
-	a.engine = engine
-	a.profilesMu.Lock()
-	a.activeConfigRevision = engine.Metadata().ConfigRevision
-	a.profilesMu.Unlock()
-	a.initializeState(engine)
-	a.eventWG.Add(1)
-	go a.consumeEvents()
+	a.mu.Lock()
+	a.state.RunStatus = "idle"
+	a.mu.Unlock()
 }
 
 func (a *App) failStartup(err error) {
@@ -185,7 +189,29 @@ func desktopConfigPath() (string, error) {
 	return filepath.Join(root, "relayer", config.DefaultPath), nil
 }
 
+// initializeState remains a compact test helper for an already-created
+// engine. Production generations are activated through activateRun.
 func (a *App) initializeState(engine desktopEngine) {
+	metadata := engine.Metadata()
+	ctx, cancel := context.WithCancel(context.Background())
+	run := &runGeneration{
+		id:         metadata.RunID,
+		generation: 1,
+		ctx:        ctx,
+		cancel:     cancel,
+		engine:     engine,
+	}
+	if strings.TrimSpace(run.id) == "" {
+		run.id = "test-run"
+	}
+	a.activateRun(run)
+}
+
+func (a *App) activateRun(run *runGeneration) {
+	if run == nil || run.engine == nil {
+		return
+	}
+	engine := run.engine
 	metadata := engine.Metadata()
 	sessions := engine.Sessions()
 	agents := make([]AgentState, 0, len(sessions))
@@ -207,9 +233,22 @@ func (a *App) initializeState(engine desktopEngine) {
 		})
 	}
 	a.mu.Lock()
+	a.active = run
+	a.engine = engine
+	a.agentIndex = index
+	a.pending = make(map[eventKey]pendingEvent)
+	a.ingesting = make(map[eventKey]struct{})
+	a.resolved = make(map[eventKey]struct{})
+	a.resolvedOrder = nil
+	a.inFlight = make(map[string]eventKey)
+	a.outputRunning = make(map[string]bool)
+	a.outputDirty = make(map[string]bool)
+	a.frozen = make(map[string]bool)
+	a.auditFailed = false
+	a.shuttingDown = false
 	a.agentIndex = index
 	a.state = AppState{
-		RunID:     metadata.RunID,
+		RunID:     run.id,
 		RunStatus: "running",
 		StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		Policy: PolicyState{
@@ -226,14 +265,36 @@ func (a *App) initializeState(engine desktopEngine) {
 		PendingEvents: []SupervisionEvent{},
 	}
 	a.mu.Unlock()
+	a.openDelivery()
 }
 
-func (a *App) consumeEvents() {
+func (a *App) isActiveRun(run *runGeneration) bool {
+	if run == nil {
+		return false
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.active == run && !a.shuttingDown
+}
+
+func (a *App) activeRun(expectedRunID string) (*runGeneration, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.active == nil || a.active.engine == nil || a.shuttingDown {
+		return nil, errRuntimeStopped
+	}
+	if strings.TrimSpace(expectedRunID) == "" || expectedRunID != a.active.id {
+		return nil, errRunStale
+	}
+	return a.active, nil
+}
+
+func (a *App) consumeEvents(run *runGeneration) {
 	defer a.eventWG.Done()
-	events := a.engine.Events()
+	events := run.engine.Events()
 	for {
 		select {
-		case <-a.ctx.Done():
+		case <-run.ctx.Done():
 			return
 		case message, open := <-events:
 			if !open {
@@ -241,25 +302,25 @@ func (a *App) consumeEvents() {
 			}
 			switch value := message.(type) {
 			case session.OutputAvailable:
-				a.scheduleOutputRefresh(value.SessionID)
+				a.scheduleOutputRefresh(run, value.SessionID)
 			case session.AdapterEvent:
-				a.handleAdapterEvent(value.Event.Clone())
+				a.handleAdapterEventForRun(run, value.Event.Clone())
 			case session.Error:
-				a.markSessionError(value.SessionID, "backend_stream_failed")
+				a.markSessionError(run, value.SessionID, "backend_stream_failed")
 			case session.Exited:
-				a.markLegacyExit(value.SessionID)
+				a.markLegacyExit(run, value.SessionID)
 			}
 		}
 	}
 }
 
-func (a *App) scheduleOutputRefresh(sessionID string) {
+func (a *App) scheduleOutputRefresh(run *runGeneration, sessionID string) {
 	key := strings.ToLower(strings.TrimSpace(sessionID))
 	if key == "" {
 		return
 	}
 	a.mu.Lock()
-	if a.shuttingDown {
+	if a.shuttingDown || a.active != run {
 		a.mu.Unlock()
 		return
 	}
@@ -278,7 +339,7 @@ func (a *App) scheduleOutputRefresh(sessionID string) {
 		for {
 			timer := time.NewTimer(outputFrameDelay)
 			select {
-			case <-a.ctx.Done():
+			case <-run.ctx.Done():
 				if !timer.Stop() {
 					select {
 					case <-timer.C:
@@ -292,9 +353,9 @@ func (a *App) scheduleOutputRefresh(sessionID string) {
 				return
 			case <-timer.C:
 			}
-			a.refreshOutput(sessionID)
+			a.refreshOutputForRun(run, sessionID)
 			a.mu.Lock()
-			if a.outputDirty[key] && !a.shuttingDown {
+			if a.outputDirty[key] && !a.shuttingDown && a.active == run {
 				a.outputDirty[key] = false
 				a.mu.Unlock()
 				continue
@@ -319,9 +380,21 @@ func (a *App) GetState() (AppState, error) {
 }
 
 func (a *App) refreshOutput(sessionID string) {
-	output, err := a.engine.Output(sessionID)
+	a.mu.RLock()
+	run := a.active
+	a.mu.RUnlock()
+	if run != nil {
+		a.refreshOutputForRun(run, sessionID)
+	}
+}
+
+func (a *App) refreshOutputForRun(run *runGeneration, sessionID string) {
+	if !a.isActiveRun(run) {
+		return
+	}
+	output, err := run.engine.Output(sessionID)
 	if err != nil {
-		a.emitSafeError("output_refresh_failed", "Impossible d'actualiser la sortie bornée de la session.", sessionID)
+		a.emitSafeError(run, "output_refresh_failed", "Impossible d'actualiser la sortie bornée de la session.", sessionID)
 		return
 	}
 	a.mu.Lock()
@@ -333,15 +406,27 @@ func (a *App) refreshOutput(sessionID string) {
 	agent := &a.state.Agents[index]
 	agent.Output = output
 	agent.Revision++
-	payload := snapshotFromAgent(*agent)
+	payload := snapshotFromAgent(run.id, *agent)
 	a.mu.Unlock()
 	a.emit(eventSnapshot, payload)
 }
 
 func (a *App) handleAdapterEvent(event adapters.Event) {
+	a.mu.RLock()
+	run := a.active
+	a.mu.RUnlock()
+	if run != nil {
+		a.handleAdapterEventForRun(run, event)
+	}
+}
+
+func (a *App) handleAdapterEventForRun(run *runGeneration, event adapters.Event) {
+	if !a.isActiveRun(run) {
+		return
+	}
 	key := makeEventKey(event.SessionID, event.ID)
 	if key.sessionID == "" || key.eventID == "" {
-		a.emitSafeError("invalid_event", "Un événement invalide a été ignoré.", event.SessionID)
+		a.emitSafeError(run, "invalid_event", "Un événement invalide a été ignoré.", event.SessionID)
 		return
 	}
 	if !a.reserveEvent(key) {
@@ -349,9 +434,9 @@ func (a *App) handleAdapterEvent(event adapters.Event) {
 	}
 	defer a.releaseEventReservation(key)
 
-	backend := a.backendFor(event.SessionID)
+	backend := a.backendFor(run, event.SessionID)
 	if event.Type == adapters.EventProcessExit {
-		a.handleProcessExit(event, backend)
+		a.handleProcessExit(run, event, backend)
 		return
 	}
 	if !event.Actionable() {
@@ -366,25 +451,25 @@ func (a *App) handleAdapterEvent(event adapters.Event) {
 	// OutputAvailable is intentionally coalescable. Refreshing here guarantees
 	// that an essential semantic event still brings the latest bounded tail to
 	// the WebView even when its preceding output invalidation was dropped.
-	a.refreshOutput(event.SessionID)
-	if !a.recordAudit(eventDetectedEntry(event, backend)) {
-		a.addFrozenEvent(event, policy.Evaluation{Action: policy.ActionAsk, ProposedAction: policy.ActionAsk, Reason: policy.ReasonNoEngine})
+	a.refreshOutputForRun(run, event.SessionID)
+	if !a.recordAudit(run, eventDetectedEntry(event, backend)) {
+		a.addFrozenEvent(run, event, policy.Evaluation{Action: policy.ActionAsk, ProposedAction: policy.ActionAsk, Reason: policy.ReasonNoEngine})
 		return
 	}
-	evaluation := a.engine.Evaluate(event)
-	if !a.recordAudit(policyAuditEntry(event, backend, evaluation)) {
-		a.addFrozenEvent(event, evaluation)
+	evaluation := run.engine.Evaluate(event)
+	if !a.recordAudit(run, policyAuditEntry(event, backend, evaluation)) {
+		a.addFrozenEvent(run, event, evaluation)
 		return
 	}
 
-	view := supervisionView(event, evaluation, "pending")
+	view := supervisionView(run.id, event, evaluation, "pending")
 	a.mu.Lock()
 	a.pending[key] = pendingEvent{event: event.Clone(), view: view}
 	a.setAgentWaitingLocked(event.SessionID)
 	a.rebuildPendingLocked()
 	a.mu.Unlock()
 	a.emit(eventSemantic, view)
-	a.scheduleAutomatic(event.SessionID)
+	a.scheduleAutomatic(run, event.SessionID)
 }
 
 func (a *App) sessionRunning(sessionID string) bool {
@@ -423,9 +508,9 @@ func eventDetectedEntry(event adapters.Event, backend string) audit.Entry {
 	return entry
 }
 
-func (a *App) handleProcessExit(event adapters.Event, backend string) {
+func (a *App) handleProcessExit(run *runGeneration, event adapters.Event, backend string) {
 	key := makeEventKey(event.SessionID, event.ID)
-	if !a.recordAudit(eventDetectedEntry(event, backend)) {
+	if !a.recordAudit(run, eventDetectedEntry(event, backend)) {
 		// Lifecycle state still has to converge even when audit has failed.
 	}
 	finished := eventAuditEntry(audit.KindSessionFinished, event, backend)
@@ -434,7 +519,7 @@ func (a *App) handleProcessExit(event adapters.Event, backend string) {
 		finished.Outcome = audit.OutcomeFailed
 	}
 	finished.Reason = "process_exit"
-	_ = a.recordAudit(finished)
+	_ = a.recordAudit(run, finished)
 
 	a.mu.Lock()
 	if _, duplicate := a.resolved[key]; duplicate {
@@ -464,20 +549,20 @@ func (a *App) handleProcessExit(event adapters.Event, backend string) {
 		status = a.state.Agents[index].Status
 	}
 	a.mu.Unlock()
-	a.refreshOutput(event.SessionID)
-	a.emit(eventStatus, StatusEvent{Scope: "session", SessionID: event.SessionID, Status: status})
+	a.refreshOutputForRun(run, event.SessionID)
+	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: event.SessionID, Status: status})
 }
 
 // scheduleAutomatic serialises every automatic decision for a session and
 // never overtakes an earlier human prompt. The reservation and WaitGroup Add
 // happen under a.mu so Shutdown cannot begin waiting between those steps.
-func (a *App) scheduleAutomatic(sessionID string) {
+func (a *App) scheduleAutomatic(run *runGeneration, sessionID string) {
 	sessionKey := strings.ToLower(strings.TrimSpace(sessionID))
 	if sessionKey == "" {
 		return
 	}
 	a.mu.Lock()
-	if a.shuttingDown || a.auditFailed || a.frozen[sessionKey] {
+	if a.shuttingDown || a.active != run || a.auditFailed || a.frozen[sessionKey] {
 		a.mu.Unlock()
 		return
 	}
@@ -510,7 +595,7 @@ func (a *App) scheduleAutomatic(sessionID string) {
 	a.emit(eventSemantic, view)
 	go func() {
 		defer a.eventWG.Done()
-		a.applyAutomatic(key, event, evaluation)
+		a.applyAutomaticForRun(run, key, event, evaluation)
 	}()
 }
 
@@ -539,34 +624,43 @@ func eventBefore(left, right adapters.Event) bool {
 	return left.ID < right.ID
 }
 
-func (a *App) finishDecision(key eventKey, advance bool) {
+func (a *App) finishDecision(run *runGeneration, key eventKey, advance bool) {
 	a.mu.Lock()
 	if current, exists := a.inFlight[key.sessionID]; exists && current == key {
 		delete(a.inFlight, key.sessionID)
 	}
 	shuttingDown := a.shuttingDown
 	a.mu.Unlock()
-	if advance && !shuttingDown {
-		a.scheduleAutomatic(key.sessionID)
+	if advance && !shuttingDown && a.isActiveRun(run) {
+		a.scheduleAutomatic(run, key.sessionID)
 	}
 }
 
 func (a *App) applyAutomatic(key eventKey, event adapters.Event, evaluation policy.Evaluation) {
+	a.mu.RLock()
+	run := a.active
+	a.mu.RUnlock()
+	if run != nil {
+		a.applyAutomaticForRun(run, key, event, evaluation)
+	}
+}
+
+func (a *App) applyAutomaticForRun(run *runGeneration, key eventKey, event adapters.Event, evaluation policy.Evaluation) {
 	advance := false
-	defer func() { a.finishDecision(key, advance) }()
+	defer func() { a.finishDecision(run, key, advance) }()
 	decision, supported := adapterDecisionForPolicy(evaluation.Action)
 	if !supported {
 		a.fallbackToAsk(key, "fallback_unsupported")
 		return
 	}
-	backend := a.backendFor(event.SessionID)
+	backend := a.backendFor(run, event.SessionID)
 	auditDecision := auditDecisionForPolicy(evaluation.Action)
-	if !a.recordAudit(decisionAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy)) {
+	if !a.recordAudit(run, decisionAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy)) {
 		a.markDelivery(key, "failed", "audit_unavailable")
 		return
 	}
 	if !a.beginDelivery() {
-		if !a.recordAudit(deliveryAuditEntry(
+		if !a.recordAudit(run, deliveryAuditEntry(
 			event,
 			backend,
 			auditDecision,
@@ -580,11 +674,11 @@ func (a *App) applyAutomatic(key eventKey, event adapters.Event, evaluation poli
 		return
 	}
 	defer a.endDelivery()
-	ctx, cancel := context.WithTimeout(a.ctx, 8*time.Second)
-	err := a.engine.ApplyDecision(ctx, event.SessionID, event, decision, "")
+	ctx, cancel := context.WithTimeout(run.ctx, 8*time.Second)
+	err := run.engine.ApplyDecision(ctx, event.SessionID, event, decision, "")
 	cancel()
 	if err == nil {
-		if !a.recordAudit(deliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeApplied, "delivery_applied")) {
+		if !a.recordAudit(run, deliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeApplied, "delivery_applied")) {
 			return
 		}
 		if a.pendingExists(key) {
@@ -594,7 +688,7 @@ func (a *App) applyAutomatic(key eventKey, event adapters.Event, evaluation poli
 		return
 	}
 	if errors.Is(err, adapters.ErrDecisionUnsupported) {
-		if !a.recordAudit(deliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackUnsupported, "fallback_unsupported")) {
+		if !a.recordAudit(run, deliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackUnsupported, "fallback_unsupported")) {
 			return
 		}
 		if a.pendingExists(key) {
@@ -603,21 +697,21 @@ func (a *App) applyAutomatic(key eventKey, event adapters.Event, evaluation poli
 		return
 	}
 	if errors.Is(err, adapters.ErrEventMismatch) {
-		if !a.recordAudit(deliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackStale, "fallback_stale")) {
+		if !a.recordAudit(run, deliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackStale, "fallback_stale")) {
 			return
 		}
 		if a.pendingExists(key) {
 			a.resolveEvent(key)
-			a.reconcilePending(event.SessionID)
+			a.reconcilePending(run, event.SessionID)
 			advance = true
 		}
 		return
 	}
-	if !a.recordAudit(deliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackDeliveryUncertain, "delivery_uncertain")) {
+	if !a.recordAudit(run, deliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackDeliveryUncertain, "delivery_uncertain")) {
 		return
 	}
 	if a.pendingExists(key) {
-		a.freezeSession(key, "delivery_uncertain")
+		a.freezeSession(run, key, "delivery_uncertain")
 	}
 }
 
@@ -639,9 +733,9 @@ func (a *App) fallbackToAsk(key eventKey, reason string) {
 	a.emit(eventSemantic, view)
 }
 
-func (a *App) addFrozenEvent(event adapters.Event, evaluation policy.Evaluation) {
+func (a *App) addFrozenEvent(run *runGeneration, event adapters.Event, evaluation policy.Evaluation) {
 	key := makeEventKey(event.SessionID, event.ID)
-	view := supervisionView(event, evaluation, "failed")
+	view := supervisionView(run.id, event, evaluation, "failed")
 	a.mu.Lock()
 	a.pending[key] = pendingEvent{event: event.Clone(), view: view}
 	a.frozen[key.sessionID] = true
@@ -670,9 +764,9 @@ func (a *App) markDelivery(key eventKey, status, reason string) {
 	a.emit(eventSemantic, view)
 }
 
-func (a *App) freezeSession(key eventKey, reason string) {
+func (a *App) freezeSession(run *runGeneration, key eventKey, reason string) {
 	a.markDelivery(key, "uncertain", reason)
-	a.emitSafeError("delivery_uncertain", "Livraison indéterminée: la session est gelée pour éviter une seconde réponse.", key.sessionID)
+	a.emitSafeError(run, "delivery_uncertain", "Livraison indéterminée: la session est gelée pour éviter une seconde réponse.", key.sessionID)
 }
 
 func (a *App) resolveEvent(key eventKey) {
@@ -694,7 +788,10 @@ func (a *App) resolveEvent(key eventKey) {
 	a.mu.Unlock()
 	if exists {
 		a.emit(eventSemantic, item.view)
-		a.emit(eventStatus, StatusEvent{Scope: "session", SessionID: key.sessionID, Status: status})
+		a.mu.RLock()
+		runID := a.state.RunID
+		a.mu.RUnlock()
+		a.emit(eventStatus, StatusEvent{RunID: runID, Scope: "session", SessionID: key.sessionID, Status: status})
 	}
 }
 
@@ -707,19 +804,23 @@ func (a *App) hasPendingForSessionLocked(sessionKey string) bool {
 	return false
 }
 
-func (a *App) reconcilePending(sessionID string) {
-	ctx, cancel := context.WithTimeout(a.ctx, 2*time.Second)
-	pending, err := a.engine.PendingEvent(ctx, sessionID)
+func (a *App) reconcilePending(run *runGeneration, sessionID string) {
+	ctx, cancel := context.WithTimeout(run.ctx, 2*time.Second)
+	pending, err := run.engine.PendingEvent(ctx, sessionID)
 	cancel()
 	if err != nil || pending == nil {
 		return
 	}
-	a.handleAdapterEvent(pending.Clone())
+	a.handleAdapterEventForRun(run, pending.Clone())
 }
 
 // SubmitDecision relays a manual value to the exact canonical occurrence. The
 // value is never copied into application state, events, errors or audit data.
-func (a *App) SubmitDecision(sessionID, eventID, manualInput string) error {
+func (a *App) SubmitDecision(runID, sessionID, eventID, manualInput string) error {
+	run, runErr := a.activeRun(runID)
+	if runErr != nil {
+		return runErr
+	}
 	key := makeEventKey(sessionID, eventID)
 	if !a.beginDelivery() {
 		a.mu.RLock()
@@ -760,32 +861,32 @@ func (a *App) SubmitDecision(sessionID, eventID, manualInput string) error {
 	a.mu.Unlock()
 	a.emit(eventSemantic, view)
 	advance := false
-	defer func() { a.finishDecision(key, advance) }()
+	defer func() { a.finishDecision(run, key, advance) }()
 
-	backend := a.backendFor(sessionID)
-	if !a.recordAudit(decisionAuditEntry(item.event, backend, audit.DecisionAsk, audit.DecisionByHuman)) {
+	backend := a.backendFor(run, sessionID)
+	if !a.recordAudit(run, decisionAuditEntry(item.event, backend, audit.DecisionAsk, audit.DecisionByHuman)) {
 		return errAuditUnavailable
 	}
-	ctx, cancel := context.WithTimeout(a.ctx, 8*time.Second)
-	err := a.engine.ApplyDecision(ctx, sessionID, item.event, adapters.DecisionManual, manualInput)
+	ctx, cancel := context.WithTimeout(run.ctx, 8*time.Second)
+	err := run.engine.ApplyDecision(ctx, sessionID, item.event, adapters.DecisionManual, manualInput)
 	cancel()
 	if err != nil {
 		if errors.Is(err, adapters.ErrEventMismatch) {
-			if !a.recordAudit(deliveryAuditEntry(item.event, backend, audit.DecisionAsk, audit.DecisionByHuman, audit.OutcomeFallbackStale, "fallback_stale")) {
+			if !a.recordAudit(run, deliveryAuditEntry(item.event, backend, audit.DecisionAsk, audit.DecisionByHuman, audit.OutcomeFallbackStale, "fallback_stale")) {
 				return errAuditUnavailable
 			}
 			a.resolveEvent(key)
-			a.reconcilePending(sessionID)
+			a.reconcilePending(run, sessionID)
 			advance = true
 			return errDecisionStale
 		}
-		if !a.recordAudit(deliveryAuditEntry(item.event, backend, audit.DecisionAsk, audit.DecisionByHuman, audit.OutcomeFallbackDeliveryUncertain, "delivery_uncertain")) {
+		if !a.recordAudit(run, deliveryAuditEntry(item.event, backend, audit.DecisionAsk, audit.DecisionByHuman, audit.OutcomeFallbackDeliveryUncertain, "delivery_uncertain")) {
 			return errAuditUnavailable
 		}
-		a.freezeSession(key, "delivery_uncertain")
+		a.freezeSession(run, key, "delivery_uncertain")
 		return errDeliveryUncertain
 	}
-	if !a.recordAudit(deliveryAuditEntry(item.event, backend, audit.DecisionAsk, audit.DecisionByHuman, audit.OutcomeApplied, "delivery_applied")) {
+	if !a.recordAudit(run, deliveryAuditEntry(item.event, backend, audit.DecisionAsk, audit.DecisionByHuman, audit.OutcomeApplied, "delivery_applied")) {
 		return errAuditUnavailable
 	}
 	a.resolveEvent(key)
@@ -793,32 +894,42 @@ func (a *App) SubmitDecision(sessionID, eventID, manualInput string) error {
 	return nil
 }
 
-func (a *App) ResizeSession(sessionID string, columns, rows int) error {
+func (a *App) ResizeSession(runID, sessionID string, columns, rows int) error {
 	if columns < 1 || rows < 1 || columns > 65535 || rows > 65535 {
 		return errors.New("Dimensions de terminal invalides.")
 	}
-	if a.engine == nil {
+	run, err := a.activeRun(runID)
+	if err != nil {
+		return err
+	}
+	if !a.beginDelivery() {
 		return errRuntimeStopped
 	}
-	ctx, cancel := context.WithTimeout(a.ctx, 3*time.Second)
-	err := a.engine.Resize(ctx, sessionID, terminal.Size{Columns: columns, Rows: rows})
+	defer a.endDelivery()
+	ctx, cancel := context.WithTimeout(run.ctx, 3*time.Second)
+	err = run.engine.Resize(ctx, sessionID, terminal.Size{Columns: columns, Rows: rows})
 	cancel()
 	if err != nil {
-		a.emitSafeError("resize_failed", "Le redimensionnement de la session a échoué.", sessionID)
+		a.emitSafeError(run, "resize_failed", "Le redimensionnement de la session a échoué.", sessionID)
 		return errors.New("Le redimensionnement de la session a échoué.")
 	}
 	return nil
 }
 
-func (a *App) StopSession(sessionID string) error {
-	if a.engine == nil {
+func (a *App) StopSession(runID, sessionID string) error {
+	run, err := a.activeRun(runID)
+	if err != nil {
+		return err
+	}
+	if !a.beginDelivery() {
 		return errRuntimeStopped
 	}
-	ctx, cancel := context.WithTimeout(a.ctx, 6*time.Second)
-	err := a.engine.Stop(ctx, sessionID)
+	defer a.endDelivery()
+	ctx, cancel := context.WithTimeout(run.ctx, 6*time.Second)
+	err = run.engine.Stop(ctx, sessionID)
 	cancel()
 	if err != nil {
-		a.emitSafeError("stop_failed", "Impossible d'arrêter cette session proprement.", sessionID)
+		a.emitSafeError(run, "stop_failed", "Impossible d'arrêter cette session proprement.", sessionID)
 		return errors.New("Impossible d'arrêter cette session proprement.")
 	}
 	return nil
@@ -827,38 +938,20 @@ func (a *App) StopSession(sessionID string) error {
 func (a *App) Shutdown() error {
 	a.shutdownOnce.Do(func() {
 		defer close(a.shutdownDone)
-		a.closeDelivery()
-		a.mu.Lock()
-		a.shuttingDown = true
-		a.state.RunStatus = "stopping"
-		a.mu.Unlock()
-		a.emit(eventStatus, StatusEvent{Scope: "run", Status: "stopping"})
-		if a.cancel != nil {
-			a.cancel()
-		}
-		if a.engine != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-			a.shutdownErr = a.engine.BeginShutdown(ctx)
-			cancel()
-		}
-		a.eventWG.Wait()
-		a.deliveryWG.Wait()
-		if a.engine != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-			closeErr := a.engine.Close(ctx)
-			cancel()
-			if closeErr != nil {
-				a.shutdownErr = errors.Join(a.shutdownErr, closeErr)
-			}
+		a.lifecycleMu.Lock()
+		a.finalShutdown = true
+		a.mu.RLock()
+		run := a.active
+		a.mu.RUnlock()
+		if run != nil {
+			a.shutdownErr = a.stopGenerationLocked(run, false, "stopping")
 		}
 		status := "stopped"
 		if a.shutdownErr != nil {
 			status = "failed"
 		}
-		a.mu.Lock()
-		a.state.RunStatus = status
-		a.mu.Unlock()
-		a.emit(eventStatus, StatusEvent{Scope: "run", Status: status})
+		a.setRunStatus(status, "")
+		a.lifecycleMu.Unlock()
 	})
 	<-a.shutdownDone
 	if a.shutdownErr != nil {
@@ -871,18 +964,21 @@ func (a *App) onShutdown(_ context.Context) {
 	_ = a.Shutdown()
 }
 
-func (a *App) recordAudit(entry audit.Entry) bool {
-	if a.engine == nil {
+func (a *App) recordAudit(run *runGeneration, entry audit.Entry) bool {
+	if run == nil || run.engine == nil {
 		return false
 	}
-	if err := a.engine.RecordAudit(entry); err != nil {
-		a.freezeAudit()
+	if err := run.engine.RecordAudit(entry); err != nil {
+		a.freezeAudit(run)
 		return false
 	}
 	return true
 }
 
-func (a *App) freezeAudit() {
+func (a *App) freezeAudit(run *runGeneration) {
+	if !a.isActiveRun(run) {
+		return
+	}
 	a.closeDelivery()
 	a.mu.Lock()
 	if a.auditFailed {
@@ -903,8 +999,8 @@ func (a *App) freezeAudit() {
 	}
 	a.rebuildPendingLocked()
 	a.mu.Unlock()
-	a.emit(eventStatus, StatusEvent{Scope: "audit", Status: "failed"})
-	a.emitSafeError("audit_unavailable", "Audit local indisponible: aucune nouvelle décision ne sera envoyée.", "")
+	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "audit", Status: "failed"})
+	a.emitSafeError(run, "audit_unavailable", "Audit local indisponible: aucune nouvelle décision ne sera envoyée.", "")
 }
 
 func (a *App) beginDelivery() bool {
@@ -925,9 +1021,15 @@ func (a *App) closeDelivery() {
 	a.deliveryMu.Unlock()
 }
 
-func (a *App) markSessionError(sessionID, reason string) {
-	backend := a.backendFor(sessionID)
-	_ = a.recordAudit(audit.Entry{
+func (a *App) openDelivery() {
+	a.deliveryMu.Lock()
+	a.deliveryAvailable = true
+	a.deliveryMu.Unlock()
+}
+
+func (a *App) markSessionError(run *runGeneration, sessionID, reason string) {
+	backend := a.backendFor(run, sessionID)
+	_ = a.recordAudit(run, audit.Entry{
 		Kind:       audit.KindBackendError,
 		SessionID:  sessionID,
 		AgentID:    sessionID,
@@ -941,11 +1043,11 @@ func (a *App) markSessionError(sessionID, reason string) {
 		a.state.Agents[index].Status = "failed"
 	}
 	a.mu.Unlock()
-	a.emit(eventStatus, StatusEvent{Scope: "session", SessionID: sessionID, Status: "failed"})
-	a.emitSafeError("backend_stream_failed", "Le flux du backend a rencontré une erreur.", sessionID)
+	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: sessionID, Status: "failed"})
+	a.emitSafeError(run, "backend_stream_failed", "Le flux du backend a rencontré une erreur.", sessionID)
 }
 
-func (a *App) markLegacyExit(sessionID string) {
+func (a *App) markLegacyExit(run *runGeneration, sessionID string) {
 	a.mu.Lock()
 	if index, found := a.agentIndex[strings.ToLower(sessionID)]; found {
 		a.state.Agents[index].Status = "failed"
@@ -954,12 +1056,15 @@ func (a *App) markLegacyExit(sessionID string) {
 	a.clearSessionPendingLocked(sessionID)
 	a.rebuildPendingLocked()
 	a.mu.Unlock()
-	a.emit(eventStatus, StatusEvent{Scope: "session", SessionID: sessionID, Status: "failed"})
+	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: sessionID, Status: "failed"})
 }
 
-func (a *App) backendFor(sessionID string) string {
+func (a *App) backendFor(run *runGeneration, sessionID string) string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
+	if a.active != run {
+		return ""
+	}
 	if index, found := a.agentIndex[strings.ToLower(sessionID)]; found {
 		return a.state.Agents[index].Backend
 	}
@@ -1027,8 +1132,13 @@ func (a *App) rebuildPendingLocked() {
 	a.state.PendingEvents = items
 }
 
-func (a *App) emitSafeError(code, message, sessionID string) {
+func (a *App) emitSafeError(run *runGeneration, code, message, sessionID string) {
+	runID := ""
+	if run != nil {
+		runID = run.id
+	}
 	a.emit(eventError, SafeErrorEvent{
+		RunID:     runID,
 		Code:      code,
 		Message:   message,
 		SessionID: sessionID,
@@ -1049,12 +1159,13 @@ func makeEventKey(sessionID, eventID string) eventKey {
 	}
 }
 
-func supervisionView(event adapters.Event, evaluation policy.Evaluation, delivery string) SupervisionEvent {
+func supervisionView(runID string, event adapters.Event, evaluation policy.Evaluation, delivery string) SupervisionEvent {
 	timestamp := event.Timestamp
 	if timestamp.IsZero() {
 		timestamp = time.Now().UTC()
 	}
 	return SupervisionEvent{
+		RunID:     runID,
 		ID:        event.ID,
 		SessionID: event.SessionID,
 		AgentID:   event.AgentID,
@@ -1076,8 +1187,9 @@ func supervisionView(event adapters.Event, evaluation policy.Evaluation, deliver
 	}
 }
 
-func snapshotFromAgent(agent AgentState) SnapshotEvent {
+func snapshotFromAgent(runID string, agent AgentState) SnapshotEvent {
 	return SnapshotEvent{
+		RunID:     runID,
 		SessionID: agent.SessionID,
 		Revision:  agent.Revision,
 		Output:    agent.Output,

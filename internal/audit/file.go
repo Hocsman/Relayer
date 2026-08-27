@@ -16,6 +16,7 @@ import (
 type openOptions struct {
 	clock       func() time.Time
 	idGenerator func() (string, error)
+	runID       string
 }
 
 // DefaultPath returns the private per-user audit file location.
@@ -75,6 +76,19 @@ func WithIDGenerator(generator func() (string, error)) Option {
 	}
 }
 
+// WithRunID binds audit records to an externally reserved runtime identity.
+// This keeps GUI generation identity stable even when auditing is disabled.
+func WithRunID(runID string) Option {
+	return func(options *openOptions) error {
+		runID = strings.TrimSpace(runID)
+		if !generatedIDPattern.MatchString(runID) {
+			return errors.New("run_id d'audit explicite invalide")
+		}
+		options.runID = runID
+		return nil
+	}
+}
+
 // Open creates a rotating FileSink and wraps it in a Recorder. Disabled and
 // off configurations perform no filesystem or ID-generator work.
 func Open(config Config, options ...Option) (*Recorder, error) {
@@ -91,7 +105,7 @@ func Open(config Config, options ...Option) (*Recorder, error) {
 		}
 	}
 	if !config.Enabled || config.Mode == ModeOff {
-		return NewRecorder(config, nil, resolved.clock, resolved.idGenerator)
+		return newRecorder(config, nil, resolved.clock, resolved.idGenerator, resolved.runID)
 	}
 
 	absolute, err := ResolvePath(config.Path)
@@ -104,7 +118,7 @@ func Open(config Config, options ...Option) (*Recorder, error) {
 	if err != nil {
 		return nil, err
 	}
-	recorder, err := NewRecorder(config, sink, resolved.clock, resolved.idGenerator)
+	recorder, err := newRecorder(config, sink, resolved.clock, resolved.idGenerator, resolved.runID)
 	if err != nil {
 		_ = sink.Close()
 		return nil, err

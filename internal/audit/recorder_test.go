@@ -102,6 +102,36 @@ func TestDefaultConfigValidationAndDisabledRecorderAreSafe(t *testing.T) {
 	}
 }
 
+func TestExplicitRunIDSurvivesDisabledAuditWithoutGeneratingIDs(t *testing.T) {
+	idCalls := 0
+	recorder, err := Open(
+		Config{Enabled: false, Mode: ModeMetadata, MaxFileSizeMB: 1, MaxFiles: 1},
+		WithRunID("desktop-generation-7"),
+		WithIDGenerator(func() (string, error) {
+			idCalls++
+			return "unexpected", nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recorder.RunID() != "desktop-generation-7" {
+		t.Fatalf("RunID = %q", recorder.RunID())
+	}
+	if recorder.Enabled() {
+		t.Fatal("disabled audit became enabled")
+	}
+	if idCalls != 0 {
+		t.Fatalf("disabled audit generated %d IDs", idCalls)
+	}
+	if _, err := Open(
+		Config{Enabled: false, Mode: ModeMetadata, MaxFileSizeMB: 1, MaxFiles: 1},
+		WithRunID(" invalid run "),
+	); err == nil {
+		t.Fatal("Open accepted an invalid explicit run ID")
+	}
+}
+
 func TestRecorderWritesVersionedOrderedJSONLAndCopiesMetadata(t *testing.T) {
 	sink := &memoryLineSink{}
 	now := time.Date(2026, 8, 26, 12, 34, 56, 789, time.FixedZone("test", 2*60*60))

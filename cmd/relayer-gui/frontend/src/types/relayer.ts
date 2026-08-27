@@ -1,4 +1,12 @@
-export type RunStatus = "starting" | "running" | "stopping" | "stopped" | "failed";
+export type RunStatus =
+  | "idle"
+  | "starting"
+  | "running"
+  | "restarting"
+  | "rollback"
+  | "stopping"
+	| "stopped"
+  | "failed";
 
 export type SessionStatus =
   | "starting"
@@ -64,6 +72,7 @@ export interface PolicyEvaluation {
 // Metadata and raw matches deliberately do not cross the GUI bridge. The Go
 // core remains the authority for redaction and audit safety.
 export interface SupervisionEvent {
+  runID: string;
   id: string;
   sessionID: string;
   agentID: string;
@@ -88,6 +97,7 @@ export interface AppState {
 }
 
 export interface SnapshotEvent {
+  runID: string;
   sessionID: string;
   revision: number;
   output: string;
@@ -98,12 +108,14 @@ export interface SnapshotEvent {
 }
 
 export interface StatusEvent {
+  runID: string;
   scope: "run" | "session" | "audit";
   status: RunStatus | SessionStatus | AuditState["status"];
   sessionID?: string;
 }
 
 export interface SafeErrorEvent {
+  runID: string;
   code: string;
   message: string;
   sessionID?: string;
@@ -155,6 +167,18 @@ export interface SaveAgentProfilesRequest {
   profiles: AgentProfileInput[];
 }
 
+export interface SaveAgentProfilesAndRestartRequest extends SaveAgentProfilesRequest {
+  expectedRunID: string;
+}
+
+export type LifecycleOutcome = "started" | "restarted" | "rolled_back";
+
+export interface LifecycleResult {
+  outcome: LifecycleOutcome;
+  state: AppState;
+  profiles: AgentProfilesView;
+}
+
 export interface AgentProfileInput {
   id: string;
   name: string;
@@ -176,11 +200,12 @@ export type BridgeEventName = keyof BridgeEventMap;
 
 export interface RelayerBridge {
   getState(): Promise<AppState>;
-  submitDecision(sessionID: string, eventID: string, value: string): Promise<void>;
-  resizeSession(sessionID: string, columns: number, rows: number): Promise<void>;
-  stopSession(sessionID: string): Promise<void>;
+  submitDecision(runID: string, sessionID: string, eventID: string, value: string): Promise<void>;
+  resizeSession(runID: string, sessionID: string, columns: number, rows: number): Promise<void>;
+  stopSession(runID: string, sessionID: string): Promise<void>;
   getAgentProfiles(): Promise<AgentProfilesView>;
-  saveAgentProfiles(request: SaveAgentProfilesRequest): Promise<AgentProfilesView>;
-  shutdown(): Promise<void>;
+  saveAgentProfiles(runID: string, request: SaveAgentProfilesRequest): Promise<AgentProfilesView>;
+  saveAgentProfilesAndRestart(request: SaveAgentProfilesAndRestartRequest): Promise<LifecycleResult>;
+  stopRun(runID: string): Promise<AppState>;
   on<K extends BridgeEventName>(event: K, listener: (payload: BridgeEventMap[K]) => void): () => void;
 }

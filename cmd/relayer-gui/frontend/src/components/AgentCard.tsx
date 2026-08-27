@@ -3,14 +3,15 @@ import { TerminalSnapshotView } from "./TerminalSnapshotView";
 import type { AgentState, SupervisionEvent } from "../types/relayer";
 
 interface AgentCardProps {
+  runID: string;
   agent: AgentState;
   event?: SupervisionEvent;
-  onResize(sessionID: string, columns: number, rows: number): Promise<void>;
-  onStop(sessionID: string): Promise<void>;
-  onOpenEvent(sessionID: string, eventID: string): void;
+  onResize(runID: string, sessionID: string, columns: number, rows: number): Promise<void>;
+  onStop(runID: string, sessionID: string): Promise<void>;
+  onOpenEvent(runID: string, sessionID: string, eventID: string): void;
 }
 
-export function AgentCard({ agent, event, onResize, onStop, onOpenEvent }: AgentCardProps) {
+export function AgentCard({ runID, agent, event, onResize, onStop, onOpenEvent }: AgentCardProps) {
   const waiting = Boolean(event) || agent.status === "waiting";
   return (
     <article className={`agent-card${waiting ? " agent-card--waiting" : ""}`}>
@@ -35,6 +36,7 @@ export function AgentCard({ agent, event, onResize, onStop, onOpenEvent }: Agent
       </div>
 
       <TerminalSnapshotView
+        runID={runID}
         sessionID={agent.sessionID}
         label={`Sortie de ${agent.name}`}
         output={agent.output}
@@ -49,7 +51,7 @@ export function AgentCard({ agent, event, onResize, onStop, onOpenEvent }: Agent
             <button
               className="button button--attention button--small"
               type="button"
-              onClick={() => onOpenEvent(event.sessionID, event.id)}
+              onClick={() => onOpenEvent(event.runID, event.sessionID, event.id)}
             >
               Examiner
             </button>
@@ -58,7 +60,7 @@ export function AgentCard({ agent, event, onResize, onStop, onOpenEvent }: Agent
             <button
               className="button button--ghost button--small"
               type="button"
-              onClick={() => void onStop(agent.sessionID)}
+              onClick={() => void onStop(runID, agent.sessionID)}
             >
               Arrêter
             </button>

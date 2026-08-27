@@ -1,51 +1,24 @@
 import type {
+  AgentProfile,
   AgentProfilesView,
+  AgentState,
   AppState,
   BridgeEventMap,
   BridgeEventName,
   RelayerBridge,
+  SaveAgentProfilesRequest,
   SupervisionEvent,
 } from "../types/relayer";
 
 type Listener = (payload: never) => void;
 
-const startedAt = new Date().toISOString();
-
 function initialState(): AppState {
   return {
-    runID: "demo-local",
-    runStatus: "running",
-    startedAt,
+    runID: "",
+    runStatus: "idle",
     policy: { defaultAction: "ask", dryRun: false },
-    audit: { enabled: true, mode: "metadata", status: "ready" },
-    agents: [
-      {
-        sessionID: "demo-a",
-        agentID: "demo-a",
-        name: "Agent A · Claude",
-        displayCommand: "claude",
-        backend: "pty",
-        adapter: "generic",
-        status: "running",
-        output: "Relayer demo — agent initialisé\n",
-        revision: 1,
-        running: true,
-        attached: false,
-      },
-      {
-        sessionID: "demo-b",
-        agentID: "demo-b",
-        name: "Agent B · Codex",
-        displayCommand: "codex",
-        backend: "tmux",
-        adapter: "generic",
-        status: "running",
-        output: "Relayer demo — agent initialisé\n",
-        revision: 1,
-        running: true,
-        attached: false,
-      },
-    ],
+    audit: { enabled: false, mode: "off", status: "disabled" },
+    agents: [],
     pendingEvents: [],
   };
 }
@@ -131,8 +104,9 @@ function initialProfiles(): AgentProfilesView {
   };
 }
 
-function demoEvent(sessionID: string, sensitive: boolean): SupervisionEvent {
+function demoEvent(runID: string, sessionID: string, sensitive: boolean): SupervisionEvent {
   return {
+    runID,
     id: `${sessionID}-prompt-1`,
     sessionID,
     agentID: sessionID,
@@ -153,19 +127,87 @@ function demoEvent(sessionID: string, sensitive: boolean): SupervisionEvent {
   };
 }
 
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
 // The demo is only constructed when VITE_RELAYER_DEMO=true. Production never
 // calls this function as a fallback when the native Wails bridge is missing.
 export function createDemoBridge(): RelayerBridge {
   let state = initialState();
   let profiles = initialProfiles();
+  let runSequence = 0;
   const listeners = new Map<BridgeEventName, Set<Listener>>();
-  const lineCounts = new Map(state.agents.map((agent) => [agent.sessionID, 0]));
+  const lineCounts = new Map<string, number>();
 
   const emit = <K extends BridgeEventName>(event: K, payload: BridgeEventMap[K]) => {
     listeners.get(event)?.forEach((listener) => listener(payload as never));
   };
 
-  const timer = window.setInterval(() => {
+  const requireRun = (runID: string, runningOnly = false) => {
+    if (runID !== state.runID || (runningOnly && state.runStatus !== "running")) {
+      throw new Error("Le run de démonstration est devenu obsolète.");
+    }
+  };
+
+  const saveProfiles = (request: SaveAgentProfilesRequest): AgentProfilesView => {
+    if (request.expectedRevision !== profiles.revision) {
+      throw new Error("Configuration de démonstration obsolète.");
+    }
+    const revision = Number.parseInt(profiles.revision.replace("demo-", ""), 10) + 1;
+    const previousProfiles = profiles.profiles;
+    const nextProfiles: AgentProfile[] = request.profiles.map((input) => {
+      if (input.preserve) {
+        const existing = previousProfiles.find(
+          (profile) => profile.id.toLocaleLowerCase() === input.id.toLocaleLowerCase(),
+        );
+        if (existing) {
+          return {
+            ...structuredClone(existing),
+            name: input.name,
+            cwd: input.cwd,
+            backend: input.backend,
+          };
+        }
+      }
+      return {
+        id: input.id,
+        name: input.name,
+        presetID: input.presetID,
+        cwd: input.cwd,
+        backend: input.backend,
+        executableLabel: input.argv[0] || "commande personnalisée",
+        argumentCount: Math.max(0, input.argv.length - 1),
+        locked: false,
+        preserveOnSave: true,
+      };
+    });
+    profiles = {
+      ...profiles,
+      revision: `demo-${revision}`,
+      profiles: nextProfiles,
+      restartRequired: state.runStatus === "running",
+    };
+    return structuredClone(profiles);
+  };
+
+  const agentsFromProfiles = (): AgentState[] => profiles.profiles.map((profile) => ({
+    sessionID: profile.id,
+    agentID: profile.id,
+    name: profile.name,
+    displayCommand: profile.executableLabel || "commande configurée",
+    backend: profile.backend === "auto" ? "pty" : profile.backend,
+    adapter: "generic",
+    status: "running",
+    output: "Relayer demo — agent initialisé\n",
+    revision: 1,
+    running: true,
+    attached: false,
+  }));
+
+  window.setInterval(() => {
+    if (state.runStatus !== "running") return;
+    const eventRunID = state.runID;
     for (const agent of state.agents) {
       if (agent.status !== "running") continue;
       const next = (lineCounts.get(agent.sessionID) ?? 0) + 1;
@@ -173,6 +215,7 @@ export function createDemoBridge(): RelayerBridge {
       agent.output += `Génération · étape ${next.toString().padStart(2, "0")}\n`;
       agent.revision += 1;
       emit("relayer:snapshot", {
+        runID: eventRunID,
         sessionID: agent.sessionID,
         revision: agent.revision,
         output: agent.output,
@@ -183,7 +226,7 @@ export function createDemoBridge(): RelayerBridge {
 
       const threshold = agent.sessionID === "demo-a" ? 8 : 12;
       if (next === threshold) {
-        const event = demoEvent(agent.sessionID, agent.sessionID === "demo-b");
+        const event = demoEvent(eventRunID, agent.sessionID, agent.sessionID === "demo-b");
         state.pendingEvents.push(event);
         agent.status = "waiting";
         agent.output += agent.sessionID === "demo-a"
@@ -191,6 +234,7 @@ export function createDemoBridge(): RelayerBridge {
           : "Credential required:\n";
         agent.revision += 1;
         emit("relayer:snapshot", {
+          runID: eventRunID,
           sessionID: agent.sessionID,
           revision: agent.revision,
           output: agent.output,
@@ -207,9 +251,10 @@ export function createDemoBridge(): RelayerBridge {
     async getState() {
       return structuredClone(state);
     },
-    async submitDecision(sessionID, eventID, _value) {
+    async submitDecision(runID, sessionID, eventID, _value) {
+      requireRun(runID, true);
       const eventIndex = state.pendingEvents.findIndex(
-        (event) => event.id === eventID && event.sessionID === sessionID,
+        (event) => event.runID === runID && event.id === eventID && event.sessionID === sessionID,
       );
       if (eventIndex < 0) throw new Error("Événement de démonstration devenu obsolète.");
       state.pendingEvents.splice(eventIndex, 1);
@@ -221,6 +266,7 @@ export function createDemoBridge(): RelayerBridge {
       agent.running = false;
       agent.exitCode = 0;
       emit("relayer:snapshot", {
+        runID,
         sessionID,
         revision: agent.revision,
         output: agent.output,
@@ -230,64 +276,81 @@ export function createDemoBridge(): RelayerBridge {
         exitCode: 0,
       });
     },
-    async resizeSession(_sessionID, columns, rows) {
+    async resizeSession(runID, _sessionID, columns, rows) {
+      requireRun(runID, true);
       if (columns < 1 || rows < 1) throw new Error("Dimensions de terminal invalides.");
     },
-    async stopSession(sessionID) {
+    async stopSession(runID, sessionID) {
+      requireRun(runID, true);
       const agent = state.agents.find((candidate) => candidate.sessionID === sessionID);
       if (!agent) throw new Error("Session de démonstration introuvable.");
       agent.status = "exited";
       agent.running = false;
       agent.exitCode = 130;
       state.pendingEvents = state.pendingEvents.filter((event) => event.sessionID !== sessionID);
-      emit("relayer:status", { scope: "session", sessionID, status: "exited" });
+      emit("relayer:status", { runID, scope: "session", sessionID, status: "exited" });
     },
     async getAgentProfiles() {
       return structuredClone(profiles);
     },
-    async saveAgentProfiles(request) {
-      if (request.expectedRevision !== profiles.revision) {
-        throw new Error("Configuration de démonstration obsolète.");
+    async saveAgentProfiles(runID, request) {
+      requireRun(runID);
+      if (["starting", "restarting", "rollback", "stopping"].includes(state.runStatus)) {
+        throw new Error("Un changement de run est déjà en cours.");
       }
-      const revision = Number.parseInt(profiles.revision.replace("demo-", ""), 10) + 1;
-      profiles = {
-        ...profiles,
-        revision: `demo-${revision}`,
-        profiles: request.profiles.map((input) => {
-          if (input.preserve) {
-            const existing = profiles.profiles.find(
-              (profile) => profile.id.toLocaleLowerCase() === input.id.toLocaleLowerCase(),
-            );
-            if (existing) {
-              return {
-                ...structuredClone(existing),
-                name: input.name,
-                cwd: input.cwd,
-                backend: input.backend,
-              };
-            }
-          }
-          return {
-            id: input.id,
-            name: input.name,
-            presetID: input.presetID,
-            cwd: input.cwd,
-            backend: input.backend,
-            argv: [...input.argv],
-            executableLabel: input.argv[0] || "",
-            argumentCount: Math.max(0, input.argv.length - 1),
-            locked: false,
-            preserveOnSave: false,
-          };
-        }),
-        restartRequired: true,
-      };
-      return structuredClone(profiles);
+      return saveProfiles(request);
     },
-    async shutdown() {
-      window.clearInterval(timer);
-      state = { ...state, runStatus: "stopped" };
-      emit("relayer:status", { scope: "run", status: "stopped" });
+    async saveAgentProfilesAndRestart(request) {
+      requireRun(request.expectedRunID);
+      const restarting = state.runStatus === "running";
+      if (!restarting && state.runStatus !== "idle" && state.runStatus !== "failed") {
+        throw new Error("Un changement de run est déjà en cours.");
+      }
+      const transitionRunID = state.runID;
+      state = {
+        ...state,
+        runStatus: restarting ? "restarting" : "starting",
+        pendingEvents: [],
+      };
+      emit("relayer:status", {
+        runID: transitionRunID,
+        scope: "run",
+        status: state.runStatus,
+      });
+      saveProfiles(request);
+      await delay(500);
+
+      runSequence += 1;
+      const runID = `demo-run-${runSequence}`;
+      lineCounts.clear();
+      state = {
+        runID,
+        runStatus: "running",
+        startedAt: new Date().toISOString(),
+        policy: { defaultAction: "ask", dryRun: false },
+        audit: { enabled: true, mode: "metadata", status: "ready" },
+        agents: agentsFromProfiles(),
+        pendingEvents: [],
+      };
+      profiles = { ...profiles, restartRequired: false };
+      emit("relayer:status", { runID, scope: "run", status: "running" });
+      return {
+        outcome: restarting ? "restarted" : "started",
+        state: structuredClone(state),
+        profiles: structuredClone(profiles),
+      };
+    },
+    async stopRun(runID) {
+      requireRun(runID);
+      if (state.runStatus !== "running" && state.runStatus !== "failed") {
+        throw new Error("Le run ne peut pas être arrêté dans cet état.");
+      }
+      state = { ...state, runStatus: "stopping", pendingEvents: [] };
+      emit("relayer:status", { runID, scope: "run", status: "stopping" });
+      await delay(350);
+      state = initialState();
+      emit("relayer:status", { runID, scope: "run", status: "idle" });
+      return structuredClone(state);
     },
     on<K extends BridgeEventName>(
       event: K,

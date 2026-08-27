@@ -20,10 +20,11 @@ import (
 type executableLookup func(string) (string, error)
 
 type backendDependencies struct {
-	lookup   executableLookup
-	newAudit func(audit.Config) (*audit.Recorder, error)
-	newPTY   func(context.Context, chan<- session.Event, *adapters.Registry, int) (terminal.Backend, error)
-	newTmux  func(context.Context, chan<- session.Event, *adapters.Registry, int, tmuxbackend.Options) (terminal.Backend, error)
+	lookup         executableLookup
+	newAudit       func(audit.Config) (*audit.Recorder, error)
+	newAuditForRun func(audit.Config, string) (*audit.Recorder, error)
+	newPTY         func(context.Context, chan<- session.Event, *adapters.Registry, int) (terminal.Backend, error)
+	newTmux        func(context.Context, chan<- session.Event, *adapters.Registry, int, tmuxbackend.Options) (terminal.Backend, error)
 }
 
 func productionBackendDependencies() backendDependencies {
@@ -31,6 +32,9 @@ func productionBackendDependencies() backendDependencies {
 		lookup: exec.LookPath,
 		newAudit: func(configuration audit.Config) (*audit.Recorder, error) {
 			return audit.Open(configuration)
+		},
+		newAuditForRun: func(configuration audit.Config, runID string) (*audit.Recorder, error) {
+			return audit.Open(configuration, audit.WithRunID(runID))
 		},
 		newPTY: func(
 			ctx context.Context,
@@ -174,6 +178,19 @@ func buildBackendRouter(
 	policy config.SessionPolicy,
 	dependencies backendDependencies,
 ) (*backendRouter, error) {
+	return buildBackendRouterForRun(parent, events, registry, ringCapacity, selection, policy, dependencies, "")
+}
+
+func buildBackendRouterForRun(
+	parent context.Context,
+	events chan<- session.Event,
+	registry *adapters.Registry,
+	ringCapacity int,
+	selection backendResolution,
+	policy config.SessionPolicy,
+	dependencies backendDependencies,
+	runID string,
+) (*backendRouter, error) {
 	defaults := productionBackendDependencies()
 	if dependencies.newPTY == nil {
 		dependencies.newPTY = defaults.newPTY
@@ -200,6 +217,7 @@ func buildBackendRouter(
 	if selection.NeedsTmux {
 		backend, err := dependencies.newTmux(parent, events, registry, ringCapacity, tmuxbackend.Options{
 			TmuxPath:         selection.TmuxPath,
+			RunID:            runID,
 			PersistOnExit:    policy.PersistOnExit,
 			CleanupOnSuccess: policy.CleanupOnSuccess,
 			CaptureLimit:     ringCapacity,

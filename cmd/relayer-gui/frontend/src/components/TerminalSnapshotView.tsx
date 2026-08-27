@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 interface TerminalSnapshotViewProps {
+  runID: string;
   sessionID: string;
   label: string;
   output: string;
   revision: number;
-  onResize(sessionID: string, columns: number, rows: number): Promise<void>;
+  onResize(runID: string, sessionID: string, columns: number, rows: number): Promise<void>;
 }
 
 const FOLLOW_THRESHOLD = 12;
@@ -13,6 +14,7 @@ const FOLLOW_THRESHOLD = 12;
 // This is intentionally a bounded text-snapshot viewer, not a VT emulator.
 // Keeping it isolated makes a later migration to a true terminal stream local.
 export function TerminalSnapshotView({
+  runID,
   sessionID,
   label,
   output,
@@ -66,7 +68,7 @@ export function TerminalSnapshotView({
           return;
         }
         lastSizeRef.current = { columns, rows };
-        void resizeRef.current(sessionID, columns, rows);
+        void resizeRef.current(runID, sessionID, columns, rows);
       }, 120);
     };
 
@@ -77,7 +79,7 @@ export function TerminalSnapshotView({
       observer.disconnect();
       window.clearTimeout(timeout);
     };
-  }, [sessionID]);
+  }, [runID, sessionID]);
 
   const handleScroll = () => {
     const viewport = viewportRef.current;

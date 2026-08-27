@@ -8,7 +8,7 @@ interface DecisionModalProps {
   agent?: AgentState;
   queueSize: number;
   onClose(): void;
-  onSubmit(sessionID: string, eventID: string, value: string): Promise<boolean>;
+  onSubmit(runID: string, sessionID: string, eventID: string, value: string): Promise<boolean>;
 }
 
 export function DecisionModal({ event, agent, queueSize, onClose, onSubmit }: DecisionModalProps) {
@@ -21,7 +21,7 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit }: De
       inputRef.current.value = "";
       inputRef.current.focus();
     }
-  }, [event?.id]);
+  }, [event?.runID, event?.sessionID, event?.id]);
 
   useEffect(() => {
     if (!event) return;
@@ -44,7 +44,7 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit }: De
     input.value = "";
     setBusy(true);
     try {
-      const delivered = await onSubmit(event.sessionID, event.id, value);
+      const delivered = await onSubmit(event.runID, event.sessionID, event.id, value);
       if (delivered) onClose();
     } finally {
       // The manual value is never put in component state, notifications or logs.

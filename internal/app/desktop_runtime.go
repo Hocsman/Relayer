@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -24,12 +26,33 @@ const (
 	defaultDesktopRows    = 32
 )
 
+// ErrCleanupUncertain marks a failed runtime start whose rollback could not
+// prove that every partially started session was removed. Desktop controllers
+// must quarantine the lifecycle and must not launch a candidate or rollback
+// run while this sentinel is present.
+var ErrCleanupUncertain = errors.New("nettoyage du runtime desktop non confirmé")
+
 // DesktopOptions configures the headless runtime used by desktop frontends.
 // It deliberately does not inherit the deprecated pane flags from the CLI.
 type DesktopOptions struct {
 	ConfigPath  string
 	InitialSize terminal.Size
 	Diagnostics io.Writer
+}
+
+// DesktopPlan is an immutable, Go-only preflight result. Preparing a plan may
+// read configuration and resolve executables, but it never opens audit files,
+// terminal backends or child processes.
+type DesktopPlan struct {
+	configuration config.Result
+	configPath    string
+	resolution    agentResolution
+	selection     backendResolution
+	policyEngine  *policy.Engine
+	registry      *adapters.Registry
+	dependencies  backendDependencies
+	initialSize   terminal.Size
+	diagnostics   io.Writer
 }
 
 // DesktopSession is display-safe startup metadata. Shell bodies, environment
@@ -73,6 +96,9 @@ type DesktopRuntime struct {
 	sessions      []DesktopSession
 	infos         []session.Info
 	startupLogs   []string
+	runID         string
+	strictStop    bool
+	strictStopped bool
 
 	closeMu   sync.Mutex
 	quiesceMu sync.Mutex
@@ -80,20 +106,13 @@ type DesktopRuntime struct {
 	closeErr  error
 }
 
-// NewDesktopRuntime performs the same strict preflight as the TUI and starts
-// every configured session transactionally. A caller must invoke Close.
-func NewDesktopRuntime(parent context.Context, options DesktopOptions) (_ *DesktopRuntime, returnErr error) {
-	if parent == nil {
-		parent = context.Background()
-	}
-	ctx, cancel := context.WithCancel(parent)
-	runtime := &DesktopRuntime{ctx: ctx, cancel: cancel}
-
+// PrepareDesktopRuntime performs every validation that can safely happen
+// before an existing desktop run is stopped.
+func PrepareDesktopRuntime(options DesktopOptions) (*DesktopPlan, error) {
 	configPath := strings.TrimSpace(options.ConfigPath)
 	if configPath == "" {
 		configPath = config.DefaultPath
 	}
-	runtime.configPath = configPath
 	diagnostics := options.Diagnostics
 	if diagnostics == nil {
 		diagnostics = io.Discard
@@ -101,67 +120,98 @@ func NewDesktopRuntime(parent context.Context, options DesktopOptions) (_ *Deskt
 
 	configuration, err := config.Load(configPath)
 	if err != nil {
-		cancel()
 		return nil, err
 	}
-	runtime.configuration = configuration
 
 	workingDirectory, err := os.Getwd()
 	if err != nil {
-		cancel()
 		return nil, fmt.Errorf("lecture du dossier courant: %w", err)
 	}
 	resolution, err := resolveAgentPlans(configuration, optionsFromDesktop(), workingDirectory)
 	if err != nil {
-		cancel()
 		return nil, err
 	}
 	policyEngine, err := policy.New(configuration.Policies)
 	if err != nil {
-		cancel()
 		return nil, fmt.Errorf("initialisation des politiques: %w", err)
 	}
 	if err := validatePolicyAgentIDs(policyEngine.Config(), resolution.Specs); err != nil {
-		cancel()
 		return nil, err
 	}
 	registry, err := adapters.NewRegistry(configuration.Patterns)
 	if err != nil {
-		cancel()
 		return nil, fmt.Errorf("initialisation des adaptateurs: %w", err)
 	}
 	resolution.Specs, err = resolveAgentAdapters(resolution.Specs, registry)
 	if err != nil {
-		cancel()
 		return nil, err
 	}
 
 	dependencies := productionBackendDependencies()
 	backendSelection, err := resolveAgentBackends(resolution.Specs, dependencies.lookup)
 	if err != nil {
-		cancel()
 		return nil, err
 	}
 	resolution.Specs = backendSelection.Specs
 	resolution.Warnings = append(resolution.Warnings, backendSelection.Warnings...)
-	for _, warning := range resolution.Warnings {
-		_, _ = fmt.Fprintln(diagnostics, warning)
+	size := options.InitialSize.Normalize()
+	if options.InitialSize.Columns <= 0 {
+		size.Columns = defaultDesktopColumns
+	}
+	if options.InitialSize.Rows <= 0 {
+		size.Rows = defaultDesktopRows
+	}
+	return &DesktopPlan{
+		configuration: configuration,
+		configPath:    configPath,
+		resolution:    resolution,
+		selection:     backendSelection,
+		policyEngine:  policyEngine,
+		registry:      registry,
+		dependencies:  dependencies,
+		initialSize:   size,
+		diagnostics:   diagnostics,
+	}, nil
+}
+
+// StartDesktopRuntime starts an immutable preflight plan under the externally
+// reserved identity shared by GUI events, tmux ownership and audit records.
+func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string) (_ *DesktopRuntime, returnErr error) {
+	if plan == nil {
+		return nil, errors.New("plan desktop nil")
+	}
+	if !validDesktopRunID(runID) {
+		return nil, errors.New("run_id desktop invalide")
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	runtime := &DesktopRuntime{
+		ctx:           ctx,
+		cancel:        cancel,
+		configuration: plan.configuration,
+		configPath:    plan.configPath,
+		policyEngine:  plan.policyEngine,
+		runID:         runID,
+	}
+	for _, warning := range plan.resolution.Warnings {
+		_, _ = fmt.Fprintln(plan.diagnostics, warning)
 	}
 
-	auditor, err := initializeAudit(configuration.Audit, dependencies)
+	auditor, err := initializeAuditForRun(plan.configuration.Audit, plan.dependencies, runID)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("initialisation du journal d'audit: %w", err)
 	}
 	runtime.auditor = auditor
-	runtime.policyEngine = policyEngine
 	cleanup := true
 	defer func() {
 		if !cleanup {
 			return
 		}
 		if abortErr := runtime.abortInitialization(); abortErr != nil {
-			returnErr = errors.Join(returnErr, abortErr)
+			returnErr = errors.Join(returnErr, ErrCleanupUncertain, abortErr)
 		}
 	}()
 
@@ -174,14 +224,15 @@ func NewDesktopRuntime(parent context.Context, options DesktopOptions) (_ *Deskt
 	}
 
 	events := make(chan session.Event, defaultEventCapacity)
-	router, err := buildBackendRouter(
+	router, err := buildBackendRouterForRun(
 		ctx,
 		events,
-		registry,
+		plan.registry,
 		defaultRingCapacity,
-		backendSelection,
-		configuration.Sessions,
-		dependencies,
+		plan.selection,
+		plan.configuration.Sessions,
+		plan.dependencies,
+		runID,
 	)
 	if err != nil {
 		_ = auditor.Record(audit.Entry{
@@ -195,16 +246,8 @@ func NewDesktopRuntime(parent context.Context, options DesktopOptions) (_ *Deskt
 	runtime.router = router
 	runtime.events = events
 
-	size := options.InitialSize.Normalize()
-	if options.InitialSize.Columns <= 0 {
-		size.Columns = defaultDesktopColumns
-	}
-	if options.InitialSize.Rows <= 0 {
-		size.Rows = defaultDesktopRows
-	}
-
-	for _, spec := range resolution.Specs {
-		info, startErr := router.Start(ctx, spec, size)
+	for _, spec := range plan.resolution.Specs {
+		info, startErr := router.Start(ctx, spec, plan.initialSize)
 		if startErr != nil {
 			_ = auditor.Record(audit.Entry{
 				Kind:       audit.KindBackendError,
@@ -239,11 +282,11 @@ func NewDesktopRuntime(parent context.Context, options DesktopOptions) (_ *Deskt
 		}
 	}
 
-	runtime.startupLogs = buildStartupLogs(configuration, resolution, runtime.infos, configPath)
+	runtime.startupLogs = buildStartupLogs(plan.configuration, plan.resolution, runtime.infos, plan.configPath)
 	if auditor.Enabled() {
 		runtime.startupLogs = append(runtime.startupLogs, fmt.Sprintf(
 			"Audit local: mode=%s, fichier=%s",
-			configuration.Audit.Mode,
+			plan.configuration.Audit.Mode,
 			auditor.Path(),
 		))
 	} else {
@@ -252,6 +295,44 @@ func NewDesktopRuntime(parent context.Context, options DesktopOptions) (_ *Deskt
 
 	cleanup = false
 	return runtime, nil
+}
+
+// NewDesktopRuntime preserves the historical one-call API.
+func NewDesktopRuntime(parent context.Context, options DesktopOptions) (*DesktopRuntime, error) {
+	plan, err := PrepareDesktopRuntime(options)
+	if err != nil {
+		return nil, err
+	}
+	runID, err := newDesktopRunID()
+	if err != nil {
+		return nil, err
+	}
+	return StartDesktopRuntime(parent, plan, runID)
+}
+
+func newDesktopRunID() (string, error) {
+	var data [16]byte
+	if _, err := rand.Read(data[:]); err != nil {
+		return "", errors.New("génération du run_id desktop impossible")
+	}
+	return hex.EncodeToString(data[:]), nil
+}
+
+func validDesktopRunID(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) == 0 || len(value) > 128 {
+		return false
+	}
+	for index, character := range value {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			(index > 0 && (character == '.' || character == '_' || character == '-')) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // optionsFromDesktop preserves the configured agent list and deliberately
@@ -305,7 +386,7 @@ func (r *DesktopRuntime) Metadata() DesktopMetadata {
 		return DesktopMetadata{}
 	}
 	metadata := DesktopMetadata{
-		RunID:          r.auditor.RunID(),
+		RunID:          r.runID,
 		ConfigPath:     r.configPath,
 		ConfigRevision: r.configuration.Revision,
 		Backend:        effectiveBackendLabel(r.infos),
@@ -401,6 +482,76 @@ func (r *DesktopRuntime) BeginShutdown(ctx context.Context) error {
 	return r.router.Close(ctx)
 }
 
+// BeginRestart is the stricter desktop transition used before another run is
+// allowed to start. Unlike a normal application shutdown it explicitly stops
+// every session, including tmux sessions configured to persist on exit. A
+// non-nil result means cleanup is uncertain and callers must not start a
+// replacement run.
+func (r *DesktopRuntime) BeginRestart(ctx context.Context) error {
+	if r == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	r.closeMu.Lock()
+	defer r.closeMu.Unlock()
+	if r.closed {
+		return terminal.ErrClosed
+	}
+
+	r.quiesceMu.Lock()
+	defer r.quiesceMu.Unlock()
+	r.strictStop = true
+	stopErr := r.stopAllSessions(ctx)
+	r.strictStopped = stopErr == nil
+	if stopErr == nil && r.auditor != nil {
+		for _, info := range r.infos {
+			if err := r.auditor.Record(audit.Entry{
+				Kind:       audit.KindSessionFinished,
+				SessionID:  info.ID,
+				AgentID:    info.ID,
+				Backend:    info.Backend,
+				Adapter:    info.Adapter,
+				DecisionBy: audit.DecisionBySystem,
+				Outcome:    audit.OutcomeFinished,
+				Reason:     "restart_stop_confirmed",
+			}); err != nil {
+				stopErr = errors.Join(stopErr, fmt.Errorf("audit de l'arrêt strict de la session %q: %w", info.ID, err))
+			}
+		}
+	}
+	r.cancel()
+	if r.router != nil {
+		stopErr = errors.Join(stopErr, r.router.Close(ctx))
+	}
+	return stopErr
+}
+
+func (r *DesktopRuntime) stopAllSessions(ctx context.Context) error {
+	if r == nil || r.router == nil {
+		return nil
+	}
+	errorsByIndex := make([]error, len(r.infos))
+	var group sync.WaitGroup
+	for index, info := range r.infos {
+		index, info := index, info
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			errorsByIndex[index] = r.router.Stop(ctx, info.ID)
+		}()
+	}
+	group.Wait()
+	var result error
+	for index, err := range errorsByIndex {
+		if err != nil {
+			result = errors.Join(result, fmt.Errorf("arrêt strict de la session %q: %w", r.infos[index].ID, err))
+		}
+	}
+	return result
+}
+
 func (r *DesktopRuntime) available() error {
 	if r == nil || r.router == nil {
 		return terminal.ErrUnavailable
@@ -452,7 +603,14 @@ func (r *DesktopRuntime) Close(ctx context.Context) error {
 		}
 		for _, info := range r.infos {
 			closed, known := r.router.backendCloseStatus(info.Backend)
-			outcome, reason := auditCleanupResult(info, r.configuration.Sessions, closed, known)
+			policy := r.configuration.Sessions
+			if r.strictStop && r.strictStopped {
+				policy.PersistOnExit = false
+			}
+			if r.strictStop && !r.strictStopped {
+				known = false
+			}
+			outcome, reason := auditCleanupResult(info, policy, closed, known)
 			if err := r.auditor.Record(audit.Entry{
 				Kind:       audit.KindSessionCleanup,
 				SessionID:  info.ID,
@@ -489,7 +647,6 @@ func (r *DesktopRuntime) abortInitialization() error {
 	if r == nil {
 		return nil
 	}
-	r.cancel()
 	var result error
 	if r.auditor != nil {
 		for _, info := range r.infos {
@@ -509,12 +666,23 @@ func (r *DesktopRuntime) abortInitialization() error {
 	}
 	if r.router != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		stopErr := r.stopAllSessions(ctx)
+		r.strictStop = true
+		r.strictStopped = stopErr == nil
+		result = errors.Join(result, stopErr)
+		r.cancel()
 		result = errors.Join(result, r.router.Close(ctx))
 		cancel()
 		if r.auditor != nil {
 			for _, info := range r.infos {
 				closed, known := r.router.backendCloseStatus(info.Backend)
-				outcome, reason := auditCleanupResult(info, r.configuration.Sessions, closed, known)
+				policy := r.configuration.Sessions
+				if r.strictStopped {
+					policy.PersistOnExit = false
+				} else {
+					known = false
+				}
+				outcome, reason := auditCleanupResult(info, policy, closed, known)
 				if err := r.auditor.Record(audit.Entry{
 					Kind:       audit.KindSessionCleanup,
 					SessionID:  info.ID,
@@ -529,6 +697,9 @@ func (r *DesktopRuntime) abortInitialization() error {
 				}
 			}
 		}
+	}
+	if r.router == nil {
+		r.cancel()
 	}
 	if r.auditor != nil {
 		if err := r.auditor.Record(audit.Entry{

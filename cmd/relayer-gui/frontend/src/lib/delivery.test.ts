@@ -7,6 +7,7 @@ function event(
   automatic: boolean,
 ): SupervisionEvent {
   return {
+    runID: "run-1",
     id: "event-1",
     sessionID: "agent-a",
     agentID: "agent-a",

@@ -6,7 +6,7 @@ interface SupervisorPanelProps {
   state: AppState;
   errors: SafeErrorEvent[];
   selectedEventKey?: string;
-  onSelectEvent(sessionID: string, eventID: string): void;
+  onSelectEvent(runID: string, sessionID: string, eventID: string): void;
 }
 
 const actionLabels = { allow: "Autoriser", ask: "Demander", deny: "Refuser" } as const;
@@ -41,11 +41,11 @@ export function SupervisorPanel({
           <div className="event-list">
             {state.pendingEvents.map((event) => (
               <EventItem
-                key={event.id}
+                key={supervisionEventKey(event.runID, event.sessionID, event.id)}
                 event={event}
                 agentName={state.agents.find((agent) => agent.sessionID === event.sessionID)?.name}
-                selected={supervisionEventKey(event.sessionID, event.id) === selectedEventKey}
-                onSelect={() => onSelectEvent(event.sessionID, event.id)}
+                selected={supervisionEventKey(event.runID, event.sessionID, event.id) === selectedEventKey}
+                onSelect={() => onSelectEvent(event.runID, event.sessionID, event.id)}
               />
             ))}
           </div>

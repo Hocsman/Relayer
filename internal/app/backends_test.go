@@ -210,7 +210,7 @@ func TestBuildBackendRouterPTYOnlyNeverConstructsTmux(t *testing.T) {
 func TestBuildBackendRouterPassesTmuxPathPolicyAndCaptureLimit(t *testing.T) {
 	tmux := newRouterFakeBackend(agent.BackendTmux)
 	var captured tmuxbackend.Options
-	router, err := buildBackendRouter(
+	router, err := buildBackendRouterForRun(
 		context.Background(),
 		make(chan session.Event, 1),
 		mustBackendTestRegistry(t),
@@ -230,12 +230,13 @@ func TestBuildBackendRouterPassesTmuxPathPolicyAndCaptureLimit(t *testing.T) {
 				return tmux, nil
 			},
 		},
+		"desktop-run-17",
 	)
 	if err != nil {
 		t.Fatalf("buildBackendRouter: %v", err)
 	}
 	defer router.Close(context.Background())
-	if captured.TmuxPath != "/resolved/bin/tmux" || !captured.PersistOnExit || captured.CleanupOnSuccess || captured.CaptureLimit != 8192 {
+	if captured.TmuxPath != "/resolved/bin/tmux" || captured.RunID != "desktop-run-17" || !captured.PersistOnExit || captured.CleanupOnSuccess || captured.CaptureLimit != 8192 {
 		t.Fatalf("tmux options = %#v", captured)
 	}
 }

@@ -11,12 +11,13 @@ installer, Developer ID-signed application, or notarized package.
 | --- | --- | --- |
 | macOS | Alpha, build and run from source | Unix PTY; tmux when installed and visible on `PATH` |
 | Linux | Alpha, build and run from source | Unix PTY; tmux when installed and visible on `PATH` |
-| Windows | UI scaffolding only; agent execution is refused | No native backend until ConPTY is implemented and tested |
+| Windows | Configuration only; agent execution is refused | No native backend until ConPTY is implemented and tested |
 
 Windows support must not be inferred from Wails' ability to create a Windows
 window. Relayer's current process and PTY implementations are Unix-specific.
-The Windows build deliberately refuses to launch agents; native support
-requires a real ConPTY backend and platform tests.
+The Windows build can inspect and save agent profiles, but deliberately refuses
+to start or restart them. Native execution requires a real ConPTY backend and
+platform tests.
 
 The terminal TUI remains available on supported Unix systems:
 
@@ -109,7 +110,8 @@ Typical locations are:
 
 When the file is missing, the existing strict configuration loader creates the
 default configuration with `agents: []`, which activates the two deterministic
-mock agents.
+mock agents when a run is explicitly started. Opening the GUI alone never
+launches them.
 
 Override the path with `RELAYER_CONFIG`. Prefer an absolute path:
 
@@ -172,10 +174,72 @@ external editor that does not honor Relayer's lock is still best-effort. The
 lock wait is bounded, and a stale or post-commit-uncertain save reloads the
 authoritative file before another attempt. The Go bridge repeats the
 cardinality, length, identifier, and conservative secret-shaped-argument
-validation rather than trusting validation performed in the WebView. The active
-run is never mutated by a save: the banner asks you to stop the current
-sessions, close Relayer, and reopen it. Generation-safe hot restart is a future
-feature.
+validation rather than trusting validation performed in the WebView.
+
+## Starting, stopping, and restarting
+
+The desktop control plane always opens in `idle`. It loads configuration for
+editing but starts no audit recorder, PTY, tmux session, or agent process until
+you explicitly request a run.
+
+The **Agents** panel separates persistence from activation:
+
+- **Enregistrer** atomically updates the YAML only. It never mutates an active
+  run.
+- From `idle`, **Enregistrer et démarrer** saves, validates, preflights, and
+  starts the candidate configuration.
+- From `running`, **Enregistrer et redémarrer** performs the same save and
+  preflight, asks for confirmation, and replaces the active run. If the YAML is
+  already saved, the action is labelled **Redémarrer les agents**.
+- **Arrêter le run** returns the application to an editable `idle` state without
+  closing the window.
+
+Each successful start receives a new opaque `runID`. Snapshots, supervision
+events, status/error events, decisions, resizes, and session-stop requests all
+carry that ID. Both Go and the WebView reject data for any run other than the
+currently active one, so a late callback from a stopped generation cannot
+modify or answer a replacement session that reused the same agent ID.
+
+A restart is a fail-closed transaction:
+
+1. Relayer captures the exact previous YAML bytes and file mode, publishes the
+   candidate under the configuration revision lock, and preflights the complete
+   candidate before touching the active run.
+2. It closes admission for new decisions and session mutations, then begins a
+   strict stop of every PTY and every Relayer-owned tmux session. Starting the
+   stop first is necessary to unblock a PTY write that may be waiting below
+   Go's context boundary.
+3. It waits for every already-admitted operation and its terminal audit outcome,
+   closes the old run audit, and only then starts the candidate under a new
+   `runID`.
+4. If candidate startup fails after the old run stopped, Relayer restores the
+   exact previous YAML with compare-and-swap and attempts to launch the previous
+   immutable plan as another fresh run. The UI reports the `rolled_back`
+   outcome; it never presents the failed candidate as active.
+
+The explicit GUI stop/restart path intentionally overrides
+`sessions.persist_on_exit`: a tmux session cannot remain alive while a
+replacement run with the same agent identity starts. This exception applies to
+**Arrêter le run** and GUI restart. An ordinary application shutdown continues
+to honor the configured tmux persistence policy, and Relayer never kills the
+tmux server.
+
+If the candidate fails during preflight, the active run remains untouched and
+Relayer attempts a compare-and-swap restore of the prior YAML. A concurrent
+Relayer writer is serialized by the revision lock. If an external edit is
+visible at the revision check or immediately after candidate publication,
+Relayer preserves it and leaves the existing run active with visible
+configuration drift. A non-cooperating editor can still race in the narrow
+check-to-rename window because portable filesystems do not offer an atomic
+content compare-and-swap. Avoid editing the YAML concurrently with a GUI
+save/restart. If the first start from `idle` fails, the YAML is restored and
+the GUI returns to `idle`. Once the old run has stopped, any uncertain strict
+cleanup, YAML restoration, or rollback startup puts the GUI in `failed` and
+starts no replacement process. Close Relayer and inspect local sessions before
+retrying from an uncertain cleanup state.
+
+Windows follows the same configuration-save rules, but the start/restart
+transaction is refused before any agent execution until ConPTY support exists.
 
 ## Executable discovery and `PATH`
 
@@ -234,9 +298,10 @@ required.
 ## Human decisions and sensitive input
 
 Only a semantic event detected by the Go core can open a supervisor request.
-The GUI submits the session ID and exact event occurrence ID with the manual
-value. Sensitive fields use a masked, uncontrolled input that is cleared before
-and after delivery and is never added to frontend logs or notifications.
+The GUI submits the active run ID, session ID, and exact event occurrence ID
+with the manual value. Sensitive fields use a masked, uncontrolled input that
+is cleared before and after delivery and is never added to frontend logs or
+notifications.
 
 If delivery is uncertain, the GUI disables further input for that occurrence
 and asks the user to stop or resynchronize the session. It does not guess that

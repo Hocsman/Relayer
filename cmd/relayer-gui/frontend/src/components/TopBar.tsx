@@ -3,20 +3,26 @@ import type { AppState } from "../types/relayer";
 interface TopBarProps {
   state: AppState;
   onOpenAgents(): void;
-  onShutdown(): Promise<void>;
+  onRequestStop(): void;
 }
 
 const runLabels: Record<AppState["runStatus"], string> = {
+  idle: "Prêt à démarrer",
   starting: "Initialisation",
   running: "En cours",
+  restarting: "Redémarrage",
+  rollback: "Restauration",
   stopping: "Arrêt en cours",
   stopped: "Arrêté",
   failed: "Erreur",
 };
 
-export function TopBar({ state, onOpenAgents, onShutdown }: TopBarProps) {
+export function TopBar({ state, onOpenAgents, onRequestStop }: TopBarProps) {
   const running = state.agents.filter((agent) => agent.running).length;
   const waiting = state.pendingEvents.length;
+  const transitioning = ["starting", "restarting", "rollback", "stopping"].includes(
+    state.runStatus,
+  );
   return (
     <header className="topbar">
       <div className="brand">
@@ -44,12 +50,24 @@ export function TopBar({ state, onOpenAgents, onShutdown }: TopBarProps) {
       <div className="topbar__actions">
         {state.policy.dryRun && <span className="mode-pill">DRY RUN</span>}
         <span className="mode-pill mode-pill--quiet">POLICY {state.policy.defaultAction.toUpperCase()}</span>
-        <button className="button button--agents" type="button" onClick={onOpenAgents}>
+        <button
+          className="button button--agents"
+          type="button"
+          onClick={onOpenAgents}
+          disabled={transitioning}
+        >
           <span aria-hidden="true">◇</span> Agents
         </button>
-        <button className="button button--ghost" type="button" onClick={() => void onShutdown()}>
-          Arrêter
-        </button>
+        {state.runID && state.runStatus !== "idle" && (
+          <button
+            className="button button--ghost"
+            type="button"
+            disabled={transitioning}
+            onClick={onRequestStop}
+          >
+            {state.runStatus === "failed" ? "Réessayer l’arrêt" : "Arrêter le run"}
+          </button>
+        )}
       </div>
     </header>
   );

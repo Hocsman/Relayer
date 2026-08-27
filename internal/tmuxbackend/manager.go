@@ -459,11 +459,20 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 }
 
 func (m *Manager) emit(event session.Event, essential bool) bool {
+	return m.emitWithContext(context.Background(), event, essential)
+}
+
+func (m *Manager) emitWithContext(ctx context.Context, event session.Event, essential bool) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if essential {
 		select {
 		case m.events <- event:
 			return true
 		case <-m.ctx.Done():
+			return false
+		case <-ctx.Done():
 			return false
 		}
 	}
@@ -471,6 +480,8 @@ func (m *Manager) emit(event session.Event, essential bool) bool {
 	case m.events <- event:
 		return true
 	case <-m.ctx.Done():
+		return false
+	case <-ctx.Done():
 		return false
 	default:
 		return false
@@ -1085,7 +1096,7 @@ func (m *Manager) Stop(ctx context.Context, id string) error {
 	}
 	target.updateState(stopped)
 	if target.finish() {
-		m.emit(session.AdapterEvent{Event: target.processExitEvent(stopped)}, true)
+		m.emitWithContext(ctx, session.AdapterEvent{Event: target.processExitEvent(stopped)}, true)
 	}
 	target.closeTransport()
 	return nil
@@ -1227,6 +1238,11 @@ func (m *Manager) killSession(ctx context.Context, target *managedSession) error
 	if _, err := m.run(ctx, "kill-session", "-t", target.sessionID); err != nil {
 		return err
 	}
+	if _, err := m.run(ctx, "has-session", "-t", target.sessionID); err == nil {
+		return fmt.Errorf("%w: l'identifiant immuable existe encore", ErrStopUncertain)
+	} else if !isMissingTargetProbe(err) {
+		return errors.Join(ErrStopUncertain, err)
+	}
 	target.markRemoved()
 	return nil
 }
@@ -1236,7 +1252,15 @@ func isMissingTargetProbe(err error) bool {
 		return false
 	}
 	var exitError *exec.ExitError
-	return errors.As(err, &exitError)
+	if !errors.As(err, &exitError) {
+		return false
+	}
+	diagnostic := strings.ToLower(strings.TrimSpace(string(exitError.Stderr)))
+	if diagnostic == "" || strings.Contains(diagnostic, "\n") {
+		return false
+	}
+	return strings.HasPrefix(diagnostic, "can't find session:") ||
+		strings.HasPrefix(diagnostic, "no server running on ")
 }
 
 func conditionalOwnerToken(marked bool, token string) string {

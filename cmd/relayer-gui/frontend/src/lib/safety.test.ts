@@ -4,6 +4,7 @@ import type { SupervisionEvent } from "../types/relayer";
 
 function event(overrides: Partial<SupervisionEvent> = {}): SupervisionEvent {
   return {
+    runID: "run-1",
     id: "event-1",
     sessionID: "agent-a",
     agentID: "agent-a",

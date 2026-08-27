@@ -41,6 +41,7 @@ type PolicyEvaluation struct {
 }
 
 type SupervisionEvent struct {
+	RunID          string           `json:"runID"`
 	ID             string           `json:"id"`
 	SessionID      string           `json:"sessionID"`
 	AgentID        string           `json:"agentID"`
@@ -65,6 +66,7 @@ type AppState struct {
 }
 
 type SnapshotEvent struct {
+	RunID     string `json:"runID"`
 	SessionID string `json:"sessionID"`
 	Revision  uint64 `json:"revision"`
 	Output    string `json:"output"`
@@ -75,14 +77,28 @@ type SnapshotEvent struct {
 }
 
 type StatusEvent struct {
+	RunID     string `json:"runID"`
 	Scope     string `json:"scope"`
 	Status    string `json:"status"`
 	SessionID string `json:"sessionID,omitempty"`
 }
 
 type SafeErrorEvent struct {
+	RunID     string `json:"runID"`
 	Code      string `json:"code"`
 	Message   string `json:"message"`
 	SessionID string `json:"sessionID,omitempty"`
 	Timestamp string `json:"timestamp"`
+}
+
+type RestartAgentProfilesRequest struct {
+	ExpectedRunID    string              `json:"expectedRunID"`
+	ExpectedRevision string              `json:"expectedRevision"`
+	Profiles         []AgentProfileInput `json:"profiles"`
+}
+
+type AgentLifecycleResult struct {
+	Outcome  string            `json:"outcome"`
+	State    AppState          `json:"state"`
+	Profiles AgentProfilesView `json:"profiles"`
 }

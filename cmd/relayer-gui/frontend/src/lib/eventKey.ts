@@ -1,3 +1,3 @@
-export function supervisionEventKey(sessionID: string, eventID: string): string {
-  return `${sessionID}\u0000${eventID}`;
+export function supervisionEventKey(runID: string, sessionID: string, eventID: string): string {
+  return `${runID}\u0000${sessionID}\u0000${eventID}`;
 }

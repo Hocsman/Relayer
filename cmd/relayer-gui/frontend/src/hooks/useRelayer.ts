@@ -4,10 +4,22 @@ import {
   initialRelayerState,
   relayerReducer,
 } from "../state/relayerState";
-import type { RelayerBridge, SafeErrorEvent } from "../types/relayer";
+import type {
+  LifecycleResult,
+  RelayerBridge,
+  SafeErrorEvent,
+  SaveAgentProfilesAndRestartRequest,
+  SaveAgentProfilesRequest,
+} from "../types/relayer";
 
-function localError(code: string, message: string, sessionID?: string): SafeErrorEvent {
+function localError(
+  runID: string,
+  code: string,
+  message: string,
+  sessionID?: string,
+): SafeErrorEvent {
   return {
+    runID,
     code,
     message,
     sessionID,
@@ -38,21 +50,22 @@ export function useRelayer(bridge: RelayerBridge) {
   }, [bridge, refresh]);
 
   const submitDecision = useCallback(
-    async (sessionID: string, eventID: string, value: string) => {
-      dispatch({ type: "delivery", sessionID, eventID, status: "delivering" });
+    async (runID: string, sessionID: string, eventID: string, value: string) => {
+      dispatch({ type: "delivery", runID, sessionID, eventID, status: "delivering" });
       try {
-        await bridge.submitDecision(sessionID, eventID, value);
-        dispatch({ type: "delivery", sessionID, eventID, status: "delivered" });
+        await bridge.submitDecision(runID, sessionID, eventID, value);
+        dispatch({ type: "delivery", runID, sessionID, eventID, status: "delivered" });
         await refresh();
         return true;
       } catch {
         // Once the native bridge has accepted the call, an error cannot prove
         // that zero bytes reached the PTY/tmux pane. Keep the occurrence
         // locked until the native snapshot removes or reconciles it.
-        dispatch({ type: "delivery", sessionID, eventID, status: "uncertain" });
+        dispatch({ type: "delivery", runID, sessionID, eventID, status: "uncertain" });
         dispatch({
           type: "error",
           error: localError(
+            runID,
             "decision_delivery_uncertain",
             "La livraison est indéterminée. Arrêtez ou resynchronisez la session avant toute nouvelle saisie.",
             sessionID,
@@ -65,13 +78,18 @@ export function useRelayer(bridge: RelayerBridge) {
   );
 
   const resizeSession = useCallback(
-    async (sessionID: string, columns: number, rows: number) => {
+    async (runID: string, sessionID: string, columns: number, rows: number) => {
       try {
-        await bridge.resizeSession(sessionID, columns, rows);
+        await bridge.resizeSession(runID, sessionID, columns, rows);
       } catch {
         dispatch({
           type: "error",
-          error: localError("resize_failed", "Le redimensionnement de la session a échoué.", sessionID),
+          error: localError(
+            runID,
+            "resize_failed",
+            "Le redimensionnement de la session a échoué.",
+            sessionID,
+          ),
         });
       }
     },
@@ -79,29 +97,74 @@ export function useRelayer(bridge: RelayerBridge) {
   );
 
   const stopSession = useCallback(
-    async (sessionID: string) => {
+    async (runID: string, sessionID: string) => {
       try {
-        await bridge.stopSession(sessionID);
+        await bridge.stopSession(runID, sessionID);
       } catch {
         dispatch({
           type: "error",
-          error: localError("stop_failed", "L’arrêt de la session a échoué.", sessionID),
+          error: localError(runID, "stop_failed", "L’arrêt de la session a échoué.", sessionID),
         });
       }
     },
     [bridge],
   );
 
-  const shutdown = useCallback(async () => {
+  const saveAgentProfiles = useCallback(
+    (runID: string, request: SaveAgentProfilesRequest) =>
+      bridge.saveAgentProfiles(runID, request),
+    [bridge],
+  );
+
+  const saveAgentProfilesAndRestart = useCallback(
+    async (request: SaveAgentProfilesAndRestartRequest): Promise<LifecycleResult> => {
+      try {
+        const result = await bridge.saveAgentProfilesAndRestart(request);
+        dispatch({ type: "loaded", state: result.state });
+        return result;
+      } catch (error) {
+        dispatch({
+          type: "error",
+          error: localError(
+            request.expectedRunID,
+            "lifecycle_failed",
+            safeError(error, "Le changement de run a échoué."),
+          ),
+        });
+        await refresh();
+        throw error;
+      }
+    },
+    [bridge, refresh],
+  );
+
+  const stopRun = useCallback(async (runID: string) => {
     try {
-      await bridge.shutdown();
+      const stopped = await bridge.stopRun(runID);
+      dispatch({ type: "loaded", state: stopped });
+      return true;
     } catch {
       dispatch({
         type: "error",
-        error: localError("shutdown_failed", "L’arrêt de Relayer a échoué."),
+        error: localError(
+          runID,
+          "stop_run_failed",
+          "L’arrêt du run a échoué. Aucun nouveau run ne sera démarré tant que l’état reste incertain.",
+        ),
       });
+      await refresh();
+      return false;
     }
-  }, [bridge]);
+  }, [bridge, refresh]);
 
-  return { state, refresh, submitDecision, resizeSession, stopSession, shutdown };
+  return {
+    state,
+    refresh,
+    submitDecision,
+    resizeSession,
+    stopSession,
+    saveAgentProfiles,
+    saveAgentProfilesAndRestart,
+    stopRun,
+  };
 }

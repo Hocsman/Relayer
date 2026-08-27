@@ -106,48 +106,70 @@ func (a *App) GetAgentProfiles() (AgentProfilesView, error) {
 	return a.loadAgentProfilesLocked()
 }
 
-func (a *App) SaveAgentProfiles(request SaveAgentProfilesRequest) (AgentProfilesView, error) {
+func (a *App) SaveAgentProfiles(runID string, request SaveAgentProfilesRequest) (AgentProfilesView, error) {
+	a.lifecycleMu.Lock()
+	defer a.lifecycleMu.Unlock()
+	if a.finalShutdown {
+		return AgentProfilesView{}, errRuntimeStopped
+	}
+	a.mu.RLock()
+	active := a.active
+	a.mu.RUnlock()
+	if active == nil {
+		if strings.TrimSpace(runID) != "" {
+			return AgentProfilesView{}, errRunStale
+		}
+	} else if runID != active.id {
+		return AgentProfilesView{}, errRunStale
+	}
 	a.profilesMu.Lock()
 	defer a.profilesMu.Unlock()
+	updated, token, err := a.saveAgentProfilesLocked(request)
+	if err != nil {
+		return AgentProfilesView{}, err
+	}
+	return a.agentProfilesViewLocked(updated, token), nil
+}
 
+func (a *App) saveAgentProfilesLocked(request SaveAgentProfilesRequest) (config.Result, string, error) {
 	path, err := a.profileConfigPathLocked()
 	if err != nil {
-		return AgentProfilesView{}, errProfilesSave
+		return config.Result{}, "", errProfilesSave
 	}
 	current, err := config.Load(path)
 	if err != nil {
-		return AgentProfilesView{}, errProfilesSave
+		return config.Result{}, "", errProfilesSave
 	}
 	if current.Legacy {
-		return AgentProfilesView{}, errProfilesInvalid
+		return config.Result{}, "", errProfilesInvalid
 	}
 	if request.ExpectedRevision == "" || request.ExpectedRevision != a.profileRevisionToken ||
 		a.profileRevisionHash == "" || current.Revision != a.profileRevisionHash {
-		return AgentProfilesView{}, errProfilesStale
+		return config.Result{}, "", errProfilesStale
 	}
 	if len(request.Profiles) < minimumAgentProfiles || len(request.Profiles) > maximumAgentProfiles {
-		return AgentProfilesView{}, errProfilesInvalid
+		return config.Result{}, "", errProfilesInvalid
 	}
 
 	baseDir, err := filepath.Abs(filepath.Dir(path))
 	if err != nil {
-		return AgentProfilesView{}, errProfilesInvalid
+		return config.Result{}, "", errProfilesInvalid
 	}
 	specs, err := resolveProfileInputs(request.Profiles, current, baseDir)
 	if err != nil {
-		return AgentProfilesView{}, errProfilesInvalid
+		return config.Result{}, "", errProfilesInvalid
 	}
 	if reflect.DeepEqual(specs, current.Agents) {
-		return a.agentProfilesViewLocked(current, a.profileRevisionToken), nil
+		return current, a.profileRevisionToken, nil
 	}
 	token, err := a.profileTokenGenerator()
 	if err != nil {
-		return AgentProfilesView{}, errProfilesSave
+		return config.Result{}, "", errProfilesSave
 	}
 	updated, revision, err := config.ReplaceAgents(path, current.Revision, specs)
 	if err != nil {
 		if errors.Is(err, config.ErrRevisionMismatch) {
-			return AgentProfilesView{}, errProfilesStale
+			return config.Result{}, "", errProfilesStale
 		}
 		// Rename may have completed even when directory synchronization or the
 		// post-commit read failed. Reconcile the opaque token before returning a
@@ -156,11 +178,11 @@ func (a *App) SaveAgentProfiles(request SaveAgentProfilesRequest) (AgentProfiles
 			a.profileRevisionHash = reloaded.Revision
 			a.profileRevisionToken = token
 		}
-		return AgentProfilesView{}, errProfilesSave
+		return config.Result{}, "", errProfilesSave
 	}
 	a.profileRevisionHash = revision
 	a.profileRevisionToken = token
-	return a.agentProfilesViewLocked(updated, token), nil
+	return updated, token, nil
 }
 
 func (a *App) loadAgentProfilesLocked() (AgentProfilesView, error) {

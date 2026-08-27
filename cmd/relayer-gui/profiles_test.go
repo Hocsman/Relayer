@@ -98,7 +98,7 @@ func TestSaveAgentProfilesWritesLiteralArgvAndRequiresNextLaunch(t *testing.T) {
 			{ID: "mimo", Name: "MiMo Code", PresetID: "mimo-code", Cwd: filepath.Dir(path), Backend: "tmux", Argv: []string{"mimo"}},
 		},
 	}
-	updated, err := application.SaveAgentProfiles(request)
+	updated, err := saveAgentProfilesForTest(application, request)
 	if err != nil {
 		t.Fatalf("SaveAgentProfiles: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestSaveAgentProfilesWritesLiteralArgvAndRequiresNextLaunch(t *testing.T) {
 	}
 
 	request.ExpectedRevision = updated.Revision
-	unchanged, err := application.SaveAgentProfiles(request)
+	unchanged, err := saveAgentProfilesForTest(application, request)
 	if err != nil {
 		t.Fatalf("SaveAgentProfiles unchanged: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestSaveAgentProfilesWritesLiteralArgvAndRequiresNextLaunch(t *testing.T) {
 		t.Fatalf("read before stale save: %v", err)
 	}
 	request.ExpectedRevision = view.Revision
-	if _, err := application.SaveAgentProfiles(request); !errors.Is(err, errProfilesStale) {
+	if _, err := saveAgentProfilesForTest(application, request); !errors.Is(err, errProfilesStale) {
 		t.Fatalf("stale SaveAgentProfiles error = %v", err)
 	}
 	after, err := os.ReadFile(path)
@@ -167,7 +167,7 @@ func TestSaveAgentProfilesRejectsSecretsAndCardinalityWithoutMutation(t *testing
 		{name: "JWT", profiles: []AgentProfileInput{{ID: "custom", Name: "Custom", PresetID: "custom", Cwd: filepath.Dir(path), Backend: "pty", Argv: []string{"runner", "eyJhbGciOiJIUzI1NiJ9.e30.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"}}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, saveErr := application.SaveAgentProfiles(SaveAgentProfilesRequest{ExpectedRevision: view.Revision, Profiles: test.profiles})
+			_, saveErr := saveAgentProfilesForTest(application, SaveAgentProfilesRequest{ExpectedRevision: view.Revision, Profiles: test.profiles})
 			if !errors.Is(saveErr, errProfilesInvalid) {
 				t.Fatalf("SaveAgentProfiles error = %v", saveErr)
 			}
@@ -196,7 +196,7 @@ func TestSaveAgentProfilesPreservesLockedSpecInsideGo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAgentProfiles: %v", err)
 	}
-	updated, err := application.SaveAgentProfiles(SaveAgentProfilesRequest{
+	updated, err := saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
 		ExpectedRevision: view.Revision,
 		Profiles: []AgentProfileInput{
 			{ID: "claude", Name: "Claude", PresetID: "claude-code", Cwd: directory, Backend: "auto", Argv: []string{"claude"}},
@@ -235,7 +235,7 @@ func TestSaveAgentProfilesEditsMetadataWithoutExposingExistingArgv(t *testing.T)
 	if len(view.Profiles) != 1 || len(view.Profiles[0].Argv) != 0 || !view.Profiles[0].PreserveOnSave {
 		t.Fatalf("existing argv was not masked: %#v", view.Profiles)
 	}
-	updated, err := application.SaveAgentProfiles(SaveAgentProfilesRequest{
+	updated, err := saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
 		ExpectedRevision: view.Revision,
 		Profiles: []AgentProfileInput{{
 			ID: "agent", Name: "Renamed", PresetID: "custom", Cwd: otherDirectory, Backend: "tmux", Preserve: true,
@@ -277,7 +277,7 @@ func TestSaveAgentProfilesDoesNotRestartActiveEngine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAgentProfiles: %v", err)
 	}
-	_, err = application.SaveAgentProfiles(SaveAgentProfilesRequest{
+	_, err = saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
 		ExpectedRevision: view.Revision,
 		Profiles:         []AgentProfileInput{{ID: "claude", Name: "Claude", PresetID: "claude-code", Cwd: directory, Backend: "auto", Argv: []string{"claude"}}},
 	})
@@ -305,7 +305,7 @@ func TestSaveAgentProfilesTokenFailureDoesNotPublish(t *testing.T) {
 	application.profileTokenGenerator = func() (string, error) {
 		return "", errors.New("fixture token failure")
 	}
-	_, err = application.SaveAgentProfiles(SaveAgentProfilesRequest{
+	_, err = saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
 		ExpectedRevision: view.Revision,
 		Profiles: []AgentProfileInput{{
 			ID: "agent", Name: "Agent", PresetID: "custom", Cwd: filepath.Dir(path), Backend: "pty", Argv: []string{"runner"},
@@ -343,6 +343,10 @@ func profileTestApp(t *testing.T, specs []agent.Spec) (*App, string) {
 	application.activeConfigRevision = loaded.Revision
 	application.profileTokenGenerator = profileTokenSequence()
 	return application, path
+}
+
+func saveAgentProfilesForTest(application *App, request SaveAgentProfilesRequest) (AgentProfilesView, error) {
+	return application.SaveAgentProfiles(activeRunIDForTest(application), request)
 }
 
 func profileTokenSequence() func() (string, error) {

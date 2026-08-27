@@ -32,9 +32,12 @@ type fakeRunner struct {
 	display     string
 	capture     string
 	killDelay   time.Duration
+	keepOnKill  bool
 	nextID      int
 	identities  map[string]*fakeIdentity
+	removed     map[string]bool
 	newOutput   *string
+	hasSession  chan struct{}
 }
 
 type fakeIdentity struct {
@@ -45,12 +48,27 @@ type fakeIdentity struct {
 	owner     string
 }
 
+func fakeExitError(diagnostic string) error {
+	err := exec.Command("/usr/bin/false").Run()
+	if err == nil {
+		panic("/usr/bin/false unexpectedly succeeded")
+	}
+	exitError, ok := err.(*exec.ExitError)
+	if !ok {
+		panic("/usr/bin/false did not return exec.ExitError")
+	}
+	return &exec.ExitError{ProcessState: exitError.ProcessState, Stderr: []byte(diagnostic)}
+}
+
+var fakeMissingSessionError = fakeExitError("can't find session: $fixture\n")
+
 func newFakeRunner() *fakeRunner {
 	return &fakeRunner{
 		lookPath:   "/test/bin/tmux",
 		fail:       make(map[string]error),
 		display:    "0\t\t0\t1\n",
 		identities: make(map[string]*fakeIdentity),
+		removed:    make(map[string]bool),
 	}
 }
 
@@ -82,6 +100,10 @@ func (r *fakeRunner) Run(ctx context.Context, spec CommandSpec) ([]byte, error) 
 			r.identities[identity.sessionID] = identity
 			r.identities[identity.windowID] = identity
 			r.identities[identity.paneID] = identity
+			delete(r.removed, identity.name)
+			delete(r.removed, identity.sessionID)
+			delete(r.removed, identity.windowID)
+			delete(r.removed, identity.paneID)
 			output = []byte(identity.sessionID + "\t" + identity.windowID + "\t" + identity.paneID + "\n")
 			if r.newOutput != nil {
 				output = []byte(*r.newOutput)
@@ -118,6 +140,25 @@ func (r *fakeRunner) Run(ctx context.Context, spec CommandSpec) ([]byte, error) 
 			}
 		case "capture-pane":
 			output = []byte(r.capture)
+		case "kill-session":
+			identity := r.identities[optionValue(spec.Args, "-t")]
+			if identity != nil && !r.keepOnKill {
+				r.removed[identity.name] = true
+				r.removed[identity.sessionID] = true
+				r.removed[identity.windowID] = true
+				r.removed[identity.paneID] = true
+			}
+		case "has-session":
+			if r.hasSession != nil {
+				select {
+				case r.hasSession <- struct{}{}:
+				default:
+				}
+			}
+			target := optionValue(spec.Args, "-t")
+			if r.identities[target] == nil || r.removed[target] {
+				failure = fakeMissingSessionError
+			}
 		}
 	}
 	r.mu.Unlock()
@@ -421,6 +462,109 @@ func TestManagerStopKillsOwnedSessionEvenWhenPersistent(t *testing.T) {
 	kills := runner.callsFor("kill-session")
 	if len(kills) != 1 || optionValue(kills[0].Args, "-t") != runner.sessionID(SessionName("persist-stop", "stop-me")) {
 		t.Fatalf("Stop kill calls = %#v", kills)
+	}
+}
+
+func TestManagerStopRejectsUnconfirmedTmuxRemoval(t *testing.T) {
+	runner := newFakeRunner()
+	runner.keepOnKill = true
+	manager, _ := newTestManager(t, runner, Options{RunID: "unconfirmed-stop", PersistOnExit: true})
+	t.Cleanup(func() {
+		runner.mu.Lock()
+		runner.keepOnKill = false
+		runner.mu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = manager.Close(ctx)
+	})
+	info, err := manager.Start(context.Background(), testSpec(t, "still-present"), terminal.Size{})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := manager.Stop(context.Background(), info.ID); !errors.Is(err, ErrStopUncertain) {
+		t.Fatalf("Stop error = %v, want %v", err, ErrStopUncertain)
+	}
+	target, err := manager.session(info.ID)
+	if err != nil {
+		t.Fatalf("session lookup: %v", err)
+	}
+	if !target.isPresent() {
+		t.Fatal("unconfirmed tmux session was marked removed")
+	}
+}
+
+func TestManagerStopRejectsGenericProbeExitError(t *testing.T) {
+	runner := newFakeRunner()
+	manager, _ := newTestManager(t, runner, Options{RunID: "failed-stop-probe", PersistOnExit: true})
+	t.Cleanup(func() {
+		runner.setFailure("has-session", nil)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = manager.Close(ctx)
+	})
+	info, err := manager.Start(context.Background(), testSpec(t, "probe-uncertain"), terminal.Size{})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	runner.setFailure("has-session", fakeExitError("permission denied\n"))
+	if err := manager.Stop(context.Background(), info.ID); !errors.Is(err, ErrStopUncertain) {
+		t.Fatalf("Stop error = %v, want %v", err, ErrStopUncertain)
+	}
+	target, err := manager.session(info.ID)
+	if err != nil {
+		t.Fatalf("session lookup: %v", err)
+	}
+	if !target.isPresent() {
+		t.Fatal("generic tmux probe failure was treated as confirmed removal")
+	}
+}
+
+func TestManagerStopEventEmissionHonorsCallerDeadline(t *testing.T) {
+	runner := newFakeRunner()
+	runner.hasSession = make(chan struct{}, 1)
+	events := make(chan session.Event, 1)
+	manager, err := NewManager(context.Background(), events, intercept.DefaultPatterns(), 4096, Options{
+		Runner:        runner,
+		TmuxPath:      "tmux",
+		HelperPath:    "/test/bin/relayer",
+		RuntimeDir:    t.TempDir(),
+		RunID:         "bounded-stop-event",
+		PersistOnExit: true,
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	t.Cleanup(func() {
+		select {
+		case <-events:
+		default:
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = manager.Close(ctx)
+	})
+	info, err := manager.Start(context.Background(), testSpec(t, "blocked-event"), terminal.Size{})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	events <- session.OutputAvailable{SessionID: "occupied"}
+	ctx, cancel := context.WithCancel(context.Background())
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- manager.Stop(ctx, info.ID) }()
+	select {
+	case <-runner.hasSession:
+		cancel()
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("Stop never reached post-kill confirmation")
+	}
+	select {
+	case err := <-stopDone:
+		if err != nil {
+			t.Fatalf("Stop after confirmed kill: %v", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("Stop remained blocked on essential event after caller cancellation")
 	}
 }
 
@@ -991,15 +1135,22 @@ func TestMalformedIdentityRollbackNeverKillsAnUnmarkedName(t *testing.T) {
 }
 
 func TestMissingTargetProbeRequiresDefinitiveExitStatus(t *testing.T) {
-	exitErr := exec.Command("/usr/bin/false").Run()
-	if !isMissingTargetProbe(exitErr) {
-		t.Fatalf("exit status was not recognized as missing probe: %v", exitErr)
+	for _, diagnostic := range []string{
+		"can't find session: $42\n",
+		"no server running on /private/tmp/relayer.sock\n",
+	} {
+		if err := fakeExitError(diagnostic); !isMissingTargetProbe(err) {
+			t.Fatalf("missing diagnostic was not recognized: %q", diagnostic)
+		}
 	}
 	for _, transient := range []error{
 		errors.New("temporary I/O failure"),
 		context.DeadlineExceeded,
 		context.Canceled,
 		exec.ErrNotFound,
+		fakeExitError("permission denied\n"),
+		fakeExitError("can't find session: $42\nnon-fatal diagnostic\n"),
+		fakeExitError(""),
 	} {
 		if isMissingTargetProbe(transient) {
 			t.Fatalf("transient probe error classified as missing: %v", transient)

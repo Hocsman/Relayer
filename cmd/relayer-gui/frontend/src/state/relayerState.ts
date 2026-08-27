@@ -28,6 +28,7 @@ export type RelayerAction =
   | { type: "error"; error: SafeErrorEvent }
   | {
       type: "delivery";
+      runID: string;
       sessionID: string;
       eventID: string;
       status: SupervisionEvent["deliveryStatus"];
@@ -47,11 +48,15 @@ function actionable(event: SupervisionEvent): boolean {
   return event.type === "confirmation" || event.type === "credential";
 }
 
-function normalizePending(events: SupervisionEvent[]): SupervisionEvent[] {
+function normalizePending(runID: string, events: SupervisionEvent[]): SupervisionEvent[] {
   const byID = new Map<string, SupervisionEvent>();
   for (const event of events) {
-    if (!actionable(event) || event.deliveryStatus === "delivered") continue;
-    byID.set(supervisionEventKey(event.sessionID, event.id), { ...event });
+    if (
+      event.runID !== runID ||
+      !actionable(event) ||
+      event.deliveryStatus === "delivered"
+    ) continue;
+    byID.set(supervisionEventKey(event.runID, event.sessionID, event.id), { ...event });
   }
   return [...byID.values()]
     .sort((left, right) => left.timestamp.localeCompare(right.timestamp))
@@ -66,7 +71,7 @@ export function normalizeState(state: AppState): AppState {
       revision: Math.max(0, Math.trunc(agent.revision || 0)),
       output: boundedOutput(agent.output || ""),
     })),
-    pendingEvents: normalizePending(state.pendingEvents || []),
+    pendingEvents: normalizePending(state.runID, state.pendingEvents || []),
   };
 }
 
@@ -78,11 +83,14 @@ export function relayerReducer(state: RelayerUIState, action: RelayerAction): Re
         connection: "ready",
         fatalError: undefined,
         app: normalizeState(action.state),
+        errors: state.app && state.app.runID !== action.state.runID
+          ? state.errors.filter((error) => error.runID === "" || error.runID === action.state.runID)
+          : state.errors,
       };
     case "loadFailed":
       return { ...state, connection: "failed", fatalError: action.message };
     case "snapshot": {
-      if (!state.app) return state;
+      if (!state.app || action.snapshot.runID !== state.app.runID) return state;
       const current = state.app.agents.find(
         (agent) => agent.sessionID === action.snapshot.sessionID,
       );
@@ -104,12 +112,19 @@ export function relayerReducer(state: RelayerUIState, action: RelayerAction): Re
       };
     }
     case "event": {
-      if (!state.app || !actionable(action.event)) return state;
+      if (
+        !state.app ||
+        action.event.runID !== state.app.runID ||
+        !actionable(action.event)
+      ) return state;
       const withoutOccurrence = state.app.pendingEvents.filter(
         (event) =>
           event.id !== action.event.id || event.sessionID !== action.event.sessionID,
       );
-      const pendingEvents = normalizePending([...withoutOccurrence, action.event]);
+      const pendingEvents = normalizePending(state.app.runID, [
+        ...withoutOccurrence,
+        action.event,
+      ]);
       return {
         ...state,
         app: {
@@ -124,7 +139,7 @@ export function relayerReducer(state: RelayerUIState, action: RelayerAction): Re
       };
     }
     case "status": {
-      if (!state.app) return state;
+      if (!state.app || action.status.runID !== state.app.runID) return state;
       if (action.status.scope === "run") {
         return {
           ...state,
@@ -154,12 +169,13 @@ export function relayerReducer(state: RelayerUIState, action: RelayerAction): Re
       };
     }
     case "error":
+      if (state.app && action.error.runID !== state.app.runID) return state;
       return {
         ...state,
         errors: [sanitizeErrorEvent(action.error), ...state.errors].slice(0, MAX_ERRORS),
       };
     case "delivery": {
-      if (!state.app) return state;
+      if (!state.app || action.runID !== state.app.runID) return state;
       const pendingEvents = state.app.pendingEvents
         .map((event) =>
           event.id === action.eventID && event.sessionID === action.sessionID

@@ -54,13 +54,21 @@ type fakeDesktopEngine struct {
 	auditStarted         chan struct{}
 	auditRelease         <-chan struct{}
 
-	resizeErr    error
-	stopErr      error
-	closeErr     error
-	closeCalls   int
-	closeStarted chan struct{}
-	closed       bool
-	operations   []string
+	resizeErr     error
+	resizeCalls   []string
+	stopErr       error
+	stopCalls     []string
+	restartErr    error
+	restartCalls  int
+	restartStart  chan struct{}
+	restartWait   <-chan struct{}
+	shutdownErr   error
+	shutdownCalls int
+	closeErr      error
+	closeCalls    int
+	closeStarted  chan struct{}
+	closed        bool
+	operations    []string
 }
 
 func newFakeDesktopEngine(sessionIDs ...string) *fakeDesktopEngine {
@@ -178,11 +186,19 @@ func (f *fakeDesktopEngine) ApplyDecision(
 	return err
 }
 
-func (f *fakeDesktopEngine) Resize(context.Context, string, terminal.Size) error {
+func (f *fakeDesktopEngine) Resize(_ context.Context, sessionID string, _ terminal.Size) error {
+	f.mu.Lock()
+	f.resizeCalls = append(f.resizeCalls, sessionID)
+	f.mu.Unlock()
 	return f.resizeErr
 }
 
-func (f *fakeDesktopEngine) Stop(context.Context, string) error { return f.stopErr }
+func (f *fakeDesktopEngine) Stop(_ context.Context, sessionID string) error {
+	f.mu.Lock()
+	f.stopCalls = append(f.stopCalls, sessionID)
+	f.mu.Unlock()
+	return f.stopErr
+}
 
 func (f *fakeDesktopEngine) RecordAudit(entry audit.Entry) error {
 	f.mu.Lock()
@@ -223,8 +239,26 @@ func (f *fakeDesktopEngine) RecordAudit(entry audit.Entry) error {
 func (f *fakeDesktopEngine) BeginShutdown(context.Context) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.shutdownCalls++
 	f.operations = append(f.operations, "shutdown:begin")
-	return nil
+	return f.shutdownErr
+}
+
+func (f *fakeDesktopEngine) BeginRestart(context.Context) error {
+	f.mu.Lock()
+	f.restartCalls++
+	f.operations = append(f.operations, "restart:begin")
+	started := f.restartStart
+	wait := f.restartWait
+	err := f.restartErr
+	f.mu.Unlock()
+	if started != nil {
+		started <- struct{}{}
+	}
+	if wait != nil {
+		<-wait
+	}
+	return err
 }
 
 func (f *fakeDesktopEngine) Close(context.Context) error {
@@ -285,6 +319,12 @@ func newBridgeForTest(engine *fakeDesktopEngine) *App {
 	// tests can use ordinary contexts without invoking the Wails runtime.
 	application.ctx = nil
 	return application
+}
+
+func activeRunIDForTest(application *App) string {
+	application.mu.RLock()
+	defer application.mu.RUnlock()
+	return application.state.RunID
 }
 
 func bridgeEvent(sessionID, eventID string) adapters.Event {
@@ -359,7 +399,7 @@ func TestSensitiveManualInputNeverAppearsInDTOsOrAudit(t *testing.T) {
 	}
 
 	application.ctx = context.Background()
-	if err := application.SubmitDecision(event.SessionID, event.ID, secret); err != nil {
+	if err := application.SubmitDecision(activeRunIDForTest(application), event.SessionID, event.ID, secret); err != nil {
 		t.Fatalf("SubmitDecision: %v", err)
 	}
 
@@ -388,7 +428,7 @@ func TestAuditFailurePreventsManualDeliveryAndFreezesBridge(t *testing.T) {
 	event := bridgeEvent("agent-a", "prompt-audit")
 	application.handleAdapterEvent(event)
 
-	if err := application.SubmitDecision(event.SessionID, event.ID, "Y"); !errors.Is(err, errAuditUnavailable) {
+	if err := application.SubmitDecision(activeRunIDForTest(application), event.SessionID, event.ID, "Y"); !errors.Is(err, errAuditUnavailable) {
 		t.Fatalf("SubmitDecision error = %v, want audit unavailable", err)
 	}
 	if got := len(engine.applySnapshot()); got != 0 {
@@ -405,7 +445,7 @@ func TestAuditFailurePreventsManualDeliveryAndFreezesBridge(t *testing.T) {
 	if prompt.DeliveryStatus != "failed" || prompt.Evaluation.Reason != "audit_unavailable" {
 		t.Fatalf("frozen prompt = %#v", prompt)
 	}
-	if err := application.SubmitDecision(event.SessionID, event.ID, "n"); !errors.Is(err, errDeliveryUncertain) {
+	if err := application.SubmitDecision(activeRunIDForTest(application), event.SessionID, event.ID, "n"); !errors.Is(err, errDeliveryUncertain) {
 		t.Fatalf("second decision error = %v, want frozen delivery", err)
 	}
 	if got := len(engine.applySnapshot()); got != 0 {
@@ -427,9 +467,10 @@ func TestUnsupportedAutomaticDecisionFallsBackToAsk(t *testing.T) {
 		EventID:        event.ID,
 		Automatic:      true,
 	}
+	runID := activeRunIDForTest(application)
 	application.mu.Lock()
 	item := application.pending[key]
-	item.view = supervisionView(event, automatic, "delivering")
+	item.view = supervisionView(runID, event, automatic, "delivering")
 	application.pending[key] = item
 	application.rebuildPendingLocked()
 	application.mu.Unlock()
@@ -475,7 +516,7 @@ func TestSecondPromptForSameSessionRemainsWaitingAfterFirstDecision(t *testing.T
 		// returns.
 		application.handleAdapterEvent(second)
 	}
-	if err := application.SubmitDecision(first.SessionID, first.ID, "Y"); err != nil {
+	if err := application.SubmitDecision(activeRunIDForTest(application), first.SessionID, first.ID, "Y"); err != nil {
 		t.Fatalf("SubmitDecision(first): %v", err)
 	}
 
@@ -511,7 +552,7 @@ func TestConcurrentSubmitDecisionAdmitsExactlyOneDelivery(t *testing.T) {
 
 	firstDone := make(chan error, 1)
 	go func() {
-		firstDone <- application.SubmitDecision(event.SessionID, event.ID, "Y")
+		firstDone <- application.SubmitDecision(activeRunIDForTest(application), event.SessionID, event.ID, "Y")
 	}()
 	select {
 	case <-started:
@@ -521,7 +562,7 @@ func TestConcurrentSubmitDecisionAdmitsExactlyOneDelivery(t *testing.T) {
 
 	secondDone := make(chan error, 1)
 	go func() {
-		secondDone <- application.SubmitDecision(event.SessionID, event.ID, "n")
+		secondDone <- application.SubmitDecision(activeRunIDForTest(application), event.SessionID, event.ID, "n")
 	}()
 
 	var (
@@ -577,9 +618,10 @@ func TestProcessExitDuringAutomaticDeliveryStillRecordsTerminalOutcome(t *testin
 		EventID:        prompt.ID,
 		Automatic:      true,
 	}
+	runID := activeRunIDForTest(application)
 	application.mu.Lock()
 	item := application.pending[key]
-	item.view = supervisionView(prompt, automatic, "delivering")
+	item.view = supervisionView(runID, prompt, automatic, "delivering")
 	application.pending[key] = item
 	application.rebuildPendingLocked()
 	application.mu.Unlock()
@@ -630,7 +672,7 @@ func TestShutdownWaitsForInFlightDeliveryBeforeClosingEngine(t *testing.T) {
 
 	decisionDone := make(chan error, 1)
 	go func() {
-		decisionDone <- application.SubmitDecision(event.SessionID, event.ID, "Y")
+		decisionDone <- application.SubmitDecision(activeRunIDForTest(application), event.SessionID, event.ID, "Y")
 	}()
 	select {
 	case <-engine.applyStarted:
@@ -691,7 +733,7 @@ func TestShutdownWaitsForAdmittedDecisionBlockedBeforeApply(t *testing.T) {
 
 	decisionDone := make(chan error, 1)
 	go func() {
-		decisionDone <- application.SubmitDecision(event.SessionID, event.ID, "Y")
+		decisionDone <- application.SubmitDecision(activeRunIDForTest(application), event.SessionID, event.ID, "Y")
 	}()
 	select {
 	case <-engine.auditStarted:
@@ -705,8 +747,9 @@ func TestShutdownWaitsForAdmittedDecisionBlockedBeforeApply(t *testing.T) {
 	shutdownDone := make(chan error, 1)
 	go func() { shutdownDone <- application.Shutdown() }()
 	waitForCondition(t, 2*time.Second, func() bool {
-		operations := engine.operationSnapshot()
-		return operationIndex(operations, "shutdown:begin") >= 0
+		application.mu.RLock()
+		defer application.mu.RUnlock()
+		return application.state.RunStatus == "stopping"
 	})
 
 	closedBeforeAudit := false

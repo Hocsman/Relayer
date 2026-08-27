@@ -38,7 +38,8 @@ and network behavior.
 - Two deterministic Bash mock agents when `agents: []` is configured.
 - An optional source-built Wails desktop GUI for macOS and Linux; the TUI
   remains fully available. Its local agent picker can prepare one to eight
-  Claude Code, Codex CLI, MiMo Code, or custom CLI launch profiles.
+  Claude Code, Codex CLI, MiMo Code, or custom CLI launch profiles, then start,
+  stop, or generation-safely restart them without closing the application.
 
 Relayer is not a sandbox, a policy enforcement boundary, a terminal emulator,
 or a substitute for reviewing an agent's work. See the
@@ -50,7 +51,7 @@ or a substitute for reviewing an agent's work. See the
 | --- | --- | --- |
 | Linux | Supported (CI); GUI alpha | PTY backend; tmux backend when tmux is installed. |
 | macOS | Supported (CI); GUI alpha | PTY backend; tmux backend when tmux is installed. |
-| Windows, native | Not supported | The GUI refuses agent execution until a tested ConPTY backend exists. |
+| Windows, native | Configuration only | The GUI can edit profiles but refuses agent execution until a tested ConPTY backend exists. |
 | WSL | Not validated | No support guarantee during alpha. |
 
 ## Prerequisites
@@ -107,10 +108,31 @@ Agent panels display bounded, ANSI-stripped text snapshots, not a full VT/ANSI
 terminal. The Bubble Tea TUI and its native tmux attach workflow are preserved.
 Use **Agents** in the top bar to configure exact argv, working directory, and
 backend. Existing argv values are never sent to the WebView: replacing a
-command requires re-entering its complete vector. Saved profiles take effect
-the next time the application starts; this alpha does not hot-restart a run.
-Historical configuration shapes are shown read-only until migrated to
-`version: 1`.
+command requires re-entering its complete vector. The GUI opens idle and does
+not launch a process until you choose **Enregistrer et démarrer**. While a run
+is active, **Enregistrer** changes only the YAML; **Enregistrer et redémarrer**
+applies it through a guarded lifecycle transaction. Historical configuration
+shapes are shown read-only until migrated to `version: 1`.
+
+Each desktop run has a new opaque `runID`. Session mutations and emitted events
+carry that identity, so a delayed result from a stopped generation cannot act
+on a replacement run. Before a GUI stop or restart, Relayer stops admitting
+new decisions and begins a strict PTY/tmux stop so blocked I/O can return. It
+then drains every already-admitted mutation and its terminal audit outcome
+before closing the run. This explicit lifecycle stop overrides
+`sessions.persist_on_exit`; ordinary application shutdown keeps the configured
+persistence behavior.
+
+A restart publishes and preflights the candidate configuration before stopping
+the active run. If candidate startup then fails, Relayer atomically restores
+the exact previous YAML when the candidate revision is still current, then
+attempts to launch the previous immutable plan as a fresh run. A concurrent
+Relayer writer is protected by the revision lock. An editor that does not use
+that lock remains best-effort because portable filesystems do not provide an
+atomic compare-and-swap for file contents. If cleanup or restoration is
+uncertain, the GUI enters a failed, fail-closed state and does not start
+another run.
+
 See the [desktop GUI guide](docs/gui.md) for prerequisites, configuration,
 build commands, platform status, and rendering limitations.
 
@@ -271,8 +293,10 @@ Important configuration behavior:
 - A blank per-agent backend inherits the global backend. `auto` chooses tmux
   when its executable is found and otherwise falls back to PTY with a visible
   warning. An explicit unavailable `tmux` backend is an error before startup.
-- `persist_on_exit` concerns detached tmux sessions. PTY sessions remain owned
-  by the Relayer process. Relayer never kills the tmux server.
+- `persist_on_exit` concerns detached tmux sessions during ordinary application
+  shutdown. PTY sessions remain owned by the Relayer process. An explicit GUI
+  **Arrêter le run** or restart strictly stops both PTY and owned tmux sessions,
+  regardless of this setting. Relayer never kills the tmux server.
 - `cleanup_on_success` removes a successful Relayer-owned tmux session even
   when persistence is enabled.
 - `agents: []` means the two mocks; otherwise one to eight agents are accepted.
@@ -362,7 +386,8 @@ sensitive repositories.
 - Separate Relayer processes do not coordinate rotation of one shared audit
   path.
 - Configuration files and command-line arguments are not secret stores.
-- WSL has not been validated, and native Windows is unsupported.
+- WSL has not been validated, and native Windows agent execution is
+  unsupported.
 
 See [troubleshooting](docs/troubleshooting.md) for startup, tmux, prompt,
 rendering, persistence, and audit diagnostics.

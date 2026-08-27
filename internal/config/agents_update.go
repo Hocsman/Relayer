@@ -28,6 +28,88 @@ var (
 var configurationPathLocks sync.Map
 var syncConfigurationDirectory = syncDirectory
 
+// FileSnapshot is an opaque, in-memory copy of one regular configuration
+// file. Its bytes may contain credentials and are therefore deliberately not
+// exported. Desktop lifecycle code uses it only to restore an exact previous
+// document after a failed restart.
+type FileSnapshot struct {
+	path     string
+	data     []byte
+	mode     os.FileMode
+	revision string
+}
+
+// CaptureFileSnapshot reads a configuration under the same cooperative lock
+// used by ReplaceAgents. The returned snapshot owns an independent byte copy.
+func CaptureFileSnapshot(path string) (*FileSnapshot, error) {
+	absolutePath, unlock, err := acquireConfigurationUpdateLock(path)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	data, info, err := readRegularConfiguration(absolutePath)
+	if err != nil {
+		return nil, err
+	}
+	return &FileSnapshot{
+		path:     absolutePath,
+		data:     append([]byte(nil), data...),
+		mode:     info.Mode().Perm(),
+		revision: contentRevision(data),
+	}, nil
+}
+
+// Revision returns the content revision captured with the snapshot without
+// exposing any file bytes.
+func (snapshot *FileSnapshot) Revision() string {
+	if snapshot == nil {
+		return ""
+	}
+	return snapshot.revision
+}
+
+// Restore atomically republishes the exact captured bytes only while the
+// current file still has expectedRevision. This prevents rollback from
+// overwriting a newer edit made by another process.
+func (snapshot *FileSnapshot) Restore(expectedRevision string) (Result, string, error) {
+	if snapshot == nil || len(snapshot.data) == 0 || strings.TrimSpace(snapshot.path) == "" {
+		return Result{}, "", errors.New("instantané de configuration indisponible")
+	}
+	absolutePath, unlock, err := acquireConfigurationUpdateLock(snapshot.path)
+	if err != nil {
+		return Result{}, "", err
+	}
+	defer unlock()
+	current, _, err := readRegularConfiguration(absolutePath)
+	if err != nil {
+		return Result{}, "", err
+	}
+	if contentRevision(current) != expectedRevision {
+		return Result{}, "", ErrRevisionMismatch
+	}
+	if err := publishConfigurationBytes(absolutePath, snapshot.data, snapshot.mode); err != nil {
+		return Result{}, "", err
+	}
+	restored, err := Load(absolutePath)
+	if err != nil {
+		return Result{}, snapshot.revision, errors.Join(ErrCommitUncertain, err)
+	}
+	return restored, restored.Revision, nil
+}
+
+// Discard overwrites the retained bytes and makes the snapshot unusable.
+func (snapshot *FileSnapshot) Discard() {
+	if snapshot == nil {
+		return
+	}
+	for index := range snapshot.data {
+		snapshot.data[index] = 0
+	}
+	snapshot.data = nil
+	snapshot.path = ""
+	snapshot.revision = ""
+}
+
 // FileRevision returns a content-derived revision suitable for optimistic
 // updates. It never includes file contents in errors or diagnostics.
 func FileRevision(path string) (string, error) {
@@ -55,28 +137,20 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 		return Result{}, "", fmt.Errorf("trop d'agents: maximum %d", maxAgents)
 	}
 
-	absolutePath, err := filepath.Abs(path)
-	if err != nil {
-		return Result{}, "", errors.New("résolution du chemin de configuration impossible")
-	}
-	pathLock, _ := configurationPathLocks.LoadOrStore(filepath.Clean(absolutePath), &sync.Mutex{})
-	pathMutex := pathLock.(*sync.Mutex)
-	pathMutex.Lock()
-	defer pathMutex.Unlock()
-	unlockFile, err := lockConfigurationFile(absolutePath)
+	absolutePath, unlock, err := acquireConfigurationUpdateLock(path)
 	if err != nil {
 		return Result{}, "", err
 	}
-	defer unlockFile()
+	defer unlock()
 
-	current, err := Load(path)
+	current, err := Load(absolutePath)
 	if err != nil {
 		return Result{}, "", err
 	}
 	if current.Legacy {
 		return Result{}, "", errors.New("la configuration historique doit être migrée vers version: 1 avant de modifier les agents")
 	}
-	data, info, err := readRegularConfiguration(path)
+	data, info, err := readRegularConfiguration(absolutePath)
 	if err != nil {
 		return Result{}, "", err
 	}
@@ -84,7 +158,7 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 		return Result{}, "", ErrRevisionMismatch
 	}
 
-	baseDir, err := filepath.Abs(filepath.Dir(path))
+	baseDir, err := filepath.Abs(filepath.Dir(absolutePath))
 	if err != nil {
 		return Result{}, "", errors.New("résolution du dossier de configuration impossible")
 	}
@@ -99,8 +173,9 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 	if err != nil {
 		return Result{}, "", err
 	}
+	publishedRevision := contentRevision(rendered)
 
-	directory := filepath.Dir(path)
+	directory := filepath.Dir(absolutePath)
 	temporary, err := os.CreateTemp(directory, ".relayer-agents-*.tmp")
 	if err != nil {
 		return Result{}, "", errors.New("création du fichier temporaire de configuration impossible")
@@ -137,18 +212,18 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 		return Result{}, "", fmt.Errorf("configuration mise à jour invalide: %w", err)
 	}
 
-	latest, _, err := readRegularConfiguration(path)
+	latest, _, err := readRegularConfiguration(absolutePath)
 	if err != nil {
 		return Result{}, "", err
 	}
 	if contentRevision(latest) != expectedRevision {
 		return Result{}, "", ErrRevisionMismatch
 	}
-	if err := os.Rename(temporaryPath, path); err != nil {
+	if err := os.Rename(temporaryPath, absolutePath); err != nil {
 		return Result{}, "", errors.New("publication atomique de la configuration impossible")
 	}
 	if err := syncConfigurationDirectory(directory); err != nil {
-		updated, loadErr := Load(path)
+		updated, loadErr := Load(absolutePath)
 		if loadErr != nil {
 			return Result{}, contentRevision(rendered), errors.Join(
 				ErrCommitUncertain,
@@ -161,14 +236,81 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 		)
 	}
 
-	updated, err := Load(path)
+	updated, err := Load(absolutePath)
 	if err != nil {
-		return Result{}, contentRevision(rendered), errors.Join(ErrCommitUncertain, err)
+		return Result{}, publishedRevision, errors.Join(ErrCommitUncertain, err)
 	}
-	// The loaded result is authoritative. A non-cooperating editor may have
-	// replaced the file after our atomic rename; returning the rendered hash in
-	// that case would pair a fresh view with an already-stale revision.
+	if updated.Revision != publishedRevision {
+		// A non-cooperating editor published after our rename. Its bytes are
+		// authoritative, but our requested transaction did not win and therefore
+		// must never be used as rollback authority by a lifecycle controller.
+		return updated, updated.Revision, ErrRevisionMismatch
+	}
 	return updated, updated.Revision, nil
+}
+
+func acquireConfigurationUpdateLock(path string) (string, func(), error) {
+	if strings.TrimSpace(path) == "" {
+		return "", nil, errors.New("le chemin du fichier de configuration est vide")
+	}
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return "", nil, errors.New("résolution du chemin de configuration impossible")
+	}
+	pathLock, _ := configurationPathLocks.LoadOrStore(filepath.Clean(absolutePath), &sync.Mutex{})
+	pathMutex := pathLock.(*sync.Mutex)
+	pathMutex.Lock()
+	unlockFile, err := lockConfigurationFile(absolutePath)
+	if err != nil {
+		pathMutex.Unlock()
+		return "", nil, err
+	}
+	return absolutePath, func() {
+		unlockFile()
+		pathMutex.Unlock()
+	}, nil
+}
+
+func publishConfigurationBytes(path string, data []byte, mode os.FileMode) error {
+	directory := filepath.Dir(path)
+	temporary, err := os.CreateTemp(directory, ".relayer-rollback-*.tmp")
+	if err != nil {
+		return errors.New("création du fichier temporaire de restauration impossible")
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if mode.Perm() == 0 {
+		mode = 0o600
+	}
+	if _, err := temporary.Write(data); err != nil {
+		_ = temporary.Close()
+		return errors.New("écriture de la restauration impossible")
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return errors.New("synchronisation de la restauration impossible")
+	}
+	if err := temporary.Chmod(mode.Perm()); err != nil {
+		_ = temporary.Close()
+		return errors.New("application des permissions de restauration impossible")
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return errors.New("synchronisation des permissions de restauration impossible")
+	}
+	if err := temporary.Close(); err != nil {
+		return errors.New("fermeture de la restauration temporaire impossible")
+	}
+	if _, err := Load(temporaryPath); err != nil {
+		return errors.New("instantané de restauration invalide")
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return errors.New("publication atomique de la restauration impossible")
+	}
+	if err := syncConfigurationDirectory(directory); err != nil {
+		return errors.Join(ErrCommitUncertain, errors.New("synchronisation du dossier restauré impossible"))
+	}
+	return nil
 }
 
 func validateUpdatedPolicyAgents(current Result, specs []agent.Spec) error {

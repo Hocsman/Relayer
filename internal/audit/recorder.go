@@ -35,6 +35,16 @@ func NewRecorder(
 	clock func() time.Time,
 	idGenerator func() (string, error),
 ) (*Recorder, error) {
+	return newRecorder(config, sink, clock, idGenerator, "")
+}
+
+func newRecorder(
+	config Config,
+	sink LineSink,
+	clock func() time.Time,
+	idGenerator func() (string, error),
+	explicitRunID string,
+) (*Recorder, error) {
 	if err := Validate(config); err != nil {
 		return nil, err
 	}
@@ -49,6 +59,7 @@ func NewRecorder(
 		config:      config,
 		clock:       clock,
 		idGenerator: idGenerator,
+		runID:       explicitRunID,
 	}
 	if !result.Enabled() {
 		return result, nil
@@ -56,9 +67,13 @@ func NewRecorder(
 	if sink == nil {
 		return nil, errors.New("sink d'audit nil")
 	}
-	runID, err := idGenerator()
-	if err != nil {
-		return nil, fmt.Errorf("génération du run_id d'audit: %w", err)
+	runID := explicitRunID
+	if runID == "" {
+		var err error
+		runID, err = idGenerator()
+		if err != nil {
+			return nil, fmt.Errorf("génération du run_id d'audit: %w", err)
+		}
 	}
 	if !generatedIDPattern.MatchString(runID) {
 		return nil, errors.New("générateur d'identifiants d'audit retournant un run_id invalide")

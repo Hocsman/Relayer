@@ -8,6 +8,7 @@ import type { AppState, SupervisionEvent } from "../types/relayer";
 
 function pending(sessionID: string, id = "same-id"): SupervisionEvent {
   return {
+    runID: "run-1",
     id,
     sessionID,
     agentID: sessionID,
@@ -71,6 +72,7 @@ describe("relayerReducer", () => {
     const updated = relayerReducer(loaded, {
       type: "snapshot",
       snapshot: {
+        runID: "run-1",
         sessionID: "a",
         revision: 4,
         output: "new output at equal revision",
@@ -87,6 +89,7 @@ describe("relayerReducer", () => {
     const updated = relayerReducer(loaded, {
       type: "snapshot",
       snapshot: {
+        runID: "run-1",
         sessionID: "a",
         revision: 3,
         output: "stale",
@@ -102,10 +105,62 @@ describe("relayerReducer", () => {
     const loaded = relayerReducer(initialRelayerState, { type: "loaded", state: appState() });
     const updated = relayerReducer(loaded, {
       type: "delivery",
+      runID: "run-1",
       sessionID: "a",
       eventID: "same-id",
       status: "delivered",
     });
     expect(updated.app?.pendingEvents.map((event) => event.sessionID)).toEqual(["b"]);
+  });
+
+  it("ignores every late event from a previous run", () => {
+    const loaded = relayerReducer(initialRelayerState, { type: "loaded", state: appState() });
+
+    const staleSnapshot = relayerReducer(loaded, {
+      type: "snapshot",
+      snapshot: {
+        runID: "run-old",
+        sessionID: "a",
+        revision: 99,
+        output: "stale output",
+        status: "failed",
+        running: false,
+        attached: false,
+      },
+    });
+    const staleEvent = relayerReducer(staleSnapshot, {
+      type: "event",
+      event: { ...pending("a", "late"), runID: "run-old" },
+    });
+    const staleStatus = relayerReducer(staleEvent, {
+      type: "status",
+      status: { runID: "run-old", scope: "run", status: "failed" },
+    });
+    const staleError = relayerReducer(staleStatus, {
+      type: "error",
+      error: {
+        runID: "run-old",
+        code: "late_error",
+        message: "late",
+        timestamp: "2026-01-01T00:00:01Z",
+      },
+    });
+    const staleDelivery = relayerReducer(staleError, {
+      type: "delivery",
+      runID: "run-old",
+      sessionID: "a",
+      eventID: "same-id",
+      status: "delivered",
+    });
+
+    expect(staleDelivery).toEqual(loaded);
+  });
+
+  it("drops pending events whose runID does not match the loaded state", () => {
+    const normalized = normalizeState({
+      ...appState(),
+      pendingEvents: [pending("a"), { ...pending("b", "old"), runID: "run-old" }],
+    });
+    expect(normalized.pendingEvents).toEqual([pending("a")]);
   });
 });

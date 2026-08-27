@@ -297,8 +297,7 @@ func (m *Manager) Stop(sessionID string) error {
 		return err
 	}
 	session.requestStop()
-	session.waitForStop()
-	return nil
+	return session.waitForStop()
 }
 
 func (m *Manager) Output(sessionID string) (string, error) {
@@ -368,7 +367,7 @@ func (m *Manager) Close() {
 			session.requestStop()
 		}
 		for _, session := range sessions {
-			session.waitForStop()
+			_ = session.waitForStop()
 		}
 		m.wg.Wait()
 	})

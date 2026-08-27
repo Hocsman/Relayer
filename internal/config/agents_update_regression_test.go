@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -111,7 +112,7 @@ func TestReplaceAgentsReturnsDefensiveCopies(t *testing.T) {
 	}
 }
 
-func TestReplaceAgentsRevisionMatchesUpdatedStateAfterExternalPostCommitWrite(t *testing.T) {
+func TestReplaceAgentsRejectsExternalPostCommitWriteWithoutLosingItsRevision(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "config.yaml")
 	loaded, err := Load(path)
@@ -120,6 +121,7 @@ func TestReplaceAgentsRevisionMatchesUpdatedStateAfterExternalPostCommitWrite(t 
 	}
 
 	originalSync := syncConfigurationDirectory
+	var externalPayload []byte
 	syncConfigurationDirectory = func(string) error {
 		payload, readErr := os.ReadFile(path)
 		if readErr != nil {
@@ -129,20 +131,28 @@ func TestReplaceAgentsRevisionMatchesUpdatedStateAfterExternalPostCommitWrite(t 
 		if external == string(payload) {
 			return errors.New("fixture could not locate published agent")
 		}
-		return os.WriteFile(path, []byte(external), 0o600)
+		externalPayload = []byte(external)
+		return os.WriteFile(path, externalPayload, 0o600)
 	}
 	t.Cleanup(func() { syncConfigurationDirectory = originalSync })
 
 	updated, revision, err := ReplaceAgents(path, loaded.Revision, []agent.Spec{{
 		ID: "published", Name: "Published", Command: []string{"runner"}, Backend: agent.BackendPTY,
 	}})
-	if err != nil {
-		t.Fatalf("ReplaceAgents: %v", err)
+	if !errors.Is(err, ErrRevisionMismatch) {
+		t.Fatalf("ReplaceAgents error = %v, want ErrRevisionMismatch", err)
 	}
 	if len(updated.Agents) != 1 || updated.Agents[0].ID != "external" {
 		t.Fatalf("updated state did not observe post-commit write: %#v", updated.Agents)
 	}
 	if revision != updated.Revision {
 		t.Fatalf("returned revision %q does not describe updated revision %q", revision, updated.Revision)
+	}
+	persisted, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("read external post-commit edit: %v", readErr)
+	}
+	if !bytes.Equal(persisted, externalPayload) {
+		t.Fatalf("ReplaceAgents overwrote the external post-commit edit: persisted=%q external=%q", persisted, externalPayload)
 	}
 }

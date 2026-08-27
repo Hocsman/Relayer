@@ -2,14 +2,15 @@ import { AgentCard } from "./AgentCard";
 import type { AgentState, SupervisionEvent } from "../types/relayer";
 
 interface AgentGridProps {
+  runID: string;
   agents: AgentState[];
   events: SupervisionEvent[];
-  onResize(sessionID: string, columns: number, rows: number): Promise<void>;
-  onStop(sessionID: string): Promise<void>;
-  onOpenEvent(sessionID: string, eventID: string): void;
+  onResize(runID: string, sessionID: string, columns: number, rows: number): Promise<void>;
+  onStop(runID: string, sessionID: string): Promise<void>;
+  onOpenEvent(runID: string, sessionID: string, eventID: string): void;
 }
 
-export function AgentGrid({ agents, events, onResize, onStop, onOpenEvent }: AgentGridProps) {
+export function AgentGrid({ runID, agents, events, onResize, onStop, onOpenEvent }: AgentGridProps) {
   if (agents.length === 0) {
     return (
       <section className="empty-agents">
@@ -23,9 +24,12 @@ export function AgentGrid({ agents, events, onResize, onStop, onOpenEvent }: Age
     <section className="agent-grid" aria-label="Agents supervisés">
       {agents.map((agent) => (
         <AgentCard
-          key={agent.sessionID}
+          key={`${runID}\u0000${agent.sessionID}`}
+          runID={runID}
           agent={agent}
-          event={events.find((event) => event.sessionID === agent.sessionID)}
+          event={events.find(
+            (event) => event.runID === runID && event.sessionID === agent.sessionID,
+          )}
           onResize={onResize}
           onStop={onStop}
           onOpenEvent={onOpenEvent}
