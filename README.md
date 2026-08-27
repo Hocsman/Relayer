@@ -12,9 +12,10 @@
 > review every proposed action, and keep independent backups.
 
 Relayer starts one to eight interactive command-line agents in local terminal
-sessions, shows their output in a Bubble Tea TUI, and brings detected
-confirmation or credential prompts to a human supervisor. It can use directly
-owned PTYs or detached, Relayer-owned tmux sessions.
+sessions, shows their output in a Bubble Tea TUI or an optional alpha Wails
+desktop GUI, and brings detected confirmation or credential prompts to a human
+supervisor. It can use directly owned PTYs or detached, Relayer-owned tmux
+sessions.
 
 No direct per-token API integration is required. Relayer works with your existing CLI tools, subscriptions and local models.
 
@@ -35,6 +36,8 @@ and network behavior.
 - Optional local JSONL audit records with rotation, restrictive Unix
   permissions, bounded fields, and mandatory redaction.
 - Two deterministic Bash mock agents when `agents: []` is configured.
+- An optional source-built Wails desktop GUI for macOS and Linux; the TUI
+  remains fully available.
 
 Relayer is not a sandbox, a policy enforcement boundary, a terminal emulator,
 or a substitute for reviewing an agent's work. See the
@@ -44,9 +47,9 @@ or a substitute for reviewing an agent's work. See the
 
 | Platform | Alpha status | Notes |
 | --- | --- | --- |
-| Linux | Supported (CI) | PTY backend; tmux backend when tmux is installed. |
-| macOS | Supported (CI) | PTY backend; tmux backend when tmux is installed. |
-| Windows, native | Not supported | The Unix process, PTY, shell, and tmux implementations are unavailable. |
+| Linux | Supported (CI); GUI alpha | PTY backend; tmux backend when tmux is installed. |
+| macOS | Supported (CI); GUI alpha | PTY backend; tmux backend when tmux is installed. |
+| Windows, native | Not supported | The GUI refuses agent execution until a tested ConPTY backend exists. |
 | WSL | Not validated | No support guarantee during alpha. |
 
 ## Prerequisites
@@ -78,6 +81,31 @@ go build -o relayer main.go
 
 Development builds report `relayer dev (commit unknown)` unless build metadata
 is injected.
+
+### Desktop GUI (alpha)
+
+The optional GUI uses Wails v2.14.0 and is currently a source build for macOS
+and Linux. It does not provide functional Windows agent execution, an
+installer, or a published desktop release.
+
+```bash
+go install github.com/wailsapp/wails/v2/cmd/wails@v2.14.0
+cd cmd/relayer-gui
+wails doctor
+wails dev       # development window
+wails build     # local development artifact below build/bin/
+```
+
+By default the GUI loads
+`os.UserConfigDir()/relayer/config.yaml`; set `RELAYER_CONFIG` to use another
+path. Applications opened from Finder may not inherit the Homebrew paths used
+by an interactive shell, so use absolute executable paths or launch the app
+with an explicit `PATH` when required.
+
+Agent panels display bounded, ANSI-stripped text snapshots, not a full VT/ANSI
+terminal. The Bubble Tea TUI and its native tmux attach workflow are preserved.
+See the [desktop GUI guide](docs/gui.md) for prerequisites, configuration,
+build commands, platform status, and rendering limitations.
 
 ### Releases
 

@@ -1,0 +1,140 @@
+name: GUI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gui-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: cmd/relayer-gui/frontend
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cmd/relayer-gui/frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci
+
+      - name: Test frontend
+        run: npm test
+
+      - name: Build frontend
+        run: npm run build
+
+  native:
+    name: Native (${{ matrix.name }})
+    needs: frontend
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-24.04
+            go_flags: -tags=webkit2_41
+          - name: macOS
+            os: macos-15
+            go_flags: ""
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: cmd/relayer-gui
+
+    env:
+      CGO_ENABLED: "1"
+      GOFLAGS: ${{ matrix.go_flags }}
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: cmd/relayer-gui/go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            cmd/relayer-gui/go.sum
+
+      - name: Set up Node.js for the native bundle
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cmd/relayer-gui/frontend/package-lock.json
+
+      # Go test, race, vet and wails build all compile the native Linux WebView.
+      # Ubuntu 24.04 ships WebKitGTK 4.1, supported by Wails' webkit2_41 tag.
+      - name: Install native Wails dependencies on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            pkg-config
+
+      - name: Download and verify GUI modules
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Verify Wails module pin
+        run: |
+          version="$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2)"
+          test "$version" = "v2.14.0"
+
+      - name: Vet GUI module
+        run: go vet ./...
+
+      - name: Test GUI module
+        run: go test -count=1 -timeout=5m ./...
+
+      - name: Test GUI module with race detector
+        run: go test -race -count=1 -timeout=5m ./...
+
+      - name: Install pinned Wails CLI
+        run: |
+          mkdir -p "$RUNNER_TEMP/relayer-wails-bin"
+          GOBIN="$RUNNER_TEMP/relayer-wails-bin" \
+            go install github.com/wailsapp/wails/v2/cmd/wails@v2.14.0
+          test "$("$RUNNER_TEMP/relayer-wails-bin/wails" version)" = "v2.14.0"
+
+      - name: Build native GUI (verification only)
+        run: |
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            "$RUNNER_TEMP/relayer-wails-bin/wails" build \
+              -clean \
+              -skipbindings \
+              -tags webkit2_41
+          else
+            "$RUNNER_TEMP/relayer-wails-bin/wails" build \
+              -clean \
+              -skipbindings
+          fi

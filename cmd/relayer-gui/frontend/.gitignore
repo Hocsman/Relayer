@@ -1,0 +1,6 @@
+dist/*
+!dist/.gitkeep
+node_modules/
+wailsjs/
+package.json.md5
+*.local
