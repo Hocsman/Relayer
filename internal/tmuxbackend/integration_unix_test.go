@@ -48,6 +48,32 @@ func TestTmuxIntegrationLifecyclePromptInputAndExternalSessionIsolation(t *testi
 		t.Fatalf("test executable: %v", err)
 	}
 	runtimeRoot := t.TempDir()
+	// Keep the socket root independent from t.TempDir: Darwin's sockaddr_un
+	// limit is short enough that the testing package's test-name path can make
+	// tmux fail with "File name too long" before it creates its server.
+	socketRoot, err := os.MkdirTemp("", "rtmx-")
+	if err != nil {
+		t.Fatalf("create private tmux socket root: %v", err)
+	}
+	if err := os.Chmod(socketRoot, 0o700); err != nil {
+		t.Fatalf("restrict private tmux socket root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketRoot) })
+	// Never connect this integration test to the user's personal tmux server.
+	// Besides protecting unrelated sessions, a private socket makes the server
+	// version and startup lifecycle deterministic across repeated test runs.
+	t.Setenv("TMUX_TMPDIR", socketRoot)
+	// An inherited TMUX points directly at its parent socket and takes priority
+	// over TMUX_TMPDIR. Clear the ambient nesting metadata, then also pass -S in
+	// the wrapper so every command has an explicit, test-owned socket target.
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+	privateSocketPath := filepath.Join(socketRoot, "relayer.sock")
+	isolatedTmuxPath := filepath.Join(runtimeRoot, "isolated tmux")
+	tmuxWrapper := "#!/bin/sh\nexec " + quotePOSIX(tmuxPath) + " -f /dev/null -S " + quotePOSIX(privateSocketPath) + " \"$@\"\n"
+	if err := os.WriteFile(isolatedTmuxPath, []byte(tmuxWrapper), 0o700); err != nil {
+		t.Fatalf("write isolated tmux wrapper: %v", err)
+	}
 	helperWrapper := filepath.Join(runtimeRoot, "relayer test helper")
 	wrapper := "#!/bin/sh\nexec " + quotePOSIX(testExecutable) + " -test.run '^TestTmuxHelperProcess$' -- \"$@\"\n"
 	if err := os.WriteFile(helperWrapper, []byte(wrapper), 0o700); err != nil {
@@ -55,12 +81,19 @@ func TestTmuxIntegrationLifecyclePromptInputAndExternalSessionIsolation(t *testi
 	}
 
 	externalName := fmt.Sprintf("tmuxbackend-external-%d", os.Getpid())
-	external := exec.Command(tmuxPath, "new-session", "-d", "-s", externalName, "sleep 30")
+	external := exec.Command(isolatedTmuxPath, "new-session", "-d", "-s", externalName, "sleep 30")
 	if output, err := external.CombinedOutput(); err != nil {
 		t.Fatalf("create external tmux session: %v (%s)", err, output)
 	}
+	socketInfo, err := os.Lstat(privateSocketPath)
+	if err != nil {
+		t.Fatalf("inspect private tmux socket: %v", err)
+	}
+	if socketInfo.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("private tmux socket has mode %v", socketInfo.Mode())
+	}
 	t.Cleanup(func() {
-		_ = exec.Command(tmuxPath, "kill-session", "-t", externalName).Run()
+		_ = exec.Command(isolatedTmuxPath, "kill-session", "-t", externalName).Run()
 	})
 
 	events := make(chan session.Event, 128)
@@ -70,7 +103,7 @@ func TestTmuxIntegrationLifecyclePromptInputAndExternalSessionIsolation(t *testi
 		intercept.DefaultPatterns(),
 		4096,
 		Options{
-			TmuxPath:      tmuxPath,
+			TmuxPath:      isolatedTmuxPath,
 			HelperPath:    helperWrapper,
 			RuntimeDir:    runtimeRoot,
 			RunID:         "integration",
@@ -121,7 +154,7 @@ func TestTmuxIntegrationLifecyclePromptInputAndExternalSessionIsolation(t *testi
 		t.Fatalf("Close: %v", err)
 	}
 	cancel()
-	if output, err := exec.Command(tmuxPath, "has-session", "-t", externalName).CombinedOutput(); err != nil {
+	if output, err := exec.Command(isolatedTmuxPath, "has-session", "-t", externalName).CombinedOutput(); err != nil {
 		t.Fatalf("Relayer interfered with external tmux session: %v (%s)", err, output)
 	}
 
@@ -135,7 +168,7 @@ func TestTmuxIntegrationLifecyclePromptInputAndExternalSessionIsolation(t *testi
 		intercept.DefaultPatterns(),
 		4096,
 		Options{
-			TmuxPath:      tmuxPath,
+			TmuxPath:      isolatedTmuxPath,
 			HelperPath:    helperWrapper,
 			RuntimeDir:    runtimeRoot,
 			RunID:         "integration-persistent",
@@ -149,7 +182,7 @@ func TestTmuxIntegrationLifecyclePromptInputAndExternalSessionIsolation(t *testi
 	var persistentSessionID string
 	t.Cleanup(func() {
 		if persistentSessionID != "" {
-			_ = exec.Command(tmuxPath, "kill-session", "-t", persistentSessionID).Run()
+			_ = exec.Command(isolatedTmuxPath, "kill-session", "-t", persistentSessionID).Run()
 		}
 	})
 	t.Cleanup(func() {
@@ -184,7 +217,7 @@ func TestTmuxIntegrationLifecyclePromptInputAndExternalSessionIsolation(t *testi
 	cancel()
 
 	pipeState, err := exec.Command(
-		tmuxPath,
+		isolatedTmuxPath,
 		"display-message", "-p", "-t", persistentPaneID,
 		"#{session_id}\t#{pane_dead}\t#{pane_pipe}",
 	).CombinedOutput()
@@ -194,7 +227,7 @@ func TestTmuxIntegrationLifecyclePromptInputAndExternalSessionIsolation(t *testi
 	if got, want := strings.TrimSpace(string(pipeState)), persistentSessionID+"\t0\t0"; got != want {
 		t.Fatalf("persistent pane state after Close = %q, want %q", got, want)
 	}
-	if output, err := exec.Command(tmuxPath, "has-session", "-t", persistentSessionID).CombinedOutput(); err != nil {
+	if output, err := exec.Command(isolatedTmuxPath, "has-session", "-t", persistentSessionID).CombinedOutput(); err != nil {
 		t.Fatalf("persistent session did not survive Close: %v (%s)", err, output)
 	}
 }

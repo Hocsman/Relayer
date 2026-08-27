@@ -36,7 +36,12 @@ func (execRunner) Run(ctx context.Context, spec CommandSpec) ([]byte, error) {
 	if spec.Stdin != nil {
 		command.Stdin = bytes.NewReader(spec.Stdin)
 	}
-	return command.CombinedOutput()
+	// All successful tmux responses consumed by Manager are machine-readable
+	// stdout. Keep stderr separate so a non-fatal diagnostic (for example from
+	// tmux startup or a user configuration) cannot corrupt an identity or
+	// snapshot response. On failure os/exec still returns an *exec.ExitError;
+	// CommandError deliberately does not expose tmux diagnostics or argv.
+	return command.Output()
 }
 
 func (execRunner) Command(ctx context.Context, spec CommandSpec) *exec.Cmd {

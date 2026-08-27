@@ -949,6 +949,27 @@ func TestParseIdentityRequiresImmutableTmuxIDs(t *testing.T) {
 	}
 }
 
+func TestExecRunnerKeepsDiagnosticsOutOfMachineReadableOutput(t *testing.T) {
+	runner := execRunner{}
+	output, err := runner.Run(context.Background(), CommandSpec{
+		Path: "/bin/sh",
+		Args: []string{
+			"-c",
+			`printf '%s\n' 'non-fatal tmux diagnostic' >&2; printf '$12\t@34\t%%56\n'`,
+		},
+	})
+	if err != nil {
+		t.Fatalf("execRunner.Run: %v", err)
+	}
+	want := "$12\t@34\t%56\n"
+	if got := string(output); got != want {
+		t.Fatalf("machine-readable output = %q, want %q", got, want)
+	}
+	if _, err := parseIdentity(string(output)); err != nil {
+		t.Fatalf("parse stdout identity: %v", err)
+	}
+}
+
 func TestMalformedIdentityRollbackNeverKillsAnUnmarkedName(t *testing.T) {
 	runner := newFakeRunner()
 	runner.setNewSessionOutput("malformed identity\n")
