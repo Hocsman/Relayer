@@ -245,7 +245,7 @@ func TestMergedLaunchEnvironmentIsFreshAndExcludesOnlyImplicitTmuxMetadata(t *te
 	t.Setenv(removedName, "present")
 	first := mergedLaunchEnvironment(nil)
 	if first[refreshName] != "first" || first[removedName] != "present" {
-		t.Fatalf("first environment snapshot = %#v", first)
+		t.Fatal("first environment snapshot did not contain the expected test values")
 	}
 	t.Setenv(refreshName, "second")
 	if err := os.Unsetenv(removedName); err != nil {

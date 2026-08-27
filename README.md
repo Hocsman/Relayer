@@ -1,135 +1,175 @@
-# 🔄 Relayer
+# Relayer
 
-[![Go Version](https://img.shields.io/github/go-mod/go-version/Hocsman/relayer)](https://golang.org/)
+**A local human-approval and supervision layer for AI CLI agents.**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/Hocsman/Relayer)](https://go.dev/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Build](https://github.com/Hocsman/Relayer/actions/workflows/build.yml/badge.svg)](https://github.com/Hocsman/Relayer/actions/workflows/build.yml)
 
-[![Build Status](https://github.com/Hocsman/relayer/actions/workflows/build.yml/badge.svg)](https://github.com/Hocsman/relayer/actions)
+> [!WARNING]
+> Relayer is alpha software. Configuration, adapter, backend, and audit APIs may
+> change without compatibility guarantees. Use it with disposable work first,
+> review every proposed action, and keep independent backups.
 
-**Relayer** is a lightweight, human-in-the-loop terminal multiplexer built in Go. It allows you to orchestrate multiple interactive AI CLI tools side-by-side using your existing subscriptions—**with zero API costs.**
+Relayer starts one to eight interactive command-line agents in local terminal
+sessions, shows their output in a Bubble Tea TUI, and brings detected
+confirmation or credential prompts to a human supervisor. It can use directly
+owned PTYs or detached, Relayer-owned tmux sessions.
 
-Stop paying per-token API fees to orchestrate AI agents. Run `claude` (Claude Pro) in one pane and a local `ollama` model in another. When an agent hits a confirmation prompt (like `Overwrite file? [Y/n]`), Relayer intercepts the `stdout`, pauses the automation, and hands the control back to you.
+No direct per-token API integration is required. Relayer works with your existing CLI tools, subscriptions and local models.
 
-![Relayer Demo](docs/demo.gif) *(Note: Create a GIF using [vhs](https://github.com/charmbracelet/vhs) and place it here)*
+Relayer does not provide, proxy, or alter access to any AI service. The CLI
+tools you launch retain their own authentication, billing, usage limits, terms,
+and network behavior.
 
-## ✨ Features
+## What works today
 
-- **Zero API Costs:** Uses standard CLI interfaces, meaning it leverages your flat-rate subscriptions (Claude Pro, Copilot) or local hardware (Ollama, Llama 3.2).
-- **Human-in-the-Loop Interception:** Bounded terminal-output monitoring automatically detects interactive prompts (`[y/N]`, `password:`) and safely pauses the workflow for human input.
-- **Deterministic Policies:** Ordered `allow` / `ask` / `deny` rules evaluate detected events with a safe `ask` fallback and an observable dry-run mode.
-- **Secure Local Audit:** Optional JSONL lifecycle and decision records use private files, bounded rotation, synchronous flushes, and mandatory secret redaction.
-- **Optional Native tmux Sessions:** Keep the lightweight PTY backend, or run each agent in an isolated detached tmux session and attach to its full terminal on demand.
-- **Beautiful TUI:** Powered by the Elm-inspired [Bubble Tea](https://github.com/charmbracelet/bubbletea) framework for a smooth, glitch-free multi-pane terminal experience.
-- **Single Binary:** Written in Go. No Python environments, no heavy dependencies. Just download and run.
+- One to eight agents, with up to four visible per page.
+- Exact argument-vector commands, or explicitly requested `/bin/sh -c` shell
+  commands on supported Unix systems.
+- PTY, tmux, automatic tmux-to-PTY selection, and mixed concrete backends.
+- A bounded terminal-output view and bounded streaming prompt detection.
+- A stable, product-neutral `generic` regex adapter.
+- First-match approval policies with conservative handling of credentials,
+  sensitive events, high or unknown risk, and dry runs.
+- Optional local JSONL audit records with rotation, restrictive Unix
+  permissions, bounded fields, and mandatory redaction.
+- Two deterministic Bash mock agents when `agents: []` is configured.
 
-## 🚀 Quick Start
+Relayer is not a sandbox, a policy enforcement boundary, a terminal emulator,
+or a substitute for reviewing an agent's work. See the
+[security model](docs/security-model.md) before using it on valuable data.
 
-### Installation
+## Platform status
 
-Download the latest compiled binary for macOS or Linux from the [Releases page](https://github.com/Hocsman/Relayer/releases). The current PTY and process-group implementation targets Unix-like systems; native Windows support is not implemented yet.
+| Platform | Alpha status | Notes |
+| --- | --- | --- |
+| Linux | Supported (CI) | PTY backend; tmux backend when tmux is installed. |
+| macOS | Supported (CI) | PTY backend; tmux backend when tmux is installed. |
+| Windows, native | Not supported | The Unix process, PTY, shell, and tmux implementations are unavailable. |
+| WSL | Not validated | No support guarantee during alpha. |
 
-Or build it from source:
+## Prerequisites
+
+- Go 1.25.8 or newer to build from source. The patch-level minimum keeps
+  release binaries on a standard library version covered by the vulnerability
+  gate.
+- A UTF-8 interactive terminal.
+- Bash for the bundled mock agents and the reproducible demo.
+- tmux only when selecting `tmux` or when you want `auto` to choose it.
+- The agent CLIs you configure, installed and authenticated independently.
+
+## Install
+
+### Build from source
 
 ```bash
 git clone https://github.com/Hocsman/Relayer.git
 cd Relayer
 go build -o relayer ./cmd/relayer
+./relayer --version
 ```
 
-### Basic Usage
-
-Define your agents in `config.yaml`, then launch Relayer:
+The root entry point remains available for compatibility:
 
 ```bash
-./relayer --config config.yaml
+go build -o relayer main.go
 ```
 
-Relayer accepts between 1 and 8 configured agents. It displays up to four agents per page: one agent uses the full area, two are placed side-by-side, three use a 2+1 layout, and four use a 2×2 grid. Additional agents are shown on another page.
+Development builds report `relayer dev (commit unknown)` unless build metadata
+is injected.
 
-Terminal controls:
+### Releases
 
-- `Ctrl+Left` / `Ctrl+Right`: move focus across agents and the supervisor, changing page when needed.
-- `Ctrl+PageUp` / `Ctrl+PageDown`: move between agent pages.
-- `Up` / `Down`, `PageUp` / `PageDown`, or the mouse wheel: scroll the focused pane's retained history.
-- `Enter`: send a requested human response to the blocked agent.
-- `Enter` on an idle tmux agent: suspend Relayer and open that agent's native interactive session.
-- `Ctrl+B`, then `D`: detach from tmux and return to Relayer; output, status, pending prompts, and size are reconciled automatically.
-- `Ctrl+C`: stop the sessions and quit.
+There is no published release at the time of writing. After an authorized tag
+has been published, release archives and checksums may appear on the
+[Releases page](https://github.com/Hocsman/Relayer/releases); until then, that
+page may be empty. Do not treat an unreviewed third-party binary as an official
+Relayer release.
 
-The `--pane1` and `--pane2` flags are retained for compatibility but are deprecated. When provided, they override configured agents 1 and 2 respectively. Their values are parsed as direct argv—quotes and backslash escaping group arguments, but shell expansion is not performed:
+Once an alpha release such as `v0.1.0-alpha` actually exists, select a published
+`OS` (`linux` or `darwin`) and `ARCH` (`amd64` or `arm64`), then download and
+verify the matching archive:
 
 ```bash
-./relayer --pane1 'claude --model sonnet' --pane2 'ollama run llama3.2'
+VERSION=0.1.0-alpha
+OS=linux
+ARCH=amd64
+ARCHIVE="relayer_${VERSION}_${OS}_${ARCH}.tar.gz"
+BASE_URL="https://github.com/Hocsman/Relayer/releases/download/v${VERSION}"
+
+curl -fLO "${BASE_URL}/${ARCHIVE}"
+curl -fLO "${BASE_URL}/relayer_${VERSION}_checksums.txt"
+grep "  ${ARCHIVE}$" "relayer_${VERSION}_checksums.txt" | sha256sum -c -
+tar -xzf "${ARCHIVE}"
+"./relayer_${VERSION}_${OS}_${ARCH}/relayer" --version
 ```
 
-An explicitly empty flag, such as `--pane1=`, selects the built-in mock for that position. If `agents` is empty, Relayer starts two mocks; omitted override flags leave the corresponding configured agent unchanged.
+On macOS, replace the verification command with:
 
-## ⚙️ How it Works (The Architecture)
-
-Relayer exposes one neutral, context-aware terminal backend contract. The built-in PTY implementation keeps the original lightweight behavior. The optional tmux implementation creates one detached, Relayer-owned session per agent. Bubble Tea never constructs tmux commands, and the interception engine never imports tmux-specific code.
-
-```text
-config.yaml / CLI compatibility flags
-                  │
-                  ▼
-        backend selector (pty/tmux/auto)
-                  │
-          ┌───────┴────────┐
-          ▼                ▼
-     PTY backend      tmux backend
-     master fd        detached session + private FIFO
-          └───────┬────────┘
-                  ▼
-               transient raw terminal bytes
-                              │
-                              ▼
-             ANSI sanitizer / CR normalization
-                    │                    │
-                    ▼                    ▼
-       bounded detection window   bounded render Ring Buffer
-                    │                    │
-                    ▼                    │
-          per-session Adapter            │
-                    │                    │
-                    └──── Event ─────────┘
-                              │
-                              ▼
-                  deterministic policy engine
-                    allow / ask / deny
-                              │
-                              ▼
-                  Bubble Tea TUI / supervisor
-                              │ Enter on tmux agent
-                              ▼
-                  tea.ExecProcess(tmux attach-session)
-                              │ Ctrl+B, D
-                              ▼
-                  snapshot + prompt + size resynchronization
+```bash
+grep "  ${ARCHIVE}$" "relayer_${VERSION}_checksums.txt" | shasum -a 256 -c -
 ```
 
-Detached tmux output is streamed with `pipe-pane` into a private FIFO inside a `0700` runtime directory. Relayer reads that stream continuously—without an aggressive output polling loop—and retains only the configured in-memory Ring Buffer. A low-frequency status probe detects attachment state and process exit; after an interactive detach, only the current pane tail is captured to reconcile a prompt without duplicating scrollback.
+Compare the reported version with the authorized tag before placing the binary
+on your `PATH`. A checksum downloaded from the same release detects corruption;
+it is not a cryptographic signature or independent publisher authentication.
 
-Direct agent arguments are never concatenated into a tmux shell command. Relayer writes the exact argv, working directory, and merged environment to a temporary `0600` JSON specification. The generated tmux command contains only internally generated, POSIX-quoted helper paths. The helper decodes and unlinks the specification before the start gate is released, then replaces itself with the requested process. Explicit `shell:` configurations remain intentionally interpreted by `/bin/sh -c`.
+## Quick start with safe mocks
 
-The code is split into focused internal packages: `config` owns strict YAML loading, `agent` validates execution specifications, `buffer` bounds retained output, `adapters` turns normalized terminal text into backend-neutral events, `session` exclusively owns PTYs and process lifecycles, and `tui` renders typed session events through a narrow backend interface. `intercept` remains a compatibility facade for the original API; regex detection itself has a single owner, `GenericRegexAdapter`. Unix-specific shell and process-group behavior is isolated in `internal/platform` behind build tags. The root `main.go` remains a compatibility entrypoint; `cmd/relayer` is the canonical command.
+On first launch, Relayer creates `config.yaml` without overwriting an existing
+file. The generated `agents: []` activates two synthetic Bash agents:
 
-Terminal bytes, normalized detection text, rendered viewport history, and audit metadata have separate lifetimes. Raw bytes are processed and discarded, the detection window and viewport history are bounded independently, and semantic events contain only the metadata needed to route a human decision. Sensitive prompt matches and manual input are never added to supervisor logs.
+```bash
+./relayer
+```
 
-### Agent adapters
+Each mock prints 20 progress lines, asks `Overwrite file? [Y/n]`, waits for a
+human answer, and displays that answer. It does not call Claude, Codex, Ollama,
+or another remote service.
 
-- `generic` is the only stable, implemented adapter. It preserves `intercept_patterns`, detects prompts split across chunks or ANSI sequences, classifies credential input, and assigns a stable ID to each occurrence so repeated tmux snapshots, resizes, and attach/resume cycles do not duplicate a prompt.
-- `claude` and `codex` are experimental, unimplemented registry placeholders. Explicitly selecting either one fails before a terminal backend starts. When the adapter is omitted, their executable names currently fall back to `generic`; Relayer does not claim tool-specific support.
-- Vendor-specific detection rules will only be added together with anonymized, verified terminal fixtures. The current synthetic generic fixtures live in `internal/adapters/testdata/generic`; the Claude and Codex fixture directories contain policy notes only, not fabricated transcripts.
+Use another configuration path with:
 
-Events describe observations and pending human actions. The policy engine evaluates only those detected occurrences; it cannot retroactively stop an operation that already ran. An automatic decision is delivered only through the adapter that produced the exact pending event. If that adapter cannot encode the decision reliably, Relayer falls back to `ask`.
+```bash
+./relayer --config ./examples/local.yaml
+```
 
-## 🛠️ Configuration
+The old `--pane1` and `--pane2` flags still override the first two configured
+agents, but they are deprecated. Their values are tokenized into an argument
+vector; shell operators, variable expansion, globbing, pipes, substitutions,
+and redirections are not interpreted.
 
-Schema version 1 configures the terminal backend, session retention, agents, and interception patterns together:
+## TUI controls
+
+| Key or input | Action |
+| --- | --- |
+| `Ctrl+Left`, `Ctrl+Right` | Move focus between agents and the supervisor. |
+| `Ctrl+PageUp`, `Ctrl+PageDown` | Move between pages of agents. |
+| `Up`, `Down`, `PageUp`, `PageDown` | Scroll the focused viewport. |
+| Mouse wheel | Scroll the viewport under the pointer. |
+| Left click | Select an agent or the supervisor. |
+| `Enter` on a pending prompt | Send the supervisor input to that agent. |
+| `Enter` on an idle tmux agent | Attach the native tmux client. |
+| `Ctrl+B`, then `d` | Default tmux detach sequence; custom tmux bindings may differ. |
+| `Ctrl+C` | Stop supervision and begin backend shutdown. |
+
+When a prompt is pending, Relayer highlights the pane and focuses the
+supervisor. Credential and sensitive inputs are masked in the TUI. Masking does
+not prevent the target program from echoing the value into its own terminal or
+tmux scrollback.
+
+The in-TUI viewport is a bounded text view, not a full VT emulator. Use native
+tmux attach for full-screen interactive applications.
+
+## Configuration
+
+Version 1 configuration is strict YAML: unknown fields, aliases, merge keys,
+multiple documents, and incorrect scalar types are rejected before any backend
+starts. The following example shows every top-level section:
 
 ```yaml
 version: 1
-backend: auto
+backend: auto # pty, tmux, or auto
 
 sessions:
   persist_on_exit: false
@@ -139,153 +179,176 @@ policies:
   default_action: ask
   dry_run: false
   rules:
-    - name: ask-overwrite
+    - name: ask-reviewer-confirmations
       match:
         event_types: [confirmation]
-        text_regex: '(?i)overwrite'
+        agent_ids: [reviewer]
+        risk_levels: [unknown]
+        sensitive: false
+        text_regex: '(?i)continue'
       action: ask
 
 audit:
   enabled: true
-  mode: metadata
-  path: ""
+  mode: metadata # off, metadata, or detailed
+  path: ""       # empty selects the private per-user default
   max_file_size_mb: 10
   max_files: 5
 
 agents:
-  - id: claude-backend
-    name: Claude Backend
-    command:
-      - claude
-      - --append-system-prompt
-      - "Work only in this repository"
+  - id: builder
+    name: Builder
+    command: ["claude"]
     cwd: .
-    adapter: generic
-    backend: auto
     env:
-      RELAYER_PROFILE: "backend"
+      RELAYER_ROLE: builder
+    adapter: generic
+    backend: pty
 
-  - id: local-reviewer
-    name: Local Reviewer
-    shell: 'echo "Starting local reviewer" && exec ollama run llama3.2'
-    cwd: .
+  - id: reviewer
+    name: Local reviewer
+    command: ["ollama", "run", "llama3.2"]
     adapter: generic
     backend: tmux
-    env:
-      OLLAMA_HOST: "http://127.0.0.1:11434"
+
+  - id: scripted
+    name: Explicit shell example
+    shell: 'printf "ready\\n"; exec ./local-agent'
+    adapter: generic
+    backend: auto
 
 intercept_patterns:
   - pattern: '(?i)overwrite.*\[y/n\]'
-    description: "File overwrite confirmation"
-  - pattern: '(?i)do you want to continue'
-    description: "Generic CLI pause"
+    description: overwrite confirmation
+  - pattern: '(?im)password:[[:space:]]*$'
+    description: credential prompt
 ```
 
-The supported policy fields are deliberately limited:
+Important configuration behavior:
 
-- `default_action`: `allow`, `ask`, or `deny`; omitted configurations safely default to `ask`.
-- `dry_run`: boolean. Rules are evaluated and displayed, but every effective action becomes `ask` and no automatic encoding or delivery is attempted.
-- `rules`: an ordered list. Every rule requires a unique, non-empty `name`, a non-empty `match`, and an `action`.
-- `match.event_types`: one or more implemented actionable types: `confirmation` or `credential`.
-- `match.text_regex`: a Go regular expression compiled at startup and applied only to the event summary and matched prompt fragment, not to unbounded terminal history.
-- `match.agent_ids`: configured agent IDs, compared case-insensitively and validated before any agent starts.
-- `match.risk_levels`: `low`, `unknown`, or `high`.
-- `match.sensitive`: a boolean selector. Setting it to `false` never declassifies an event that the adapter marked sensitive or credential-bearing.
+- `command` is an exact argument vector and does not invoke a shell. Prefer it.
+- `shell` is mutually exclusive with `command` and explicitly invokes
+  `/bin/sh -c` on supported Unix systems. Treat shell text as code.
+- Relative `cwd` and audit paths are resolved from the configuration file's
+  directory. An agent working directory must already exist.
+- Agent environment entries override the inherited process environment. Avoid
+  putting credentials in YAML: generated configuration files use mode `0644`.
+- A blank per-agent backend inherits the global backend. `auto` chooses tmux
+  when its executable is found and otherwise falls back to PTY with a visible
+  warning. An explicit unavailable `tmux` backend is an error before startup.
+- `persist_on_exit` concerns detached tmux sessions. PTY sessions remain owned
+  by the Relayer process. Relayer never kills the tmux server.
+- `cleanup_on_success` removes a successful Relayer-owned tmux session even
+  when persistence is enabled.
+- `agents: []` means the two mocks; otherwise one to eight agents are accepted.
 
-Matchers inside one rule use AND semantics; values inside a list use OR semantics. Rules retain YAML order and the first matching rule wins. With no match, `default_action` applies. Sensitive and `credential` events always become `ask`. Automatic `allow` additionally requires an explicit `low` risk event. Invalid configuration stops startup, and runtime uncertainty never becomes an implicit allow. If a transport reports an error after delivery may have begun, Relayer freezes that pane instead of sending a second response that could reach the following prompt.
+See [configuration](docs/configuration.md) for validation, inheritance,
+backends, deprecated flags, policies, and legacy pattern-only files.
 
-The bundled `generic` adapter intentionally encodes manual input only. It never invents a `Y`, `N`, or tool-specific refusal, so its automatic `allow` and `deny` evaluations fall back to `ask`. The policy engine and delivery path are tested with explicit encoder adapters, but no Claude or Codex encoder is claimed.
+## Prompt detection and decisions
 
-Three valid policy examples are shown below. The `allow` and `deny` examples become automatic only when a future or custom tested adapter emits the matching event and explicitly supports that encoding:
+The generic adapter strips ANSI sequences, handles fragmented output and
+carriage-return rewrites, and tests the active prompt line against ordered
+regular expressions. It suppresses common quotation, code-fence, table,
+history, and old-log shapes to reduce false positives. Regex interception is
+still heuristic: it can miss a prompt or be tricked by output that resembles
+one.
 
-```yaml
-policies:
-  default_action: ask
-  dry_run: false
-  rules:
-    - name: allow-low-risk-reviewer-check
-      match:
-        event_types: [confirmation]
-        agent_ids: [reviewer]
-        risk_levels: [low]
-        sensitive: false
-        text_regex: '(?i)(go test|npm test|pytest)'
-      action: allow
+Policies use first-match order. Match fields are combined with AND, while
+values inside one list use OR. Conservative invariants always win:
 
-    - name: deny-high-risk-release-confirmation
-      match:
-        event_types: [confirmation]
-        agent_ids: [release]
-        risk_levels: [high]
-        sensitive: false
-      action: deny
+- credentials and sensitive events require a human;
+- automatic `allow` requires explicit `low` risk; `unknown` or `high` risk
+  cannot be auto-allowed;
+- a matched `deny` may be automatic for an otherwise valid, non-sensitive
+  confirmation, including at `unknown` or `high` risk;
+- invalid, incomplete, or non-actionable events ask;
+- dry-run mode records the proposal but asks instead of delivering it;
+- if an adapter cannot encode an automatic decision, Relayer asks instead.
 
-    - name: always-ask-for-credentials
-      match:
-        event_types: [credential]
-      action: ask
+The current generic adapter encodes manual supervisor input only. Consequently,
+an `allow` or `deny` policy evaluated against a generic prompt falls back to a
+human ask. `deny` means an adapter-defined refusal, not process termination.
+
+Only the `generic` adapter is implemented. The `claude` and `codex` identifiers
+are reserved experimental placeholders and fail clearly if selected. Relayer
+does not ship vendor transcripts. See [adapters](docs/adapters.md).
+
+## Audit log
+
+Newly generated configuration enables local `metadata` auditing. Configurations
+created before the audit block existed and legacy pattern-only configurations
+remain disabled for compatibility.
+
+The audit is JSONL and records Relayer lifecycle, event, policy, delivery,
+attach, and cleanup metadata. It never has fields for raw terminal output,
+commands, environment values, manual input, encoded decision bytes, or raw
+errors. Detailed summaries are bounded and redacted. Sensitive events use a
+constant summary and omit derivative event IDs.
+
+On Unix, the dedicated audit directory and files are checked for restrictive
+ownership, type, and permissions. Writes are synchronized line by line, and
+files rotate within configured bounds. Audit failure is fail-closed for startup
+and further decision delivery, but the audit is not signed and redaction is not
+a data-loss-prevention guarantee.
+
+See [audit logging](docs/audit.md) for the schema, default path, retention,
+failure behavior, and confidentiality limits.
+
+## Architecture and security
+
+Relayer separates configuration and validation, adapter event processing,
+policy evaluation, audit recording, terminal backends, and the TUI. Sessions
+communicate through typed events; terminal output, prompt windows, supervisor
+logs, and queues are bounded. Startup validates all plans and initializes the
+audit before launching an agent, and partial startup is rolled back.
+
+The tmux backend creates one marked session per agent and checks immutable
+ownership metadata before cleanup. Runtime launch files and FIFOs are private,
+but a process still runs with the current user's authority. Native tmux attach
+temporarily leaves the TUI and is outside policy interception until Relayer
+resynchronizes after detach.
+
+Read [architecture](docs/architecture.md), the [security model](docs/security-model.md),
+and [SECURITY.md](SECURITY.md) before using Relayer with untrusted commands or
+sensitive repositories.
+
+## Limits worth knowing
+
+- An agent may act before emitting a detectable prompt.
+- Prompt-like output can spoof the supervisor; a real prompt can evade regexes.
+- The current adapter cannot automate allow/deny delivery.
+- Terminal rendering is intentionally bounded and not a complete emulator.
+- tmux persistence can intentionally leave processes running after Relayer
+  exits; inspect them with `tmux list-sessions`.
+- Cancellation of an already blocked PTY input write relies on session
+  `Stop`/`Close` closing the PTY descriptor; a request context alone cannot yet
+  interrupt that in-flight Unix `write`.
+- Separate Relayer processes do not coordinate rotation of one shared audit
+  path.
+- Configuration files and command-line arguments are not secret stores.
+- WSL has not been validated, and native Windows is unsupported.
+
+See [troubleshooting](docs/troubleshooting.md) for startup, tmux, prompt,
+rendering, persistence, and audit diagnostics.
+
+## Development and contribution
+
+```bash
+go test -race ./...
+go vet ./...
+go build ./cmd/relayer
 ```
 
-Do not put passwords, tokens, OTP values, response bytes, or other secrets in policy YAML. Rules describe event metadata only.
+Contributions are welcome, especially product-neutral prompt fixtures, backend
+lifecycle tests, accessibility improvements, and documentation that narrows
+ambiguous security claims. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Report
+security issues using the private process in [SECURITY.md](SECURITY.md), not a
+public issue containing secrets.
 
-The optional `audit` block writes structured local JSON Lines without terminal output or human input. `metadata` records only closed lifecycle and policy fields; `detailed` additionally permits bounded summaries and metadata but still applies mandatory redaction. An empty path uses the user's private configuration directory, `max_files` includes the active file, and configurations without an audit block remain disabled for compatibility. Newly generated configurations enable `metadata` mode explicitly. See [Secure local audit logging](docs/audit.md) for the complete schema, permissions, rotation, redaction rules, anonymized examples, and confidentiality limits.
+The reproducible [`docs/demo.tape`](docs/demo.tape) exercises only bundled mocks
+and tmux; it does not reference a pre-rendered image or vendor transcript.
 
-Each agent must define exactly one execution mode:
+## License
 
-- `command` is an exact argv list. Relayer passes every element directly to the executable without an implicit shell, word splitting, variable or command expansion, globbing, pipes, or redirection. For example, an item containing spaces remains one argument.
-- `shell` is the explicit alternative for scripts that require shell syntax. It is passed verbatim to the platform shell—currently `/bin/sh -c` on supported Unix systems—so metacharacters such as `&&`, pipes, redirections, variables, and substitutions are interpreted.
-
-A relative `cwd` is resolved from the directory containing the selected configuration file. `env` is merged with Relayer's inherited environment without duplicate keys and agent values take precedence. PTY sessions default `TERM` to `xterm-256color`; tmux sessions preserve the fresh `TERM`, `TMUX`, and `TMUX_PANE` metadata supplied by tmux. Environment values, including sensitive credentials, are never written to Relayer's logs.
-
-Backend selectors are available globally and per agent:
-
-- `pty` preserves the original pseudo-terminal process manager.
-- `tmux` requires the `tmux` executable and fails before starting any agent when it is unavailable.
-- `auto` selects tmux when it is installed and otherwise falls back to PTY with a visible warning.
-
-Mixed concrete backends are supported in one run. The interface and startup logs show the effective backend and adapter of every agent; `auto` is always resolved before startup. The optional `adapter` key defaults through the registry to the stable `generic` fallback. The names `claude` and `codex` are reserved experimental placeholders and cannot be selected as working adapters yet.
-
-With `persist_on_exit: false`, shutdown destroys only sessions created and still owned by this Relayer run. With `persist_on_exit: true`, unfinished tmux sessions remain after Relayer exits. `cleanup_on_success: true` removes a tmux session after a confirmed zero exit code; failed sessions remain inspectable until the normal ownership policy applies. Relayer never calls `tmux kill-server`.
-
-An empty `agents: []` list activates the two built-in mocks. Agent IDs must be unique, and a version 1 file may define at most eight agents.
-
-Use an alternate file with `./relayer --config path/to/config.yaml`. If the selected file does not exist, Relayer creates a version 1 default without overwriting an existing user file. Legacy pattern-only files remain readable in both forms: a direct YAML list or an `intercept_patterns` wrapper; because they contain no agents, they use the two-mock fallback unless deprecated CLI overrides are supplied.
-
-### Manual tmux smoke test
-
-1. Install tmux and verify `tmux -V` succeeds.
-2. Set `backend: tmux`, keep `agents: []`, then run `./relayer --config config.yaml`.
-3. Confirm both mocks stream 20 lines and raise the overwrite interception.
-4. Answer one prompt from the supervisor and confirm that agent completes.
-5. Focus the other tmux pane and press `Enter`; interact with it directly, then press `Ctrl+B`, followed by `D`.
-6. Confirm Relayer returns, restores the pane dimensions, refreshes output/status, and does not repeat an already answered prompt.
-7. Repeat once with `persist_on_exit: true`; quit Relayer and inspect the remaining `relayer-*` session with `tmux list-sessions`. Remove that test session manually when finished.
-
-### Known limitations
-
-- The supported runtime targets are Linux, macOS, and WSL. Native Windows terminal execution is not implemented.
-- Bubble Tea viewports show a sanitized, bounded output stream; they are not VT100 emulators. Full-screen TUIs are used through the tmux attachment path.
-- tmux is an optional external dependency and must be installed when `backend: tmux` is selected.
-- Relayer monitoring stops after the Relayer process exits, even when tmux sessions are intentionally persisted.
-
-### Policy security model
-
-Relayer can approve or refuse only a prompt that an adapter has detected while the underlying CLI is still waiting for input, and only when that adapter can encode the selected action. A `deny` sends an adapter-defined refusal; it does not kill the process. `ask` is the safe default and remains mandatory for sensitive input.
-
-Relayer cannot block commands, file writes, network requests, or other effects that happened before a prompt was observed. Output-based rules can miss an event, and terminal output can be ambiguous or adversarial. Direct interaction during a native tmux attach is outside policy enforcement. Relayer is therefore not a sandbox, a system firewall, an authorization boundary, or a replacement for OS-level isolation and permissions.
-
-Use `dry_run: true` to review proposed rule matches before enabling automation. The supervisor marks dry-run evaluations clearly and retains only bounded terminal output plus whitelisted policy metadata; it does not log prompt matches, arbitrary event metadata, encoded decision bytes, or manual secret input.
-
-## 🤝 Contributing
-
-Contributions are welcome! Whether it's adding new default regex patterns for popular AI tools, improving the Lipgloss UI, or writing tests.
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-## 📄 License
-
-Distributed under the MIT License. See `LICENSE` for more information.
+Relayer is distributed under the [MIT License](LICENSE).

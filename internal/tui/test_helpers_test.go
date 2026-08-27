@@ -168,7 +168,6 @@ func mouseWheelUp(x, y int) tea.MouseMsg {
 		Y:      y,
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonWheelUp,
-		Type:   tea.MouseWheelUp,
 	}
 }
 
@@ -178,7 +177,6 @@ func mouseWheelDown(x, y int) tea.MouseMsg {
 		Y:      y,
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonWheelDown,
-		Type:   tea.MouseWheelDown,
 	}
 }
 
@@ -188,7 +186,6 @@ func mouseLeftClick(x, y int) tea.MouseMsg {
 		Y:      y,
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
-		Type:   tea.MouseLeft,
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/terminal"
 	"github.com/Hocsman/Relayer/internal/tui"
+	buildversion "github.com/Hocsman/Relayer/internal/version"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/creack/pty"
 )
@@ -33,7 +34,52 @@ const (
 // Run parses the public CLI, initializes the process owner and starts Bubble
 // Tea. It never returns while sessions are still owned by the manager.
 func Run(arguments []string, diagnostics io.Writer) error {
-	return run(arguments, diagnostics, productionBackendDependencies())
+	return runWithOutput(
+		arguments,
+		diagnostics,
+		diagnostics,
+		productionBackendDependencies(),
+	)
+}
+
+// RunWithOutput is the canonical public CLI entry. Version output is kept
+// separate from diagnostics and is handled before configuration, audit, or
+// backend initialization.
+func RunWithOutput(arguments []string, output io.Writer, diagnostics io.Writer) error {
+	return runWithOutput(
+		arguments,
+		output,
+		diagnostics,
+		productionBackendDependencies(),
+	)
+}
+
+func runWithOutput(
+	arguments []string,
+	output io.Writer,
+	diagnostics io.Writer,
+	dependencies backendDependencies,
+) error {
+	versionRequested := false
+	for _, argument := range arguments {
+		if argument == "--version" || argument == "-version" {
+			versionRequested = true
+			break
+		}
+	}
+	if versionRequested {
+		if len(arguments) != 1 {
+			return errors.New("l'option --version doit être utilisée seule")
+		}
+		if output == nil {
+			output = io.Discard
+		}
+		if _, err := fmt.Fprintln(output, buildversion.String()); err != nil {
+			return fmt.Errorf("écriture de la version: %w", err)
+		}
+		return nil
+	}
+	return run(arguments, diagnostics, dependencies)
 }
 
 func run(arguments []string, diagnostics io.Writer, dependencies backendDependencies) (returnErr error) {

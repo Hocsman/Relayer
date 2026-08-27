@@ -2,6 +2,11 @@
 
 Relayer can maintain a local JSON Lines audit trail describing lifecycle events and policy decisions. The audit is designed to answer _what Relayer observed and decided_ without recording terminal output, decision bytes, or human input.
 
+For the surrounding trust boundaries and failure model, see the
+[security model](security-model.md). Configuration semantics are documented in
+[configuration.md](configuration.md), and private vulnerability reports follow
+[SECURITY.md](../SECURITY.md).
+
 Each line is one independently decodable JSON object. The current `schema_version` is `1`.
 
 ## Configuration
@@ -35,6 +40,10 @@ With an empty `path`, Relayer uses the per-user configuration directory returned
 A relative configured path is resolved from the directory containing `config.yaml`. Relayer creates the dedicated audit directory with mode `0700` and active or rotated files with mode `0600` on Unix, and verifies that they belong to the current UID. A symlink used as the audit directory, active file, or rotated generation, non-regular files, and non-private existing audit directories are rejected.
 
 Every complete line is appended and synchronized before `Record` succeeds. Rotation happens before a new line would cross the configured threshold; a single oversized entry remains intact rather than being split. Writes and rotation are serialized across goroutines, and shutdown synchronizes and closes the file.
+
+If a previous process stopped during an append, reopening the sink truncates an
+incomplete final JSONL fragment while preserving complete lines before it. This
+is local crash recovery, not tamper detection.
 
 ## Recorded fields
 
@@ -106,3 +115,6 @@ Redaction is defense in depth, not a formal data-loss-prevention engine. Previou
 Permissions protect against other ordinary local users but do not protect against the same operating-system account, an administrator, root, malware, backups, disk snapshots, or post-write tampering. The audit is not cryptographically signed and is not an authorization boundary, sandbox, or system firewall.
 
 One recorder serializes all agents inside a Relayer run. Separate Relayer processes do not coordinate rotation with each other; configure distinct paths when running multiple instances concurrently.
+
+Return to the [README](../README.md) or continue with
+[troubleshooting](troubleshooting.md).

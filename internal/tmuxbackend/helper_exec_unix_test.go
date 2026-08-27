@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -118,7 +119,7 @@ func TestHelperMainExecPreservesTransportExactly(t *testing.T) {
 		t.Fatalf("read launch snapshot: %v", err)
 	}
 	if _, found := writtenSpec.Env[helperExecStaleEnv]; found {
-		t.Fatalf("stale helper variable unexpectedly entered launch snapshot: %#v", writtenSpec.Env)
+		t.Fatal("stale helper variable unexpectedly entered launch snapshot")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -173,15 +174,54 @@ func TestHelperMainExecPreservesTransportExactly(t *testing.T) {
 		t.Fatalf("target cwd = %q, want %q", report.Cwd, workingDirectory)
 	}
 	if !reflect.DeepEqual(report.Environment, writtenSpec.Env) {
-		t.Fatalf("target environment differs from exact launch snapshot:\n got %#v\nwant %#v", report.Environment, writtenSpec.Env)
+		t.Fatal("target environment differs from exact launch snapshot")
 	}
 	if _, found := report.Environment[helperExecStaleEnv]; found {
-		t.Fatalf("stale helper variable survived syscall.Exec: %#v", report.Environment)
+		t.Fatal("stale helper variable survived syscall.Exec")
 	}
 	for _, dynamic := range []string{"TERM", "TMUX", "TMUX_PANE"} {
 		if _, found := report.Environment[dynamic]; found {
 			t.Fatalf("helper invented dynamic tmux variable %q outside tmux", dynamic)
 		}
+	}
+}
+
+func TestPrepareLaunchSpecOpensGateBeforeRemovingSecrets(t *testing.T) {
+	runtimeDirectory := t.TempDir()
+	files, err := createLaunchFiles(runtimeDirectory, "ordered-handshake", agent.Spec{
+		Command: []string{"/usr/bin/true"},
+		Env:     map[string]string{"PRIVATE_TOKEN": "must-disappear-before-release"},
+	})
+	if err != nil {
+		t.Fatalf("create launch files: %v", err)
+	}
+	t.Cleanup(func() {
+		files.close()
+		files.remove()
+	})
+
+	openedWhileSpecPresent := false
+	spec, gate, err := prepareLaunchSpec(files.specPath, files.gatePath, func(path string) (*os.File, error) {
+		if _, statErr := os.Stat(files.specPath); statErr != nil {
+			return nil, fmt.Errorf("spec removed before FIFO open: %w", statErr)
+		}
+		openedWhileSpecPresent = true
+		return os.Open(path)
+	})
+	if err != nil {
+		t.Fatalf("prepare launch: %v", err)
+	}
+	if !openedWhileSpecPresent {
+		t.Fatal("FIFO opener was not called while the private spec existed")
+	}
+	if _, err := os.Stat(files.specPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("private spec still exists after FIFO handshake: %v", err)
+	}
+	if spec.Env["PRIVATE_TOKEN"] != "must-disappear-before-release" {
+		t.Fatal("prepared spec lost its in-memory environment snapshot")
+	}
+	if err := gate.Close(); err != nil {
+		t.Fatalf("close prepared gate: %v", err)
 	}
 }
 

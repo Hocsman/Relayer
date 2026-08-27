@@ -95,7 +95,12 @@ func (r *fakeRunner) Run(ctx context.Context, spec CommandSpec) ([]byte, error) 
 		case "pipe-pane":
 			fields := strings.Split(strings.TrimSpace(r.display), "\t")
 			if len(fields) == 4 {
-				fields[3] = "1"
+				// A shell command enables capture; tmux's no-command form
+				// disables an existing pane pipe.
+				fields[3] = "0"
+				if len(spec.Args) > 3 {
+					fields[3] = "1"
+				}
 				r.display = strings.Join(fields, "\t") + "\n"
 			}
 		case "display-message":
@@ -295,6 +300,17 @@ func TestManagerCloseHonorsPersistenceOwnershipAndIdempotence(t *testing.T) {
 			kills := runner.callsFor("kill-session")
 			if persist && len(kills) != 0 {
 				t.Fatalf("persistent Close killed sessions: %#v", kills)
+			}
+			if persist {
+				pipes := runner.callsFor("pipe-pane")
+				if len(pipes) != 4 {
+					t.Fatalf("persistent pipe calls = %#v, want two enables and two disables", pipes)
+				}
+				for _, call := range pipes[2:] {
+					if len(call.Args) != 3 || call.Args[1] != "-t" || !strings.HasPrefix(call.Args[2], "%") {
+						t.Fatalf("persistent Close did not use exact pane disable form: %#v", call.Args)
+					}
+				}
 			}
 			if !persist {
 				want := map[string]bool{
@@ -510,6 +526,177 @@ func TestManagerRetriesPrivateBufferDeletionOnClose(t *testing.T) {
 	for _, call := range runner.allCalls() {
 		if strings.Contains(strings.Join(call.Args, "\x00"), secret) {
 			t.Fatalf("secret leaked into argv: %#v", call.Args)
+		}
+	}
+}
+
+func TestManagerCleansPossiblyCreatedBufferAfterLoadError(t *testing.T) {
+	runner := newFakeRunner()
+	manager, _ := newTestManager(t, runner, Options{RunID: "uncertain-load", PersistOnExit: true})
+	if _, err := manager.Start(context.Background(), testSpec(t, "input"), terminal.Size{}); err != nil {
+		t.Fatal(err)
+	}
+
+	secret := "secret-accepted-before-client-error"
+	loadErr := errors.New("load acknowledgement lost")
+	runner.setFailure("load-buffer", loadErr)
+	if err := manager.Send(context.Background(), "input", []byte(secret)); !errors.Is(err, loadErr) {
+		t.Fatalf("Send error = %v, want load error", err)
+	}
+	if got := len(runner.callsFor("delete-buffer")); got != 1 {
+		t.Fatalf("delete-buffer calls after uncertain load = %d, want one", got)
+	}
+	if got := len(manager.secretBuffers()); got != 0 {
+		t.Fatalf("successful uncertain-load cleanup retained %d tracked buffer(s)", got)
+	}
+	if got := len(runner.callsFor("paste-buffer")); got != 0 {
+		t.Fatalf("paste-buffer ran after load error: %d call(s)", got)
+	}
+	for _, call := range runner.allCalls() {
+		if strings.Contains(strings.Join(call.Args, "\x00"), secret) {
+			t.Fatalf("secret leaked into command argv: %#v", call.Args)
+		}
+	}
+	runner.setFailure("load-buffer", nil)
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestManagerRetriesPossiblyCreatedBufferCleanupAfterLoadAndDeleteErrors(t *testing.T) {
+	runner := newFakeRunner()
+	manager, _ := newTestManager(t, runner, Options{RunID: "uncertain-load-retry", PersistOnExit: true})
+	if _, err := manager.Start(context.Background(), testSpec(t, "input"), terminal.Size{}); err != nil {
+		t.Fatal(err)
+	}
+
+	loadErr := errors.New("load acknowledgement lost")
+	deleteErr := errors.New("delete temporarily unavailable")
+	runner.setFailure("load-buffer", loadErr)
+	runner.setFailure("delete-buffer", deleteErr)
+	err := manager.Send(context.Background(), "input", []byte("must-not-remain"))
+	if !errors.Is(err, loadErr) || !errors.Is(err, deleteErr) {
+		t.Fatalf("Send error = %v, want joined load and cleanup errors", err)
+	}
+	if got := len(manager.secretBuffers()); got != 1 {
+		t.Fatalf("failed uncertain-load cleanup retained %d buffers, want one tracked", got)
+	}
+
+	runner.setFailure("load-buffer", nil)
+	runner.setFailure("delete-buffer", nil)
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatalf("Close cleanup retry: %v", err)
+	}
+	if got := len(manager.secretBuffers()); got != 0 {
+		t.Fatalf("Close retained %d tracked buffer(s)", got)
+	}
+	if got := len(runner.callsFor("delete-buffer")); got != 2 {
+		t.Fatalf("delete-buffer calls = %d, want immediate attempt and Close retry", got)
+	}
+}
+
+func TestManagerMonitorStopsAfterPersistentOwnershipLossWithoutKilling(t *testing.T) {
+	runner := newFakeRunner()
+	manager, events := newTestManager(t, runner, Options{
+		RunID:         "monitor-owner-loss",
+		PersistOnExit: true,
+		PollInterval:  minimumPollInterval,
+	})
+	info, err := manager.Start(context.Background(), testSpec(t, "agent"), terminal.Size{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := manager.session(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runner.mu.Lock()
+	identity := runner.identities[target.sessionID]
+	// A hostile marker containing a field separator makes the inspection shape
+	// malformed as well as mismatched; it must still terminalize supervision.
+	identity.owner = "foreign\towner"
+	runner.mu.Unlock()
+
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	var (
+		ownershipErrors int
+		exitedEvents    int
+		processExits    int
+	)
+	for exitedEvents == 0 {
+		select {
+		case emitted := <-events:
+			switch event := emitted.(type) {
+			case session.Error:
+				if event.SessionID == info.ID && errors.Is(event.Err, errOwnershipInvalid) {
+					ownershipErrors++
+				}
+			case session.Exited:
+				if event.SessionID == info.ID {
+					exitedEvents++
+					if !errors.Is(event.Err, errOwnershipInvalid) {
+						t.Fatalf("ownership loss Exited error = %v", event.Err)
+					}
+				}
+			case session.AdapterEvent:
+				if event.Event.SessionID == info.ID && event.Event.Type == adapters.EventProcessExit {
+					processExits++
+				}
+			}
+		case <-deadline.C:
+			t.Fatal("monitor did not terminalize persistent ownership loss")
+		}
+	}
+	if ownershipErrors != 1 {
+		t.Fatal("monitor did not emit the typed ownership error before Exited")
+	}
+	select {
+	case <-target.done:
+	default:
+		t.Fatal("ownership loss left session Done open")
+	}
+	if target.isPresent() {
+		t.Fatal("ownership loss left foreign target marked present")
+	}
+	if kills := runner.callsFor("kill-session"); len(kills) != 0 {
+		t.Fatalf("ownership loss killed foreign session: %#v", kills)
+	}
+	if probes := runner.callsFor("has-session"); len(probes) != 0 {
+		t.Fatalf("typed ownership loss used an ambiguous existence probe: %#v", probes)
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatalf("Close after ownership loss: %v", err)
+	}
+	for {
+		select {
+		case emitted := <-events:
+			switch event := emitted.(type) {
+			case session.Error:
+				if event.SessionID == info.ID && errors.Is(event.Err, errOwnershipInvalid) {
+					ownershipErrors++
+				}
+			case session.Exited:
+				if event.SessionID == info.ID {
+					exitedEvents++
+				}
+			case session.AdapterEvent:
+				if event.Event.SessionID == info.ID && event.Event.Type == adapters.EventProcessExit {
+					processExits++
+				}
+			}
+		default:
+			if ownershipErrors != 1 {
+				t.Fatalf("ownership loss errors = %d, want exactly one", ownershipErrors)
+			}
+			if exitedEvents != 1 {
+				t.Fatalf("ownership loss Exited events = %d, want exactly one", exitedEvents)
+			}
+			if processExits != 0 {
+				t.Fatalf("ownership loss emitted %d false process_exit event(s)", processExits)
+			}
+			return
 		}
 	}
 }

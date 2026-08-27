@@ -13,35 +13,28 @@ import (
 )
 
 func executeLaunchSpec(specPath, gatePath string) error {
-	spec, err := readLaunchSpec(specPath)
+	spec, gate, err := prepareLaunchSpec(specPath, gatePath, os.Open)
 	if err != nil {
 		return err
 	}
-	// Remove secrets before waiting and before the user process starts. The
-	// decoded values now live only in this short-lived helper's memory.
-	if err := os.Remove(specPath); err != nil {
-		return fmt.Errorf("suppression de la spécification privée: %w", err)
-	}
-
-	gateInfo, err := os.Lstat(gatePath)
-	if err != nil {
-		return fmt.Errorf("inspection du signal de démarrage: %w", err)
-	}
-	if gateInfo.Mode()&os.ModeNamedPipe == 0 || gateInfo.Mode().Perm()&0o077 != 0 {
-		return errors.New("permissions invalides pour le signal de démarrage")
-	}
-	gate, err := os.Open(gatePath)
-	if err != nil {
-		return fmt.Errorf("ouverture du signal de démarrage: %w", err)
-	}
 	_, readErr := bufio.NewReader(gate).ReadString('\n')
 	closeErr := gate.Close()
-	_ = os.Remove(gatePath)
+	removeErr := os.Remove(gatePath)
 	if readErr != nil {
-		return fmt.Errorf("attente du signal de démarrage: %w", readErr)
+		return errors.Join(
+			fmt.Errorf("attente du signal de démarrage: %w", readErr),
+			wrapGateCloseError(closeErr),
+			wrapGateRemoveError(removeErr),
+		)
 	}
 	if closeErr != nil {
-		return fmt.Errorf("fermeture du signal de démarrage: %w", closeErr)
+		return errors.Join(
+			fmt.Errorf("fermeture du signal de démarrage: %w", closeErr),
+			wrapGateRemoveError(removeErr),
+		)
+	}
+	if err := wrapGateRemoveError(removeErr); err != nil {
+		return err
 	}
 
 	arguments := append([]string(nil), spec.Command...)
@@ -88,4 +81,71 @@ func executeLaunchSpec(specPath, gatePath string) error {
 		}
 	}
 	return syscall.Exec(executable, arguments, os.Environ())
+}
+
+// prepareLaunchSpec opens and verifies the FIFO before unlinking the private
+// specification, so disappearance never advertises readiness before the helper
+// owns a reader. The parent also retains its O_RDWR endpoint after queuing the
+// start signal, making the handshake independent of process scheduling. The
+// decoded specification remains only in this short-lived process memory.
+func prepareLaunchSpec(
+	specPath string,
+	gatePath string,
+	openGate func(string) (*os.File, error),
+) (launchSpec, *os.File, error) {
+	spec, err := readLaunchSpec(specPath)
+	if err != nil {
+		return launchSpec{}, nil, err
+	}
+	gateInfo, err := os.Lstat(gatePath)
+	if err != nil {
+		return launchSpec{}, nil, fmt.Errorf("inspection du signal de démarrage: %w", err)
+	}
+	if !validLaunchGate(gateInfo) {
+		return launchSpec{}, nil, errors.New("permissions invalides pour le signal de démarrage")
+	}
+	gate, err := openGate(gatePath)
+	if err != nil {
+		return launchSpec{}, nil, fmt.Errorf("ouverture du signal de démarrage: %w", err)
+	}
+	openedInfo, statErr := gate.Stat()
+	if statErr != nil || !validLaunchGate(openedInfo) || !os.SameFile(gateInfo, openedInfo) {
+		closeErr := gate.Close()
+		if statErr != nil {
+			return launchSpec{}, nil, errors.Join(
+				fmt.Errorf("validation du signal de démarrage ouvert: %w", statErr),
+				wrapGateCloseError(closeErr),
+			)
+		}
+		return launchSpec{}, nil, errors.Join(
+			errors.New("signal de démarrage remplacé ou invalide"),
+			wrapGateCloseError(closeErr),
+		)
+	}
+	if err := os.Remove(specPath); err != nil {
+		closeErr := gate.Close()
+		return launchSpec{}, nil, errors.Join(
+			fmt.Errorf("suppression de la spécification privée: %w", err),
+			wrapGateCloseError(closeErr),
+		)
+	}
+	return spec, gate, nil
+}
+
+func validLaunchGate(info os.FileInfo) bool {
+	return info != nil && info.Mode()&os.ModeNamedPipe != 0 && info.Mode().Perm()&0o077 == 0
+}
+
+func wrapGateCloseError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("fermeture du signal de démarrage: %w", err)
+}
+
+func wrapGateRemoveError(err error) error {
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return fmt.Errorf("suppression du signal de démarrage: %w", err)
 }

@@ -124,4 +124,77 @@ func TestTmuxIntegrationLifecyclePromptInputAndExternalSessionIsolation(t *testi
 	if output, err := exec.Command(tmuxPath, "has-session", "-t", externalName).CombinedOutput(); err != nil {
 		t.Fatalf("Relayer interfered with external tmux session: %v (%s)", err, output)
 	}
+
+	// A persistent session remains owned and alive after Relayer closes, but
+	// its pipe-pane helper must not survive with a private FIFO that no longer
+	// exists. Exercise the real tmux state rather than only the fake runner.
+	persistentEvents := make(chan session.Event, 128)
+	persistentManager, err := NewManager(
+		context.Background(),
+		persistentEvents,
+		intercept.DefaultPatterns(),
+		4096,
+		Options{
+			TmuxPath:      tmuxPath,
+			HelperPath:    helperWrapper,
+			RuntimeDir:    runtimeRoot,
+			RunID:         "integration-persistent",
+			PollInterval:  minimumPollInterval,
+			PersistOnExit: true,
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewManager persistent: %v", err)
+	}
+	var persistentSessionID string
+	t.Cleanup(func() {
+		if persistentSessionID != "" {
+			_ = exec.Command(tmuxPath, "kill-session", "-t", persistentSessionID).Run()
+		}
+	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		_ = persistentManager.Close(ctx)
+	})
+
+	persistentInfo, err := persistentManager.Start(context.Background(), agent.Spec{
+		ID:      "persistent-agent",
+		Name:    "Persistent agent",
+		Command: []string{"/bin/sh", "-c", `trap 'exit 0' HUP TERM INT; printf 'persistent-ready\n'; while :; do sleep 1; done`},
+		Cwd:     runtimeRoot,
+		Adapter: agent.AdapterGeneric,
+		Backend: agent.BackendTmux,
+	}, terminal.Size{Columns: 72, Rows: 18})
+	if err != nil {
+		t.Fatalf("Start persistent: %v", err)
+	}
+	persistentTarget, err := persistentManager.session(persistentInfo.ID)
+	if err != nil {
+		t.Fatalf("persistent target: %v", err)
+	}
+	persistentSessionID = persistentTarget.sessionID
+	persistentPaneID := persistentTarget.paneID
+
+	ctx, cancel = context.WithTimeout(context.Background(), 4*time.Second)
+	if err := persistentManager.Close(ctx); err != nil {
+		cancel()
+		t.Fatalf("Close persistent: %v", err)
+	}
+	cancel()
+
+	pipeState, err := exec.Command(
+		tmuxPath,
+		"display-message", "-p", "-t", persistentPaneID,
+		"#{session_id}\t#{pane_dead}\t#{pane_pipe}",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("inspect persistent pane after Close: %v (%s)", err, pipeState)
+	}
+	if got, want := strings.TrimSpace(string(pipeState)), persistentSessionID+"\t0\t0"; got != want {
+		t.Fatalf("persistent pane state after Close = %q, want %q", got, want)
+	}
+	if output, err := exec.Command(tmuxPath, "has-session", "-t", persistentSessionID).CombinedOutput(); err != nil {
+		t.Fatalf("persistent session did not survive Close: %v (%s)", err, output)
+	}
 }

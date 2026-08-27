@@ -5,16 +5,19 @@ package session
 import (
 	"context"
 	"errors"
+	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/intercept"
-	"github.com/Hocsman/Relayer/internal/platform"
 	"github.com/creack/pty"
 )
 
@@ -164,17 +167,27 @@ func TestManagerCloseKillsSignalIgnoringDescendants(t *testing.T) {
 	}
 	defer manager.Close()
 
-	command := `trap '' TERM HUP; (trap '' TERM HUP; while :; do sleep 30; done) & printf 'READY\n'; wait`
+	heartbeatPath := filepath.Join(t.TempDir(), "descendant-heartbeat")
+	if err := syscall.Mkfifo(heartbeatPath, 0o600); err != nil {
+		t.Fatalf("creating descendant heartbeat FIFO: %v", err)
+	}
+	heartbeat, err := os.OpenFile(heartbeatPath, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		t.Fatalf("opening descendant heartbeat FIFO: %v", err)
+	}
+	defer heartbeat.Close()
+
+	command := `trap '' TERM HUP; (trap '' TERM HUP; exec 3>"$RELAYER_HEARTBEAT"; while :; do printf x >&3; sleep 0.01; done) & printf 'READY\n'; wait`
 	info, err := manager.Start(agent.Spec{
 		ID:    "stubborn-group",
 		Name:  "stubborn group",
 		Shell: command,
+		Env:   map[string]string{"RELAYER_HEARTBEAT": heartbeatPath},
 	}, 40, 10)
 	if err != nil {
 		t.Fatalf("Start returned an error: %v", err)
 	}
 	done, _ := manager.Done(info.ID)
-	session, _ := manager.session(info.ID)
 
 	deadline := time.NewTimer(3 * time.Second)
 	defer deadline.Stop()
@@ -190,6 +203,21 @@ func TestManagerCloseKillsSignalIgnoringDescendants(t *testing.T) {
 			t.Fatal("timed out waiting for the stubborn child process")
 		}
 	}
+	heartbeatByte := make([]byte, 1)
+	for {
+		count, readErr := heartbeat.Read(heartbeatByte)
+		if count > 0 {
+			break
+		}
+		if readErr != nil && !errors.Is(readErr, syscall.EAGAIN) && !errors.Is(readErr, io.EOF) {
+			t.Fatalf("reading descendant heartbeat: %v", readErr)
+		}
+		select {
+		case <-deadline.C:
+			t.Fatal("descendant did not produce a heartbeat")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
 
 	started := time.Now()
 	manager.Close()
@@ -202,14 +230,24 @@ func TestManagerCloseKillsSignalIgnoringDescendants(t *testing.T) {
 		t.Fatal("Done is still open after Close")
 	}
 
-	// A killed orphan may remain visible briefly while the system reaps it.
-	reapedDeadline := time.Now().Add(time.Second)
-	for platform.ProcessGroupExists(session.cmd) && time.Now().Before(reapedDeadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if platform.ProcessGroupExists(session.cmd) {
-		platform.KillProcessGroup(session.cmd)
-		t.Fatal("signal-ignoring descendants survived Close")
+	// A SIGKILLed orphan can remain in the process table as a zombie until PID 1
+	// reaps it. The FIFO reaches EOF only after every writer has closed, which
+	// proves that neither the descendant nor one of its children remains active.
+	closedDeadline := time.NewTimer(time.Second)
+	defer closedDeadline.Stop()
+	for {
+		count, readErr := heartbeat.Read(heartbeatByte)
+		if count == 0 && (readErr == nil || errors.Is(readErr, io.EOF)) {
+			break
+		}
+		if readErr != nil && !errors.Is(readErr, syscall.EAGAIN) {
+			t.Fatalf("reading descendant heartbeat after Close: %v", readErr)
+		}
+		select {
+		case <-closedDeadline.C:
+			t.Fatal("signal-ignoring descendant retained its heartbeat writer after Close")
+		case <-time.After(5 * time.Millisecond):
+		}
 	}
 }
 
@@ -334,17 +372,35 @@ func TestManagerCoalescesOutputButNeverDropsPrompt(t *testing.T) {
 	if !ok || placeholder.SessionID != "saturated" {
 		t.Fatalf("non-essential output displaced the saturated event: %#v", queued)
 	}
-	select {
-	case queued := <-events:
-		prompt, ok := queued.(AdapterEvent)
-		if !ok || prompt.Event.SessionID != info.ID ||
-			prompt.Event.Metadata["pattern"] != "overwrite" {
-			t.Fatalf("essential prompt event = %#v", queued)
+	promptDeadline := time.NewTimer(time.Second)
+	defer promptDeadline.Stop()
+	for {
+		select {
+		case queued := <-events:
+			switch event := queued.(type) {
+			case OutputAvailable:
+				// Once the placeholder is drained, an OnOutput call that was
+				// already scheduled may legitimately publish a coalesced viewport
+				// invalidation before the essential semantic event.
+				if event.SessionID != info.ID {
+					t.Fatalf("unexpected output notification before prompt: %#v", event)
+				}
+				continue
+			case AdapterEvent:
+				if event.Event.SessionID != info.ID ||
+					event.Event.Metadata["pattern"] != "overwrite" {
+					t.Fatalf("essential prompt event = %#v", queued)
+				}
+				goto promptReceived
+			default:
+				t.Fatalf("unexpected event before prompt: %#v", queued)
+			}
+		case <-promptDeadline.C:
+			t.Fatal("essential prompt was dropped while the event channel was saturated")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("essential prompt was dropped while the event channel was saturated")
 	}
 
+promptReceived:
 	if err := manager.SendInput(info.ID, "yes"); err != nil {
 		t.Fatalf("SendInput returned an error: %v", err)
 	}

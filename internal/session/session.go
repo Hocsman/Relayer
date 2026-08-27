@@ -49,7 +49,7 @@ func (s *processSession) setResult(err error) {
 	s.resultMu.Unlock()
 }
 
-func (s *processSession) result() (bool, error, *int) {
+func (s *processSession) result() (bool, *int, error) {
 	s.resultMu.RLock()
 	defer s.resultMu.RUnlock()
 	if !s.exited {
@@ -60,7 +60,7 @@ func (s *processSession) result() (bool, error, *int) {
 		code := s.cmd.ProcessState.ExitCode()
 		exitCode = &code
 	}
-	return true, s.waitErr, exitCode
+	return true, exitCode, s.waitErr
 }
 
 func (s *processSession) write(input []byte) error {

@@ -1,41 +1,212 @@
 name: Build
 
-# Déclenche l'action à chaque push ou pull request sur la branche main
 on:
   push:
-    branches: ["main"]
+    branches: [main]
   pull_request:
-    branches: ["main"]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-    name: Test & Build
-    runs-on: ubuntu-latest # Le serveur virtuel utilisé par GitHub
+  quality:
+    name: Quality gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
-      # 1. Télécharge votre code sur le serveur
       - name: Check out code
         uses: actions/checkout@v4
 
-      # 2. Installe le langage Go
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.21" # Spécifiez la version minimale requise
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
 
-      # 3. Télécharge les dépendances (Bubble Tea, PTY, etc.)
-      - name: Install dependencies
-        run: go mod tidy
+      - name: Download modules
+        run: go mod download
 
-      - name: Verify module files
-        run: git diff --exit-code -- go.mod go.sum
+      - name: Verify downloaded modules
+        run: go mod verify
 
-      - name: Test
-        run: go test -race ./...
+      - name: Verify module files are tidy
+        shell: bash
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Verify formatting
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [[ -n "$unformatted" ]]; then
+            printf 'Files requiring gofmt:\n%s\n' "$unformatted"
+            exit 1
+          fi
 
       - name: Vet
         run: go vet ./...
 
-      # 4. Tente de compiler le projet (sans générer le binaire final, juste pour vérifier que ça marche)
-      - name: Build
-        run: go build -v ./...
+      - name: Staticcheck
+        uses: dominikh/staticcheck-action@v1.4.1
+        with:
+          version: "2026.1"
+          install-go: false
+
+      - name: Install govulncheck
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/relayer-tools"
+          GOBIN="$RUNNER_TEMP/relayer-tools" go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+
+      - name: Scan dependencies for known vulnerabilities
+        run: $RUNNER_TEMP/relayer-tools/govulncheck ./...
+
+      - name: Test with coverage
+        shell: bash
+        run: |
+          private_tmux_dir="$(mktemp -d "$RUNNER_TEMP/relayer-quality-tmux.XXXXXX")"
+          chmod 700 "$private_tmux_dir"
+          export TMUX_TMPDIR="$private_tmux_dir"
+          unset TMUX TMUX_PANE
+
+          cleanup_tmux() {
+            if command -v tmux >/dev/null 2>&1; then
+              tmux kill-server >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup_tmux EXIT
+
+          go test -count=1 -timeout=5m -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Report coverage
+        run: go tool cover -func=coverage.out
+
+      - name: Validate GoReleaser configuration
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: v2.17.1
+          args: check
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Verify downloaded modules
+        run: go mod verify
+
+      - name: Test
+        shell: bash
+        run: |
+          private_tmux_dir="$(mktemp -d "$RUNNER_TEMP/relayer-test-tmux.XXXXXX")"
+          chmod 700 "$private_tmux_dir"
+          export TMUX_TMPDIR="$private_tmux_dir"
+          unset TMUX TMUX_PANE
+
+          cleanup_tmux() {
+            if command -v tmux >/dev/null 2>&1; then
+              tmux kill-server >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup_tmux EXIT
+
+          go test -count=1 -timeout=5m ./...
+
+      - name: Test with the race detector
+        shell: bash
+        run: |
+          private_tmux_dir="$(mktemp -d "$RUNNER_TEMP/relayer-race-tmux.XXXXXX")"
+          chmod 700 "$private_tmux_dir"
+          export TMUX_TMPDIR="$private_tmux_dir"
+          unset TMUX TMUX_PANE
+
+          cleanup_tmux() {
+            if command -v tmux >/dev/null 2>&1; then
+              tmux kill-server >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup_tmux EXIT
+
+          go test -race -count=1 -timeout=5m ./...
+
+      - name: Build all commands
+        run: go build -trimpath -buildvcs=false ./...
+
+  tmux-integration:
+    name: tmux integration (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Install tmux on Ubuntu
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes tmux
+
+      - name: Install tmux on macOS
+        if: runner.os == 'macOS'
+        run: brew install tmux
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Run tmux integration test in an isolated server
+        shell: bash
+        run: |
+          private_tmux_dir="$(mktemp -d "$RUNNER_TEMP/relayer-tmux.XXXXXX")"
+          chmod 700 "$private_tmux_dir"
+          export TMUX_TMPDIR="$private_tmux_dir"
+          unset TMUX TMUX_PANE
+
+          cleanup_tmux() {
+            tmux kill-server >/dev/null 2>&1 || true
+          }
+          trap cleanup_tmux EXIT
+
+          tmux -V
+          go test -race -count=1 -timeout=3m \
+            -run '^TestTmuxIntegrationLifecyclePromptInputAndExternalSessionIsolation$' \
+            ./internal/tmuxbackend

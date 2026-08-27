@@ -38,12 +38,6 @@ func (s *tuiAuditSink) WriteLine(line []byte) error {
 
 func (s *tuiAuditSink) Close() error { return nil }
 
-func (s *tuiAuditSink) failOnAttempt(attempt int) {
-	s.mu.Lock()
-	s.failAt = attempt
-	s.mu.Unlock()
-}
-
 func (s *tuiAuditSink) count() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -167,7 +161,7 @@ func TestAuditAutomaticDecisionIsDurableOrderedAndDeduplicated(t *testing.T) {
 		t.Fatal("duplicate occurrence produced another audit record or command")
 	}
 
-	application, _ = updateModel(t, application, executeCommand(t, command))
+	_, _ = updateModel(t, application, executeCommand(t, command))
 	entries = sink.entries(t)
 	if len(entries) != 4 || entries[3].Kind != audit.KindDelivery ||
 		entries[3].Outcome != audit.OutcomeSucceeded || entries[3].Decision != audit.DecisionAllow {
@@ -290,7 +284,7 @@ func TestAuditManualDecisionNeverPersistsInput(t *testing.T) {
 		t.Fatal("manual input reached the synchronized audit record")
 	}
 
-	application, _ = updateModel(t, application, executeCommand(t, delivery))
+	_, _ = updateModel(t, application, executeCommand(t, delivery))
 	if calls := backend.inputSnapshot(); len(calls) != 1 || calls[0].value != manualSecret {
 		t.Fatalf("manual backend calls = %#v", calls)
 	}
@@ -319,7 +313,7 @@ func TestAuditEventSummaryShowsSafeTextAndMasksSensitiveText(t *testing.T) {
 	credential := testAdapterEvent("agent-b", "password", "credential-summary-secret", true).Event
 
 	application, _ = updateModel(t, application, session.AdapterEvent{Event: normal})
-	application, _ = updateModel(t, application, session.AdapterEvent{Event: credential})
+	_, _ = updateModel(t, application, session.AdapterEvent{Event: credential})
 	entries := sink.entries(t)
 	if len(entries) != 4 || entries[0].Kind != audit.KindEventDetected ||
 		entries[0].Summary != "safe visible summary" || entries[2].Kind != audit.KindEventDetected ||
@@ -435,7 +429,7 @@ func TestAuditAttachIsPairedAroundResyncAndFailsClosed(t *testing.T) {
 		entries[1].Outcome != audit.OutcomeSucceeded || entries[1].Reason != "detach_resynced" {
 		t.Fatalf("attach finish audit = %#v", entries)
 	}
-	application, duplicateFinish := updateModel(t, application, resynced)
+	_, duplicateFinish := updateModel(t, application, resynced)
 	if duplicateFinish != nil || sink.count() != 2 {
 		t.Fatal("duplicate resync completion produced another terminal audit entry")
 	}
@@ -478,7 +472,7 @@ func TestAuditResyncFailureRecordsOneFinishAndBackendError(t *testing.T) {
 
 	application, attach := updateModel(t, application, tea.KeyMsg{Type: tea.KeyEnter})
 	application, resync := updateModel(t, application, executeCommand(t, attach))
-	application, _ = updateModel(t, application, executeCommand(t, resync))
+	_, _ = updateModel(t, application, executeCommand(t, resync))
 	entries := sink.entries(t)
 	if len(entries) != 3 || entries[0].Kind != audit.KindAttachStarted ||
 		entries[1].Kind != audit.KindAttachFinished || entries[1].Outcome != audit.OutcomeFailed ||
@@ -560,7 +554,7 @@ func TestAuditRecordsProcessExitAndSafeBackendErrors(t *testing.T) {
 		strings.Contains(sink.raw(), "resize-error-secret-sentinel") {
 		t.Fatal("raw backend error leaked into audit")
 	}
-	application, _ = updateModel(t, application, session.Exited{SessionID: "agent-b"})
+	_, _ = updateModel(t, application, session.Exited{SessionID: "agent-b"})
 	if sink.count() != 4 {
 		t.Fatal("legacy Exited duplicated canonical process_exit audit records")
 	}

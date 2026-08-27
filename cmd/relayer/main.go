@@ -15,7 +15,7 @@ func main() {
 	if handled, exitCode := tmuxbackend.HelperMain(os.Args[1:], os.Stderr); handled {
 		os.Exit(exitCode)
 	}
-	if err := app.Run(os.Args[1:], os.Stderr); err != nil {
+	if err := app.RunWithOutput(os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return
 		}

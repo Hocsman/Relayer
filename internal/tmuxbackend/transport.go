@@ -2,6 +2,7 @@ package tmuxbackend
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -124,13 +125,16 @@ func (files *launchFiles) release() error {
 	if files == nil || files.gate == nil {
 		return nil
 	}
-	_, err := files.gate.Write([]byte("start\n"))
-	closeErr := files.gate.Close()
-	files.gate = nil
-	if err != nil {
-		return err
+	if _, err := files.gate.Write([]byte("start\n")); err != nil {
+		closeErr := files.gate.Close()
+		files.gate = nil
+		return errors.Join(err, closeErr)
 	}
-	return closeErr
+	// Keep this O_RDWR endpoint alive until the helper has opened its reader.
+	// FIFO bytes may be queued before that point; closing here would let a
+	// delayed helper block forever if no writer remained. The descriptor count
+	// is bounded by the configured agent count and closeTransport closes it.
+	return nil
 }
 
 func (files *launchFiles) close() {

@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.semver.outputs.version }}
+
+    steps:
+      - name: Validate semantic version tag
+        id: semver
+        shell: bash
+        run: |
+          tag="$GITHUB_REF_NAME"
+          semver_re='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
+          if [[ ! "$tag" =~ $semver_re ]]; then
+            printf 'Invalid release tag: %s\nExpected vMAJOR.MINOR.PATCH with optional SemVer prerelease/build metadata.\n' "$tag" >&2
+            exit 1
+          fi
+          printf 'version=%s\n' "${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the tagged commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Download and verify modules
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Verify module files are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Install tmux
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes tmux
+
+      - name: Test, including isolated tmux integration
+        shell: bash
+        run: |
+          private_tmux_dir="$(mktemp -d "$RUNNER_TEMP/relayer-release-tmux.XXXXXX")"
+          chmod 700 "$private_tmux_dir"
+          export TMUX_TMPDIR="$private_tmux_dir"
+          unset TMUX TMUX_PANE
+
+          cleanup_tmux() {
+            tmux kill-server >/dev/null 2>&1 || true
+          }
+          trap cleanup_tmux EXIT
+
+          tmux -V
+          go test -race -count=1 -timeout=5m ./...
+
+      - name: Validate injected version metadata
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          go build -trimpath -buildvcs=false \
+            -ldflags "-s -w -X github.com/Hocsman/Relayer/internal/version.Version=$version -X github.com/Hocsman/Relayer/internal/version.Commit=$GITHUB_SHA" \
+            -o "$RUNNER_TEMP/relayer" ./cmd/relayer
+          actual="$("$RUNNER_TEMP/relayer" --version)"
+          expected="relayer $version (commit $GITHUB_SHA)"
+          if [[ "$actual" != "$expected" ]]; then
+            printf 'Unexpected version output: %s\n' "$actual" >&2
+            exit 1
+          fi
+
+      - name: Validate GoReleaser configuration
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: v2.17.1
+          args: check
+
+  publish:
+    name: Publish release
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Build and publish release artifacts
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: v2.17.1
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

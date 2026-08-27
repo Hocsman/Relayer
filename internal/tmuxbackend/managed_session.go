@@ -41,6 +41,7 @@ type managedSession struct {
 	attachCancel     context.CancelFunc
 	attachStop       func() bool
 	exitEmitted      bool
+	captureDisabled  bool
 	appliedSize      terminal.Size
 	sizeKnown        bool
 
@@ -147,6 +148,18 @@ func (s *managedSession) isPresent() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.exists
+}
+
+func (s *managedSession) captureNeedsDisable() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.exists && !s.captureDisabled
+}
+
+func (s *managedSession) markCaptureDisabled() {
+	s.mu.Lock()
+	s.captureDisabled = true
+	s.mu.Unlock()
 }
 
 func (s *managedSession) beginAttach(cancel context.CancelFunc, stop func() bool) bool {

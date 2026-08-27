@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/Hocsman/Relayer/internal/agent"
@@ -98,15 +99,15 @@ func TestLaunchSpecIsPrivateExactAndCarriesFreshMergedEnvironment(t *testing.T) 
 		t.Fatalf("decode private spec: %v", err)
 	}
 	if !reflect.DeepEqual(decoded.Command, spec.Command) || decoded.Cwd != spec.Cwd {
-		t.Fatalf("decoded spec = %#v, want command/cwd from %#v", decoded, spec)
+		t.Fatal("decoded launch command or working directory differs from the test specification")
 	}
 	if decoded.Env["RELAYER_PARENT_SNAPSHOT_TOKEN"] != "parent-secret" ||
 		decoded.Env["EXPLICIT_TOKEN"] != "configured-secret" || decoded.Env["EMPTY"] != "" {
-		t.Fatalf("fresh merged environment missing values: %#v", decoded.Env)
+		t.Fatal("fresh merged environment missing expected values")
 	}
 	for _, dynamic := range []string{"TERM", "TMUX", "TMUX_PANE"} {
 		if _, found := decoded.Env[dynamic]; found {
-			t.Fatalf("tmux-owned environment %s was serialized: %#v", dynamic, decoded.Env)
+			t.Fatalf("tmux-owned environment %s was serialized", dynamic)
 		}
 	}
 
@@ -150,6 +151,47 @@ func TestReadLaunchSpecRejectsLoosePermissionsSymlinksAndOversize(t *testing.T) 
 	}
 	if _, err := readLaunchSpec(oversize); err == nil {
 		t.Fatal("oversized spec was accepted")
+	}
+}
+
+func TestLaunchReleaseKeepsGateWriterUntilTransportClose(t *testing.T) {
+	files, err := createLaunchFiles(t.TempDir(), "release-handshake", agent.Spec{
+		Command: []string{"/usr/bin/true"},
+	})
+	if err != nil {
+		t.Fatalf("create launch files: %v", err)
+	}
+	t.Cleanup(func() {
+		files.close()
+		files.remove()
+	})
+	if err := files.release(); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if files.gate == nil {
+		t.Fatal("release closed the only gate writer before helper readiness")
+	}
+
+	reader, err := os.OpenFile(files.gatePath, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		t.Fatalf("open delayed helper reader: %v", err)
+	}
+	buffer := make([]byte, len("start\n"))
+	read, readErr := reader.Read(buffer)
+	closeErr := reader.Close()
+	if readErr != nil {
+		t.Fatalf("delayed helper read: %v", readErr)
+	}
+	if closeErr != nil {
+		t.Fatalf("close delayed helper reader: %v", closeErr)
+	}
+	if got := string(buffer[:read]); got != "start\n" {
+		t.Fatalf("delayed helper read %q, want start signal", got)
+	}
+
+	files.close()
+	if files.gate != nil {
+		t.Fatal("transport close retained the gate descriptor")
 	}
 }
 

@@ -27,8 +27,7 @@ func TestKeyboardSwitchesPanelsAndCtrlCShutsDown(t *testing.T) {
 		t.Fatalf("Ctrl+Left focus = %#v", application.focus)
 	}
 
-	updated, command := application.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	application = updated.(*Model)
+	_, command := application.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if command == nil {
 		t.Fatal("Ctrl+C returned no quit command")
 	}

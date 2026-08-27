@@ -474,7 +474,7 @@ func TestQueuedEventDuringAttachUsesOnlyResynchronizedPendingOccurrence(t *testi
 	if automatic == nil || application.attachPending != "" {
 		t.Fatalf("resynchronized event state = command %v pending %q", automatic != nil, application.attachPending)
 	}
-	application, _ = updateModel(t, application, executeCommand(t, automatic))
+	_, _ = updateModel(t, application, executeCommand(t, automatic))
 	if got := backend.automaticSnapshot(); len(got) != 1 || got[0] != "event-fresh" {
 		t.Fatalf("automatic decisions = %#v, want only event-fresh", got)
 	}
@@ -531,7 +531,7 @@ func TestPendingPromptEnterTakesPriorityOverAttachAndPTYNavigation(t *testing.T)
 	// Deliberately move focus onto the tmux agent. The waiting response must
 	// still win over attachment when Enter is pressed.
 	application.focus = FocusTarget{Kind: FocusAgent, AgentID: "tmux-agent"}
-	application, delivery := updateModel(t, application, tea.KeyMsg{Type: tea.KeyEnter})
+	_, delivery := updateModel(t, application, tea.KeyMsg{Type: tea.KeyEnter})
 	if delivery == nil {
 		t.Fatal("Enter did not create the PTY response command")
 	}

@@ -31,19 +31,15 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlLeft:
 			m.moveFocus(-1)
 			commands = append(commands, m.syncFocus())
-			break
 		case tea.KeyCtrlRight:
 			m.moveFocus(1)
 			commands = append(commands, m.syncFocus())
-			break
 		case tea.KeyCtrlPgUp:
 			m.movePage(-1)
 			commands = append(commands, m.syncFocus())
-			break
 		case tea.KeyCtrlPgDown:
 			m.movePage(1)
 			commands = append(commands, m.syncFocus())
-			break
 		default:
 			// A pending human response always wins over pane actions. In
 			// particular, Enter must keep submitting PTY responses even if the

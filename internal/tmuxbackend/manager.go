@@ -27,6 +27,8 @@ const (
 	defaultCaptureLimit = 256 * 1024
 )
 
+var errOwnershipInvalid = errors.New("ownership tmux invalide")
+
 // Manager is the sole owner of tmux sessions bearing its generated run prefix.
 type Manager struct {
 	ctx    context.Context
@@ -510,6 +512,10 @@ func (m *Manager) monitor(target *managedSession) {
 			}
 			pollFailures++
 			if pollFailures >= 3 {
+				if errors.Is(err, errOwnershipInvalid) {
+					m.handleOwnershipLoss(target, err)
+					return
+				}
 				probeCtx, probeCancel := context.WithTimeout(target.ctx, commandTimeout)
 				_, probeErr := m.run(probeCtx, "has-session", "-t", target.sessionID)
 				probeCancel()
@@ -541,6 +547,7 @@ func (m *Manager) monitor(target *managedSession) {
 }
 
 func (m *Manager) handleMissingTarget(target *managedSession, cause error) {
+	failure := fmt.Errorf("%w: %v", ErrSessionNotFound, cause)
 	if !target.isPresent() {
 		return
 	}
@@ -548,9 +555,26 @@ func (m *Manager) handleMissingTarget(target *managedSession, cause error) {
 	snapshot := Snapshot{ID: target.info.ID, Status: StatusFailed}
 	target.updateState(snapshot)
 	if target.finish() {
-		missing := fmt.Errorf("%w: %v", ErrSessionNotFound, cause)
-		m.emit(session.Error{SessionID: target.info.ID, Err: missing}, true)
+		m.emit(session.Error{SessionID: target.info.ID, Err: failure}, true)
 		m.emit(session.AdapterEvent{Event: target.processExitEvent(snapshot)}, true)
+	}
+	target.closeTransport()
+}
+
+func (m *Manager) handleOwnershipLoss(target *managedSession, cause error) {
+	failure := fmt.Errorf("supervision tmux interrompue: %w", cause)
+	if !target.isPresent() {
+		return
+	}
+	target.markRemoved()
+	snapshot := Snapshot{ID: target.info.ID, Status: StatusFailed}
+	target.updateState(snapshot)
+	if target.finish() {
+		m.emit(session.Error{SessionID: target.info.ID, Err: failure}, true)
+		// Losing ownership ends Relayer's supervision, not necessarily the
+		// foreign process. A legacy Exited message closes local UI state without
+		// asserting the canonical process_exit/session_finished audit fact.
+		m.emit(session.Exited{SessionID: target.info.ID, Err: failure}, true)
 	}
 	target.closeTransport()
 }
@@ -651,10 +675,19 @@ func (m *Manager) sendBytes(ctx context.Context, target *managedSession, data []
 		return err
 	}
 	bufferName := target.tmuxName + "-" + shortHash(target.ownerToken) + "-input"
+	// Register the deterministic name before load-buffer. If tmux accepts the
+	// bytes but the client loses the acknowledgement, cleanup still knows exactly
+	// which private buffer may contain the user's input.
+	m.trackSecretBuffer(bufferName)
 	if _, err := m.runInput(ctx, data, "load-buffer", "-b", bufferName, "-"); err != nil {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), commandTimeout)
+		cleanupErr := m.deleteSecretBuffer(cleanupCtx, bufferName)
+		cleanupCancel()
+		if cleanupErr != nil {
+			return errors.Join(err, fmt.Errorf("suppression du buffer tmux privé: %w", cleanupErr))
+		}
 		return err
 	}
-	m.trackSecretBuffer(bufferName)
 	if _, err := m.run(ctx, "paste-buffer", "-d", "-b", bufferName, "-t", target.paneID); err != nil {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), commandTimeout)
 		cleanupErr := m.deleteSecretBuffer(cleanupCtx, bufferName)
@@ -798,7 +831,7 @@ func (m *Manager) inspect(ctx context.Context, target *managedSession) (terminal
 
 func (m *Manager) inspectRaw(ctx context.Context, target *managedSession) (terminal.Snapshot, bool, error) {
 	if target.ownerToken == "" || !validTmuxID(target.sessionID, '$') || !validTmuxID(target.paneID, '%') {
-		return terminal.Snapshot{}, false, errors.New("ownership tmux absent ou invalide")
+		return terminal.Snapshot{}, false, fmt.Errorf("%w: identité absente ou invalide", errOwnershipInvalid)
 	}
 	output, err := m.run(ctx,
 		"display-message", "-p", "-t", target.paneID,
@@ -809,10 +842,13 @@ func (m *Manager) inspectRaw(ctx context.Context, target *managedSession) (termi
 	}
 	fields := strings.Split(strings.TrimSpace(string(output)), "\t")
 	if len(fields) != 7 {
-		return terminal.Snapshot{}, false, errors.New("inspection tmux invalide")
+		// Without the complete immutable IDs and owner marker, the response cannot
+		// be attributed to this Manager. Treat malformed identity output like an
+		// ownership loss instead of probing only for name existence forever.
+		return terminal.Snapshot{}, false, fmt.Errorf("%w: inspection incomplète", errOwnershipInvalid)
 	}
 	if fields[0] != target.sessionID || fields[1] != target.paneID || fields[2] != target.ownerToken {
-		return terminal.Snapshot{}, false, errors.New("ownership tmux invalide")
+		return terminal.Snapshot{}, false, fmt.Errorf("%w: cible inattendue", errOwnershipInvalid)
 	}
 	snapshot, err := parseSnapshot(target.info.ID, strings.Join(fields[3:6], "\t"))
 	if err != nil {
@@ -884,7 +920,7 @@ func validTmuxID(value string, prefix byte) bool {
 
 func (m *Manager) verifySession(ctx context.Context, target *managedSession) error {
 	if target.ownerToken == "" || !validTmuxID(target.sessionID, '$') {
-		return errors.New("ownership de la session tmux absent ou invalide")
+		return fmt.Errorf("%w: session absente ou invalide", errOwnershipInvalid)
 	}
 	output, err := m.run(ctx,
 		"display-message", "-p", "-t", target.sessionID,
@@ -895,14 +931,14 @@ func (m *Manager) verifySession(ctx context.Context, target *managedSession) err
 	}
 	fields := strings.Split(strings.TrimSpace(string(output)), "\t")
 	if len(fields) != 2 || fields[0] != target.sessionID || fields[1] != target.ownerToken {
-		return errors.New("ownership de la session tmux invalide")
+		return fmt.Errorf("%w: session inattendue", errOwnershipInvalid)
 	}
 	return nil
 }
 
 func (m *Manager) verifyPane(ctx context.Context, target *managedSession) (string, error) {
 	if target.ownerToken == "" || !validTmuxID(target.sessionID, '$') || !validTmuxID(target.paneID, '%') {
-		return "", errors.New("ownership du pane tmux absent ou invalide")
+		return "", fmt.Errorf("%w: pane absent ou invalide", errOwnershipInvalid)
 	}
 	output, err := m.run(ctx,
 		"display-message", "-p", "-t", target.paneID,
@@ -913,7 +949,7 @@ func (m *Manager) verifyPane(ctx context.Context, target *managedSession) (strin
 	}
 	fields := strings.Split(strings.TrimSpace(string(output)), "\t")
 	if len(fields) != 4 || fields[0] != target.sessionID || fields[2] != target.paneID || fields[3] != target.ownerToken || !validTmuxID(fields[1], '@') {
-		return "", errors.New("ownership du pane tmux invalide")
+		return "", fmt.Errorf("%w: pane inattendu", errOwnershipInvalid)
 	}
 	return fields[1], nil
 }
@@ -1090,10 +1126,18 @@ func (m *Manager) Close(ctx context.Context) error {
 	type cleanupTask func(context.Context) error
 	tasks := make([]cleanupTask, 0, len(targets)+len(m.secretBuffers()))
 	for _, target := range targets {
-		if (m.persistOnExit && !target.forceCleanup) || !target.isPresent() {
+		if !target.isPresent() {
 			continue
 		}
 		target := target
+		if m.persistOnExit && !target.forceCleanup {
+			if target.captureNeedsDisable() {
+				tasks = append(tasks, func(cleanupCtx context.Context) error {
+					return m.disableCapture(cleanupCtx, target)
+				})
+			}
+			continue
+		}
 		tasks = append(tasks, func(cleanupCtx context.Context) error {
 			return m.killSession(cleanupCtx, target)
 		})
@@ -1148,6 +1192,24 @@ func (m *Manager) Close(ctx context.Context) error {
 		closeErr = errors.Join(closeErr, err)
 	}
 	return closeErr
+}
+
+func (m *Manager) disableCapture(ctx context.Context, target *managedSession) error {
+	target.killMu.Lock()
+	defer target.killMu.Unlock()
+	if !target.captureNeedsDisable() {
+		return nil
+	}
+	if _, err := m.verifyPane(ctx, target); err != nil {
+		return err
+	}
+	// Calling pipe-pane without a shell command disables the existing pipe while
+	// leaving the explicitly persistent pane and its user process untouched.
+	if _, err := m.run(ctx, "pipe-pane", "-t", target.paneID); err != nil {
+		return err
+	}
+	target.markCaptureDisabled()
+	return nil
 }
 
 func (m *Manager) killSession(ctx context.Context, target *managedSession) error {

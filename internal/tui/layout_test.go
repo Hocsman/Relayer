@@ -152,7 +152,7 @@ func TestTinyWindowResizesAllHiddenAndVisibleSessionsSafely(t *testing.T) {
 		t.Fatal(err)
 	}
 	backend.resetResizeCalls()
-	application, _ = updateModel(t, application, tea.WindowSizeMsg{Width: 1, Height: 1})
+	_, _ = updateModel(t, application, tea.WindowSizeMsg{Width: 1, Height: 1})
 	calls := backend.resizeSnapshot()
 	if len(calls) != 8 {
 		t.Fatalf("tiny resize calls = %d, want 8", len(calls))
@@ -281,7 +281,6 @@ func TestNewModelCopiesTheDynamicPaneSlice(t *testing.T) {
 	}
 	panes[0].ID = "mutated"
 	panes[1].Name = "mutated"
-	panes = append(panes, Pane{ID: "extra", Name: "extra"})
 	if len(application.panes) != 3 || application.panes[0].sessionID != "agent-1" || application.panes[1].name != "Agent 2" {
 		t.Fatalf("model aliases caller pane slice: %#v", application.panes)
 	}

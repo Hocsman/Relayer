@@ -140,7 +140,7 @@ func TestPolicyAutomaticDecisionsAreCASKeyedBySessionAndOccurrence(t *testing.T)
 		t.Fatal("independent sessions did not schedule independent automatic decisions")
 	}
 
-	application, _ = updateModel(t, application, executeCommand(t, secondCommand))
+	_, _ = updateModel(t, application, executeCommand(t, secondCommand))
 	application, _ = updateModel(t, application, executeCommand(t, firstCommand))
 	calls := backend.automaticSnapshot()
 	if len(calls) != 2 || calls[0] != (automaticDecisionCall{"agent-b", second.ID, adapters.DecisionAllow}) ||
@@ -181,7 +181,7 @@ func TestPolicySuccessiveSameSignatureOccurrencesAreSequencedPerSession(t *testi
 	if secondCommand == nil {
 		t.Fatal("second occurrence was not resumed after first completion")
 	}
-	application, _ = updateModel(t, application, executeCommand(t, secondCommand))
+	_, _ = updateModel(t, application, executeCommand(t, secondCommand))
 	calls := backend.automaticSnapshot()
 	if len(calls) != 2 || calls[0].eventID != first.ID || calls[1].eventID != second.ID ||
 		calls[0].decision != adapters.DecisionDeny || calls[1].decision != adapters.DecisionDeny {

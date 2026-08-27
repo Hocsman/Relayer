@@ -250,7 +250,7 @@ func (m *Manager) Result(sessionID string) (exited bool, waitErr error, exitCode
 	if err != nil {
 		return false, nil, nil, err
 	}
-	exited, waitErr, exitCode = session.result()
+	exited, exitCode, waitErr = session.result()
 	return exited, waitErr, exitCode, nil
 }
 

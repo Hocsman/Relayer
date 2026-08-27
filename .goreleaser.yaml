@@ -1,0 +1,62 @@
+version: 2
+
+project_name: relayer
+
+builds:
+  - id: relayer
+    main: ./cmd/relayer
+    binary: relayer
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    ldflags:
+      - -s -w
+      - -X github.com/Hocsman/Relayer/internal/version.Version={{ .Version }}
+      - -X github.com/Hocsman/Relayer/internal/version.Commit={{ .Commit }}
+
+archives:
+  - id: unix
+    ids:
+      - relayer
+    formats:
+      - tar.gz
+    name_template: "relayer_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    wrap_in_directory: true
+    builds_info:
+      owner: root
+      group: root
+      mtime: "{{ .CommitDate }}"
+    files:
+      - src: LICENSE
+        info:
+          owner: root
+          group: root
+          mode: 0644
+          mtime: "{{ .CommitDate }}"
+      - src: README.md
+        info:
+          owner: root
+          group: root
+          mode: 0644
+          mtime: "{{ .CommitDate }}"
+
+checksum:
+  name_template: "relayer_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+changelog:
+  use: git
+  sort: asc
+
+release:
+  draft: false
+  prerelease: auto

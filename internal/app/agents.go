@@ -82,7 +82,7 @@ func resolveAgentPlans(configuration config.Result, cli options, workingDirector
 		return agentResolution{}, fmt.Errorf("configuration effective des agents invalide: %w", err)
 	}
 	if len(validated) == 0 || len(validated) > 8 {
-		return agentResolution{}, fmt.Errorf("Relayer prend en charge entre 1 et 8 agents, reçu: %d", len(validated))
+		return agentResolution{}, fmt.Errorf("relayer prend en charge entre 1 et 8 agents, reçu: %d", len(validated))
 	}
 	result.Specs = validated
 	return result, nil
