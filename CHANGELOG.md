@@ -66,6 +66,15 @@ No release tag has been published at the time of writing.
 
 ### Fixed
 
+- A prompt laid out with cursor movement instead of spaces was invisible to
+  every configured pattern. Claude Code 2.1.59 emits no literal space in its
+  prompts, only `ESC[1C` between words, and those were stripped without
+  substitution: the detector matched against `DoyouwanttousethisAPIkey?`, so
+  the shipped `intercept_patterns` — and any pattern an operator writes with a
+  space in it — could never fire. Deterministic, silent, and on the documented
+  compatibility path. Cursor-forward escapes are now expanded to the spaces they
+  produce, under a bound, since the column count comes from untrusted output.
+
 - The audit sink took ownership of `audit.path` without checking what was
   already there. Startup truncates a partial trailing line and rotation removes
   generations beyond `max_files`, both purely by name, so pointing the setting

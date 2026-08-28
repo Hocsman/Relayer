@@ -28,6 +28,26 @@ implemented; those profiles use `generic` detection.
 An unknown or unavailable explicit ID is a configuration error before a
 terminal backend starts.
 
+
+## Cursor movement and spacing
+
+Some agents lay a prompt out by moving the cursor rather than emitting spaces.
+Claude Code 2.1.59 does: its recorded prompts contain no literal space at all,
+only `ESC[1C` between words.
+
+Relayer substitutes a cursor-forward escape (`ESC[<n>C`) with the spaces it
+visually produces before stripping the remaining ANSI. Without that step the
+detector matched against `DoyouwanttousethisAPIkey?`, so any configured pattern
+containing a space could never fire, silently — including the shipped defaults.
+Each substitution is bounded, because the column count comes from untrusted
+output.
+
+Only horizontal movement is modelled. Absolute positioning and vertical
+movement would need a screen model, which this package does not have, so a
+prompt drawn with those still needs a pattern that tolerates missing spacing.
+Writing `\s*` between words, as the vendor adapters do, remains the robust
+form for anything you author yourself.
+
 ## Event model
 
 An adapter event contains:
