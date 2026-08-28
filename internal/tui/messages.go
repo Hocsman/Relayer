@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
+	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/terminal"
@@ -19,7 +20,11 @@ type execProcessFunc func(*exec.Cmd, tea.ExecCallback) tea.Cmd
 type inputDeliveredMsg struct {
 	SessionID string
 	Event     adapters.Event
-	Err       error
+	// Decision is what the operator expressed. Free-form text is recorded as
+	// an ask; the semantic answers carry their own value so the journal can
+	// show a refusal made by a person.
+	Decision audit.Decision
+	Err      error
 }
 
 // lineInputDeliveredMsg intentionally carries no submitted value or length.
@@ -112,6 +117,7 @@ func deliverInput(
 		message := inputDeliveredMsg{
 			SessionID: sessionID,
 			Event:     event.Clone(),
+			Decision:  audit.DecisionAsk,
 		}
 		if len(gates) > 0 {
 			if !gates[0].beginOperation() {
@@ -303,5 +309,43 @@ func resizeSessions(
 			}
 		}
 		return resizeFinishedMsg{Generation: generation, Failures: failures}
+	}
+}
+
+// deliverHumanDecision encodes a semantic answer the operator chose and
+// delivers it through the adapter that produced the exact occurrence.
+//
+// It shares the automatic path's transport because the encoding is the
+// adapter's either way; only the attribution differs. An adapter that cannot
+// represent the answer reports ErrDecisionUnsupported and nothing is written,
+// which keeps the occurrence pending for a typed reply instead of inventing
+// terminal bytes on the operator's behalf.
+func deliverHumanDecision(
+	backend Backend,
+	sessionID string,
+	event adapters.Event,
+	decision adapters.Decision,
+	gates ...*deliveryGate,
+) tea.Cmd {
+	return func() tea.Msg {
+		message := inputDeliveredMsg{
+			SessionID: sessionID,
+			Event:     event.Clone(),
+			Decision:  decisionForAdapter(decision),
+		}
+		if len(gates) > 0 {
+			if !gates[0].beginOperation() {
+				message.Err = errAuditUnavailable
+				return message
+			}
+			defer gates[0].endOperation()
+		}
+		automatic, ok := backend.(AutomaticDecisionBackend)
+		if !ok {
+			message.Err = errAutomaticDecisionBackendUnavailable
+			return message
+		}
+		message.Err = automatic.SendAutomaticDecision(sessionID, event.Clone(), decision)
+		return message
 	}
 }
