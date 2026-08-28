@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/Hocsman/Relayer/internal/terminal"
 )
@@ -109,9 +110,26 @@ func (e *CommandError) Error() string {
 
 func (e *CommandError) Unwrap() error { return e.Err }
 
+// tmuxGlobalFlagsWithValue are the tmux options that precede a command and
+// consume the following argument.
+var tmuxGlobalFlagsWithValue = map[string]bool{"-S": true, "-f": true, "-L": true, "-c": true}
+
+// commandOperation names the tmux command an argument vector invokes. Leading
+// global options are skipped so a caller that targets an explicit socket still
+// reports the operation rather than the flag.
 func commandOperation(args []string) string {
-	if len(args) == 0 || args[0] == "" {
-		return "command"
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		if argument == "" {
+			continue
+		}
+		if strings.HasPrefix(argument, "-") {
+			if tmuxGlobalFlagsWithValue[argument] {
+				index++
+			}
+			continue
+		}
+		return argument
 	}
-	return args[0]
+	return "command"
 }

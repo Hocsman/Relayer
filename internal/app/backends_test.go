@@ -20,11 +20,13 @@ import (
 func TestResolveAgentBackendsPTYDoesNotProbeTmux(t *testing.T) {
 	lookupCalls := 0
 	resolution, err := resolveAgentBackends(
+		context.Background(),
 		backendTestSpecs(agent.BackendPTY, agent.BackendPTY),
 		func(name string) (string, error) {
 			lookupCalls++
 			return "", errors.New("lookup must not be called for PTY")
 		},
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("resolveAgentBackends: %v", err)
@@ -45,6 +47,7 @@ func TestResolveAgentBackendsPTYDoesNotProbeTmux(t *testing.T) {
 func TestResolveAgentBackendsExplicitTmuxFailsClearlyWhenUnavailable(t *testing.T) {
 	lookupCalls := 0
 	resolution, err := resolveAgentBackends(
+		context.Background(),
 		backendTestSpecs(agent.BackendTmux),
 		func(name string) (string, error) {
 			lookupCalls++
@@ -53,6 +56,7 @@ func TestResolveAgentBackendsExplicitTmuxFailsClearlyWhenUnavailable(t *testing.
 			}
 			return "", errors.New("not installed")
 		},
+		nil,
 	)
 	if err == nil {
 		t.Fatalf("resolveAgentBackends returned %#v without an error", resolution)
@@ -70,11 +74,13 @@ func TestResolveAgentBackendsExplicitTmuxFailsClearlyWhenUnavailable(t *testing.
 func TestResolveAgentBackendsAutoSelectsTmuxWhenAvailable(t *testing.T) {
 	lookupCalls := 0
 	resolution, err := resolveAgentBackends(
+		context.Background(),
 		backendTestSpecs(agent.BackendAuto, agent.BackendAuto),
 		func(string) (string, error) {
 			lookupCalls++
 			return "/opt/relayer-test/tmux", nil
 		},
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("resolveAgentBackends: %v", err)
@@ -101,11 +107,13 @@ func TestResolveAgentBackendsAutoSelectsTmuxWhenAvailable(t *testing.T) {
 func TestResolveAgentBackendsAutoFallsBackToPTYWhenTmuxIsUnavailable(t *testing.T) {
 	lookupCalls := 0
 	resolution, err := resolveAgentBackends(
+		context.Background(),
 		backendTestSpecs(agent.BackendAuto, agent.BackendAuto),
 		func(string) (string, error) {
 			lookupCalls++
 			return "", errors.New("tmux missing")
 		},
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("resolveAgentBackends: %v", err)
@@ -129,11 +137,13 @@ func TestResolveAgentBackendsAutoFallsBackToPTYWhenTmuxIsUnavailable(t *testing.
 func TestResolveAgentBackendsSupportsMixedConcreteBackendsAndLooksUpOnce(t *testing.T) {
 	lookupCalls := 0
 	resolution, err := resolveAgentBackends(
+		context.Background(),
 		backendTestSpecs(agent.BackendPTY, agent.BackendTmux, agent.BackendAuto, agent.BackendPTY),
 		func(string) (string, error) {
 			lookupCalls++
 			return "/usr/local/bin/tmux", nil
 		},
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("resolveAgentBackends: %v", err)
@@ -159,9 +169,9 @@ func TestResolveAgentBackendsReturnsDefensiveCopies(t *testing.T) {
 	input[0].Command = []string{"runner", "original argument"}
 	input[0].Env = map[string]string{"MODEL": "original env"}
 
-	resolution, err := resolveAgentBackends(input, func(string) (string, error) {
+	resolution, err := resolveAgentBackends(context.Background(), input, func(string) (string, error) {
 		return "", errors.New("tmux missing")
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("resolveAgentBackends: %v", err)
 	}
@@ -458,4 +468,86 @@ func mustBackendTestRegistry(t *testing.T) *adapters.Registry {
 		t.Fatal(err)
 	}
 	return registry
+}
+
+// A tmux that is present on PATH but cannot run a session must not be selected.
+// Finding the binary used to be treated as proof of availability, so a tmux
+// whose format responses were unparsable was chosen at startup and then failed
+// at the first session start.
+func TestResolveAgentBackendsAutoFallsBackWhenTmuxProbeFails(t *testing.T) {
+	probeCalls := 0
+	resolution, err := resolveAgentBackends(
+		context.Background(),
+		backendTestSpecs(agent.BackendAuto, agent.BackendAuto),
+		func(string) (string, error) { return "/usr/bin/tmux", nil },
+		func(context.Context, string) error {
+			probeCalls++
+			return tmuxbackend.ErrProbeFailed
+		},
+	)
+	if err != nil {
+		t.Fatalf("resolveAgentBackends: %v", err)
+	}
+	if probeCalls != 1 {
+		t.Fatalf("probe calls = %d, want exactly one memoized call", probeCalls)
+	}
+	for index, spec := range resolution.Specs {
+		if spec.Backend != agent.BackendPTY {
+			t.Fatalf("agent %d backend = %q, want PTY fallback", index, spec.Backend)
+		}
+	}
+	if resolution.NeedsTmux || resolution.TmuxPath != "" {
+		t.Fatalf("unusable tmux was still selected: %#v", resolution)
+	}
+	if !resolution.NeedsPTY || !resolution.UsedAuto || !resolution.AutoFallback {
+		t.Fatalf("resolution = %#v", resolution)
+	}
+	// The operator must be able to tell "tmux is missing" from "tmux is broken".
+	joined := strings.Join(resolution.Warnings, "\n")
+	if !strings.Contains(joined, "installé mais ne peut pas exécuter de session") {
+		t.Fatalf("warnings = %q, want an unusable-tmux fallback warning", resolution.Warnings)
+	}
+}
+
+func TestResolveAgentBackendsExplicitTmuxRejectsUnusableBinary(t *testing.T) {
+	_, err := resolveAgentBackends(
+		context.Background(),
+		backendTestSpecs(agent.BackendTmux),
+		func(string) (string, error) { return "/usr/bin/tmux", nil },
+		func(context.Context, string) error { return tmuxbackend.ErrProbeFailed },
+	)
+	if err == nil {
+		t.Fatal("explicit tmux backend accepted an unusable tmux")
+	}
+	if !errors.Is(err, tmuxbackend.ErrProbeFailed) {
+		t.Fatalf("error = %v, want it to wrap ErrProbeFailed", err)
+	}
+	// A missing binary and an unusable one need different remediation.
+	if errors.Is(err, tmuxbackend.ErrTmuxNotFound) {
+		t.Fatalf("error = %v, want it distinguished from a missing binary", err)
+	}
+}
+
+func TestResolveAgentBackendsAutoSelectsProbedTmux(t *testing.T) {
+	resolution, err := resolveAgentBackends(
+		context.Background(),
+		backendTestSpecs(agent.BackendAuto),
+		func(string) (string, error) { return "/usr/bin/tmux", nil },
+		func(context.Context, string) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("resolveAgentBackends: %v", err)
+	}
+	if !resolution.NeedsTmux || resolution.TmuxPath != "/usr/bin/tmux" || resolution.AutoFallback {
+		t.Fatalf("resolution = %#v", resolution)
+	}
+}
+
+// The probe is skipped when nil, which keeps unit tests off a real tmux. That
+// makes an unwired production dependency silently revert to lookup-only
+// availability, so the wiring itself is asserted.
+func TestProductionBackendDependenciesWireTheTmuxProbe(t *testing.T) {
+	if productionBackendDependencies().probeTmux == nil {
+		t.Fatal("production dependencies do not wire a tmux probe")
+	}
 }

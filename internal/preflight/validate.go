@@ -280,13 +280,17 @@ func adapterVocabulary(inspected AgentInfo) []checkVocabulary {
 func backendVocabulary(backend string) []checkVocabulary {
 	switch backend {
 	case "":
-		return []checkVocabulary{{ScopeBackend, CheckBlock, summaryBackendUnavailable, remediationBackend}}
+		return []checkVocabulary{
+			{ScopeBackend, CheckBlock, summaryBackendUnavailable, remediationBackend},
+			{ScopeBackend, CheckBlock, summaryBackendUnusable, remediationBackendUnusable},
+		}
 	case agent.BackendTmux:
 		return []checkVocabulary{{ScopeBackend, CheckPass, summaryBackendTmux, ""}}
 	case agent.BackendPTY:
 		return []checkVocabulary{
 			{ScopeBackend, CheckPass, summaryBackendPTY, ""},
 			{ScopeBackend, CheckWarning, summaryBackendAutoFallback, remediationBackendAuto},
+			{ScopeBackend, CheckWarning, summaryBackendAutoUnusable, remediationBackendUnusable},
 		}
 	default:
 		return nil

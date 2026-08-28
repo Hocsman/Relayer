@@ -148,7 +148,8 @@ func PrepareDesktopRuntime(options DesktopOptions) (*DesktopPlan, error) {
 	}
 
 	dependencies := productionBackendDependencies()
-	backendSelection, err := resolveAgentBackends(resolution.Specs, dependencies.lookup)
+	backendSelection, err := resolveAgentBackends(
+		context.Background(), resolution.Specs, dependencies.lookup, dependencies.probeTmux)
 	if err != nil {
 		return nil, err
 	}

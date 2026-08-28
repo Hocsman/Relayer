@@ -1,9 +1,16 @@
-// Package preflight performs passive, read-only readiness checks for Relayer.
-// Reports deliberately contain no configuration path, command arguments,
-// environment values, agent identifiers, names or raw dependency errors.
+// Package preflight performs read-only readiness checks for Relayer. Reports
+// deliberately contain no configuration path, command arguments, environment
+// values, agent identifiers, names or raw dependency errors.
+//
+// Every check is passive with one deliberate exception: when tmux is the
+// effective backend, Options.TmuxProbe runs tmux inside a private socket to
+// establish that it can actually serve a session. Nothing belonging to the
+// user - configuration, audit journal, tmux server, agent process - is created,
+// read or mutated.
 package preflight
 
 import (
+	"context"
 	"io/fs"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
@@ -167,10 +174,27 @@ const (
 
 type OwnerCheckFunc func(fs.FileInfo) OwnerStatus
 
-// Options contains passive dependencies only. Empty platform fields use the
-// current runtime; a nil detector uses toolcatalog.DefaultDetector.
+// TmuxProbeFunc reports whether a discovered tmux can actually run a session.
+type TmuxProbeFunc func(context.Context, string) error
+
+// Options contains passive dependencies, plus the single deliberate exception
+// described on TmuxProbe. Empty platform fields use the current runtime; a nil
+// detector uses toolcatalog.DefaultDetector.
 type Options struct {
-	Detector         toolcatalog.Detector
+	Detector toolcatalog.Detector
+
+	// TmuxProbe is the one check in this package that executes a program.
+	// Discovering the tmux binary is not evidence that it can serve Relayer's
+	// machine-readable protocol, and a report that cannot observe that failure
+	// tells the operator the backend is healthy right before startup fails with
+	// an opaque identity error.
+	//
+	// The probe is bounded and self-contained: one short-lived session on a
+	// private socket inside a 0700 temporary directory, removed by name. It
+	// never reads, attaches to, or mutates the user's tmux server, and never
+	// calls kill-server. A nil probe uses tmuxbackend.Probe.
+	TmuxProbe TmuxProbeFunc
+
 	GOOS             string
 	GOARCH           string
 	Lstat            LstatFunc

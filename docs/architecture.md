@@ -9,7 +9,8 @@ and internal interfaces are intentionally allowed to change.
 strict config + CLI overrides
             │
             ├── read-only preflight ──► versioned safe report (CLI / GUI)
-            │                          no audit, backend, or child process
+            │                          no audit, backend, or agent process
+            │                          (tmux backend: private functional probe)
             │
             ▼
 agent validation ── adapter registry ── policy engine ── audit initialization
@@ -32,13 +33,19 @@ No adapter or policy owns a process. Backends own process/session lifecycle;
 adapters turn output into typed events; the policy engine proposes an action;
 the TUI coordinates human input and delivery.
 
-`internal/preflight` accepts an already effective agent plan and performs only
-passive checks. `internal/app.RunPreflight` is the shared composition facade:
-it reads an existing file with `config.LoadExisting`, applies the same empty-
-agent demo fallback as runtime startup, and returns the same versioned report
-to the CLI and Wails bridge. Expected failures become closed static checks;
-raw parser, filesystem, lookup, command, environment, path, and agent identity
-data never enter the report.
+`internal/preflight` accepts an already effective agent plan.
+`internal/app.RunPreflight` is the shared composition facade: it reads an
+existing file with `config.LoadExisting`, applies the same empty-agent demo
+fallback as runtime startup, and returns the same versioned report to the CLI
+and Wails bridge. Expected failures become closed static checks; raw parser,
+filesystem, lookup, command, environment, path, and agent identity data never
+enter the report.
+
+Its checks are passive except `Options.TmuxProbe`, which runs tmux on a private
+socket when tmux is the effective backend: discovering the binary does not
+establish that it can serve the machine-readable protocol. Backend resolution at
+startup performs the same probe, so `auto` falls back to PTY for an unusable
+tmux instead of selecting it and failing at the first session start.
 
 ## Composition and validation
 
@@ -143,7 +150,13 @@ unrelated tmux use. Cleanup requires ownership verification and never calls
 
 Identity, ownership, and snapshot responses are read through `-F` and
 `display-message` formats built by `tmuxFormat` and parsed by
-`splitTmuxFields`, which share one printable separator.
+`splitTmuxFields`, which share one printable separator. tmux sanitizes
+unprintable bytes while rendering a format — tmux 3.7 rewrites a tab to `_`
+unless `TMUX` is present in the environment, which it is not for a Relayer
+launched from an ordinary shell — so a control character in that separator
+silently corrupts every response. Every field carried this way is a tmux ID, a
+number, a signal name, or the hex owner token, none of which can contain the
+separator.
 
 Launch transport uses a private runtime directory (`0700` on Unix), a launch
 specification and FIFOs (`0600`), and an internal helper mode. The helper reads
