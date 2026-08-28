@@ -51,20 +51,20 @@ func createLaunchFiles(runtimeDirectory, tmuxName string, spec agent.Spec) (_ *l
 	}()
 
 	if err = makeFIFO(files.gatePath, 0o600); err != nil {
-		return nil, fmt.Errorf("création du signal privé tmux: %w", err)
+		return nil, fmt.Errorf("creating the private tmux signal: %w", err)
 	}
 	if err = makeFIFO(files.outputPath, 0o600); err != nil {
-		return nil, fmt.Errorf("création du flux privé tmux: %w", err)
+		return nil, fmt.Errorf("creating the private tmux stream: %w", err)
 	}
 	// O_RDWR prevents FIFO open-order deadlocks. This process never reads the
 	// gate nor writes the output descriptor, so bytes still have one consumer.
 	files.gate, err = openFIFO(files.gatePath)
 	if err != nil {
-		return nil, fmt.Errorf("ouverture du signal privé tmux: %w", err)
+		return nil, fmt.Errorf("opening the private tmux signal: %w", err)
 	}
 	files.output, err = openFIFO(files.outputPath)
 	if err != nil {
-		return nil, fmt.Errorf("ouverture du flux privé tmux: %w", err)
+		return nil, fmt.Errorf("opening the private tmux stream: %w", err)
 	}
 
 	payload, err := json.Marshal(launchSpec{
@@ -74,22 +74,22 @@ func createLaunchFiles(runtimeDirectory, tmuxName string, spec agent.Spec) (_ *l
 		Env:     mergedLaunchEnvironment(spec.Env),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("sérialisation du lancement tmux: %w", err)
+		return nil, fmt.Errorf("serializing the tmux launch: %w", err)
 	}
 	file, err := os.OpenFile(files.specPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("création de la spécification tmux privée: %w", err)
+		return nil, fmt.Errorf("creating the private tmux specification: %w", err)
 	}
 	if _, err = file.Write(payload); err != nil {
 		_ = file.Close()
-		return nil, fmt.Errorf("écriture de la spécification tmux privée: %w", err)
+		return nil, fmt.Errorf("writing the private tmux specification: %w", err)
 	}
 	if err = file.Sync(); err != nil {
 		_ = file.Close()
-		return nil, fmt.Errorf("synchronisation de la spécification tmux privée: %w", err)
+		return nil, fmt.Errorf("syncing the private tmux specification: %w", err)
 	}
 	if err = file.Close(); err != nil {
-		return nil, fmt.Errorf("fermeture de la spécification tmux privée: %w", err)
+		return nil, fmt.Errorf("closing the private tmux specification: %w", err)
 	}
 	return files, nil
 }
@@ -148,7 +148,7 @@ func (files *launchFiles) waitForHandoff(ctx context.Context) error {
 		return nil
 	}
 	if ctx == nil {
-		return errors.New("contexte de prise en charge tmux nil")
+		return errors.New("nil tmux handoff context")
 	}
 	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()
@@ -159,16 +159,16 @@ func (files *launchFiles) waitForHandoff(ctx context.Context) error {
 			closeErr := files.gate.Close()
 			files.gate = nil
 			if closeErr != nil {
-				return fmt.Errorf("fermeture du signal après prise en charge tmux: %w", closeErr)
+				return fmt.Errorf("closing the signal after tmux handoff: %w", closeErr)
 			}
 			return nil
 		case err != nil:
-			return fmt.Errorf("confirmation de prise en charge tmux: %w", err)
+			return fmt.Errorf("confirm the tmux handoff: %w", err)
 		}
 
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("confirmation de prise en charge tmux: %w", ctx.Err())
+			return fmt.Errorf("confirm the tmux handoff: %w", ctx.Err())
 		case <-ticker.C:
 		}
 	}

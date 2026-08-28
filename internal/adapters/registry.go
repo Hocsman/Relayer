@@ -92,13 +92,13 @@ func (r *Registry) register(descriptor Descriptor, factory Factory) error {
 	}
 	id := strings.ToLower(strings.TrimSpace(descriptor.ID))
 	if id == "" {
-		return errors.New("identifiant d'adaptateur vide")
+		return errors.New("empty adapter identifier")
 	}
 	if descriptor.Status != StatusStable && descriptor.Status != StatusExperimental {
-		return fmt.Errorf("statut d'adaptateur %q invalide", descriptor.Status)
+		return fmt.Errorf("invalid adapter status %q", descriptor.Status)
 	}
 	if descriptor.Implemented != (factory != nil) {
-		return fmt.Errorf("disponibilité incohérente pour l'adaptateur %q", id)
+		return fmt.Errorf("inconsistent availability for adapter %q", id)
 	}
 	descriptor.ID = id
 	descriptor.Executables = append([]string(nil), descriptor.Executables...)
@@ -106,22 +106,22 @@ func (r *Registry) register(descriptor Descriptor, factory Factory) error {
 	for index := range descriptor.Executables {
 		descriptor.Executables[index] = executableName(descriptor.Executables[index])
 		if descriptor.Executables[index] == "" {
-			return fmt.Errorf("exécutable vide pour l'adaptateur %q", id)
+			return fmt.Errorf("empty executable for adapter %q", id)
 		}
 		if _, duplicate := seenExecutables[descriptor.Executables[index]]; duplicate {
-			return fmt.Errorf("exécutable dupliqué %q pour l'adaptateur %q", descriptor.Executables[index], id)
+			return fmt.Errorf("duplicate executable %q for adapter %q", descriptor.Executables[index], id)
 		}
 		seenExecutables[descriptor.Executables[index]] = struct{}{}
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.entries[id]; exists {
-		return fmt.Errorf("adaptateur dupliqué %q", id)
+		return fmt.Errorf("duplicate adapter %q", id)
 	}
 	for existingID, existing := range r.entries {
 		for executable := range seenExecutables {
 			if containsExecutable(existing.descriptor.Executables, executable) {
-				return fmt.Errorf("exécutable %q déjà associé à l'adaptateur %q", executable, existingID)
+				return fmt.Errorf("executable %q already associated with adapter %q", executable, existingID)
 			}
 		}
 	}
@@ -180,11 +180,11 @@ func (r *Registry) Resolve(requestedID, executable string) (Adapter, Descriptor,
 		return nil, cloneDescriptor(entry.descriptor), err
 	}
 	if adapter == nil {
-		return nil, cloneDescriptor(entry.descriptor), fmt.Errorf("factory de l'adaptateur %q a retourné nil", entry.descriptor.ID)
+		return nil, cloneDescriptor(entry.descriptor), fmt.Errorf("factory for adapter %q returned nil", entry.descriptor.ID)
 	}
 	if adapter.ID() != entry.descriptor.ID {
 		return nil, cloneDescriptor(entry.descriptor), fmt.Errorf(
-			"factory de l'adaptateur %q a retourné l'identifiant incohérent %q",
+			"factory for adapter %q returned inconsistent identifier %q",
 			entry.descriptor.ID,
 			adapter.ID(),
 		)

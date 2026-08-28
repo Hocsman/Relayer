@@ -656,7 +656,7 @@ func TestManagerRetriesPrivateBufferDeletionOnClose(t *testing.T) {
 	runner.setFailure("paste-buffer", errors.New("paste failed"))
 	runner.setFailure("delete-buffer", errors.New("delete failed"))
 	err := manager.Send(context.Background(), "input", []byte(secret))
-	if err == nil || !strings.Contains(err.Error(), "suppression du buffer") || strings.Contains(err.Error(), secret) {
+	if err == nil || !strings.Contains(err.Error(), "deleting the private tmux buffer") || strings.Contains(err.Error(), secret) {
 		t.Fatalf("Send cleanup error = %v", err)
 	}
 	if got := len(manager.secretBuffers()); got != 1 {

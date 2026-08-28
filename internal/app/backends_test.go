@@ -64,7 +64,7 @@ func TestResolveAgentBackendsExplicitTmuxFailsClearlyWhenUnavailable(t *testing.
 	if lookupCalls != 1 {
 		t.Fatalf("tmux lookup calls = %d, want one", lookupCalls)
 	}
-	for _, text := range []string{"tmux", "introuvable", "agent-1"} {
+	for _, text := range []string{"tmux", "was not found", "agent-1"} {
 		if !strings.Contains(err.Error(), text) {
 			t.Fatalf("error %q does not contain %q", err, text)
 		}
@@ -331,7 +331,7 @@ func TestRunExplicitTmuxAbsenceFailsBeforeAnyBackendConstruction(t *testing.T) {
 			return newRouterFakeBackend(agent.BackendTmux), nil
 		},
 	})
-	if err == nil || !strings.Contains(err.Error(), "tmux") || !strings.Contains(err.Error(), "introuvable") {
+	if err == nil || !strings.Contains(err.Error(), "tmux") || !strings.Contains(err.Error(), "was not found") {
 		t.Fatalf("run error = %v", err)
 	}
 	if constructed != 0 {

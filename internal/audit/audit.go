@@ -128,22 +128,22 @@ func Validate(config Config) error {
 	switch config.Mode {
 	case ModeOff, ModeMetadata, ModeDetailed:
 	default:
-		return fmt.Errorf("mode d'audit invalide %q", config.Mode)
+		return fmt.Errorf("invalid audit mode %q", config.Mode)
 	}
 	if strings.IndexByte(config.Path, 0) >= 0 {
-		return errors.New("chemin d'audit contenant un octet NUL")
+		return errors.New("audit path contains a NUL byte")
 	}
 	if config.MaxFileSizeMB <= 0 {
-		return errors.New("max_file_size_mb doit être strictement positif")
+		return errors.New("max_file_size_mb must be strictly positive")
 	}
 	if int64(config.MaxFileSizeMB) > math.MaxInt64/(1024*1024) {
-		return errors.New("max_file_size_mb dépasse la taille prise en charge")
+		return errors.New("max_file_size_mb exceeds the supported size")
 	}
 	if config.MaxFiles <= 0 {
-		return errors.New("max_files doit être strictement positif")
+		return errors.New("max_files must be strictly positive")
 	}
 	if config.MaxFiles > maximumMaxFiles {
-		return fmt.Errorf("max_files ne peut pas dépasser %d", maximumMaxFiles)
+		return fmt.Errorf("max_files cannot exceed %d", maximumMaxFiles)
 	}
 	return nil
 }
@@ -180,4 +180,4 @@ type LineSink interface {
 	Close() error
 }
 
-var ErrClosed = errors.New("enregistreur d'audit fermé")
+var ErrClosed = errors.New("audit recorder is closed")

@@ -47,7 +47,7 @@ func resolveAgentPlans(configuration config.Result, cli options, workingDirector
 		}
 		if override.index >= len(result.Specs) {
 			return agentResolution{}, fmt.Errorf(
-				"%s ne peut pas remplacer l'agent %d: la configuration ne contient que %d agent(s)",
+				"%s cannot replace agent %d: the configuration only contains %d agent(s)",
 				override.flag,
 				override.index+1,
 				len(result.Specs),
@@ -63,10 +63,10 @@ func resolveAgentPlans(configuration config.Result, cli options, workingDirector
 		} else {
 			arguments, err := splitLegacyCommand(override.value)
 			if err != nil {
-				return agentResolution{}, fmt.Errorf("%s invalide: %w", override.flag, err)
+				return agentResolution{}, fmt.Errorf("invalid %s: %w", override.flag, err)
 			}
 			if len(arguments) == 0 {
-				return agentResolution{}, fmt.Errorf("%s ne contient aucune commande", override.flag)
+				return agentResolution{}, fmt.Errorf("%s contains no command", override.flag)
 			}
 			spec.Command = arguments
 			spec.Shell = ""
@@ -79,10 +79,10 @@ func resolveAgentPlans(configuration config.Result, cli options, workingDirector
 
 	validated, err := agent.ValidateAll(result.Specs, workingDirectory, backend)
 	if err != nil {
-		return agentResolution{}, fmt.Errorf("configuration effective des agents invalide: %w", err)
+		return agentResolution{}, fmt.Errorf("invalid effective agent configuration: %w", err)
 	}
 	if len(validated) == 0 || len(validated) > 8 {
-		return agentResolution{}, fmt.Errorf("relayer prend en charge entre 1 et 8 agents, reçu: %d", len(validated))
+		return agentResolution{}, fmt.Errorf("relayer supports between 1 and 8 agents, got: %d", len(validated))
 	}
 	result.Specs = validated
 	return result, nil

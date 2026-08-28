@@ -72,11 +72,11 @@ func newRecorder(
 		var err error
 		runID, err = idGenerator()
 		if err != nil {
-			return nil, fmt.Errorf("génération du run_id d'audit: %w", err)
+			return nil, fmt.Errorf("generate audit run_id: %w", err)
 		}
 	}
 	if !generatedIDPattern.MatchString(runID) {
-		return nil, errors.New("générateur d'identifiants d'audit retournant un run_id invalide")
+		return nil, errors.New("audit ID generator returned an invalid run_id")
 	}
 	result.sink = sink
 	result.runID = runID
@@ -100,10 +100,10 @@ func (r *Recorder) Record(entry Entry) error {
 
 	entryID, err := r.idGenerator()
 	if err != nil {
-		return fmt.Errorf("génération de l'entry_id d'audit: %w", err)
+		return fmt.Errorf("generate audit entry_id: %w", err)
 	}
 	if !generatedIDPattern.MatchString(entryID) {
-		return errors.New("générateur d'identifiants d'audit retournant un entry_id invalide")
+		return errors.New("audit ID generator returned an invalid entry_id")
 	}
 
 	nextSequence := r.sequence + 1
@@ -115,11 +115,11 @@ func (r *Recorder) Record(entry Entry) error {
 	entry.RunID = r.runID
 	encoded, err := json.Marshal(entry)
 	if err != nil {
-		return fmt.Errorf("encodage JSON de l'audit: %w", err)
+		return fmt.Errorf("encode the audit entry as JSON: %w", err)
 	}
 	encoded = append(encoded, '\n')
 	if err := r.sink.WriteLine(encoded); err != nil {
-		r.writeErr = fmt.Errorf("écriture de l'audit: %w", err)
+		r.writeErr = fmt.Errorf("write audit: %w", err)
 		return r.writeErr
 	}
 	r.sequence = nextSequence

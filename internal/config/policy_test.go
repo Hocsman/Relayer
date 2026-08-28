@@ -169,7 +169,7 @@ func TestLoadVersionOnePoliciesRejectsInvalidSemanticsAndEmptyMatcherLists(t *te
 		{name: "invalid default action", policies: "policies:\n  default_action: approve", wantMessage: "default"},
 		{name: "invalid rule action", policies: validPolicyRule("name: bad-action", "match:\n        agent_ids: [agent-a]", "action: approve"), wantMessage: "invalid action"},
 		{name: "invalid regex", policies: validPolicyRule("name: bad-regex", "match:\n        text_regex: '['", "action: ask"), wantMessage: "regex"},
-		{name: "blank regex", policies: validPolicyRule("name: blank-regex", "match:\n        text_regex: '   '", "action: ask"), wantMessage: "ne peut pas être vide"},
+		{name: "blank regex", policies: validPolicyRule("name: blank-regex", "match:\n        text_regex: '   '", "action: ask"), wantMessage: "cannot be empty"},
 		{name: "invalid event type", policies: validPolicyRule("name: bad-type", "match:\n        event_types: [process_exit]", "action: ask"), wantMessage: "event type"},
 		{name: "invalid risk", policies: validPolicyRule("name: bad-risk", "match:\n        risk_levels: [critical]", "action: ask"), wantMessage: "risk level"},
 		{
@@ -186,9 +186,9 @@ func TestLoadVersionOnePoliciesRejectsInvalidSemanticsAndEmptyMatcherLists(t *te
       action: deny`,
 			wantMessage: "duplicates",
 		},
-		{name: "empty event type list", policies: validPolicyRule("name: empty-types", "match:\n        event_types: []", "action: ask"), wantMessage: "ne peut pas être vide"},
-		{name: "empty agent id list", policies: validPolicyRule("name: empty-agents", "match:\n        agent_ids: []", "action: ask"), wantMessage: "ne peut pas être vide"},
-		{name: "empty risk list", policies: validPolicyRule("name: empty-risks", "match:\n        risk_levels: []", "action: ask"), wantMessage: "ne peut pas être vide"},
+		{name: "empty event type list", policies: validPolicyRule("name: empty-types", "match:\n        event_types: []", "action: ask"), wantMessage: "cannot be empty"},
+		{name: "empty agent id list", policies: validPolicyRule("name: empty-agents", "match:\n        agent_ids: []", "action: ask"), wantMessage: "cannot be empty"},
+		{name: "empty risk list", policies: validPolicyRule("name: empty-risks", "match:\n        risk_levels: []", "action: ask"), wantMessage: "cannot be empty"},
 		{name: "empty match object", policies: validPolicyRule("name: no-matcher", "match: {}", "action: ask"), wantMessage: "no matcher"},
 	}
 

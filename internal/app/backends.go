@@ -77,7 +77,7 @@ func resolveAgentAdapters(specs []agent.Spec, registry *adapters.Registry) ([]ag
 		}
 		adapter, _, err := registry.Resolve(spec.Adapter, executable)
 		if err != nil {
-			return nil, fmt.Errorf("adaptateur de l'agent %q: %w", spec.ID, err)
+			return nil, fmt.Errorf("adapter for agent %q: %w", spec.ID, err)
 		}
 		spec.Adapter = adapter.ID()
 	}
@@ -146,13 +146,13 @@ func resolveAgentBackends(
 			if err != nil {
 				if probeFailed {
 					return backendResolution{}, fmt.Errorf(
-						"backend tmux demandé pour l'agent %q, mais tmux ne peut pas exécuter de session: %w",
+						"tmux backend requested for agent %q, but tmux cannot run a session: %w",
 						spec.ID,
 						err,
 					)
 				}
 				return backendResolution{}, fmt.Errorf(
-					"backend tmux demandé pour l'agent %q, mais le binaire tmux est introuvable: %w",
+					"tmux backend requested for agent %q, but the tmux binary was not found: %w",
 					spec.ID,
 					fmt.Errorf("%w: %v", tmuxbackend.ErrTmuxNotFound, err),
 				)
@@ -172,7 +172,7 @@ func resolveAgentBackends(
 			result.NeedsPTY = true
 			result.AutoFallback = true
 		default:
-			return backendResolution{}, fmt.Errorf("backend non résolu %q pour l'agent %q", spec.Backend, spec.ID)
+			return backendResolution{}, fmt.Errorf("unresolved backend %q for agent %q", spec.Backend, spec.ID)
 		}
 	}
 
@@ -248,7 +248,7 @@ func buildBackendRouterForRun(
 	if selection.NeedsPTY {
 		backend, err := dependencies.newPTY(parent, events, registry, ringCapacity)
 		if err != nil {
-			return nil, fmt.Errorf("initialisation du backend PTY: %w", err)
+			return nil, fmt.Errorf("initialize the PTY backend: %w", err)
 		}
 		created = append(created, backend)
 	}
@@ -262,12 +262,12 @@ func buildBackendRouterForRun(
 		})
 		if err != nil {
 			rollback()
-			return nil, fmt.Errorf("initialisation du backend tmux: %w", err)
+			return nil, fmt.Errorf("initialize the tmux backend: %w", err)
 		}
 		created = append(created, backend)
 	}
 	if len(created) == 0 {
-		return nil, errors.New("la sélection ne contient aucun backend concret")
+		return nil, errors.New("the selection contains no concrete backend")
 	}
 	router, err := newBackendRouter(parent, created...)
 	if err != nil {

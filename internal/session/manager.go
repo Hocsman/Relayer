@@ -62,13 +62,13 @@ func NewManagerWithRegistry(
 		parent = context.Background()
 	}
 	if events == nil {
-		return nil, errors.New("canal d'événements de session nil")
+		return nil, errors.New("nil session event channel")
 	}
 	if registry == nil {
 		return nil, errors.New("registry d'adaptateurs nil")
 	}
 	if _, _, err := registry.Resolve(adapters.GenericID, ""); err != nil {
-		return nil, fmt.Errorf("registry d'adaptateurs invalide: %w", err)
+		return nil, fmt.Errorf("invalid adapter registry: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(parent)
@@ -117,10 +117,10 @@ func (m *Manager) emit(event Event, essential bool) bool {
 func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 	normalized, err := agent.ValidateSpec(spec, ".", agent.BackendPTY)
 	if err != nil {
-		return Info{}, fmt.Errorf("agent invalide: %w", err)
+		return Info{}, fmt.Errorf("invalid agent: %w", err)
 	}
 	if normalized.Backend != agent.BackendPTY {
-		return Info{}, fmt.Errorf("backend %q non pris en charge par le gestionnaire PTY", normalized.Backend)
+		return Info{}, fmt.Errorf("backend %q not supported by the PTY manager", normalized.Backend)
 	}
 	executable := ""
 	if normalized.Shell == "" && len(normalized.Command) > 0 {
@@ -128,7 +128,7 @@ func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 	}
 	selectedAdapter, descriptor, err := m.registry.Resolve(normalized.Adapter, executable)
 	if err != nil {
-		return Info{}, fmt.Errorf("résolution de l'adaptateur de %s: %w", normalized.Name, err)
+		return Info{}, fmt.Errorf("resolving the adapter for %s: %w", normalized.Name, err)
 	}
 	normalized.Adapter = descriptor.ID
 
@@ -139,7 +139,7 @@ func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 	}
 	for existingID := range m.sessions {
 		if strings.EqualFold(existingID, normalized.ID) {
-			return Info{}, fmt.Errorf("session %q déjà démarrée", normalized.ID)
+			return Info{}, fmt.Errorf("session %q already started", normalized.ID)
 		}
 	}
 
@@ -147,7 +147,7 @@ func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 	cmd, shell, err := newCommand(sessionCtx, normalized)
 	if err != nil {
 		sessionCancel()
-		return Info{}, fmt.Errorf("préparation de %s: %w", normalized.Name, err)
+		return Info{}, fmt.Errorf("preparing %s: %w", normalized.Name, err)
 	}
 	sessionID := normalized.ID
 	info := Info{
@@ -191,7 +191,7 @@ func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 	})
 	if err != nil {
 		sessionCancel()
-		return Info{}, fmt.Errorf("démarrage de %s: %w", normalized.Name, err)
+		return Info{}, fmt.Errorf("starting %s: %w", normalized.Name, err)
 	}
 	session.master = master
 	m.sessions[sessionID] = session
@@ -283,7 +283,7 @@ func (m *Manager) session(sessionID string) (*processSession, error) {
 			return session, nil
 		}
 	}
-	return nil, fmt.Errorf("session %q inconnue", sessionID)
+	return nil, fmt.Errorf("unknown session %q", sessionID)
 }
 
 func (m *Manager) SendInput(sessionID string, value string) error {

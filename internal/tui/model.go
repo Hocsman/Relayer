@@ -184,22 +184,22 @@ func NewModelWithPolicyAndAudit(
 		return nil, errors.New("backend TUI nil")
 	}
 	if evaluator == nil {
-		return nil, errors.New("moteur de politique TUI nil")
+		return nil, errors.New("nil TUI policy engine")
 	}
 	if auditor == nil {
 		return nil, errors.New("enregistreur d'audit TUI nil")
 	}
 	if len(panes) < 1 || len(panes) > maxAgentCount {
-		return nil, fmt.Errorf("la TUI exige entre 1 et %d agents (reçu: %d)", maxAgentCount, len(panes))
+		return nil, fmt.Errorf("the TUI requires between 1 and %d agents (received: %d)", maxAgentCount, len(panes))
 	}
 	seen := make([]string, 0, len(panes))
 	for index, pane := range panes {
 		if strings.TrimSpace(pane.ID) == "" {
-			return nil, fmt.Errorf("panneau %d: ID vide", index+1)
+			return nil, fmt.Errorf("pane %d: empty ID", index+1)
 		}
 		for _, existingID := range seen {
 			if strings.EqualFold(existingID, pane.ID) {
-				return nil, fmt.Errorf("ID de panneau dupliqué: %q", pane.ID)
+				return nil, fmt.Errorf("duplicate pane ID: %q", pane.ID)
 			}
 		}
 		seen = append(seen, pane.ID)

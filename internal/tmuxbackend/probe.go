@@ -40,7 +40,7 @@ func Probe(ctx context.Context, runner CommandRunner, tmuxPath string) error {
 		runner = execRunner{}
 	}
 	if strings.TrimSpace(tmuxPath) == "" {
-		return fmt.Errorf("%w: chemin tmux vide", ErrProbeFailed)
+		return fmt.Errorf("%w: empty tmux path", ErrProbeFailed)
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -48,16 +48,16 @@ func Probe(ctx context.Context, runner CommandRunner, tmuxPath string) error {
 
 	root, err := os.MkdirTemp("", "relayer-tmux-probe-")
 	if err != nil {
-		return fmt.Errorf("%w: répertoire de sonde indisponible", ErrProbeFailed)
+		return fmt.Errorf("%w: probe directory unavailable", ErrProbeFailed)
 	}
 	defer func() { _ = os.RemoveAll(root) }()
 	if err := os.Chmod(root, 0o700); err != nil {
-		return fmt.Errorf("%w: répertoire de sonde non restreint", ErrProbeFailed)
+		return fmt.Errorf("%w: probe directory not restricted", ErrProbeFailed)
 	}
 
 	suffix, err := newRunID()
 	if err != nil {
-		return fmt.Errorf("%w: identifiant de sonde indisponible", ErrProbeFailed)
+		return fmt.Errorf("%w: probe identifier unavailable", ErrProbeFailed)
 	}
 	socketPath := filepath.Join(root, "probe.sock")
 	sessionName := probeSessionPrefix + suffix
@@ -87,10 +87,10 @@ func Probe(ctx context.Context, runner CommandRunner, tmuxPath string) error {
 	if err != nil {
 		// tmux diagnostics can carry paths and environment detail, so the
 		// reason stays static exactly like CommandError.
-		return fmt.Errorf("%w: la session de sonde n'a pas démarré", ErrProbeFailed)
+		return fmt.Errorf("%w: probe session did not start", ErrProbeFailed)
 	}
 	if _, err := parseIdentity(string(output)); err != nil {
-		return fmt.Errorf("%w: réponse de format illisible (%w)", ErrProbeFailed, err)
+		return fmt.Errorf("%w: unreadable format response (%w)", ErrProbeFailed, err)
 	}
 	return nil
 }

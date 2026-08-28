@@ -118,10 +118,10 @@ func splitLegacyCommand(value string) ([]string, error) {
 	}
 
 	if escaped {
-		return nil, errors.New("commande incomplète: caractère d'échappement final")
+		return nil, errors.New("incomplete command: trailing escape character")
 	}
 	if quote != 0 {
-		return nil, errors.New("commande incomplète: guillemet non fermé")
+		return nil, errors.New("incomplete command: unclosed quote")
 	}
 	flush()
 	return arguments, nil

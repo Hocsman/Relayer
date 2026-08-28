@@ -24,10 +24,10 @@ type openOptions struct {
 func DefaultPath() (string, error) {
 	directory, err := os.UserConfigDir()
 	if err != nil {
-		return "", fmt.Errorf("résolution du dossier de configuration utilisateur: %w", err)
+		return "", fmt.Errorf("resolve user configuration directory: %w", err)
 	}
 	if strings.TrimSpace(directory) == "" {
-		return "", errors.New("dossier de configuration utilisateur vide")
+		return "", errors.New("empty user configuration directory")
 	}
 	return filepath.Join(directory, "relayer", "audit", "audit.jsonl"), nil
 }
@@ -36,7 +36,7 @@ func DefaultPath() (string, error) {
 // empty configured value.
 func ResolvePath(path string) (string, error) {
 	if strings.IndexByte(path, 0) >= 0 {
-		return "", errors.New("chemin d'audit contenant un octet NUL")
+		return "", errors.New("audit path contains a NUL byte")
 	}
 	if strings.TrimSpace(path) == "" {
 		var err error
@@ -47,7 +47,7 @@ func ResolvePath(path string) (string, error) {
 	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
-		return "", fmt.Errorf("résolution du chemin d'audit %q: %w", path, err)
+		return "", fmt.Errorf("resolve audit path %q: %w", path, err)
 	}
 	return filepath.Clean(absolute), nil
 }
@@ -70,7 +70,7 @@ func WithClock(clock func() time.Time) Option {
 func WithIDGenerator(generator func() (string, error)) Option {
 	return func(options *openOptions) error {
 		if generator == nil {
-			return errors.New("générateur d'identifiants d'audit nil")
+			return errors.New("audit ID generator must not be nil")
 		}
 		options.idGenerator = generator
 		return nil
@@ -83,7 +83,7 @@ func WithRunID(runID string) Option {
 	return func(options *openOptions) error {
 		runID = strings.TrimSpace(runID)
 		if !generatedIDPattern.MatchString(runID) {
-			return errors.New("run_id d'audit explicite invalide")
+			return errors.New("invalid explicit audit run_id")
 		}
 		options.runID = runID
 		return nil
@@ -144,23 +144,23 @@ type FileSink struct {
 // active file, so maxFiles=1 retains no rotated generation.
 func NewFileSink(path string, maxBytes int64, maxFiles int) (*FileSink, error) {
 	if strings.TrimSpace(path) == "" {
-		return nil, errors.New("chemin du fichier d'audit vide")
+		return nil, errors.New("empty audit file path")
 	}
 	if strings.IndexByte(path, 0) >= 0 {
-		return nil, errors.New("chemin du fichier d'audit contenant un octet NUL")
+		return nil, errors.New("audit file path contains a NUL byte")
 	}
 	if maxBytes <= 0 {
-		return nil, errors.New("taille maximale du fichier d'audit non positive")
+		return nil, errors.New("maximum audit file size is not positive")
 	}
 	if maxFiles <= 0 {
-		return nil, errors.New("nombre maximal de fichiers d'audit non positif")
+		return nil, errors.New("maximum audit file count is not positive")
 	}
 	if maxFiles > maximumMaxFiles {
-		return nil, fmt.Errorf("nombre maximal de fichiers d'audit supérieur à %d", maximumMaxFiles)
+		return nil, fmt.Errorf("maximum audit file count is greater than %d", maximumMaxFiles)
 	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
-		return nil, fmt.Errorf("résolution du fichier d'audit %q: %w", path, err)
+		return nil, fmt.Errorf("resolve audit file %q: %w", path, err)
 	}
 	absolute = filepath.Clean(absolute)
 	if err := ensurePrivateDirectory(filepath.Dir(absolute)); err != nil {
@@ -199,11 +199,11 @@ func (s *FileSink) WriteLine(line []byte) error {
 		return s.stickyErr
 	}
 	if len(line) == 0 || line[len(line)-1] != '\n' || bytes.IndexByte(line[:len(line)-1], '\n') >= 0 {
-		return errors.New("le sink d'audit exige exactement une ligne terminée par un saut de ligne")
+		return errors.New("audit sink requires exactly one newline-terminated line")
 	}
 	if s.size > 0 && s.size+int64(len(line)) > s.maxBytes {
 		if err := s.rotate(); err != nil {
-			s.stickyErr = fmt.Errorf("rotation de l'audit: %w", err)
+			s.stickyErr = fmt.Errorf("rotate the audit: %w", err)
 			return s.stickyErr
 		}
 	}
@@ -218,12 +218,12 @@ func (s *FileSink) WriteLine(line []byte) error {
 		if truncateErr := s.file.Truncate(start); truncateErr != nil {
 			writeErr = errors.Join(writeErr, truncateErr)
 		}
-		s.stickyErr = fmt.Errorf("ajout d'une ligne d'audit: %w", writeErr)
+		s.stickyErr = fmt.Errorf("append an audit line: %w", writeErr)
 		return s.stickyErr
 	}
 	s.size += int64(written)
 	if err := s.file.Sync(); err != nil {
-		s.stickyErr = fmt.Errorf("synchronisation d'une ligne d'audit: %w", err)
+		s.stickyErr = fmt.Errorf("sync an audit line: %w", err)
 		return s.stickyErr
 	}
 	return nil
@@ -246,10 +246,10 @@ func (s *FileSink) Close() error {
 	}
 	if s.file != nil {
 		if err := s.file.Sync(); err != nil {
-			closeErrors = append(closeErrors, fmt.Errorf("synchronisation finale de l'audit: %w", err))
+			closeErrors = append(closeErrors, fmt.Errorf("final audit sync: %w", err))
 		}
 		if err := s.file.Close(); err != nil {
-			closeErrors = append(closeErrors, fmt.Errorf("fermeture du fichier d'audit: %w", err))
+			closeErrors = append(closeErrors, fmt.Errorf("close the audit file: %w", err))
 		}
 		s.file = nil
 	}
@@ -265,7 +265,7 @@ func (s *FileSink) openActive() error {
 	info, err := file.Stat()
 	if err != nil {
 		_ = file.Close()
-		return fmt.Errorf("inspection du fichier d'audit %s: %w", s.path, err)
+		return fmt.Errorf("inspect the audit file %s: %w", s.path, err)
 	}
 	s.file = file
 	s.size = info.Size()
@@ -312,24 +312,24 @@ func ensurePrivateDirectory(directory string) error {
 	info, err := os.Lstat(directory)
 	if errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
-			return fmt.Errorf("création du dossier d'audit %s: %w", directory, err)
+			return fmt.Errorf("create audit directory %s: %w", directory, err)
 		}
 		if err := os.Chmod(directory, 0o700); err != nil {
-			return fmt.Errorf("permissions du dossier d'audit %s: %w", directory, err)
+			return fmt.Errorf("permissions on the audit directory %s: %w", directory, err)
 		}
 		info, err = os.Lstat(directory)
 	}
 	if err != nil {
-		return fmt.Errorf("inspection du dossier d'audit %s: %w", directory, err)
+		return fmt.Errorf("inspect the audit directory %s: %w", directory, err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return fmt.Errorf("dossier d'audit %s non régulier", directory)
+		return fmt.Errorf("audit directory %s is not a regular directory", directory)
 	}
 	if err := requireCurrentUserOwner(info, directory); err != nil {
 		return err
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("dossier d'audit %s non privé (permissions %04o)", directory, info.Mode().Perm())
+		return fmt.Errorf("audit directory %s is not private (permissions %04o)", directory, info.Mode().Perm())
 	}
 	return nil
 }
@@ -337,23 +337,23 @@ func ensurePrivateDirectory(directory string) error {
 func openPrivateRegularFile(path string) (*os.File, error) {
 	if info, err := os.Lstat(path); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("fichier d'audit %s non régulier", path)
+			return nil, fmt.Errorf("audit file %s is not a regular file", path)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("inspection du fichier d'audit %s: %w", path, err)
+		return nil, fmt.Errorf("inspect the audit file %s: %w", path, err)
 	}
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("ouverture du fichier d'audit %s: %w", path, err)
+		return nil, fmt.Errorf("open the audit file %s: %w", path, err)
 	}
 	if err := file.Chmod(0o600); err != nil {
 		_ = file.Close()
-		return nil, fmt.Errorf("permissions du fichier d'audit %s: %w", path, err)
+		return nil, fmt.Errorf("permissions on the audit file %s: %w", path, err)
 	}
 	opened, err := file.Stat()
 	if err != nil || !opened.Mode().IsRegular() {
 		_ = file.Close()
-		return nil, fmt.Errorf("fichier d'audit %s ouvert non régulier", path)
+		return nil, fmt.Errorf("opened audit file %s is not a regular file", path)
 	}
 	if err := requireCurrentUserOwner(opened, path); err != nil {
 		_ = file.Close()
@@ -362,7 +362,7 @@ func openPrivateRegularFile(path string) (*os.File, error) {
 	linked, err := os.Lstat(path)
 	if err != nil || !linked.Mode().IsRegular() || !os.SameFile(opened, linked) {
 		_ = file.Close()
-		return nil, fmt.Errorf("identité du fichier d'audit %s non fiable", path)
+		return nil, fmt.Errorf("audit file %s identity is not trustworthy", path)
 	}
 	if err := requireRelayerJournal(file, opened.Size()); err != nil {
 		_ = file.Close()
@@ -370,14 +370,14 @@ func openPrivateRegularFile(path string) (*os.File, error) {
 	}
 	if err := recoverPartialJSONL(file); err != nil {
 		_ = file.Close()
-		return nil, fmt.Errorf("récupération de la dernière ligne d'audit %s: %w", path, err)
+		return nil, fmt.Errorf("recover last audit line in %s: %w", path, err)
 	}
 	return file, nil
 }
 
 // ErrNotAuditJournal reports an audit path that already holds a file Relayer
 // did not write.
-var ErrNotAuditJournal = errors.New("le chemin d'audit contient un fichier étranger")
+var ErrNotAuditJournal = errors.New("audit path contains a foreign file")
 
 // maxJournalHeaderBytes bounds the first-line read used for recognition. A
 // Relayer entry is far smaller; anything larger is not one.
@@ -408,7 +408,7 @@ func requireRelayerJournal(reader io.ReaderAt, size int64) error {
 	}
 	header := make([]byte, length)
 	if _, err := reader.ReadAt(header, 0); err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("%w: lecture impossible", ErrNotAuditJournal)
+		return fmt.Errorf("%w: unreadable", ErrNotAuditJournal)
 	}
 	complete := true
 	if index := bytes.IndexByte(header, '\n'); index >= 0 {
@@ -448,12 +448,12 @@ func requireRelayerJournal(reader io.ReaderAt, size int64) error {
 func VerifyJournalFile(path string) error {
 	file, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("inspection de la génération d'audit %s: %w", path, err)
+		return fmt.Errorf("inspect audit generation %s: %w", path, err)
 	}
 	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil {
-		return fmt.Errorf("inspection de la génération d'audit %s: %w", path, err)
+		return fmt.Errorf("inspect audit generation %s: %w", path, err)
 	}
 	if err := requireRelayerJournal(file, info.Size()); err != nil {
 		return fmt.Errorf("%w: %s", err, path)
@@ -508,7 +508,7 @@ func prepareExistingGenerations(path string, maxFiles int) error {
 	base := filepath.Base(path)
 	entries, err := os.ReadDir(directory)
 	if err != nil {
-		return fmt.Errorf("lecture du dossier d'audit %s: %w", directory, err)
+		return fmt.Errorf("read the audit directory %s: %w", directory, err)
 	}
 	for _, entry := range entries {
 		index, matches := AuditGenerationIndex(base, entry.Name())
@@ -518,10 +518,10 @@ func prepareExistingGenerations(path string, maxFiles int) error {
 		candidate := filepath.Join(directory, entry.Name())
 		info, err := os.Lstat(candidate)
 		if err != nil {
-			return fmt.Errorf("inspection de la génération d'audit %s: %w", candidate, err)
+			return fmt.Errorf("inspect audit generation %s: %w", candidate, err)
 		}
 		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return fmt.Errorf("génération d'audit %s non régulière", candidate)
+			return fmt.Errorf("audit generation %s is not a regular file", candidate)
 		}
 		if err := requireCurrentUserOwner(info, candidate); err != nil {
 			return err
@@ -533,12 +533,12 @@ func prepareExistingGenerations(path string, maxFiles int) error {
 		}
 		if index >= maxFiles {
 			if err := os.Remove(candidate); err != nil {
-				return fmt.Errorf("suppression de la génération d'audit obsolète %s: %w", candidate, err)
+				return fmt.Errorf("remove obsolete audit generation %s: %w", candidate, err)
 			}
 			continue
 		}
 		if err := os.Chmod(candidate, 0o600); err != nil {
-			return fmt.Errorf("permissions de la génération d'audit %s: %w", candidate, err)
+			return fmt.Errorf("restrict audit generation %s permissions: %w", candidate, err)
 		}
 	}
 	return nil
@@ -579,7 +579,7 @@ func removeGeneration(path string) error {
 		return err
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return fmt.Errorf("génération d'audit %s non régulière", path)
+		return fmt.Errorf("audit generation %s is not a regular file", path)
 	}
 	if err := requireCurrentUserOwner(info, path); err != nil {
 		return err
@@ -596,7 +596,7 @@ func renameGeneration(source, target string) error {
 		return err
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return fmt.Errorf("génération d'audit %s non régulière", source)
+		return fmt.Errorf("audit generation %s is not a regular file", source)
 	}
 	if err := requireCurrentUserOwner(info, source); err != nil {
 		return err

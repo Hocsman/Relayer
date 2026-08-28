@@ -16,11 +16,11 @@ import (
 // ErrClosed is returned when an operation targets a PTY that has already been
 // closed or a manager that no longer accepts sessions.
 var (
-	ErrClosed = errors.New("session PTY fermée")
+	ErrClosed = errors.New("PTY session closed")
 	// ErrStopUncertain means Relayer requested termination but could not confirm
 	// that both the command leader and its PTY process group disappeared. A
 	// caller must not start a replacement process while this error is present.
-	ErrStopUncertain = errors.New("arrêt de la session PTY non confirmé")
+	ErrStopUncertain = errors.New("PTY session stop not confirmed")
 )
 
 const (

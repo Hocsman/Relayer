@@ -79,13 +79,13 @@ func runWithOutputAndPreflight(
 	}
 	if versionRequested {
 		if len(arguments) != 1 {
-			return errors.New("l'option --version doit être utilisée seule")
+			return errors.New("the --version option must be used alone")
 		}
 		if output == nil {
 			output = io.Discard
 		}
 		if _, err := fmt.Fprintln(output, buildversion.String()); err != nil {
-			return fmt.Errorf("écriture de la version: %w", err)
+			return fmt.Errorf("writing the version: %w", err)
 		}
 		return nil
 	}
@@ -110,7 +110,7 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 	}
 	workingDirectory, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("lecture du dossier courant: %w", err)
+		return fmt.Errorf("read the current directory: %w", err)
 	}
 	resolution, err := resolveAgentPlans(configuration, options, workingDirectory)
 	if err != nil {
@@ -118,14 +118,14 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 	}
 	policyEngine, err := policy.New(configuration.Policies)
 	if err != nil {
-		return fmt.Errorf("initialisation des politiques: %w", err)
+		return fmt.Errorf("initialize the policies: %w", err)
 	}
 	if err := validatePolicyAgentIDs(policyEngine.Config(), resolution.Specs); err != nil {
 		return err
 	}
 	registry, err := adapters.NewRegistry(configuration.Patterns)
 	if err != nil {
-		return fmt.Errorf("initialisation des adaptateurs: %w", err)
+		return fmt.Errorf("initialize the adapters: %w", err)
 	}
 	resolution.Specs, err = resolveAgentAdapters(resolution.Specs, registry)
 	if err != nil {
@@ -143,7 +143,7 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 	}
 	auditor, err := initializeAudit(configuration.Audit, dependencies)
 	if err != nil {
-		return fmt.Errorf("initialisation du journal d'audit: %w", err)
+		return fmt.Errorf("initialize the audit journal: %w", err)
 	}
 	defer func() {
 		outcome := audit.OutcomeSucceeded
@@ -166,7 +166,7 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 		DecisionBy: audit.DecisionBySystem,
 		Outcome:    audit.OutcomeStarted,
 	}); err != nil {
-		return fmt.Errorf("écriture du démarrage du run dans l'audit: %w", err)
+		return fmt.Errorf("writing the run start to the audit: %w", err)
 	}
 	initialWidth, initialHeight := initialTerminalSize()
 
@@ -187,7 +187,7 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 			Outcome:    audit.OutcomeFailed,
 			Reason:     "backend_initialization_failed",
 		}); recordErr != nil {
-			return errors.Join(err, fmt.Errorf("audit de l'échec du backend: %w", recordErr))
+			return errors.Join(err, fmt.Errorf("auditing the backend failure: %w", recordErr))
 		}
 		return err
 	}
@@ -261,7 +261,7 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 			Outcome:    audit.OutcomeFailed,
 			Reason:     "session_start_failed",
 		}); recordErr != nil {
-			return errors.Join(err, fmt.Errorf("audit de l'échec de démarrage: %w", recordErr))
+			return errors.Join(err, fmt.Errorf("auditing the startup failure: %w", recordErr))
 		}
 		return err
 	}
@@ -305,7 +305,7 @@ func initializeAudit(configuration audit.Config, dependencies backendDependencie
 			return nil, err
 		}
 		if recorder == nil {
-			return nil, errors.New("fabrique d'audit ayant retourné un enregistreur nil")
+			return nil, errors.New("audit factory returned a nil recorder")
 		}
 		return recorder, nil
 	}
@@ -317,7 +317,7 @@ func initializeAudit(configuration audit.Config, dependencies backendDependencie
 
 func initializeAuditForRun(configuration audit.Config, dependencies backendDependencies, runID string) (*audit.Recorder, error) {
 	if strings.TrimSpace(runID) == "" {
-		return nil, errors.New("run_id du runtime desktop vide")
+		return nil, errors.New("empty desktop runtime run_id")
 	}
 	if dependencies.newAuditForRun != nil {
 		recorder, err := dependencies.newAuditForRun(configuration, runID)
@@ -325,7 +325,7 @@ func initializeAuditForRun(configuration audit.Config, dependencies backendDepen
 			return nil, err
 		}
 		if recorder == nil {
-			return nil, errors.New("fabrique d'audit desktop ayant retourné un enregistreur nil")
+			return nil, errors.New("desktop audit factory returned a nil recorder")
 		}
 		return recorder, nil
 	}
@@ -381,7 +381,7 @@ func validatePolicyAgentIDs(configuration policy.Config, specs []agent.Spec) err
 			id := strings.ToLower(strings.TrimSpace(configuredID))
 			if _, exists := agentIDs[id]; !exists {
 				return fmt.Errorf(
-					"politique %q: agent_id inconnu %q",
+					"policy %q: unknown agent_id %q",
 					rule.Name,
 					configuredID,
 				)
@@ -436,14 +436,14 @@ func startAgentSessionsObserved(
 			closeContext, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 			_ = owner.Close(closeContext)
 			cancel()
-			return nil, nil, fmt.Errorf("démarrage de l'agent %q: %w", spec.ID, startErr)
+			return nil, nil, fmt.Errorf("starting agent %q: %w", spec.ID, startErr)
 		}
 		if observer != nil {
 			if observeErr := observer(spec, info); observeErr != nil {
 				closeContext, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 				_ = owner.Close(closeContext)
 				cancel()
-				return nil, nil, fmt.Errorf("audit du démarrage de l'agent %q: %w", spec.ID, observeErr)
+				return nil, nil, fmt.Errorf("auditing the startup of agent %q: %w", spec.ID, observeErr)
 			}
 		}
 		infos = append(infos, info)

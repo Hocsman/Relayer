@@ -18,14 +18,14 @@ func lockConfigurationFile(path string) (func(), error) {
 	lockPath := path + ".lock"
 	info, err := os.Lstat(lockPath)
 	if err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
-		return nil, errors.New("le verrou de configuration doit être un fichier régulier non symbolique")
+		return nil, errors.New("configuration lock must be a regular non-symlink file")
 	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, errors.New("inspection du verrou de configuration impossible")
+		return nil, errors.New("could not inspect configuration lock")
 	}
 	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return nil, errors.New("ouverture du verrou de configuration impossible")
+		return nil, errors.New("could not open configuration lock")
 	}
 	deadline := time.Now().Add(configurationLockTimeout)
 	for {
@@ -35,11 +35,11 @@ func lockConfigurationFile(path string) (func(), error) {
 		}
 		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
 			_ = file.Close()
-			return nil, errors.New("verrouillage de la configuration impossible")
+			return nil, errors.New("could not lock configuration")
 		}
 		if time.Now().After(deadline) {
 			_ = file.Close()
-			return nil, errors.New("configuration occupée par une autre instance de Relayer")
+			return nil, errors.New("configuration is in use by another Relayer instance")
 		}
 		time.Sleep(25 * time.Millisecond)
 	}

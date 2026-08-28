@@ -18,14 +18,14 @@ import (
 
 var (
 	// ErrTmuxNotFound identifies an unavailable requested tmux executable.
-	ErrTmuxNotFound = errors.New("tmux introuvable")
+	ErrTmuxNotFound = errors.New("tmux not found")
 	// Aliases keep errors recognizable through the neutral terminal contract.
 	ErrSessionNotFound = terminal.ErrSessionNotFound
 	ErrClosed          = terminal.ErrClosed
 	ErrUnsupported     = terminal.ErrUnsupported
 	// ErrStopUncertain means tmux accepted a termination attempt but Relayer
 	// could not confirm that the immutable owned session ID disappeared.
-	ErrStopUncertain = errors.New("arrêt de la session tmux non confirmé")
+	ErrStopUncertain = errors.New("tmux session stop not confirmed")
 )
 
 type Status = terminal.Status

@@ -18,11 +18,11 @@ import (
 )
 
 var (
-	ErrRevisionMismatch = errors.New("configuration modifiée depuis son chargement")
+	ErrRevisionMismatch = errors.New("configuration modified since it was loaded")
 	// ErrCommitUncertain means the atomic rename completed but a subsequent
 	// durability or verification step failed. Callers must reload before any
 	// retry so they never overwrite a publication that may already be visible.
-	ErrCommitUncertain = errors.New("publication de configuration effectuée avec état de durabilité incertain")
+	ErrCommitUncertain = errors.New("configuration publication completed with uncertain durability state")
 )
 
 var configurationPathLocks sync.Map
@@ -73,7 +73,7 @@ func (snapshot *FileSnapshot) Revision() string {
 // overwriting a newer edit made by another process.
 func (snapshot *FileSnapshot) Restore(expectedRevision string) (Result, string, error) {
 	if snapshot == nil || len(snapshot.data) == 0 || strings.TrimSpace(snapshot.path) == "" {
-		return Result{}, "", errors.New("instantané de configuration indisponible")
+		return Result{}, "", errors.New("configuration snapshot unavailable")
 	}
 	absolutePath, unlock, err := acquireConfigurationUpdateLock(snapshot.path)
 	if err != nil {
@@ -114,11 +114,11 @@ func (snapshot *FileSnapshot) Discard() {
 // updates. It never includes file contents in errors or diagnostics.
 func FileRevision(path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
-		return "", errors.New("le chemin du fichier de configuration est vide")
+		return "", errors.New("configuration file path is empty")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("lecture de la configuration: %w", err)
+		return "", fmt.Errorf("read configuration: %w", err)
 	}
 	return contentRevision(data), nil
 }
@@ -128,10 +128,10 @@ func FileRevision(path string) (string, error) {
 // caller's revision immediately before publication.
 func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, string, error) {
 	if strings.TrimSpace(path) == "" {
-		return Result{}, "", errors.New("le chemin du fichier de configuration est vide")
+		return Result{}, "", errors.New("configuration file path is empty")
 	}
 	if strings.TrimSpace(expectedRevision) == "" {
-		return Result{}, "", errors.New("la révision attendue est vide")
+		return Result{}, "", errors.New("expected revision is empty")
 	}
 	if len(specs) > maxAgents {
 		return Result{}, "", fmt.Errorf("trop d'agents: maximum %d", maxAgents)
@@ -148,7 +148,7 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 		return Result{}, "", err
 	}
 	if current.Legacy {
-		return Result{}, "", errors.New("la configuration historique doit être migrée vers version: 1 avant de modifier les agents")
+		return Result{}, "", errors.New("legacy configuration must be migrated to version: 1 before modifying agents")
 	}
 	data, info, err := readRegularConfiguration(absolutePath)
 	if err != nil {
@@ -160,7 +160,7 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 
 	baseDir, err := filepath.Abs(filepath.Dir(absolutePath))
 	if err != nil {
-		return Result{}, "", errors.New("résolution du dossier de configuration impossible")
+		return Result{}, "", errors.New("could not resolve configuration directory")
 	}
 	validated, err := agent.ValidateAll(specs, baseDir, current.Backend)
 	if err != nil {
@@ -178,7 +178,7 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 	directory := filepath.Dir(absolutePath)
 	temporary, err := os.CreateTemp(directory, ".relayer-agents-*.tmp")
 	if err != nil {
-		return Result{}, "", errors.New("création du fichier temporaire de configuration impossible")
+		return Result{}, "", errors.New("could not create temporary configuration file")
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
@@ -188,28 +188,28 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 	}
 	if _, err := temporary.Write(rendered); err != nil {
 		_ = temporary.Close()
-		return Result{}, "", errors.New("écriture de la configuration impossible")
+		return Result{}, "", errors.New("could not write configuration")
 	}
 	if err := temporary.Sync(); err != nil {
 		_ = temporary.Close()
-		return Result{}, "", errors.New("synchronisation de la configuration impossible")
+		return Result{}, "", errors.New("could not sync configuration")
 	}
 	// CreateTemp starts at 0600. Keep that restrictive mode while bytes are
 	// written, then reproduce the existing file mode only after content is
 	// complete so a permissive config never exposes a partial temporary file.
 	if err := temporary.Chmod(mode); err != nil {
 		_ = temporary.Close()
-		return Result{}, "", errors.New("application des permissions de configuration impossible")
+		return Result{}, "", errors.New("could not apply configuration permissions")
 	}
 	if err := temporary.Sync(); err != nil {
 		_ = temporary.Close()
-		return Result{}, "", errors.New("synchronisation des permissions de configuration impossible")
+		return Result{}, "", errors.New("could not sync configuration permissions")
 	}
 	if err := temporary.Close(); err != nil {
-		return Result{}, "", errors.New("fermeture de la configuration temporaire impossible")
+		return Result{}, "", errors.New("could not close temporary configuration")
 	}
 	if _, err := LoadExisting(temporaryPath); err != nil {
-		return Result{}, "", fmt.Errorf("configuration mise à jour invalide: %w", err)
+		return Result{}, "", fmt.Errorf("invalid updated configuration: %w", err)
 	}
 
 	latest, _, err := readRegularConfiguration(absolutePath)
@@ -220,19 +220,19 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 		return Result{}, "", ErrRevisionMismatch
 	}
 	if err := os.Rename(temporaryPath, absolutePath); err != nil {
-		return Result{}, "", errors.New("publication atomique de la configuration impossible")
+		return Result{}, "", errors.New("could not atomically publish configuration")
 	}
 	if err := syncConfigurationDirectory(directory); err != nil {
 		updated, loadErr := LoadExisting(absolutePath)
 		if loadErr != nil {
 			return Result{}, contentRevision(rendered), errors.Join(
 				ErrCommitUncertain,
-				errors.New("synchronisation du dossier de configuration impossible"),
+				errors.New("could not sync configuration directory"),
 			)
 		}
 		return updated, updated.Revision, errors.Join(
 			ErrCommitUncertain,
-			errors.New("synchronisation du dossier de configuration impossible"),
+			errors.New("could not sync configuration directory"),
 		)
 	}
 
@@ -251,11 +251,11 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 
 func acquireConfigurationUpdateLock(path string) (string, func(), error) {
 	if strings.TrimSpace(path) == "" {
-		return "", nil, errors.New("le chemin du fichier de configuration est vide")
+		return "", nil, errors.New("configuration file path is empty")
 	}
 	absolutePath, err := filepath.Abs(path)
 	if err != nil {
-		return "", nil, errors.New("résolution du chemin de configuration impossible")
+		return "", nil, errors.New("could not resolve configuration path")
 	}
 	pathLock, _ := configurationPathLocks.LoadOrStore(filepath.Clean(absolutePath), &sync.Mutex{})
 	pathMutex := pathLock.(*sync.Mutex)
@@ -275,7 +275,7 @@ func publishConfigurationBytes(path string, data []byte, mode os.FileMode) error
 	directory := filepath.Dir(path)
 	temporary, err := os.CreateTemp(directory, ".relayer-rollback-*.tmp")
 	if err != nil {
-		return errors.New("création du fichier temporaire de restauration impossible")
+		return errors.New("could not create temporary restore file")
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
@@ -284,31 +284,31 @@ func publishConfigurationBytes(path string, data []byte, mode os.FileMode) error
 	}
 	if _, err := temporary.Write(data); err != nil {
 		_ = temporary.Close()
-		return errors.New("écriture de la restauration impossible")
+		return errors.New("could not write restore")
 	}
 	if err := temporary.Sync(); err != nil {
 		_ = temporary.Close()
-		return errors.New("synchronisation de la restauration impossible")
+		return errors.New("could not sync restore")
 	}
 	if err := temporary.Chmod(mode.Perm()); err != nil {
 		_ = temporary.Close()
-		return errors.New("application des permissions de restauration impossible")
+		return errors.New("could not apply restore permissions")
 	}
 	if err := temporary.Sync(); err != nil {
 		_ = temporary.Close()
-		return errors.New("synchronisation des permissions de restauration impossible")
+		return errors.New("could not sync restore permissions")
 	}
 	if err := temporary.Close(); err != nil {
-		return errors.New("fermeture de la restauration temporaire impossible")
+		return errors.New("could not close temporary restore")
 	}
 	if _, err := LoadExisting(temporaryPath); err != nil {
-		return errors.New("instantané de restauration invalide")
+		return errors.New("invalid restore snapshot")
 	}
 	if err := os.Rename(temporaryPath, path); err != nil {
-		return errors.New("publication atomique de la restauration impossible")
+		return errors.New("could not atomically publish restore")
 	}
 	if err := syncConfigurationDirectory(directory); err != nil {
-		return errors.Join(ErrCommitUncertain, errors.New("synchronisation du dossier restauré impossible"))
+		return errors.Join(ErrCommitUncertain, errors.New("could not sync restored directory"))
 	}
 	return nil
 }
@@ -321,7 +321,7 @@ func validateUpdatedPolicyAgents(current Result, specs []agent.Spec) error {
 	for _, rule := range current.Policies.Rules {
 		for _, configuredID := range rule.Match.AgentIDs {
 			if _, exists := available[strings.ToLower(strings.TrimSpace(configuredID))]; !exists {
-				return fmt.Errorf("la règle de politique %q référence un agent absent", rule.Name)
+				return fmt.Errorf("policy rule %q references a missing agent", rule.Name)
 			}
 		}
 	}
@@ -331,14 +331,14 @@ func validateUpdatedPolicyAgents(current Result, specs []agent.Spec) error {
 func readRegularConfiguration(path string) ([]byte, os.FileInfo, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return nil, nil, errors.New("inspection de la configuration impossible")
+		return nil, nil, errors.New("could not inspect configuration")
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return nil, nil, errors.New("la configuration doit être un fichier régulier non symbolique")
+		return nil, nil, errors.New("configuration must be a regular non-symlink file")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, nil, errors.New("lecture de la configuration impossible")
+		return nil, nil, errors.New("could not read configuration")
 	}
 	return data, info, nil
 }
@@ -352,18 +352,18 @@ func replaceAgentsYAML(data []byte, specs, requested []agent.Spec, baseDir strin
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	var document yaml.Node
 	if err := decoder.Decode(&document); err != nil {
-		return nil, errors.New("décodage de la configuration impossible")
+		return nil, errors.New("could not decode configuration")
 	}
 	var extra yaml.Node
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return nil, errors.New("la configuration contient plusieurs documents YAML")
+		return nil, errors.New("configuration contains multiple YAML documents")
 	}
 	if len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode {
-		return nil, errors.New("la configuration versionnée doit être un mapping YAML")
+		return nil, errors.New("versioned configuration must be a YAML mapping")
 	}
 	agentsNode := mappingValue(document.Content[0], "agents")
 	if agentsNode == nil {
-		return nil, errors.New("le champ agents est absent")
+		return nil, errors.New("the agents field is absent")
 	}
 	replacement := agentSequenceNode(specs, requested, agentsNode, baseDir)
 	replacement.HeadComment = agentsNode.HeadComment
@@ -375,10 +375,10 @@ func replaceAgentsYAML(data []byte, specs, requested []agent.Spec, baseDir strin
 	encoder := yaml.NewEncoder(&output)
 	encoder.SetIndent(2)
 	if err := encoder.Encode(&document); err != nil {
-		return nil, errors.New("encodage de la configuration impossible")
+		return nil, errors.New("could not encode configuration")
 	}
 	if err := encoder.Close(); err != nil {
-		return nil, errors.New("finalisation de la configuration impossible")
+		return nil, errors.New("could not finalize configuration")
 	}
 	return output.Bytes(), nil
 }

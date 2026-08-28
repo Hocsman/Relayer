@@ -58,7 +58,7 @@ func NewProcessExitEvent(sessionID, agentID, adapterID string, sequence uint64, 
 	summary := "processus terminé"
 	metadata := make(map[string]string)
 	if failed {
-		summary = "processus terminé avec erreur"
+		summary = "process exited with error"
 		metadata["failed"] = "true"
 	}
 	if exitCode != nil {
@@ -114,9 +114,9 @@ const (
 )
 
 var (
-	ErrUnknownAdapter      = errors.New("adaptateur inconnu")
-	ErrAdapterUnavailable  = errors.New("adaptateur non implémenté")
-	ErrDecisionUnsupported = errors.New("décision non prise en charge")
-	ErrEventMismatch       = errors.New("événement en attente différent")
-	ErrProcessorTerminated = errors.New("flux sémantique de l'adaptateur terminé")
+	ErrUnknownAdapter      = errors.New("unknown adapter")
+	ErrAdapterUnavailable  = errors.New("adapter not implemented")
+	ErrDecisionUnsupported = errors.New("unsupported decision")
+	ErrEventMismatch       = errors.New("pending event mismatch")
+	ErrProcessorTerminated = errors.New("adapter semantic stream terminated")
 )

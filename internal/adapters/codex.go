@@ -96,7 +96,7 @@ func (*CodexAdapter) snapshotOccurrenceAware(event Event) bool {
 // once.
 func (a *CodexAdapter) Detect(state *DetectionState, chunk []byte) ([]Event, error) {
 	if state == nil {
-		return nil, fmt.Errorf("état de détection nil")
+		return nil, fmt.Errorf("nil detection state")
 	}
 	if len(chunk) == 0 {
 		return nil, nil
@@ -280,17 +280,17 @@ func lastCodexVariant(value string, variants []string) (int, string) {
 // CLI. Generic fallback events retain the established manual-input behavior.
 func (a *CodexAdapter) EncodeDecision(event Event, decision Decision, manualInput string) ([]byte, error) {
 	if !event.Actionable() {
-		return nil, fmt.Errorf("%w pour le type %q", ErrDecisionUnsupported, event.Type)
+		return nil, fmt.Errorf("%w for type %q", ErrDecisionUnsupported, event.Type)
 	}
 	interaction := event.Metadata[codexInteractionMetadata]
 	if interaction == "" {
 		return a.generic.EncodeDecision(event, decision, manualInput)
 	}
 	if strings.IndexByte(manualInput, 0) >= 0 {
-		return nil, fmt.Errorf("entrée manuelle invalide: octet NUL")
+		return nil, fmt.Errorf("invalid manual input: NUL byte")
 	}
 	if decision != DecisionManual && manualInput != "" {
-		return nil, fmt.Errorf("une décision automatique Codex ne peut pas contenir de saisie manuelle")
+		return nil, fmt.Errorf("an automatic Codex decision cannot carry manual input")
 	}
 
 	switch interaction {
@@ -323,5 +323,5 @@ func (a *CodexAdapter) EncodeDecision(event Event, decision Decision, manualInpu
 	default:
 		return nil, fmt.Errorf("%w: interaction Codex %q", ErrDecisionUnsupported, interaction)
 	}
-	return nil, fmt.Errorf("%w: %q pour l'interaction Codex %q", ErrDecisionUnsupported, decision, interaction)
+	return nil, fmt.Errorf("%w: %q for Codex interaction %q", ErrDecisionUnsupported, decision, interaction)
 }

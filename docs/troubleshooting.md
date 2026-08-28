@@ -4,6 +4,14 @@ Relayer diagnostics and most TUI status messages are currently in French. This
 page groups failures by lifecycle stage so that a startup validation error is
 not confused with a terminal or target-program problem.
 
+
+## Language
+
+Go error messages are in English. The terminal and desktop interfaces are still
+in French, as are the desktop application's own messages, so a session mixes the
+two. That is a known inconsistency rather than a design: search an error message
+verbatim, and expect interface labels in French.
+
 ## Establish the build and configuration
 
 Check the binary first:

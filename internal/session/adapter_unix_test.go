@@ -172,7 +172,7 @@ func TestManagerPublishesFailedProcessExitWithoutLegacyOrErrorText(t *testing.T)
 				continue
 			}
 			if semantic.Event.Metadata["exit_code"] != "7" || semantic.Event.Sensitive ||
-				semantic.Event.Match != "" || !strings.Contains(semantic.Event.Summary, "erreur") {
+				semantic.Event.Match != "" || !strings.Contains(semantic.Event.Summary, "error") {
 				t.Fatalf("failed process_exit = %#v", semantic.Event)
 			}
 			_, waitErr, exitCode, resultErr := manager.Result(info.ID)

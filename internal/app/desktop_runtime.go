@@ -30,7 +30,7 @@ const (
 // prove that every partially started session was removed. Desktop controllers
 // must quarantine the lifecycle and must not launch a candidate or rollback
 // run while this sentinel is present.
-var ErrCleanupUncertain = errors.New("nettoyage du runtime desktop non confirmé")
+var ErrCleanupUncertain = errors.New("desktop runtime cleanup not confirmed")
 
 // DesktopOptions configures the headless runtime used by desktop frontends.
 // It deliberately does not inherit the deprecated pane flags from the CLI.
@@ -125,7 +125,7 @@ func PrepareDesktopRuntime(options DesktopOptions) (*DesktopPlan, error) {
 
 	workingDirectory, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("lecture du dossier courant: %w", err)
+		return nil, fmt.Errorf("read the current directory: %w", err)
 	}
 	resolution, err := resolveAgentPlans(configuration, optionsFromDesktop(), workingDirectory)
 	if err != nil {
@@ -133,14 +133,14 @@ func PrepareDesktopRuntime(options DesktopOptions) (*DesktopPlan, error) {
 	}
 	policyEngine, err := policy.New(configuration.Policies)
 	if err != nil {
-		return nil, fmt.Errorf("initialisation des politiques: %w", err)
+		return nil, fmt.Errorf("initialize the policies: %w", err)
 	}
 	if err := validatePolicyAgentIDs(policyEngine.Config(), resolution.Specs); err != nil {
 		return nil, err
 	}
 	registry, err := adapters.NewRegistry(configuration.Patterns)
 	if err != nil {
-		return nil, fmt.Errorf("initialisation des adaptateurs: %w", err)
+		return nil, fmt.Errorf("initialize the adapters: %w", err)
 	}
 	resolution.Specs, err = resolveAgentAdapters(resolution.Specs, registry)
 	if err != nil {
@@ -182,7 +182,7 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 		return nil, errors.New("plan desktop nil")
 	}
 	if !validDesktopRunID(runID) {
-		return nil, errors.New("run_id desktop invalide")
+		return nil, errors.New("invalid desktop run_id")
 	}
 	if parent == nil {
 		parent = context.Background()
@@ -203,7 +203,7 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 	auditor, err := initializeAuditForRun(plan.configuration.Audit, plan.dependencies, runID)
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("initialisation du journal d'audit: %w", err)
+		return nil, fmt.Errorf("initialize the audit journal: %w", err)
 	}
 	runtime.auditor = auditor
 	cleanup := true
@@ -221,7 +221,7 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 		DecisionBy: audit.DecisionBySystem,
 		Outcome:    audit.OutcomeStarted,
 	}); err != nil {
-		return nil, fmt.Errorf("écriture du démarrage du run dans l'audit: %w", err)
+		return nil, fmt.Errorf("writing the run start to the audit: %w", err)
 	}
 
 	events := make(chan session.Event, defaultEventCapacity)
@@ -259,7 +259,7 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 				Outcome:    audit.OutcomeFailed,
 				Reason:     "session_start_failed",
 			})
-			return nil, fmt.Errorf("démarrage de l'agent %q: %w", spec.ID, startErr)
+			return nil, fmt.Errorf("starting agent %q: %w", spec.ID, startErr)
 		}
 		runtime.infos = append(runtime.infos, info)
 		runtime.sessions = append(runtime.sessions, DesktopSession{
@@ -279,7 +279,7 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 			DecisionBy: audit.DecisionBySystem,
 			Outcome:    audit.OutcomeStarted,
 		}); err != nil {
-			return nil, fmt.Errorf("audit du démarrage de l'agent %q: %w", spec.ID, err)
+			return nil, fmt.Errorf("auditing the startup of agent %q: %w", spec.ID, err)
 		}
 	}
 
@@ -314,7 +314,7 @@ func NewDesktopRuntime(parent context.Context, options DesktopOptions) (*Desktop
 func newDesktopRunID() (string, error) {
 	var data [16]byte
 	if _, err := rand.Read(data[:]); err != nil {
-		return "", errors.New("génération du run_id desktop impossible")
+		return "", errors.New("cannot generate the desktop run_id")
 	}
 	return hex.EncodeToString(data[:]), nil
 }
@@ -527,7 +527,7 @@ func (r *DesktopRuntime) BeginRestart(ctx context.Context) error {
 				Outcome:    audit.OutcomeFinished,
 				Reason:     "restart_stop_confirmed",
 			}); err != nil {
-				stopErr = errors.Join(stopErr, fmt.Errorf("audit de l'arrêt strict de la session %q: %w", info.ID, err))
+				stopErr = errors.Join(stopErr, fmt.Errorf("auditing the strict stop of session %q: %w", info.ID, err))
 			}
 		}
 	}
@@ -556,7 +556,7 @@ func (r *DesktopRuntime) stopAllSessions(ctx context.Context) error {
 	var result error
 	for index, err := range errorsByIndex {
 		if err != nil {
-			result = errors.Join(result, fmt.Errorf("arrêt strict de la session %q: %w", r.infos[index].ID, err))
+			result = errors.Join(result, fmt.Errorf("strict stop of session %q: %w", r.infos[index].ID, err))
 		}
 	}
 	return result
@@ -601,7 +601,7 @@ func (r *DesktopRuntime) Close(ctx context.Context) error {
 			Outcome:    audit.OutcomeFinished,
 			Reason:     "supervision_ended",
 		}); err != nil {
-			result = errors.Join(result, fmt.Errorf("audit de la fin de supervision: %w", err))
+			result = errors.Join(result, fmt.Errorf("audit the end of supervision: %w", err))
 		}
 	}
 	if r.router != nil {
@@ -609,7 +609,7 @@ func (r *DesktopRuntime) Close(ctx context.Context) error {
 		closeErr := r.router.Close(ctx)
 		r.quiesceMu.Unlock()
 		if closeErr != nil {
-			result = errors.Join(result, fmt.Errorf("fermeture des backends: %w", closeErr))
+			result = errors.Join(result, fmt.Errorf("close the backends: %w", closeErr))
 		}
 		for _, info := range r.infos {
 			closed, known := r.router.backendCloseStatus(info.Backend)
@@ -631,7 +631,7 @@ func (r *DesktopRuntime) Close(ctx context.Context) error {
 				Outcome:    outcome,
 				Reason:     reason,
 			}); err != nil {
-				result = errors.Join(result, fmt.Errorf("audit du nettoyage de session: %w", err))
+				result = errors.Join(result, fmt.Errorf("audit the session cleanup: %w", err))
 			}
 		}
 	}
@@ -644,10 +644,10 @@ func (r *DesktopRuntime) Close(ctx context.Context) error {
 		DecisionBy: audit.DecisionBySystem,
 		Outcome:    outcome,
 	}); err != nil {
-		result = errors.Join(result, fmt.Errorf("audit de la fin du run: %w", err))
+		result = errors.Join(result, fmt.Errorf("audit the end of the run: %w", err))
 	}
 	if err := r.auditor.Close(); err != nil {
-		result = errors.Join(result, fmt.Errorf("fermeture du journal d'audit: %w", err))
+		result = errors.Join(result, fmt.Errorf("close the audit journal: %w", err))
 	}
 	r.closeErr = result
 	return result
