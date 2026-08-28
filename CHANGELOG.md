@@ -66,6 +66,18 @@ No release tag has been published at the time of writing.
 
 ### Fixed
 
+- A prompt drawn inside an ASCII frame was never detected. The line
+  `| Overwrite file? [Y/n]        |` shares its `| ` prefix with a markdown
+  table row, which the generic adapter suppresses as quoted documentation, so
+  the prompt was dropped at every chunk size with nothing to indicate it. A
+  table row separates cells and carries more pipes than the two a frame uses to
+  close its sides, and the two are now told apart.
+- `docs/adapters.md` claimed that "correctness cannot depend on read
+  boundaries". It does: a match must reach the active line, so a question
+  followed in the same write by its own frame or option list is missed while the
+  identical bytes split across reads are detected. The claim is removed and the
+  limit is documented, including which patterns avoid it.
+
 - A prompt that arrived while another one was pending was lost for good.
   Detection stops examining output while an occurrence is pending, so the second
   prompt reached the detection window and nowhere else — and answering the first

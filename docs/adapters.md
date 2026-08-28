@@ -73,8 +73,7 @@ could aid guessing low-entropy credentials.
 ## Streaming processor
 
 Every session has independent adapter state. The processor consumes arbitrary
-byte chunks from PTY or tmux, so correctness cannot depend on read boundaries.
-It:
+byte chunks from PTY or tmux. It:
 
 1. appends original output to a bounded 256 KiB ring for display;
 2. incrementally removes ANSI control sequences, including escapes fragmented
@@ -108,6 +107,25 @@ next.
 A generic match must overlap the active terminal line affected by the newest
 normalized chunk. This prevents old retained output from becoming actionable
 simply because a new unrelated line arrived.
+
+### Known limit: the read boundary is observable
+
+That rule ties detection to where a read happened to end, and a prompt is
+rarely the last thing an agent writes. When a question and the frame, option
+list or footer beneath it arrive in a single write, the active line is that
+trailing furniture and the question is missed; the identical bytes split across
+reads are detected. The processor does not reassemble a screen, so it cannot
+currently tell the two apart.
+
+This fails silently and in the unsafe direction: nothing is reported, so the
+agent proceeds unsupervised. Prefer a pattern that matches the last line an
+agent actually leaves on screen — its footer or its option list — over one that
+matches only the question, and use the native tmux attach when supervising an
+agent that repaints a full frame.
+
+Escaping this limit needs a screen model, which would also change every
+occurrence fingerprint and the snapshot replay contract. It is deliberately not
+attempted yet.
 
 The adapter ignores several common non-prompt contexts on the active line:
 
