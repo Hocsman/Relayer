@@ -74,7 +74,18 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit }: De
         </header>
 
         <div className="decision-context">
-          <div><span>Agent</span><strong>{agent?.name || event.agentID}</strong></div>
+          <div>
+            <span>Agent</span>
+            <strong>{agent?.name || event.agentID}</strong>
+            {agent?.simulated && (
+              <em
+                className="simulated-tag"
+                title="Script Bash de démonstration substitué à un vrai agent."
+              >
+                Simulé
+              </em>
+            )}
+          </div>
           <div><span>Adaptateur</span><strong>{event.adapter}</strong></div>
           <div><span>Risque</span><strong className={`risk-text risk-text--${event.risk}`}>{event.risk}</strong></div>
           <div><span>Règle</span><strong>{event.evaluation.ruleName || "Défaut sûr"}</strong></div>

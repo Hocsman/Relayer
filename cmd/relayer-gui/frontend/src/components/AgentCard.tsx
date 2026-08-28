@@ -53,14 +53,26 @@ export function AgentCard({ runID, agent, event, onResize, onStop, onOpenEvent, 
     }
   };
   return (
-    <article className={`agent-card${waiting ? " agent-card--waiting" : ""}`}>
+    <article
+      className={`agent-card${waiting ? " agent-card--waiting" : ""}${agent.simulated ? " agent-card--simulated" : ""}`}
+    >
       <header className="agent-card__header">
         <div className="agent-card__identity">
           <span className="agent-card__avatar" aria-hidden="true">
             {agent.name.trim().charAt(0).toUpperCase() || "A"}
           </span>
           <div className="agent-card__title">
-            <h2>{agent.name}</h2>
+            <h2>
+              {agent.name}
+              {agent.simulated && (
+                <span
+                  className="simulated-tag"
+                  title="Script Bash de démonstration substitué à un vrai agent. Ce panneau ne supervise aucun outil de code."
+                >
+                  Simulé
+                </span>
+              )}
+            </h2>
             <p title={agent.displayCommand}>{agent.displayCommand || agent.agentID}</p>
           </div>
         </div>
@@ -104,7 +116,13 @@ export function AgentCard({ runID, agent, event, onResize, onStop, onOpenEvent, 
       </form>
 
       <footer className="agent-card__footer">
-        <span>{agent.attached ? "Session attachée" : "Supervision active"}</span>
+        <span>
+          {agent.simulated
+            ? "Agent de démonstration"
+            : agent.attached
+              ? "Session attachée"
+              : "Supervision active"}
+        </span>
         <div className="agent-card__actions">
           {event && (
             <button

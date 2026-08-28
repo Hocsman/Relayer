@@ -216,6 +216,11 @@ export function createDemoBridge(): RelayerBridge {
     return structuredClone(profiles);
   };
 
+  const demoNotices = (): string[] => [
+    "Mode démonstration: aucun agent réel n'est lancé et rien n'est journalisé",
+    `${profiles.profiles.length} agent(s) simulé(s) par des scripts du navigateur`,
+  ];
+
   const agentsFromProfiles = (): AgentState[] => profiles.profiles.map((profile) => ({
     sessionID: profile.id,
     agentID: profile.id,
@@ -229,6 +234,9 @@ export function createDemoBridge(): RelayerBridge {
     running: true,
     attached: false,
     inputFrozen: false,
+    // Every agent in the demo bridge is a script; none supervises a real tool.
+    // The interface says so rather than letting the demo pass for a session.
+    simulated: true,
   }));
 
   window.setInterval(() => {
@@ -460,6 +468,7 @@ export function createDemoBridge(): RelayerBridge {
         audit: { enabled: true, mode: "metadata", status: "ready" },
         agents: agentsFromProfiles(),
         pendingEvents: [],
+        notices: demoNotices(),
       };
       profiles = { ...profiles, restartRequired: false };
       emit("relayer:status", { runID, scope: "run", status: "running" });

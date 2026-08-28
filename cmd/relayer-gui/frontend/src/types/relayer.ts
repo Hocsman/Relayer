@@ -64,6 +64,11 @@ export interface AgentState {
   running: boolean;
   attached: boolean;
   inputFrozen?: boolean;
+  // True when the Go core substituted a scripted Bash agent for a real one.
+  // Nothing else on screen distinguishes the two, and in a supervision tool an
+  // operator must never believe they are watching a coding agent when they are
+  // watching a mock.
+  simulated?: boolean;
   exitCode?: number;
 }
 
@@ -101,6 +106,9 @@ export interface AppState {
   audit: AuditState;
   agents: AgentState[];
   pendingEvents: SupervisionEvent[];
+  // Startup facts the terminal interface prints on standard error, which a
+  // desktop application launched from a file manager does not have.
+  notices?: string[];
 }
 
 export interface SnapshotEvent {
