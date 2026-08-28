@@ -24,6 +24,10 @@ func TestReplaceAgentsPreservesConfigurationAndPublishesAtomically(t *testing.T)
 	if err != nil {
 		t.Fatalf("read before: %v", err)
 	}
+	beforeInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat before: %v", err)
+	}
 
 	specs := []agent.Spec{
 		{ID: "claude", Name: "Claude Code", Command: []string{"claude", "--safe argument"}, Cwd: directory, Adapter: agent.AdapterGeneric, Backend: agent.BackendAuto},
@@ -55,8 +59,8 @@ func TestReplaceAgentsPreservesConfigurationAndPublishesAtomically(t *testing.T)
 	if err != nil {
 		t.Fatalf("stat updated config: %v", err)
 	}
-	if info.Mode().Perm() != 0o644 {
-		t.Fatalf("mode = %o, want 644", info.Mode().Perm())
+	if info.Mode().Perm() != beforeInfo.Mode().Perm() {
+		t.Fatalf("mode = %o, want preserved mode %o", info.Mode().Perm(), beforeInfo.Mode().Perm())
 	}
 }
 

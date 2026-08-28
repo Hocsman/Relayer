@@ -17,6 +17,10 @@ func TestFileSnapshotRestoresExactConfigurationAndMode(t *testing.T) {
 	if err := os.WriteFile(path, original, 0o640); err != nil {
 		t.Fatal(err)
 	}
+	originalInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	snapshot, err := CaptureFileSnapshot(path)
 	if err != nil {
 		t.Fatalf("CaptureFileSnapshot: %v", err)
@@ -55,8 +59,8 @@ func TestFileSnapshotRestoresExactConfigurationAndMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotMode := info.Mode().Perm(); gotMode != 0o640 {
-		t.Fatalf("restored mode = %04o, want 0640", gotMode)
+	if gotMode := info.Mode().Perm(); gotMode != originalInfo.Mode().Perm() {
+		t.Fatalf("restored mode = %04o, want preserved mode %04o", gotMode, originalInfo.Mode().Perm())
 	}
 }
 
