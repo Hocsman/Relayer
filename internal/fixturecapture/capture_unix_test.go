@@ -477,7 +477,7 @@ func TestPTYCaptureCancellationAndNormalExitCloseDescriptors(t *testing.T) {
 func TestTmuxCaptureUsesPrivateServerAndLeavesForeignServerAlone(t *testing.T) {
 	tmuxPath, err := exec.LookPath("tmux")
 	if err != nil {
-		t.Skip("tmux is not installed")
+		requireTmux(t, err)
 	}
 	t.Setenv("RELAYER_FIXTURE_TEST_TOKEN", "parent-tmux-fixture-secret")
 	t.Setenv("OPENAI_API_KEY", "sk-parent-tmux-fixture-secret")
@@ -499,8 +499,13 @@ func TestTmuxCaptureUsesPrivateServerAndLeavesForeignServerAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	foreign.Env = safeEnvironment(foreignDirectory)
+	// Whether a private tmux socket can be created at all is a property of the
+	// machine, established once above. Everything after that probe is this
+	// code's own behaviour, so a failure here is a failure: reporting it as a
+	// skip is how the tmux 3.7 format regression stayed hidden while the suite
+	// was green.
 	if output, err := foreign.CombinedOutput(); err != nil || len(output) != 0 {
-		t.Skip("test environment does not permit a private tmux socket")
+		t.Fatalf("starting the foreign tmux session failed: %v (output %q)", err, output)
 	}
 	t.Cleanup(func() {
 		command := exec.Command(tmuxPath, "-S", foreignSocket, "kill-server")

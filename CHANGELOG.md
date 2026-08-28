@@ -111,6 +111,14 @@ still change without compatibility guarantees.
 
 ### Fixed
 
+- Two tests reported a genuine failure as a skip. Starting the foreign tmux
+  session in the fixture-capture test, and inspecting processes after a rollback
+  in the app integration test, both ran an operation and skipped on any error —
+  so a regression in the code under test looked like an absent capability. That
+  is structurally how the tmux 3.7 format break stayed hidden behind a green
+  suite. Both now fail with the underlying error, and `CONTRIBUTING.md` already
+  stated the rule they violated.
+
 - An operator on an unsupported platform was told only that agent execution is
   unavailable, never why. The build carried the explanation — a ConPTY backend
   must be implemented and tested first — in a function nothing called, which is

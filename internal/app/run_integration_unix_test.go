@@ -58,7 +58,10 @@ intercept_patterns:
 	for {
 		output, psErr := exec.Command("ps", "-ax", "-o", "command=").Output()
 		if psErr != nil {
-			t.Skipf("process inspection is unavailable after rollback: %v", psErr)
+			// ps was located before the run started, so a failure now is not a
+			// missing tool: it is the inspection itself going wrong, and a skip
+			// would quietly stop verifying that rollback killed the process.
+			t.Fatalf("process inspection failed after rollback: %v", psErr)
 		}
 		if !bytes.Contains(output, []byte(processMarker)) {
 			break
