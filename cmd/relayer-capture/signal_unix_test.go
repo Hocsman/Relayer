@@ -94,7 +94,7 @@ func TestCapturedProcessForSignal(t *testing.T) {
 		record.TmuxServerPID, _ = strconv.Atoi(parts[1])
 	}
 	payload, err := json.Marshal(record)
-	if err != nil || os.WriteFile(recordPath, payload, 0o600) != nil {
+	if err != nil || writeFileAtomically(recordPath, payload) != nil {
 		_ = child.Process.Kill()
 		os.Exit(93)
 	}
@@ -218,14 +218,19 @@ func testSIGTERMCleanup(t *testing.T, backend, tmuxPath string) {
 func waitForSignalRecord(t *testing.T, path string, waited <-chan error) signalCaptureRecord {
 	t.Helper()
 	deadline := time.Now().Add(8 * time.Second)
+	var decodeErr error
 	for time.Now().Before(deadline) {
 		payload, err := os.ReadFile(path)
 		if err == nil {
 			var record signalCaptureRecord
-			if err := json.Unmarshal(payload, &record); err != nil {
-				t.Fatal(err)
+			// The record is published by an atomic rename, so a successful read
+			// should always be complete. Treat a decode failure as "not yet"
+			// anyway rather than failing instantly: an unlucky read must not
+			// turn into a spurious test failure, and the last error is reported
+			// if the deadline really expires.
+			if decodeErr = json.Unmarshal(payload, &record); decodeErr == nil {
+				return record
 			}
-			return record
 		}
 		select {
 		case err := <-waited:
@@ -233,6 +238,9 @@ func waitForSignalRecord(t *testing.T, path string, waited <-chan error) signalC
 		default:
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+	if decodeErr != nil {
+		t.Fatalf("capture target record never became readable: %v", decodeErr)
 	}
 	t.Fatal("capture target did not become ready")
 	return signalCaptureRecord{}
@@ -296,4 +304,32 @@ func argumentIndex(marker string) int {
 		}
 	}
 	return -1
+}
+
+// writeFileAtomically publishes payload through a same-directory rename, so a
+// reader polling for the path either sees nothing or sees the whole file.
+// os.WriteFile truncates first and would expose an empty or partial record.
+func writeFileAtomically(path string, payload []byte) error {
+	temporary, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	name := temporary.Name()
+	defer func() { _ = os.Remove(name) }()
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(payload); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
 }
