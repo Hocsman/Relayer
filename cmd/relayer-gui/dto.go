@@ -29,6 +29,7 @@ type AgentState struct {
 	Running        bool   `json:"running"`
 	Attached       bool   `json:"attached"`
 	InputFrozen    bool   `json:"inputFrozen"`
+	Simulated      bool   `json:"simulated"`
 	ExitCode       *int   `json:"exitCode,omitempty"`
 }
 
@@ -64,6 +65,13 @@ type AppState struct {
 	Audit         AuditState         `json:"audit"`
 	Agents        []AgentState       `json:"agents"`
 	PendingEvents []SupervisionEvent `json:"pendingEvents"`
+
+	// Notices are the resolution warnings and startup facts the terminal
+	// interface prints. They previously went to standard error, which an
+	// application launched from a file manager does not have, so "tmux is
+	// unavailable, falling back to PTY" and "two demo agents were substituted"
+	// reached nobody.
+	Notices []string `json:"notices"`
 }
 
 type SnapshotEvent struct {

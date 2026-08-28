@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
 	appcore "github.com/Hocsman/Relayer/internal/app"
@@ -59,6 +60,7 @@ type pendingEvent struct {
 type desktopEngine interface {
 	Metadata() appcore.DesktopMetadata
 	Sessions() []appcore.DesktopSession
+	StartupLogs() []string
 	Events() <-chan session.Event
 	Output(string) (string, error)
 	PendingEvent(context.Context, string) (*adapters.Event, error)
@@ -243,6 +245,7 @@ func (a *App) activateRun(run *runGeneration) {
 			Output:         output,
 			Revision:       1,
 			Running:        true,
+			Simulated:      item.Simulated,
 		})
 	}
 	a.mu.Lock()
@@ -277,6 +280,7 @@ func (a *App) activateRun(run *runGeneration) {
 			Path:    metadata.AuditPath,
 		},
 		Agents:        agents,
+		Notices:       safeNotices(engine.StartupLogs()),
 		PendingEvents: []SupervisionEvent{},
 	}
 	a.mu.Unlock()
@@ -1450,4 +1454,37 @@ func cloneInt(value *int) *int {
 	}
 	copy := *value
 	return &copy
+}
+
+// safeNotices bounds what the startup log may put on screen.
+//
+// Its lines are built by the application from configuration facts rather than
+// from terminal output, but this is the first path that displays them, so the
+// count and length are capped and control characters are dropped rather than
+// trusted to be absent.
+func safeNotices(logs []string) []string {
+	const (
+		maxNotices    = 16
+		maxNoticeRune = 240
+	)
+	notices := make([]string, 0, len(logs))
+	for _, line := range logs {
+		if len(notices) == maxNotices {
+			break
+		}
+		cleaned := strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) {
+				return -1
+			}
+			return r
+		}, strings.TrimSpace(line))
+		if cleaned == "" {
+			continue
+		}
+		if runes := []rune(cleaned); len(runes) > maxNoticeRune {
+			cleaned = string(runes[:maxNoticeRune])
+		}
+		notices = append(notices, cleaned)
+	}
+	return notices
 }

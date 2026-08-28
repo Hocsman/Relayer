@@ -329,3 +329,68 @@ func configuredAgentSpecs(count int) []agent.Spec {
 	}
 	return specs
 }
+
+// Two agents may legitimately carry the same display name, so a mock cannot be
+// identified by name: the interface would mark both, or neither. The resolver
+// reports substitution per position instead.
+func TestResolveAgentPlansMarksSubstitutionByPositionNotName(t *testing.T) {
+	configured := configuredAgentSpecs(2)
+	configured[0].Name = "Agent"
+	configured[1].Name = "Agent"
+
+	resolution, err := resolveAgentPlans(config.Result{
+		Backend: agent.BackendPTY,
+		Agents:  configured,
+	}, options{pane2Set: true, pane2: "  "}, t.TempDir())
+	if err != nil {
+		t.Fatalf("resolveAgentPlans: %v", err)
+	}
+	if got, want := resolution.Simulated, []bool{false, true}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("simulated = %#v, want %#v", got, want)
+	}
+	if !reflect.DeepEqual(resolution.Specs[0].Command, configured[0].Command) {
+		t.Fatalf("the first agent was substituted: %#v", resolution.Specs[0])
+	}
+	if !reflect.DeepEqual(resolution.Specs[1].Command, mockCommand()) {
+		t.Fatalf("the second agent is not the mock: %#v", resolution.Specs[1])
+	}
+	if !reflect.DeepEqual(resolution.MockAgentNames, []string{"Agent"}) {
+		t.Fatalf("mock names = %#v, want the substituted agent once", resolution.MockAgentNames)
+	}
+}
+
+// An override that supplies a real command un-marks the position it replaced.
+func TestResolveAgentPlansOverrideOfADefaultMockClearsItsSimulationMark(t *testing.T) {
+	resolution, err := resolveAgentPlans(
+		config.Result{Backend: agent.BackendPTY},
+		options{pane1Set: true, pane1: "runner --real"},
+		t.TempDir(),
+	)
+	if err != nil {
+		t.Fatalf("resolveAgentPlans: %v", err)
+	}
+	if got, want := resolution.Simulated, []bool{false, true}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("simulated = %#v, want %#v", got, want)
+	}
+	if !reflect.DeepEqual(resolution.MockAgentNames, []string{resolution.Specs[1].Name}) {
+		t.Fatalf("mock names = %#v", resolution.MockAgentNames)
+	}
+}
+
+// Configured agents are never marked; a configuration that happens to name a
+// command "bash" is still the operator's own choice.
+func TestResolveAgentPlansLeavesConfiguredAgentsUnmarked(t *testing.T) {
+	resolution, err := resolveAgentPlans(config.Result{
+		Backend: agent.BackendPTY,
+		Agents:  configuredAgentSpecs(3),
+	}, options{}, t.TempDir())
+	if err != nil {
+		t.Fatalf("resolveAgentPlans: %v", err)
+	}
+	if got, want := resolution.Simulated, []bool{false, false, false}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("simulated = %#v, want %#v", got, want)
+	}
+	if len(resolution.MockAgentNames) != 0 {
+		t.Fatalf("mock names = %#v, want none", resolution.MockAgentNames)
+	}
+}

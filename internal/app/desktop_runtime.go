@@ -64,6 +64,12 @@ type DesktopSession struct {
 	Backend string `json:"backend"`
 	Adapter string `json:"adapter"`
 	Shell   bool   `json:"shell"`
+
+	// Simulated marks one of the synthetic Bash agents substituted for an empty
+	// agent list. They are indistinguishable from a real agent on screen, which
+	// in a supervision tool means an operator can believe they are watching a
+	// coding agent while watching a scripted mock.
+	Simulated bool `json:"simulated"`
 }
 
 // DesktopMetadata contains non-sensitive run settings suitable for a GUI.
@@ -247,7 +253,10 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 	runtime.router = router
 	runtime.events = events
 
-	for _, spec := range plan.resolution.Specs {
+	// The resolver marks the agents it substituted with the built-in mock. The
+	// session carries that through so the interface can say so per agent
+	// instead of leaving it in a startup log nobody reads.
+	for index, spec := range plan.resolution.Specs {
 		info, startErr := router.Start(ctx, spec, plan.initialSize)
 		if startErr != nil {
 			_ = auditor.Record(audit.Entry{
@@ -263,12 +272,13 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 		}
 		runtime.infos = append(runtime.infos, info)
 		runtime.sessions = append(runtime.sessions, DesktopSession{
-			ID:      info.ID,
-			Name:    info.Name,
-			Command: desktopCommandLabel(spec.Command, spec.Shell),
-			Backend: info.Backend,
-			Adapter: info.Adapter,
-			Shell:   info.Shell,
+			ID:        info.ID,
+			Name:      info.Name,
+			Command:   desktopCommandLabel(spec.Command, spec.Shell),
+			Backend:   info.Backend,
+			Adapter:   info.Adapter,
+			Shell:     info.Shell,
+			Simulated: plan.resolution.Simulated[index],
 		})
 		if err := auditor.Record(audit.Entry{
 			Kind:       audit.KindSessionStarted,
