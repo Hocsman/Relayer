@@ -31,7 +31,7 @@ func TestOperationErrorPreservesSentinelWithoutLeakingExtraContext(t *testing.T)
 	if !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("OperationError does not unwrap its cause: %v", err)
 	}
-	if got, want := err.Error(), "tmux resize (session agent-a): session terminal inconnue"; got != want {
+	if got, want := err.Error(), "tmux resize (session agent-a): terminal session not found"; got != want {
 		t.Fatalf("Error() = %q, want %q", got, want)
 	}
 }

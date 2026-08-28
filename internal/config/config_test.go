@@ -299,7 +299,7 @@ func TestLoadPromptPatternsRejectsNonStrictOrMalformedYAML(t *testing.T) {
 				"---\n" +
 				"- pattern: 'second'\n" +
 				"  description: Second\n",
-			wantMessage: "plusieurs documents YAML",
+			wantMessage: "multiple YAML documents",
 		},
 	}
 
@@ -394,7 +394,7 @@ func TestLoadPromptPatternsRejectsInvalidRegexWithoutReplacingFile(t *testing.T)
 	if created {
 		t.Fatal("invalid existing config was reported as created")
 	}
-	if !strings.Contains(err.Error(), "regex invalide") {
+	if !strings.Contains(err.Error(), "invalid regex") {
 		t.Fatalf("error %q does not identify the invalid regex", err)
 	}
 	assertConfigFileBytes(t, path, original)

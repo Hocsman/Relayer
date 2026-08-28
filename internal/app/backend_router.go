@@ -54,17 +54,17 @@ func newBackendRouter(parent context.Context, backends ...terminal.Backend) (*ba
 		name := strings.ToLower(strings.TrimSpace(backend.Name()))
 		if name == "" || name == agent.BackendAuto {
 			cancel()
-			return nil, fmt.Errorf("nom de backend concret invalide %q", backend.Name())
+			return nil, fmt.Errorf("invalid concrete backend name %q", backend.Name())
 		}
 		if _, exists := result.backends[name]; exists {
 			cancel()
-			return nil, fmt.Errorf("backend concret dupliqué %q", name)
+			return nil, fmt.Errorf("duplicate concrete backend %q", name)
 		}
 		result.backends[name] = backend
 	}
 	if len(result.backends) == 0 {
 		cancel()
-		return nil, errors.New("aucun backend terminal concret")
+		return nil, errors.New("no concrete terminal backend")
 	}
 	return result, nil
 }
@@ -83,7 +83,7 @@ func (r *backendRouter) Name() string {
 func (r *backendRouter) Start(ctx context.Context, spec agent.Spec, size terminal.Size) (terminal.Info, error) {
 	backendName := strings.ToLower(strings.TrimSpace(spec.Backend))
 	if backendName == agent.BackendAuto || backendName == "" {
-		return terminal.Info{}, fmt.Errorf("backend de l'agent %q non résolu: %q", spec.ID, spec.Backend)
+		return terminal.Info{}, fmt.Errorf("unresolved backend for agent %q: %q", spec.ID, spec.Backend)
 	}
 	r.mu.RLock()
 	backend := r.backends[backendName]
@@ -104,7 +104,7 @@ func (r *backendRouter) Start(ctx context.Context, spec agent.Spec, size termina
 	}
 	if !strings.EqualFold(info.Backend, backendName) {
 		_ = backend.Stop(context.Background(), info.ID)
-		return terminal.Info{}, fmt.Errorf("backend %q a retourné le backend incohérent %q", backendName, info.Backend)
+		return terminal.Info{}, fmt.Errorf("backend %q returned inconsistent backend %q", backendName, info.Backend)
 	}
 	key := strings.ToLower(info.ID)
 	r.mu.Lock()
@@ -116,7 +116,7 @@ func (r *backendRouter) Start(ctx context.Context, spec agent.Spec, size termina
 	if _, exists := r.routes[key]; exists {
 		r.mu.Unlock()
 		_ = backend.Stop(context.Background(), info.ID)
-		return terminal.Info{}, fmt.Errorf("ID de session dupliqué %q", info.ID)
+		return terminal.Info{}, fmt.Errorf("duplicate session ID %q", info.ID)
 	}
 	r.routes[key] = backend
 	r.mu.Unlock()
@@ -185,7 +185,7 @@ func (r *backendRouter) PendingEvent(ctx context.Context, id string) (*adapters.
 	if provider, ok := backend.(terminal.PendingEventProvider); ok {
 		return provider.PendingEvent(ctx, id)
 	}
-	return nil, fmt.Errorf("%w: backend %s sans snapshot d'événement en cache", terminal.ErrUnsupported, backend.Name())
+	return nil, fmt.Errorf("%w: backend %s without cached event snapshot", terminal.ErrUnsupported, backend.Name())
 }
 
 func (r *backendRouter) SendDecision(ctx context.Context, id string, event adapters.Event, manualInput string) error {
@@ -196,7 +196,7 @@ func (r *backendRouter) SendDecision(ctx context.Context, id string, event adapt
 // before encoding and delivery. This CAS boundary prevents a stale policy or
 // UI result from acknowledging a newer prompt from the same session.
 // ErrEmptyManualDecision reports a manual decision carrying no answer.
-var ErrEmptyManualDecision = errors.New("une décision manuelle ne peut pas être vide")
+var ErrEmptyManualDecision = errors.New("a manual decision cannot be empty")
 
 func (r *backendRouter) ApplyDecision(
 	ctx context.Context,
@@ -220,19 +220,19 @@ func (r *backendRouter) ApplyDecision(
 		}
 	case adapters.DecisionAllow, adapters.DecisionDeny:
 		if manualInput != "" {
-			return errors.New("une décision automatique ne peut pas contenir de saisie manuelle")
+			return errors.New("an automatic decision cannot contain manual input")
 		}
 	default:
 		return fmt.Errorf("%w: %q", adapters.ErrDecisionUnsupported, decision)
 	}
 	if strings.TrimSpace(event.ID) == "" {
-		return fmt.Errorf("%w: identifiant d'événement vide", adapters.ErrEventMismatch)
+		return fmt.Errorf("%w: empty event ID", adapters.ErrEventMismatch)
 	}
 	if r.adapters == nil {
 		return errors.New("registry d'adaptateurs indisponible")
 	}
 	if !strings.EqualFold(strings.TrimSpace(event.SessionID), strings.TrimSpace(id)) {
-		return fmt.Errorf("%w: événement %q destiné à la session %q, pas %q",
+		return fmt.Errorf("%w: event %q targets session %q, not %q",
 			adapters.ErrEventMismatch, event.ID, event.SessionID, id)
 	}
 	backend, err := r.backendFor(id)
@@ -242,7 +242,7 @@ func (r *backendRouter) ApplyDecision(
 	ctx = effectiveContext(ctx, r.ctx)
 	provider, ok := backend.(terminal.PendingEventProvider)
 	if !ok {
-		return fmt.Errorf("%w: backend %s sans snapshot d'événement en cache", terminal.ErrUnsupported, backend.Name())
+		return fmt.Errorf("%w: backend %s without cached event snapshot", terminal.ErrUnsupported, backend.Name())
 	}
 	pending, err := provider.PendingEvent(ctx, id)
 	if err != nil {
@@ -253,7 +253,7 @@ func (r *backendRouter) ApplyDecision(
 		if pending != nil {
 			currentID = pending.ID
 		}
-		return fmt.Errorf("%w: reçu %q, attendu %q", adapters.ErrEventMismatch, event.ID, currentID)
+		return fmt.Errorf("%w: got %q, want %q", adapters.ErrEventMismatch, event.ID, currentID)
 	}
 	canonical := pending.Clone()
 	adapter, _, err := r.adapters.Resolve(canonical.Adapter, "")
@@ -267,7 +267,7 @@ func (r *backendRouter) ApplyDecision(
 	if sender, ok := backend.(terminal.EventSender); ok {
 		return sender.SendEvent(ctx, id, canonical.ID, data)
 	}
-	return fmt.Errorf("%w: backend %s sans livraison d'événement atomique", terminal.ErrUnsupported, backend.Name())
+	return fmt.Errorf("%w: backend %s without atomic event delivery", terminal.ErrUnsupported, backend.Name())
 }
 
 func (r *backendRouter) AttachCommand(ctx context.Context, id string) (*exec.Cmd, error) {

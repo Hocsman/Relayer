@@ -77,7 +77,7 @@ func (s *DetectionState) acknowledge(eventID string) (string, error) {
 		return "", nil
 	}
 	if eventID != "" && s.pending.ID != eventID {
-		return "", fmt.Errorf("%w: reçu %q, attendu %q", ErrEventMismatch, eventID, s.pending.ID)
+		return "", fmt.Errorf("%w: got %q, want %q", ErrEventMismatch, eventID, s.pending.ID)
 	}
 	signature := s.pending.Signature
 	s.pending = nil
@@ -96,10 +96,10 @@ func (s *DetectionState) resetWindow() {
 
 func (s *DetectionState) restore(event Event) error {
 	if s == nil {
-		return fmt.Errorf("état de détection nil")
+		return fmt.Errorf("nil detection state")
 	}
 	if s.pending != nil && s.pending.ID != event.ID {
-		return fmt.Errorf("%w: impossible de restaurer %q", ErrEventMismatch, event.ID)
+		return fmt.Errorf("%w: cannot restore %q", ErrEventMismatch, event.ID)
 	}
 	clone := event.Clone()
 	s.pending = &clone

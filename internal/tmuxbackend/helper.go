@@ -39,17 +39,17 @@ func HelperMain(arguments []string, diagnostics io.Writer) (handled bool, exitCo
 func readLaunchSpec(path string) (launchSpec, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return launchSpec{}, fmt.Errorf("lecture de la spécification privée: %w", err)
+		return launchSpec{}, fmt.Errorf("reading the private specification: %w", err)
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
-		return launchSpec{}, errors.New("permissions invalides pour la spécification privée")
+		return launchSpec{}, errors.New("invalid permissions for the private specification")
 	}
 	if info.Size() > maxSpecSize {
-		return launchSpec{}, errors.New("spécification privée trop volumineuse")
+		return launchSpec{}, errors.New("private specification too large")
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return launchSpec{}, fmt.Errorf("ouverture de la spécification privée: %w", err)
+		return launchSpec{}, fmt.Errorf("opening the private specification: %w", err)
 	}
 	defer file.Close()
 
@@ -57,11 +57,11 @@ func readLaunchSpec(path string) (launchSpec, error) {
 	decoder.DisallowUnknownFields()
 	var spec launchSpec
 	if err := decoder.Decode(&spec); err != nil {
-		return launchSpec{}, fmt.Errorf("décodage de la spécification privée: %w", err)
+		return launchSpec{}, fmt.Errorf("decoding the private specification: %w", err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return launchSpec{}, errors.New("données supplémentaires dans la spécification privée")
+		return launchSpec{}, errors.New("extra data in the private specification")
 	}
 	return spec, nil
 }

@@ -22,14 +22,14 @@ func executeLaunchSpec(specPath, gatePath string) error {
 	removeErr := os.Remove(gatePath)
 	if readErr != nil {
 		return errors.Join(
-			fmt.Errorf("attente du signal de démarrage: %w", readErr),
+			fmt.Errorf("waiting for the start signal: %w", readErr),
 			wrapGateCloseError(closeErr),
 			wrapGateRemoveError(removeErr),
 		)
 	}
 	if closeErr != nil {
 		return errors.Join(
-			fmt.Errorf("fermeture du signal de démarrage: %w", closeErr),
+			fmt.Errorf("closing the start signal: %w", closeErr),
 			wrapGateRemoveError(removeErr),
 		)
 	}
@@ -42,7 +42,7 @@ func executeLaunchSpec(specPath, gatePath string) error {
 		arguments = []string{"/bin/sh", "-c", spec.Shell}
 	}
 	if len(arguments) == 0 || strings.TrimSpace(arguments[0]) == "" {
-		return errors.New("commande tmux vide")
+		return errors.New("empty tmux command")
 	}
 	if spec.Cwd != "" {
 		if err := os.Chdir(spec.Cwd); err != nil {
@@ -69,7 +69,7 @@ func executeLaunchSpec(specPath, gatePath string) error {
 			continue
 		}
 		if err := os.Setenv(name, value); err != nil {
-			return fmt.Errorf("métadonnée d'environnement tmux %q: %w", name, err)
+			return fmt.Errorf("tmux environment metadata %q: %w", name, err)
 		}
 	}
 
@@ -77,7 +77,7 @@ func executeLaunchSpec(specPath, gatePath string) error {
 	if !strings.ContainsRune(executable, os.PathSeparator) {
 		executable, err = exec.LookPath(executable)
 		if err != nil {
-			return fmt.Errorf("exécutable agent introuvable: %w", err)
+			return fmt.Errorf("agent executable not found: %w", err)
 		}
 	}
 	return syscall.Exec(executable, arguments, os.Environ())
@@ -99,33 +99,33 @@ func prepareLaunchSpec(
 	}
 	gateInfo, err := os.Lstat(gatePath)
 	if err != nil {
-		return launchSpec{}, nil, fmt.Errorf("inspection du signal de démarrage: %w", err)
+		return launchSpec{}, nil, fmt.Errorf("inspecting the start signal: %w", err)
 	}
 	if !validLaunchGate(gateInfo) {
-		return launchSpec{}, nil, errors.New("permissions invalides pour le signal de démarrage")
+		return launchSpec{}, nil, errors.New("invalid permissions for the start signal")
 	}
 	gate, err := openGate(gatePath)
 	if err != nil {
-		return launchSpec{}, nil, fmt.Errorf("ouverture du signal de démarrage: %w", err)
+		return launchSpec{}, nil, fmt.Errorf("opening the start signal: %w", err)
 	}
 	openedInfo, statErr := gate.Stat()
 	if statErr != nil || !validLaunchGate(openedInfo) || !os.SameFile(gateInfo, openedInfo) {
 		closeErr := gate.Close()
 		if statErr != nil {
 			return launchSpec{}, nil, errors.Join(
-				fmt.Errorf("validation du signal de démarrage ouvert: %w", statErr),
+				fmt.Errorf("validating the opened start signal: %w", statErr),
 				wrapGateCloseError(closeErr),
 			)
 		}
 		return launchSpec{}, nil, errors.Join(
-			errors.New("signal de démarrage remplacé ou invalide"),
+			errors.New("start signal replaced or invalid"),
 			wrapGateCloseError(closeErr),
 		)
 	}
 	if err := os.Remove(specPath); err != nil {
 		closeErr := gate.Close()
 		return launchSpec{}, nil, errors.Join(
-			fmt.Errorf("suppression de la spécification privée: %w", err),
+			fmt.Errorf("removing the private specification: %w", err),
 			wrapGateCloseError(closeErr),
 		)
 	}
@@ -140,12 +140,12 @@ func wrapGateCloseError(err error) error {
 	if err == nil {
 		return nil
 	}
-	return fmt.Errorf("fermeture du signal de démarrage: %w", err)
+	return fmt.Errorf("closing the start signal: %w", err)
 }
 
 func wrapGateRemoveError(err error) error {
 	if err == nil || errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	return fmt.Errorf("suppression du signal de démarrage: %w", err)
+	return fmt.Errorf("removing the start signal: %w", err)
 }

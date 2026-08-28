@@ -161,7 +161,7 @@ func TestRunAuditInitialWriteFailurePreventsBackendConstruction(t *testing.T) {
 			return newRouterFakeBackend(agent.BackendPTY), nil
 		},
 	})
-	if err == nil || !strings.Contains(err.Error(), "démarrage du run") {
+	if err == nil || !strings.Contains(err.Error(), "writing the run start to the audit") {
 		t.Fatalf("run error = %v", err)
 	}
 	if constructed != 0 {
@@ -187,7 +187,7 @@ func TestRunRejectsNilAuditRecorderBeforeBackendConstruction(t *testing.T) {
 			return newRouterFakeBackend(agent.BackendPTY), nil
 		},
 	})
-	if err == nil || !strings.Contains(err.Error(), "journal d'audit") {
+	if err == nil || !strings.Contains(err.Error(), "audit journal") {
 		t.Fatalf("run error = %v", err)
 	}
 	if constructed != 0 {
@@ -207,7 +207,7 @@ func TestRunAuditInitializationFailsBeforeBackendConstruction(t *testing.T) {
 			return newRouterFakeBackend(agent.BackendPTY), nil
 		},
 	})
-	if err == nil || !strings.Contains(err.Error(), "journal d'audit") {
+	if err == nil || !strings.Contains(err.Error(), "audit journal") {
 		t.Fatalf("run error = %v", err)
 	}
 	if constructed != 0 {
@@ -226,7 +226,7 @@ func TestRunAuditWriteFailureRollsBackStartedSession(t *testing.T) {
 			return backend, nil
 		},
 	})
-	if err == nil || !strings.Contains(err.Error(), "audit du démarrage") {
+	if err == nil || !strings.Contains(err.Error(), "auditing the startup of agent") {
 		t.Fatalf("run error = %v", err)
 	}
 	backend.mu.Lock()

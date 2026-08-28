@@ -33,7 +33,7 @@ func NewGenericRegexAdapter(patterns []Pattern) (*GenericRegexAdapter, error) {
 	for _, pattern := range patterns {
 		expression, err := regexp.Compile(pattern.Expression)
 		if err != nil {
-			return nil, fmt.Errorf("regex %q invalide: %w", pattern.Name, err)
+			return nil, fmt.Errorf("invalid regex %q: %w", pattern.Name, err)
 		}
 		compiled = append(compiled, compiledPattern{Pattern: pattern, regex: expression})
 	}
@@ -47,7 +47,7 @@ func (*GenericRegexAdapter) ID() string { return GenericID }
 // reach the active terminal line affected by the newest normalized chunk.
 func (a *GenericRegexAdapter) Detect(state *DetectionState, chunk []byte) ([]Event, error) {
 	if state == nil {
-		return nil, fmt.Errorf("état de détection nil")
+		return nil, fmt.Errorf("nil detection state")
 	}
 	if len(chunk) == 0 {
 		return nil, nil
@@ -115,10 +115,10 @@ func (*GenericRegexAdapter) EncodeDecision(event Event, decision Decision, manua
 		return nil, fmt.Errorf("%w: %q", ErrDecisionUnsupported, decision)
 	}
 	if !event.Actionable() {
-		return nil, fmt.Errorf("%w pour le type %q", ErrDecisionUnsupported, event.Type)
+		return nil, fmt.Errorf("%w for type %q", ErrDecisionUnsupported, event.Type)
 	}
 	if strings.IndexByte(manualInput, 0) >= 0 {
-		return nil, fmt.Errorf("entrée manuelle invalide: octet NUL")
+		return nil, fmt.Errorf("invalid manual input: NUL byte")
 	}
 	return []byte(manualInput + "\r"), nil
 }

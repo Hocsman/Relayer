@@ -34,7 +34,7 @@ func TestReplaceAgentsReturnsBusyWithinBoundWhenAnotherProcessLockIsHeld(t *test
 		ID: "agent", Name: "Agent", Command: []string{"runner"}, Backend: agent.BackendPTY,
 	}})
 	elapsed := time.Since(started)
-	if replaceErr == nil || !strings.Contains(replaceErr.Error(), "occupée") {
+	if replaceErr == nil || !strings.Contains(replaceErr.Error(), "in use by another Relayer instance") {
 		t.Fatalf("ReplaceAgents error = %v, want bounded busy error", replaceErr)
 	}
 	if elapsed > 2*configurationLockTimeout {

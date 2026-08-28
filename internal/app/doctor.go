@@ -18,7 +18,7 @@ import (
 // ErrPreflightBlocked is returned only after a complete, display-safe doctor
 // report has been written. Entrypoints use it to select a non-zero exit status
 // without appending a second error message to the report.
-var ErrPreflightBlocked = errors.New("le diagnostic Relayer a détecté un blocage")
+var ErrPreflightBlocked = errors.New("relayer diagnostics detected a blocker")
 
 type preflightRunner func(context.Context, PreflightOptions) (preflight.Report, error)
 
@@ -46,7 +46,7 @@ func runDoctor(
 		return err
 	}
 	if flags.NArg() != 0 {
-		return errors.New("doctor n'accepte aucun argument positionnel")
+		return errors.New("doctor accepts no positional arguments")
 	}
 
 	var report preflight.Report
@@ -77,7 +77,7 @@ func runDoctor(
 func writeDoctorReport(output io.Writer, report preflight.Report) error {
 	report = report.Clone()
 	if err := preflight.ValidateReport(report); err != nil {
-		return errors.New("rapport doctor invalide")
+		return errors.New("invalid doctor report")
 	}
 	var rendered strings.Builder
 	rendered.WriteString("Relayer doctor\n")
@@ -87,7 +87,7 @@ func writeDoctorReport(output io.Writer, report preflight.Report) error {
 			descriptor, ok := toolcatalog.Lookup(tool.ProfileID)
 			installation, valid := doctorInstallationLabel(tool.Installation)
 			if !ok || !valid {
-				return errors.New("rapport doctor invalide")
+				return errors.New("invalid doctor report")
 			}
 			_, _ = fmt.Fprintf(&rendered, "  - %s : %s\n", descriptor.Name, installation)
 		}
@@ -97,7 +97,7 @@ func writeDoctorReport(output io.Writer, report preflight.Report) error {
 		for _, inspected := range report.Agents {
 			line, ok := doctorAgentLine(inspected)
 			if !ok {
-				return errors.New("rapport doctor invalide")
+				return errors.New("invalid doctor report")
 			}
 			_, _ = fmt.Fprintf(&rendered, "  - %s\n", line)
 		}
@@ -119,11 +119,11 @@ func writeDoctorReport(output io.Writer, report preflight.Report) error {
 			label = "BLOQUÉ"
 			blockCount++
 		default:
-			return errors.New("rapport doctor invalide")
+			return errors.New("invalid doctor report")
 		}
 		scope, ok := doctorScopeLabel(check.Scope)
 		if !ok || strings.TrimSpace(check.Summary) == "" {
-			return errors.New("rapport doctor invalide")
+			return errors.New("invalid doctor report")
 		}
 		_, _ = fmt.Fprintf(&rendered, "[%s] %s — %s\n", label, scope, check.Summary)
 		if strings.TrimSpace(check.Remediation) != "" {
@@ -140,7 +140,7 @@ func writeDoctorReport(output io.Writer, report preflight.Report) error {
 	case preflight.StatusBlocked:
 		overall = "BLOQUÉ"
 	default:
-		return errors.New("rapport doctor invalide")
+		return errors.New("invalid doctor report")
 	}
 	_, _ = fmt.Fprintf(
 		&rendered,
@@ -151,7 +151,7 @@ func writeDoctorReport(output io.Writer, report preflight.Report) error {
 		overall,
 	)
 	if _, err := io.WriteString(output, rendered.String()); err != nil {
-		return errors.New("écriture du rapport doctor impossible")
+		return errors.New("cannot write the doctor report")
 	}
 	return nil
 }

@@ -38,10 +38,10 @@ type lineInputDeliveredMsg struct {
 }
 
 var (
-	errAutomaticDecisionBackendUnavailable = errors.New("backend de décision automatique indisponible")
-	errDecisionBackendUnavailable          = errors.New("backend de décision manuelle indisponible")
-	errEventSnapshotBackendUnavailable     = errors.New("backend de snapshot d'événement indisponible")
-	errLineDeliveryUncertain               = errors.New("livraison de consigne directe incertaine")
+	errAutomaticDecisionBackendUnavailable = errors.New("automatic decision backend unavailable")
+	errDecisionBackendUnavailable          = errors.New("manual decision backend unavailable")
+	errEventSnapshotBackendUnavailable     = errors.New("event snapshot backend unavailable")
+	errLineDeliveryUncertain               = errors.New("direct instruction delivery uncertain")
 )
 
 type automaticDecisionFinishedMsg struct {

@@ -143,7 +143,7 @@ func TestManagerRejectsDuplicateStableID(t *testing.T) {
 		t.Fatalf("starting first session: %v", err)
 	}
 	second := agent.Spec{ID: "STABLE-ID", Name: "second", Command: []string{"true"}}
-	if _, err := manager.Start(second, 40, 10); err == nil || !strings.Contains(err.Error(), "déjà démarrée") {
+	if _, err := manager.Start(second, 40, 10); err == nil || !strings.Contains(err.Error(), "already started") {
 		t.Fatalf("duplicate ID returned %v", err)
 	}
 }

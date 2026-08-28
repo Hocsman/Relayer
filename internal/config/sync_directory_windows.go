@@ -20,7 +20,7 @@ func syncDirectory(path string) error {
 		return err
 	}
 	if !info.IsDir() {
-		return errors.New("le parent de la configuration n'est pas un dossier")
+		return errors.New("the configuration parent is not a directory")
 	}
 	return nil
 }

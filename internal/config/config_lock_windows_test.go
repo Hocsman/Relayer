@@ -30,7 +30,7 @@ func TestWindowsConfigurationLockReportsBusyAndClosesEveryHandle(t *testing.T) {
 		unlockContender()
 		t.Fatal("contending Windows lock unexpectedly succeeded")
 	}
-	if contenderErr == nil || !strings.Contains(contenderErr.Error(), "occupée") {
+	if contenderErr == nil || !strings.Contains(contenderErr.Error(), "in use by another Relayer instance") {
 		t.Fatalf("contending lock error = %v, want bounded busy classification", contenderErr)
 	}
 	if elapsed < configurationLockTimeout-100*time.Millisecond || elapsed > 2*configurationLockTimeout {
@@ -61,7 +61,7 @@ func TestWindowsConfigurationLockRejectsNonRegularPath(t *testing.T) {
 		unlock()
 		t.Fatal("non-regular lock path returned an unlock function")
 	}
-	if err == nil || !strings.Contains(err.Error(), "fichier régulier") {
+	if err == nil || !strings.Contains(err.Error(), "regular non-symlink file") {
 		t.Fatalf("non-regular lock error = %v", err)
 	}
 }

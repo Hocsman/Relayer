@@ -4,4 +4,4 @@ import "errors"
 
 // ErrShellUnsupported reports that the current platform has no supported
 // system shell launcher for PTY-backed sessions.
-var ErrShellUnsupported = errors.New("exécution shell non prise en charge sur cette plateforme")
+var ErrShellUnsupported = errors.New("shell execution not supported on this platform")

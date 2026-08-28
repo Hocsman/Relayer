@@ -30,7 +30,7 @@ const (
 // ErrExistingConfigRead identifies failures while reading the selected file
 // in LoadExisting. Validation errors that happen after the bytes were read,
 // including inaccessible agent working directories, never match this value.
-var ErrExistingConfigRead = errors.New("lecture de la configuration existante impossible")
+var ErrExistingConfigRead = errors.New("could not read existing configuration")
 
 // ExistingConfigReadError retains only a finite read-failure classification
 // for errors.Is/errors.As while discarding the selected path and raw
@@ -194,7 +194,7 @@ type decodedFile struct {
 // and published over the user's real configuration.
 func LoadOrCreate(path string) (Result, error) {
 	if strings.TrimSpace(path) == "" {
-		return Result{}, errors.New("le chemin du fichier de configuration est vide")
+		return Result{}, errors.New("configuration file path is empty")
 	}
 
 	data, err := os.ReadFile(path)
@@ -207,7 +207,7 @@ func LoadOrCreate(path string) (Result, error) {
 		data, err = os.ReadFile(path)
 	}
 	if err != nil {
-		return Result{}, fmt.Errorf("lecture de %s: %w", path, err)
+		return Result{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	return decodeResult(path, data, created)
 }
@@ -219,7 +219,7 @@ func LoadOrCreate(path string) (Result, error) {
 // side effect.
 func LoadExisting(path string) (Result, error) {
 	if strings.TrimSpace(path) == "" {
-		return Result{}, errors.New("le chemin du fichier de configuration est vide")
+		return Result{}, errors.New("configuration file path is empty")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -232,22 +232,22 @@ func decodeResult(path string, data []byte, created bool) (Result, error) {
 
 	configured, err := decode(data)
 	if err != nil {
-		return Result{}, fmt.Errorf("configuration %s invalide: %w", path, err)
+		return Result{}, fmt.Errorf("invalid configuration %s: %w", path, err)
 	}
 	patterns, err := validate(configured.Patterns)
 	if err != nil {
-		return Result{}, fmt.Errorf("configuration %s invalide: %w", path, err)
+		return Result{}, fmt.Errorf("invalid configuration %s: %w", path, err)
 	}
 
 	var agents []agent.Spec
 	if !configured.Legacy {
 		baseDir, absoluteErr := filepath.Abs(filepath.Dir(path))
 		if absoluteErr != nil {
-			return Result{}, fmt.Errorf("résolution du dossier de configuration %s: %w", path, absoluteErr)
+			return Result{}, fmt.Errorf("resolve configuration directory %s: %w", path, absoluteErr)
 		}
 		agents, err = validateAgents(configured.Agents, baseDir, configured.Backend)
 		if err != nil {
-			return Result{}, fmt.Errorf("configuration %s invalide: %w", path, err)
+			return Result{}, fmt.Errorf("invalid configuration %s: %w", path, err)
 		}
 		if configured.Audit.Path != "" && !filepath.IsAbs(configured.Audit.Path) {
 			configured.Audit.Path = filepath.Join(baseDir, configured.Audit.Path)
@@ -297,38 +297,38 @@ func createDefault(path string) (bool, error) {
 		InterceptPatterns: &configured,
 	})
 	if err != nil {
-		return false, fmt.Errorf("sérialisation de la configuration par défaut: %w", err)
+		return false, fmt.Errorf("serialize default configuration: %w", err)
 	}
 	payload = append([]byte("# Configuration de Relayer; agents: [] active les deux mocks.\n"), payload...)
 
 	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, 0o755); err != nil {
-		return false, fmt.Errorf("création du dossier de configuration %s: %w", directory, err)
+		return false, fmt.Errorf("create configuration directory %s: %w", directory, err)
 	}
 
 	// Publish only a fully written file. Link never replaces an existing user
 	// configuration, even if another process creates it concurrently.
 	temporary, err := os.CreateTemp(directory, ".relayer-config-*.tmp")
 	if err != nil {
-		return false, fmt.Errorf("création temporaire de %s: %w", path, err)
+		return false, fmt.Errorf("create temporary file for %s: %w", path, err)
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
 
 	if err := temporary.Chmod(0o644); err != nil {
 		_ = temporary.Close()
-		return false, fmt.Errorf("permissions de %s: %w", temporaryPath, err)
+		return false, fmt.Errorf("permissions on %s: %w", temporaryPath, err)
 	}
 	if _, err := temporary.Write(payload); err != nil {
 		_ = temporary.Close()
-		return false, fmt.Errorf("écriture de %s: %w", temporaryPath, err)
+		return false, fmt.Errorf("write %s: %w", temporaryPath, err)
 	}
 	if err := temporary.Sync(); err != nil {
 		_ = temporary.Close()
-		return false, fmt.Errorf("synchronisation de %s: %w", temporaryPath, err)
+		return false, fmt.Errorf("sync %s: %w", temporaryPath, err)
 	}
 	if err := temporary.Close(); err != nil {
-		return false, fmt.Errorf("fermeture de %s: %w", temporaryPath, err)
+		return false, fmt.Errorf("close %s: %w", temporaryPath, err)
 	}
 	if err := os.Link(temporaryPath, path); err != nil {
 		if errors.Is(err, os.ErrExist) {
@@ -431,10 +431,10 @@ func decodePolicies(configured *configuredPolicies) (policy.Config, error) {
 	result.Rules = make([]policy.Rule, 0, len(*configured.Rules))
 	for index, configuredRule := range *configured.Rules {
 		if configuredRule.Name == nil {
-			return policy.Config{}, fmt.Errorf("policies.rules[%d].name manquant", index)
+			return policy.Config{}, fmt.Errorf("missing policies.rules[%d].name", index)
 		}
 		if configuredRule.Match == nil {
-			return policy.Config{}, fmt.Errorf("policies.rules[%d].match manquant", index)
+			return policy.Config{}, fmt.Errorf("missing policies.rules[%d].match", index)
 		}
 		if configuredRule.Action == nil {
 			return policy.Config{}, fmt.Errorf("policies.rules[%d].action manquante", index)
@@ -449,7 +449,7 @@ func decodePolicies(configured *configuredPolicies) (policy.Config, error) {
 		}
 		if configuredMatch.TextRegex != nil {
 			if strings.TrimSpace(*configuredMatch.TextRegex) == "" {
-				return policy.Config{}, fmt.Errorf("policies.rules[%d].match.text_regex ne peut pas être vide", index)
+				return policy.Config{}, fmt.Errorf("policies.rules[%d].match.text_regex cannot be empty", index)
 			}
 			match.TextRegex = *configuredMatch.TextRegex
 		}
@@ -492,7 +492,7 @@ func decodeAudit(configured *configuredAudit) (audit.Config, error) {
 		result.MaxFiles = *configured.MaxFiles
 	}
 	if err := audit.Validate(result); err != nil {
-		return audit.Config{}, fmt.Errorf("audit invalide: %w", err)
+		return audit.Config{}, fmt.Errorf("invalid audit: %w", err)
 	}
 	return result, nil
 }
@@ -510,7 +510,7 @@ func createExclusively(path string, payload []byte, linkErr error) (bool, error)
 		return false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("publication de %s (lien indisponible: %v): %w", path, linkErr, err)
+		return false, fmt.Errorf("publish %s (link unavailable: %v): %w", path, linkErr, err)
 	}
 	cleanup := func() {
 		_ = file.Close()
@@ -518,15 +518,15 @@ func createExclusively(path string, payload []byte, linkErr error) (bool, error)
 	}
 	if _, err := file.Write(payload); err != nil {
 		cleanup()
-		return false, fmt.Errorf("écriture de %s: %w", path, err)
+		return false, fmt.Errorf("write %s: %w", path, err)
 	}
 	if err := file.Sync(); err != nil {
 		cleanup()
-		return false, fmt.Errorf("synchronisation de %s: %w", path, err)
+		return false, fmt.Errorf("sync %s: %w", path, err)
 	}
 	if err := file.Close(); err != nil {
 		_ = os.Remove(path)
-		return false, fmt.Errorf("fermeture de %s: %w", path, err)
+		return false, fmt.Errorf("close %s: %w", path, err)
 	}
 	return true, nil
 }
@@ -537,7 +537,7 @@ func decode(data []byte) (decodedFile, error) {
 		return decodedFile{}, err
 	}
 	if len(document.Content) == 0 {
-		return decodedFile{}, errors.New("le document YAML est vide")
+		return decodedFile{}, errors.New("YAML document is empty")
 	}
 
 	root := document.Content[0]
@@ -580,7 +580,7 @@ func decode(data []byte) (decodedFile, error) {
 			Audit:    disabledAuditConfig(),
 		}, nil
 	default:
-		return decodedFile{}, errors.New("la racine YAML doit être une liste ou un objet de configuration")
+		return decodedFile{}, errors.New("YAML root must be a list or a configuration object")
 	}
 }
 
@@ -600,15 +600,15 @@ func decodeVersionOne(data []byte, root *yaml.Node) (decodedFile, error) {
 		return decodedFile{}, errors.New("version manquante")
 	}
 	if *configured.Version != CurrentVersion {
-		return decodedFile{}, fmt.Errorf("version %d non prise en charge (attendue: %d)", *configured.Version, CurrentVersion)
+		return decodedFile{}, fmt.Errorf("unsupported version %d (expected: %d)", *configured.Version, CurrentVersion)
 	}
 	if configured.Backend == nil {
-		return decodedFile{}, errors.New("backend manquant")
+		return decodedFile{}, errors.New("missing backend")
 	}
 	backend := strings.TrimSpace(*configured.Backend)
 	if !agent.IsSupportedBackend(backend) {
 		return decodedFile{}, fmt.Errorf(
-			"backend %q non pris en charge (attendus: %s, %s ou %s)",
+			"unsupported backend %q (expected: %s, %s or %s)",
 			*configured.Backend,
 			agent.BackendPTY,
 			agent.BackendTmux,
@@ -616,13 +616,13 @@ func decodeVersionOne(data []byte, root *yaml.Node) (decodedFile, error) {
 		)
 	}
 	if configured.Agents == nil {
-		return decodedFile{}, errors.New("agents manquant")
+		return decodedFile{}, errors.New("missing agents")
 	}
 	if len(*configured.Agents) > maxAgents {
-		return decodedFile{}, fmt.Errorf("%d agents configurés; maximum autorisé: %d", len(*configured.Agents), maxAgents)
+		return decodedFile{}, fmt.Errorf("%d agents configured; maximum allowed: %d", len(*configured.Agents), maxAgents)
 	}
 	if configured.InterceptPatterns == nil {
-		return decodedFile{}, errors.New("intercept_patterns manquant")
+		return decodedFile{}, errors.New("missing intercept_patterns")
 	}
 	sessionPolicy := defaultSessionPolicy()
 	if configured.Sessions != nil {
@@ -665,12 +665,12 @@ func rejectVersionOneIndirections(node *yaml.Node) error {
 		return nil
 	}
 	if node.Kind == yaml.AliasNode {
-		return errors.New("les alias YAML ne sont pas autorisés dans une configuration versionnée")
+		return errors.New("YAML aliases are not allowed in a versioned configuration")
 	}
 	if node.Kind == yaml.MappingNode {
 		for index := 0; index+1 < len(node.Content); index += 2 {
 			if node.Content[index].Value == "<<" {
-				return errors.New("les clés de fusion YAML ne sont pas autorisées dans une configuration versionnée")
+				return errors.New("YAML merge keys are not allowed in a versioned configuration")
 			}
 		}
 	}
@@ -738,7 +738,7 @@ func validateVersionOneNode(root *yaml.Node) error {
 
 func validateAuditNode(node *yaml.Node) error {
 	if node.Kind != yaml.MappingNode {
-		return errors.New("audit doit être un objet YAML")
+		return errors.New("audit must be a YAML object")
 	}
 	for index := 0; index+1 < len(node.Content); index += 2 {
 		name := node.Content[index].Value
@@ -763,7 +763,7 @@ func validateAuditNode(node *yaml.Node) error {
 
 func validatePoliciesNode(node *yaml.Node) error {
 	if node.Kind != yaml.MappingNode {
-		return errors.New("policies doit être un objet YAML")
+		return errors.New("policies must be a YAML object")
 	}
 	for index := 0; index+1 < len(node.Content); index += 2 {
 		name := node.Content[index].Value
@@ -779,7 +779,7 @@ func validatePoliciesNode(node *yaml.Node) error {
 			}
 		case "rules":
 			if value.Kind != yaml.SequenceNode {
-				return errors.New("policies.rules doit être une liste YAML")
+				return errors.New("policies.rules must be a YAML list")
 			}
 			for ruleIndex, rawRule := range value.Content {
 				if err := validatePolicyRuleNode(dereferenceAlias(rawRule), ruleIndex); err != nil {
@@ -793,7 +793,7 @@ func validatePoliciesNode(node *yaml.Node) error {
 
 func validatePolicyRuleNode(node *yaml.Node, index int) error {
 	if node.Kind != yaml.MappingNode {
-		return fmt.Errorf("policies.rules[%d] doit être un objet YAML", index)
+		return fmt.Errorf("policies.rules[%d] must be a YAML object", index)
 	}
 	for fieldIndex := 0; fieldIndex+1 < len(node.Content); fieldIndex += 2 {
 		name := node.Content[fieldIndex].Value
@@ -814,7 +814,7 @@ func validatePolicyRuleNode(node *yaml.Node, index int) error {
 
 func validatePolicyMatchNode(node *yaml.Node, ruleIndex int) error {
 	if node.Kind != yaml.MappingNode {
-		return fmt.Errorf("policies.rules[%d].match doit être un objet YAML", ruleIndex)
+		return fmt.Errorf("policies.rules[%d].match must be a YAML object", ruleIndex)
 	}
 	for fieldIndex := 0; fieldIndex+1 < len(node.Content); fieldIndex += 2 {
 		name := node.Content[fieldIndex].Value
@@ -830,10 +830,10 @@ func validatePolicyMatchNode(node *yaml.Node, ruleIndex int) error {
 			}
 		case "event_types", "agent_ids", "risk_levels":
 			if value.Kind != yaml.SequenceNode {
-				return fmt.Errorf("policies.rules[%d].match.%s doit être une liste YAML", ruleIndex, name)
+				return fmt.Errorf("policies.rules[%d].match.%s must be a YAML list", ruleIndex, name)
 			}
 			if len(value.Content) == 0 {
-				return fmt.Errorf("policies.rules[%d].match.%s ne peut pas être vide", ruleIndex, name)
+				return fmt.Errorf("policies.rules[%d].match.%s cannot be empty", ruleIndex, name)
 			}
 			for elementIndex, element := range value.Content {
 				if err := requireScalar(
@@ -851,7 +851,7 @@ func validatePolicyMatchNode(node *yaml.Node, ruleIndex int) error {
 
 func validateSessionPolicyNode(node *yaml.Node) error {
 	if node.Kind != yaml.MappingNode {
-		return errors.New("sessions doit être un objet YAML")
+		return errors.New("sessions must be a YAML object")
 	}
 	for index := 0; index+1 < len(node.Content); index += 2 {
 		name := node.Content[index].Value
@@ -869,12 +869,12 @@ func validateSessionPolicyNode(node *yaml.Node) error {
 func validatePatternNode(sequence *yaml.Node) error {
 	sequence = dereferenceAlias(sequence)
 	if sequence.Kind != yaml.SequenceNode {
-		return errors.New("intercept_patterns doit être une liste YAML")
+		return errors.New("intercept_patterns must be a YAML list")
 	}
 	for entryIndex, rawEntry := range sequence.Content {
 		entry := dereferenceAlias(rawEntry)
 		if entry.Kind != yaml.MappingNode {
-			return fmt.Errorf("pattern %d doit être un objet YAML", entryIndex+1)
+			return fmt.Errorf("pattern %d must be a YAML object", entryIndex+1)
 		}
 		for fieldIndex := 0; fieldIndex+1 < len(entry.Content); fieldIndex += 2 {
 			name := entry.Content[fieldIndex].Value
@@ -892,12 +892,12 @@ func validatePatternNode(sequence *yaml.Node) error {
 func validateAgentNode(sequence *yaml.Node) error {
 	sequence = dereferenceAlias(sequence)
 	if sequence.Kind != yaml.SequenceNode {
-		return errors.New("agents doit être une liste YAML")
+		return errors.New("agents must be a YAML list")
 	}
 	for entryIndex, rawEntry := range sequence.Content {
 		entry := dereferenceAlias(rawEntry)
 		if entry.Kind != yaml.MappingNode {
-			return fmt.Errorf("agent %d doit être un objet YAML", entryIndex+1)
+			return fmt.Errorf("agent %d must be a YAML object", entryIndex+1)
 		}
 		for fieldIndex := 0; fieldIndex+1 < len(entry.Content); fieldIndex += 2 {
 			name := entry.Content[fieldIndex].Value
@@ -909,7 +909,7 @@ func validateAgentNode(sequence *yaml.Node) error {
 				}
 			case "command":
 				if value.Kind != yaml.SequenceNode {
-					return fmt.Errorf("agent %d: command doit être une liste de chaînes YAML", entryIndex+1)
+					return fmt.Errorf("agent %d: command must be a YAML list of strings", entryIndex+1)
 				}
 				for argumentIndex, argument := range value.Content {
 					if err := requireScalar(dereferenceAlias(argument), "!!str", fmt.Sprintf("agent %d: command[%d] doit être une chaîne YAML", entryIndex+1, argumentIndex)); err != nil {
@@ -918,7 +918,7 @@ func validateAgentNode(sequence *yaml.Node) error {
 				}
 			case "env":
 				if value.Kind != yaml.MappingNode {
-					return fmt.Errorf("agent %d: env doit être un objet chaîne-vers-chaîne YAML", entryIndex+1)
+					return fmt.Errorf("agent %d: env must be a YAML string-to-string object", entryIndex+1)
 				}
 				for envIndex := 0; envIndex+1 < len(value.Content); envIndex += 2 {
 					key := dereferenceAlias(value.Content[envIndex])
@@ -954,7 +954,7 @@ func validateAgents(configured []configuredAgent, baseDir, defaultBackend string
 	specs := make([]agent.Spec, 0, len(configured))
 	for index, entry := range configured {
 		if entry.Command != nil && entry.Shell != nil {
-			return nil, fmt.Errorf("agent %d: command et shell sont mutuellement exclusifs", index+1)
+			return nil, fmt.Errorf("agent %d: command and shell are mutually exclusive", index+1)
 		}
 
 		var command []string
@@ -993,7 +993,7 @@ func decodeStrict(data []byte, target any) error {
 	var extra yaml.Node
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return errors.New("plusieurs documents YAML ne sont pas autorisés")
+			return errors.New("multiple YAML documents are not allowed")
 		}
 		return err
 	}
@@ -1002,19 +1002,19 @@ func decodeStrict(data []byte, target any) error {
 
 func validate(configured []ConfigPattern) ([]intercept.Pattern, error) {
 	if len(configured) == 0 {
-		return nil, errors.New("aucun pattern d'interception n'est défini")
+		return nil, errors.New("no interception pattern is defined")
 	}
 
 	patterns := make([]intercept.Pattern, 0, len(configured))
 	for index, pattern := range configured {
 		if strings.TrimSpace(pattern.Pattern) == "" {
-			return nil, fmt.Errorf("entrée %d: pattern manquant", index+1)
+			return nil, fmt.Errorf("entry %d: missing pattern", index+1)
 		}
 		if strings.TrimSpace(pattern.Description) == "" {
-			return nil, fmt.Errorf("entrée %d: description manquante", index+1)
+			return nil, fmt.Errorf("entry %d: missing description", index+1)
 		}
 		if _, err := regexp.Compile(pattern.Pattern); err != nil {
-			return nil, fmt.Errorf("entrée %d: regex invalide: %w", index+1, err)
+			return nil, fmt.Errorf("entry %d: invalid regex: %w", index+1, err)
 		}
 		patterns = append(patterns, intercept.Pattern{
 			Name:        inferName(pattern, index),

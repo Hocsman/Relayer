@@ -11,10 +11,10 @@ import (
 func requireCurrentUserOwner(info os.FileInfo, path string) error {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
-		return fmt.Errorf("propriétaire du chemin d'audit %s indéterminable", path)
+		return fmt.Errorf("owner of audit path %s cannot be determined", path)
 	}
 	if int(stat.Uid) != os.Geteuid() {
-		return fmt.Errorf("chemin d'audit %s appartenant à un autre utilisateur", path)
+		return fmt.Errorf("audit path %s is owned by another user", path)
 	}
 	return nil
 }

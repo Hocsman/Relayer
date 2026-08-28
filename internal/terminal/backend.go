@@ -66,11 +66,11 @@ type Snapshot struct {
 }
 
 var (
-	ErrClosed          = errors.New("backend terminal fermé")
-	ErrSessionNotFound = errors.New("session terminal inconnue")
-	ErrNotAttachable   = errors.New("session terminal non attachable")
+	ErrClosed          = errors.New("terminal backend closed")
+	ErrSessionNotFound = errors.New("terminal session not found")
+	ErrNotAttachable   = errors.New("terminal session not attachable")
 	ErrUnavailable     = errors.New("backend terminal indisponible")
-	ErrUnsupported     = errors.New("backend terminal non pris en charge")
+	ErrUnsupported     = errors.New("terminal backend not supported")
 	// These aliases preserve one errors.Is identity from the Processor through
 	// session, backend, router and presentation boundaries.
 	ErrEventPending          = adapters.ErrEventPending

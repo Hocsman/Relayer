@@ -298,7 +298,7 @@ func TestFileSinkRotationFailureIsStickyAndCloseConcurrent(t *testing.T) {
 	group.Wait()
 	close(results)
 	for closeErr := range results {
-		if closeErr == nil || !strings.Contains(closeErr.Error(), "rotation") {
+		if closeErr == nil || !strings.Contains(closeErr.Error(), "rotate the audit") {
 			t.Fatalf("concurrent Close error = %v", closeErr)
 		}
 	}

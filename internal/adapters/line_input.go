@@ -14,16 +14,16 @@ const MaxLineBytes = 4096
 var (
 	// ErrEventPending reports that an actionable event must be resolved before
 	// ordinary line input can be delivered.
-	ErrEventPending = errors.New("événement actionable en attente")
+	ErrEventPending = errors.New("actionable event pending")
 	// ErrInvalidLine reports line input which cannot be encoded unambiguously.
-	ErrInvalidLine = errors.New("ligne terminal invalide")
+	ErrInvalidLine = errors.New("invalid terminal line")
 	// ErrLineUnsupported reports that a transport has no atomic line boundary.
-	ErrLineUnsupported = errors.New("envoi de ligne non pris en charge")
+	ErrLineUnsupported = errors.New("line send not supported")
 	// ErrLineDeliveryUncertain reports that a transport was called but could
 	// not prove whether zero, some, or all line bytes reached the target. The
 	// original transport error is deliberately not retained: it may echo the
 	// submitted text and must never escape through errors.Unwrap.
-	ErrLineDeliveryUncertain = errors.New("livraison de ligne incertaine")
+	ErrLineDeliveryUncertain = errors.New("line delivery uncertain")
 )
 
 // SendLine serializes ordinary line input with event detection and process

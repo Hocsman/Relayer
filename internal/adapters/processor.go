@@ -63,13 +63,13 @@ func NewProcessor(adapter Adapter, state *DetectionState, capacity int, hooks Ho
 		return nil, errors.New("adaptateur nil")
 	}
 	if state == nil {
-		return nil, errors.New("état de détection nil")
+		return nil, errors.New("nil detection state")
 	}
 	if state.AdapterID == "" {
 		state.AdapterID = adapter.ID()
 	}
 	if !strings.EqualFold(state.AdapterID, adapter.ID()) {
-		return nil, fmt.Errorf("état %q incompatible avec l'adaptateur %q", state.AdapterID, adapter.ID())
+		return nil, fmt.Errorf("state %q incompatible with adapter %q", state.AdapterID, adapter.ID())
 	}
 	if hooks.OnOutput == nil {
 		hooks.OnOutput = func() {}
@@ -329,7 +329,7 @@ func (p *Processor) Restore(event Event) error {
 // by rollback of the first one.
 func (p *Processor) Resolve(eventID string, deliver func() error) error {
 	if deliver == nil {
-		return errors.New("livraison de décision nil")
+		return errors.New("nil decision delivery")
 	}
 	p.mu.Lock()
 	if p.terminated {
@@ -338,11 +338,11 @@ func (p *Processor) Resolve(eventID string, deliver func() error) error {
 	}
 	if p.state.pending == nil && eventID != "" {
 		p.mu.Unlock()
-		return fmt.Errorf("%w: aucun événement en attente pour %q", ErrEventMismatch, eventID)
+		return fmt.Errorf("%w: no pending event for %q", ErrEventMismatch, eventID)
 	}
 	if p.state.pending != nil && eventID != "" && p.state.pending.ID != eventID {
 		p.mu.Unlock()
-		return fmt.Errorf("%w: reçu %q, attendu %q", ErrEventMismatch, eventID, p.state.pending.ID)
+		return fmt.Errorf("%w: got %q, want %q", ErrEventMismatch, eventID, p.state.pending.ID)
 	}
 	if err := deliver(); err != nil {
 		p.mu.Unlock()

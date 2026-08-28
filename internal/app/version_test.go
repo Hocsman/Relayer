@@ -67,7 +67,7 @@ func TestRunWithOutputRejectsVersionCombinedWithOtherArguments(t *testing.T) {
 	} {
 		var output, diagnostics bytes.Buffer
 		err := runWithOutput(arguments, &output, &diagnostics, backendDependencies{})
-		if err == nil || !strings.Contains(err.Error(), "doit être utilisée seule") {
+		if err == nil || !strings.Contains(err.Error(), "must be used alone") {
 			t.Fatalf("arguments %q error = %v", arguments, err)
 		}
 		if output.Len() != 0 || diagnostics.Len() != 0 {

@@ -452,7 +452,7 @@ func TestBackendRouterRejectsIncoherentInfoAndStopsStartedSession(t *testing.T) 
 	_, err = router.Start(context.Background(), agent.Spec{
 		ID: "mismatch", Name: "Mismatch", Command: []string{"runner"}, Backend: agent.BackendTmux,
 	}, terminal.Size{})
-	if err == nil || !strings.Contains(err.Error(), "incohérent") {
+	if err == nil || !strings.Contains(err.Error(), "inconsistent backend") {
 		t.Fatalf("Start error = %v", err)
 	}
 	backend.mu.Lock()

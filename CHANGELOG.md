@@ -87,6 +87,14 @@ still change without compatibility guarantees.
 
 ### Changed
 
+- Go error strings are in English. Roughly 40% of them were French, so an
+  operator got a mix of two languages and could not search for the message they
+  hit — a genuine support cost: `identifiants immuables tmux invalides` returns
+  nothing anywhere. Format verbs, wrapping and the deliberate vagueness of
+  messages that must not leak paths or terminal output are unchanged. The
+  desktop application keeps French for now: its interface and its messages are
+  one unit, and mixing them would be worse than either.
+
 - The minimum build toolchain is Go 1.25.8 so release binaries include the
   standard-library security fixes enforced by `govulncheck`.
 - `--pane1` and `--pane2` remain available as deprecated direct-command

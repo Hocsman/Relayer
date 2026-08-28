@@ -872,7 +872,7 @@ func (m *Model) applyProcessExit(event adapters.Event) tea.Cmd {
 	m.refreshPaneOutput(paneIndex)
 	m.panes[paneIndex].exited = true
 	if event.Metadata["failed"] == "true" {
-		m.panes[paneIndex].exitErr = fmt.Errorf("processus terminé avec erreur")
+		m.panes[paneIndex].exitErr = fmt.Errorf("process exited with error")
 	}
 	m.rememberResolved(event.SessionID, m.panes[paneIndex].prompt.ID)
 	m.removePending(event.SessionID)

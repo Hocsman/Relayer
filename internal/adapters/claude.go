@@ -139,7 +139,7 @@ func (*ClaudeAdapter) snapshotOccurrenceAware(event Event) bool {
 // generic adapter, then enriches only rules tied to real Claude Code fixtures.
 func (a *ClaudeAdapter) Detect(state *DetectionState, chunk []byte) ([]Event, error) {
 	if a == nil || a.detector == nil {
-		return nil, fmt.Errorf("adaptateur Claude Code non initialisé")
+		return nil, fmt.Errorf("adapter for Claude Code is not initialized")
 	}
 	events, err := a.detector.Detect(state, chunk)
 	if err != nil || len(events) == 0 {
@@ -182,7 +182,7 @@ func (a *ClaudeAdapter) Detect(state *DetectionState, chunk []byte) ([]Event, er
 // and deny remain unsupported until selection-independent bytes are verified.
 func (a *ClaudeAdapter) EncodeDecision(event Event, decision Decision, manualInput string) ([]byte, error) {
 	if a == nil || a.detector == nil {
-		return nil, fmt.Errorf("adaptateur Claude Code non initialisé")
+		return nil, fmt.Errorf("adapter for Claude Code is not initialized")
 	}
 	return a.detector.EncodeDecision(event, decision, manualInput)
 }

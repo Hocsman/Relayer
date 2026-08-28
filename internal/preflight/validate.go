@@ -14,7 +14,7 @@ import (
 // ErrInvalidReport is deliberately static. A rejected report may contain
 // caller-controlled paths, commands, environment values or raw errors, so the
 // validation error must never echo the field which caused the rejection.
-var ErrInvalidReport = errors.New("rapport preflight invalide")
+var ErrInvalidReport = errors.New("invalid preflight report")
 
 type checkVocabulary struct {
 	scope       Scope

@@ -70,7 +70,7 @@ func TestPTYManagerRejectsTmuxSelectorsBeforeLaunchingAProcess(t *testing.T) {
 				Command: []string{"this-executable-must-never-be-resolved"},
 				Backend: backend,
 			}, 80, 24)
-			if startErr == nil || !strings.Contains(startErr.Error(), "gestionnaire PTY") {
+			if startErr == nil || !strings.Contains(startErr.Error(), "PTY manager") {
 				t.Fatalf("Start backend %q error = %v, want an explicit PTY-manager rejection", backend, startErr)
 			}
 		})

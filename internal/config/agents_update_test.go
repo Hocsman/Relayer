@@ -100,7 +100,7 @@ func TestReplaceAgentsRejectsLegacyAndInvalidSpecsWithoutMutation(t *testing.T) 
 	if err != nil {
 		t.Fatalf("legacy revision: %v", err)
 	}
-	if _, _, err := ReplaceAgents(legacyPath, revision, nil); err == nil || !strings.Contains(err.Error(), "historique") {
+	if _, _, err := ReplaceAgents(legacyPath, revision, nil); err == nil || !strings.Contains(err.Error(), "legacy configuration") {
 		t.Fatalf("legacy ReplaceAgents error = %v", err)
 	}
 	payload, err := os.ReadFile(legacyPath)
@@ -198,7 +198,7 @@ func TestReplaceAgentsRejectsRemovedPolicyAgent(t *testing.T) {
 	_, _, err = ReplaceAgents(path, revision, []agent.Spec{{
 		ID: "builder", Name: "Builder", Command: []string{"builder"}, Backend: agent.BackendPTY,
 	}})
-	if err == nil || !strings.Contains(err.Error(), "référence un agent absent") {
+	if err == nil || !strings.Contains(err.Error(), "references a missing agent") {
 		t.Fatalf("ReplaceAgents error = %v", err)
 	}
 	after, err := os.ReadFile(path)

@@ -157,7 +157,7 @@ func TestLoadVersionOneRejectsAgentSemanticErrors(t *testing.T) {
     name: Both modes
     command: [runner]
     shell: echo duplicate`,
-			wantMessage: "mutuellement exclusifs",
+			wantMessage: "mutually exclusive",
 		},
 		{
 			name: "missing cwd",

@@ -28,8 +28,8 @@ const (
 	pendingExitGracePolls = 3
 )
 
-var errOwnershipInvalid = errors.New("ownership tmux invalide")
-var errPaneExitPending = errors.New("statut de sortie tmux en attente")
+var errOwnershipInvalid = errors.New("invalid tmux ownership")
+var errPaneExitPending = errors.New("tmux exit status still pending")
 
 // Manager is the sole owner of tmux sessions bearing its generated run prefix.
 type Manager struct {
@@ -98,7 +98,7 @@ func NewManagerWithRegistry(
 		return nil, err
 	}
 	if events == nil {
-		return nil, errors.New("canal d'événements tmux nil")
+		return nil, errors.New("nil tmux event channel")
 	}
 	if registry == nil {
 		return nil, errors.New("registry d'adaptateurs tmux nil")
@@ -124,19 +124,19 @@ func NewManagerWithRegistry(
 	if helperPath == "" {
 		helperPath, err = os.Executable()
 		if err != nil {
-			return nil, fmt.Errorf("résolution du helper Relayer: %w", err)
+			return nil, fmt.Errorf("resolving the Relayer helper: %w", err)
 		}
 	}
 	runID := strings.TrimSpace(options.RunID)
 	if runID == "" {
 		runID, err = newRunID()
 		if err != nil {
-			return nil, fmt.Errorf("génération de l'identifiant tmux: %w", err)
+			return nil, fmt.Errorf("generating the tmux identifier: %w", err)
 		}
 	}
 	ownerToken, err := newRunID()
 	if err != nil {
-		return nil, fmt.Errorf("génération du marqueur d'ownership tmux: %w", err)
+		return nil, fmt.Errorf("generating the tmux ownership marker: %w", err)
 	}
 	pollInterval := options.PollInterval
 	if pollInterval == 0 {
@@ -149,16 +149,16 @@ func NewManagerWithRegistry(
 	baseDirectory := options.RuntimeDir
 	if baseDirectory != "" {
 		if err := os.MkdirAll(baseDirectory, 0o700); err != nil {
-			return nil, fmt.Errorf("création du dossier runtime tmux: %w", err)
+			return nil, fmt.Errorf("creating the tmux runtime directory: %w", err)
 		}
 	}
 	runtimeDirectory, err := os.MkdirTemp(baseDirectory, ".relayer-tmux-"+slug(runID, 12)+"-")
 	if err != nil {
-		return nil, fmt.Errorf("création du runtime tmux privé: %w", err)
+		return nil, fmt.Errorf("creating the private tmux runtime: %w", err)
 	}
 	if err := os.Chmod(runtimeDirectory, 0o700); err != nil {
 		_ = os.RemoveAll(runtimeDirectory)
-		return nil, fmt.Errorf("permissions du runtime tmux privé: %w", err)
+		return nil, fmt.Errorf("private tmux runtime permissions: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(parent)
@@ -260,10 +260,10 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 
 	normalized, err := agent.ValidateSpec(spec, ".", agent.BackendTmux)
 	if err != nil {
-		return terminal.Info{}, fmt.Errorf("agent tmux invalide: %w", err)
+		return terminal.Info{}, fmt.Errorf("invalid tmux agent: %w", err)
 	}
 	if normalized.Backend != agent.BackendTmux {
-		return terminal.Info{}, fmt.Errorf("backend concret %q invalide pour tmux", normalized.Backend)
+		return terminal.Info{}, fmt.Errorf("invalid concrete backend %q for tmux", normalized.Backend)
 	}
 	size = size.Normalize()
 	executable := ""
@@ -272,7 +272,7 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 	}
 	resolvedAdapter, adapterDescriptor, err := m.registry.Resolve(normalized.Adapter, executable)
 	if err != nil {
-		return terminal.Info{}, fmt.Errorf("résolution de l'adaptateur %q: %w", normalized.Adapter, err)
+		return terminal.Info{}, fmt.Errorf("resolving adapter %q: %w", normalized.Adapter, err)
 	}
 
 	m.mu.Lock()
@@ -282,13 +282,13 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 	}
 	for existingID := range m.sessions {
 		if strings.EqualFold(existingID, normalized.ID) {
-			return terminal.Info{}, fmt.Errorf("session %q déjà démarrée", normalized.ID)
+			return terminal.Info{}, fmt.Errorf("session %q already started", normalized.ID)
 		}
 	}
 	tmuxName := SessionName(m.runID, normalized.ID)
 	for _, existing := range m.sessions {
 		if existing.tmuxName == tmuxName {
-			return terminal.Info{}, fmt.Errorf("collision interne du nom tmux %q", tmuxName)
+			return terminal.Info{}, fmt.Errorf("internal tmux name collision %q", tmuxName)
 		}
 	}
 
@@ -314,7 +314,7 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 	startArgs = append(startArgs, helperCommand(m.helperPath, files.specPath, files.gatePath))
 	identityOutput, err := m.run(ctx, startArgs...)
 	if err != nil {
-		return terminal.Info{}, fmt.Errorf("création de la session tmux: %w", err)
+		return terminal.Info{}, fmt.Errorf("creating the tmux session: %w", err)
 	}
 	identity := tmuxIdentity{}
 	rollbackMarked := false
@@ -375,7 +375,7 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 		} else {
 			sessionCancel()
 		}
-		resultErr = errors.Join(resultErr, fmt.Errorf("rollback de la session tmux: %w", killErr))
+		resultErr = errors.Join(resultErr, fmt.Errorf("roll back the tmux session: %w", killErr))
 	}()
 	identity, err = parseIdentity(string(identityOutput))
 	if err != nil {
@@ -389,7 +389,7 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 		return terminal.Info{}, fmt.Errorf("configuration remain-on-exit: %w", err)
 	}
 	if _, err := m.run(ctx, "pipe-pane", "-o", "-t", identity.paneID, pipeCommand(files.outputPath)); err != nil {
-		return terminal.Info{}, fmt.Errorf("configuration de la capture tmux: %w", err)
+		return terminal.Info{}, fmt.Errorf("configure the tmux capture: %w", err)
 	}
 	if m.ctx.Err() != nil {
 		return terminal.Info{}, ErrClosed
@@ -446,11 +446,11 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 	initialSnapshot, pipeActive, err := m.inspectRaw(ctx, managed)
 	if err != nil {
 		sessionCancel()
-		return terminal.Info{}, fmt.Errorf("vérification de la capture tmux: %w", err)
+		return terminal.Info{}, fmt.Errorf("verifying the tmux capture: %w", err)
 	}
 	if !initialSnapshot.Running || !pipeActive {
 		sessionCancel()
-		return terminal.Info{}, errors.New("capture tmux inactive avant le démarrage de l'agent")
+		return terminal.Info{}, errors.New("tmux capture inactive before agent start")
 	}
 	managed.updateState(initialSnapshot)
 	m.sessions[normalized.ID] = managed
@@ -461,7 +461,7 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 	if err := files.release(); err != nil {
 		delete(m.sessions, normalized.ID)
 		managed.closeTransport()
-		return terminal.Info{}, fmt.Errorf("libération du helper tmux: %w", err)
+		return terminal.Info{}, fmt.Errorf("releasing the tmux helper: %w", err)
 	}
 	handoffCtx, handoffCancel := context.WithTimeout(ctx, commandTimeout)
 	handoffErr := m.handoffWaiter(handoffCtx, files)
@@ -766,7 +766,7 @@ func (m *Manager) sendBytes(ctx context.Context, target *managedSession, data []
 		cleanupErr := m.deleteSecretBuffer(cleanupCtx, bufferName)
 		cleanupCancel()
 		if cleanupErr != nil {
-			return errors.Join(err, fmt.Errorf("suppression du buffer tmux privé: %w", cleanupErr))
+			return errors.Join(err, fmt.Errorf("deleting the private tmux buffer: %w", cleanupErr))
 		}
 		return err
 	}
@@ -775,7 +775,7 @@ func (m *Manager) sendBytes(ctx context.Context, target *managedSession, data []
 		cleanupErr := m.deleteSecretBuffer(cleanupCtx, bufferName)
 		cleanupCancel()
 		if cleanupErr != nil {
-			return errors.Join(err, fmt.Errorf("suppression du buffer tmux privé: %w", cleanupErr))
+			return errors.Join(err, fmt.Errorf("deleting the private tmux buffer: %w", cleanupErr))
 		}
 		return err
 	}
@@ -903,21 +903,21 @@ func (m *Manager) inspect(ctx context.Context, target *managedSession) (terminal
 		return snapshot, nil
 	}
 	if _, err := m.run(ctx, "pipe-pane", "-o", "-t", target.paneID, pipeCommand(target.files.outputPath)); err != nil {
-		return terminal.Snapshot{}, fmt.Errorf("restauration de la capture tmux: %w", err)
+		return terminal.Snapshot{}, fmt.Errorf("restore the tmux capture: %w", err)
 	}
 	snapshot, pipeActive, err = m.inspectRaw(ctx, target)
 	if err != nil {
 		return terminal.Snapshot{}, err
 	}
 	if !pipeActive {
-		return terminal.Snapshot{}, errors.New("capture tmux inactive après restauration")
+		return terminal.Snapshot{}, errors.New("tmux capture inactive after restoration")
 	}
 	return snapshot, nil
 }
 
 func (m *Manager) inspectRaw(ctx context.Context, target *managedSession) (terminal.Snapshot, bool, error) {
 	if target.ownerToken == "" || !validTmuxID(target.sessionID, '$') || !validTmuxID(target.paneID, '%') {
-		return terminal.Snapshot{}, false, fmt.Errorf("%w: identité absente ou invalide", errOwnershipInvalid)
+		return terminal.Snapshot{}, false, fmt.Errorf("%w: identity missing or invalid", errOwnershipInvalid)
 	}
 	output, err := m.run(ctx,
 		"display-message", "-p", "-t", target.paneID,
@@ -934,7 +934,7 @@ func (m *Manager) inspectRaw(ctx context.Context, target *managedSession) (termi
 		// Without the complete immutable IDs and owner marker, the response cannot
 		// be attributed to this Manager. Treat malformed identity output like an
 		// ownership loss instead of probing only for name existence forever.
-		return terminal.Snapshot{}, false, fmt.Errorf("%w: inspection incomplète", errOwnershipInvalid)
+		return terminal.Snapshot{}, false, fmt.Errorf("%w: incomplete inspection", errOwnershipInvalid)
 	}
 	if fields[0] != target.sessionID || fields[1] != target.paneID || fields[2] != target.ownerToken {
 		return terminal.Snapshot{}, false, fmt.Errorf("%w: cible inattendue", errOwnershipInvalid)
@@ -945,7 +945,7 @@ func (m *Manager) inspectRaw(ctx context.Context, target *managedSession) (termi
 	}
 	pipe, err := strconv.Atoi(strings.TrimSpace(fields[7]))
 	if err != nil || (pipe != 0 && pipe != 1) {
-		return terminal.Snapshot{}, false, errors.New("indicateur pane_pipe tmux invalide")
+		return terminal.Snapshot{}, false, errors.New("invalid tmux pane_pipe flag")
 	}
 	return snapshot, pipe == 1, nil
 }
@@ -975,7 +975,7 @@ func splitTmuxFields(output string) []string {
 func parseSnapshot(id, output string) (terminal.Snapshot, error) {
 	fields := splitTmuxFields(output)
 	if len(fields) != 3 && len(fields) != 4 {
-		return terminal.Snapshot{}, fmt.Errorf("état tmux invalide")
+		return terminal.Snapshot{}, fmt.Errorf("invalid tmux state")
 	}
 	attachedField := fields[2]
 	deadSignal := ""
@@ -985,11 +985,11 @@ func parseSnapshot(id, output string) (terminal.Snapshot, error) {
 	}
 	dead, err := strconv.Atoi(strings.TrimSpace(fields[0]))
 	if err != nil || (dead != 0 && dead != 1) {
-		return terminal.Snapshot{}, fmt.Errorf("indicateur pane_dead tmux invalide")
+		return terminal.Snapshot{}, fmt.Errorf("invalid tmux pane_dead flag")
 	}
 	attached, err := strconv.Atoi(strings.TrimSpace(attachedField))
 	if err != nil || attached < 0 {
-		return terminal.Snapshot{}, fmt.Errorf("indicateur session_attached tmux invalide")
+		return terminal.Snapshot{}, fmt.Errorf("invalid tmux session_attached flag")
 	}
 	snapshot := terminal.Snapshot{ID: id, Running: dead == 0, Attached: attached > 0}
 	if dead == 0 {
@@ -1010,7 +1010,7 @@ func parseSnapshot(id, output string) (terminal.Snapshot, error) {
 	}
 	code, err := strconv.Atoi(deadStatus)
 	if err != nil {
-		return terminal.Snapshot{}, fmt.Errorf("code de sortie tmux invalide")
+		return terminal.Snapshot{}, fmt.Errorf("invalid tmux exit code")
 	}
 	snapshot.ExitCode = &code
 	if code == 0 {
@@ -1045,7 +1045,7 @@ func validTmuxID(value string, prefix byte) bool {
 
 func (m *Manager) verifySession(ctx context.Context, target *managedSession) error {
 	if target.ownerToken == "" || !validTmuxID(target.sessionID, '$') {
-		return fmt.Errorf("%w: session absente ou invalide", errOwnershipInvalid)
+		return fmt.Errorf("%w: session missing or invalid", errOwnershipInvalid)
 	}
 	output, err := m.run(ctx,
 		"display-message", "-p", "-t", target.sessionID,
@@ -1063,7 +1063,7 @@ func (m *Manager) verifySession(ctx context.Context, target *managedSession) err
 
 func (m *Manager) verifyPane(ctx context.Context, target *managedSession) (string, error) {
 	if target.ownerToken == "" || !validTmuxID(target.sessionID, '$') || !validTmuxID(target.paneID, '%') {
-		return "", fmt.Errorf("%w: pane absent ou invalide", errOwnershipInvalid)
+		return "", fmt.Errorf("%w: pane missing or invalid", errOwnershipInvalid)
 	}
 	output, err := m.run(ctx,
 		"display-message", "-p", "-t", target.paneID,
@@ -1104,7 +1104,7 @@ func (m *Manager) AttachCommand(ctx context.Context, id string) (*exec.Cmd, erro
 	if !target.beginAttach(cancelAttach, stopManagerCancellation) {
 		stopManagerCancellation()
 		cancelAttach()
-		return nil, errors.New("attachement tmux déjà actif")
+		return nil, errors.New("tmux attachment already active")
 	}
 	if err := m.verifySession(operationCtx, target); err != nil {
 		target.endAttach()
@@ -1116,7 +1116,7 @@ func (m *Manager) AttachCommand(ctx context.Context, id string) (*exec.Cmd, erro
 	})
 	if command == nil {
 		target.endAttach()
-		return nil, errors.New("CommandRunner a retourné une commande attach nil")
+		return nil, errors.New("CommandRunner returned a nil attach command")
 	}
 	return command, nil
 }
@@ -1275,7 +1275,7 @@ func (m *Manager) Close(ctx context.Context) error {
 		bufferName := bufferName
 		tasks = append(tasks, func(cleanupCtx context.Context) error {
 			if err := m.deleteSecretBuffer(cleanupCtx, bufferName); err != nil {
-				return fmt.Errorf("suppression du buffer tmux privé: %w", err)
+				return fmt.Errorf("deleting the private tmux buffer: %w", err)
 			}
 			return nil
 		})
@@ -1348,7 +1348,7 @@ func (m *Manager) killSession(ctx context.Context, target *managedSession) error
 		return nil
 	}
 	if target.sessionID == "" {
-		return errors.New("session tmux sans identifiant immuable")
+		return errors.New("tmux session without an immutable ID")
 	}
 	if err := m.verifySession(ctx, target); err != nil {
 		return err
@@ -1357,7 +1357,7 @@ func (m *Manager) killSession(ctx context.Context, target *managedSession) error
 		return err
 	}
 	if _, err := m.run(ctx, "has-session", "-t", target.sessionID); err == nil {
-		return fmt.Errorf("%w: l'identifiant immuable existe encore", ErrStopUncertain)
+		return fmt.Errorf("%w: the immutable identifier still exists", ErrStopUncertain)
 	} else if !isMissingTargetProbe(err) {
 		return errors.Join(ErrStopUncertain, err)
 	}
