@@ -23,12 +23,13 @@ func TestNewManagerWithRegistryResolvesSpecAdapter(t *testing.T) {
 		t.Fatal(err)
 	}
 	options := Options{
-		Runner:       runner,
-		TmuxPath:     "tmux",
-		HelperPath:   "/test/bin/relayer",
-		RuntimeDir:   t.TempDir(),
-		RunID:        "registry",
-		PollInterval: minimumPollInterval,
+		Runner:        runner,
+		TmuxPath:      "tmux",
+		HelperPath:    "/test/bin/relayer",
+		RuntimeDir:    t.TempDir(),
+		RunID:         "registry",
+		PollInterval:  minimumPollInterval,
+		handoffWaiter: skipLaunchHandoff,
 	}
 	manager, err := NewManagerWithRegistry(context.Background(), events, registry, 4096, options)
 	if err != nil {

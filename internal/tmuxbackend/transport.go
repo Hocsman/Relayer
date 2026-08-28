@@ -1,12 +1,14 @@
 package tmuxbackend
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Hocsman/Relayer/internal/agent"
 )
@@ -135,6 +137,41 @@ func (files *launchFiles) release() error {
 	// delayed helper block forever if no writer remained. The descriptor count
 	// is bounded by the configured agent count and closeTransport closes it.
 	return nil
+}
+
+// waitForHandoff waits until the helper has loaded the private launch spec,
+// consumed the start signal and removed the gate. Close may remove the runtime
+// files as soon as Start returns, so this confirmation prevents an immediate
+// persistent-session shutdown from racing a helper that has not taken over yet.
+func (files *launchFiles) waitForHandoff(ctx context.Context) error {
+	if files == nil || files.gate == nil {
+		return nil
+	}
+	if ctx == nil {
+		return errors.New("contexte de prise en charge tmux nil")
+	}
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		_, err := os.Lstat(files.gatePath)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			closeErr := files.gate.Close()
+			files.gate = nil
+			if closeErr != nil {
+				return fmt.Errorf("fermeture du signal après prise en charge tmux: %w", closeErr)
+			}
+			return nil
+		case err != nil:
+			return fmt.Errorf("confirmation de prise en charge tmux: %w", err)
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("confirmation de prise en charge tmux: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func (files *launchFiles) close() {

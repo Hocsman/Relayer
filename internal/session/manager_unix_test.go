@@ -27,6 +27,39 @@ var integrationPatterns = []intercept.Pattern{{
 	Expression:  `(?i)overwrite.*\[y/n\]`,
 }}
 
+func TestDoneDoesNotWaitForFinalInvalidationConsumer(t *testing.T) {
+	events := make(chan Event, 1)
+	events <- OutputAvailable{SessionID: "occupied"}
+	manager, err := NewManager(context.Background(), events, integrationPatterns, 4096)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	t.Cleanup(manager.Close)
+	info, err := manager.Start(agent.Spec{
+		ID:      "blocked-invalidation",
+		Name:    "blocked invalidation",
+		Command: []string{"/bin/sh", "-c", "printf final-output"},
+	}, 40, 10)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	done, err := manager.Done(info.ID)
+	if err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Done waited for a consumer of the final output invalidation")
+	}
+	output, err := manager.Output(info.ID)
+	if err != nil || !strings.Contains(output, "final-output") {
+		t.Fatalf("final output = %q, error %v", output, err)
+	}
+	// Release the deliberately occupied queue before cleanup joins emitters.
+	<-events
+}
+
 func TestManagerLifecyclePromptResizeInputAndFinalOutput(t *testing.T) {
 	if _, err := exec.LookPath("stty"); err != nil {
 		t.Skipf("stty is required for the PTY resize assertion: %v", err)

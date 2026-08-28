@@ -59,8 +59,6 @@ func TestManagerSendLineUsesAtomicProcessorBoundary(t *testing.T) {
 	if len(loads) != loadCount+1 || string(loads[len(loads)-1].Stdin) != "ordinary input\r" {
 		t.Fatalf("load-buffer calls = %#v, want exact ordinary input + CR", loads)
 	}
-	loadCount = len(loads)
-	callCount = len(runner.allCalls())
 	if _, err := manager.AttachCommand(context.Background(), info.ID); err != nil {
 		t.Fatalf("AttachCommand: %v", err)
 	}
@@ -72,7 +70,6 @@ func TestManagerSendLineUsesAtomicProcessorBoundary(t *testing.T) {
 		t.Fatalf("attached line performed %d load-buffer call(s)", got-loadCount)
 	}
 	target.endAttach()
-	callCount = len(runner.allCalls())
 	target.updateState(Snapshot{ID: info.ID, Status: StatusAttached, Running: true, Attached: true})
 	if err := manager.SendLine(context.Background(), info.ID, "must not cross external attach"); !errors.Is(err, terminal.ErrLineUnsupported) {
 		t.Fatalf("externally attached line error = %v, want unsupported", err)

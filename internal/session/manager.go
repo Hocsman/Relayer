@@ -159,11 +159,12 @@ func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 		Shell:          shell,
 	}
 	session := &processSession{
-		info:   info,
-		cmd:    cmd,
-		ctx:    sessionCtx,
-		cancel: sessionCancel,
-		done:   make(chan struct{}),
+		info:     info,
+		cmd:      cmd,
+		ctx:      sessionCtx,
+		cancel:   sessionCancel,
+		done:     make(chan struct{}),
+		readDone: make(chan struct{}),
 	}
 	processor, err := adapters.NewProcessor(
 		selectedAdapter,
@@ -205,9 +206,13 @@ func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 
 func (m *Manager) readSession(session *processSession, master *os.File) {
 	defer m.wg.Done()
-	defer session.closePTY()
 
 	err := session.processor.Run(session.ctx, master)
+	// Publish the drain barrier before sending the final invalidation. The
+	// output bytes are already retained in Processor; a full UI event channel
+	// must not prevent waitSession from closing Done and publishing lifecycle.
+	session.closePTY()
+	close(session.readDone)
 	// This essential final invalidation exposes a last chunk even when earlier
 	// non-essential output events were coalesced.
 	m.emit(OutputAvailable{SessionID: session.info.ID}, true)
@@ -243,6 +248,14 @@ func (m *Manager) waitSession(session *processSession) {
 		platform.KillProcessGroup(session.cmd)
 	}
 
+	// cmd.Wait may win before the PTY reader has consumed the final kernel
+	// buffer. Give the normal EOF path a short bounded drain window, then close
+	// the master to guarantee progress if a detached descendant retained the
+	// slave outside the original process group.
+	if !waitForSignal(session.readDone, finalOutputDrainTime) {
+		session.closePTY()
+		<-session.readDone
+	}
 	close(session.done)
 	// An actionable event detected before Wait must still reach its hook before
 	// process_exit. Waiting here cannot delay descendant termination or Done.
@@ -476,12 +489,6 @@ func displayCommand(spec agent.Spec) string {
 		parts[index] = strconv.Quote(argument)
 	}
 	return strings.Join(parts, " ")
-}
-
-func newProcessExitEvent(session *processSession, waitErr error) adapters.Event {
-	event := markProcessExitEvent(session, waitErr)
-	session.processor.WaitSemanticEvents()
-	return event
 }
 
 func markProcessExitEvent(session *processSession, waitErr error) adapters.Event {

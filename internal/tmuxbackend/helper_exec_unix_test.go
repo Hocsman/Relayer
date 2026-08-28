@@ -155,6 +155,11 @@ func TestHelperMainExecPreservesTransportExactly(t *testing.T) {
 		_ = commandProcess.Wait()
 		t.Fatalf("release helper gate: %v (%s)", err, diagnostics.String())
 	}
+	if err := files.waitForHandoff(ctx); err != nil {
+		cancel()
+		_ = commandProcess.Wait()
+		t.Fatalf("confirm helper handoff: %v (%s)", err, diagnostics.String())
+	}
 	if err := commandProcess.Wait(); err != nil {
 		t.Fatalf("helper/target subprocess: %v (%s)", err, diagnostics.String())
 	}

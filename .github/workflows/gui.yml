@@ -124,7 +124,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/relayer-wails-bin"
           GOBIN="$RUNNER_TEMP/relayer-wails-bin" \
             go install github.com/wailsapp/wails/v2/cmd/wails@v2.14.0
-          test "$("$RUNNER_TEMP/relayer-wails-bin/wails" version)" = "v2.14.0"
+          version_output="$("$RUNNER_TEMP/relayer-wails-bin/wails" version)"
+          test "${version_output%%$'\n'*}" = "v2.14.0"
 
       - name: Build native GUI (verification only)
         run: |

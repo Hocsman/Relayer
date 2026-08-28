@@ -74,6 +74,7 @@ func TestDetectRejectsInvalidInputAndDetectorResults(t *testing.T) {
 	if _, err := Detect(context.Background(), "missing", "", validDetector); err == nil || !strings.Contains(err.Error(), "unknown tool profile") {
 		t.Fatalf("unknown profile error = %v", err)
 	}
+	//lint:ignore SA1012 The public boundary must reject a genuinely nil context.
 	if _, err := Detect(nil, ClaudeCode, "", validDetector); err == nil || !strings.Contains(err.Error(), "context") {
 		t.Fatalf("nil context error = %v", err)
 	}

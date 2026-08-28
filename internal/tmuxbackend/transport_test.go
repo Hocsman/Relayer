@@ -4,7 +4,9 @@ package tmuxbackend
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/Hocsman/Relayer/internal/agent"
 )
@@ -154,7 +157,7 @@ func TestReadLaunchSpecRejectsLoosePermissionsSymlinksAndOversize(t *testing.T) 
 	}
 }
 
-func TestLaunchReleaseKeepsGateWriterUntilTransportClose(t *testing.T) {
+func TestLaunchReleaseWaitsForConfirmedHelperHandoff(t *testing.T) {
 	files, err := createLaunchFiles(t.TempDir(), "release-handshake", agent.Spec{
 		Command: []string{"/usr/bin/true"},
 	})
@@ -187,6 +190,24 @@ func TestLaunchReleaseKeepsGateWriterUntilTransportClose(t *testing.T) {
 	}
 	if got := string(buffer[:read]); got != "start\n" {
 		t.Fatalf("delayed helper read %q, want start signal", got)
+	}
+
+	timeoutCtx, timeoutCancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer timeoutCancel()
+	if err := files.waitForHandoff(timeoutCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("handoff before helper removed gate = %v, want deadline", err)
+	}
+	if files.gate == nil {
+		t.Fatal("failed handoff confirmation closed the gate descriptor")
+	}
+	if err := os.Remove(files.gatePath); err != nil {
+		t.Fatalf("simulate helper gate removal: %v", err)
+	}
+	if err := files.waitForHandoff(context.Background()); err != nil {
+		t.Fatalf("confirm helper handoff: %v", err)
+	}
+	if files.gate != nil {
+		t.Fatal("confirmed helper handoff retained the gate descriptor")
 	}
 
 	files.close()

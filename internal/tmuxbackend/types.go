@@ -61,6 +61,7 @@ type Options struct {
 	CleanupOnSuccess bool
 	PollInterval     time.Duration
 	CaptureLimit     int
+	handoffWaiter    func(context.Context, *launchFiles) error
 }
 
 // InteractiveBackend is the optional capability consumed by the Bubble Tea

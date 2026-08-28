@@ -21,13 +21,15 @@ import (
 )
 
 const (
-	defaultPollInterval = time.Second
-	minimumPollInterval = 100 * time.Millisecond
-	commandTimeout      = 3 * time.Second
-	defaultCaptureLimit = 256 * 1024
+	defaultPollInterval   = time.Second
+	minimumPollInterval   = 100 * time.Millisecond
+	commandTimeout        = 3 * time.Second
+	defaultCaptureLimit   = 256 * 1024
+	pendingExitGracePolls = 3
 )
 
 var errOwnershipInvalid = errors.New("ownership tmux invalide")
+var errPaneExitPending = errors.New("statut de sortie tmux en attente")
 
 // Manager is the sole owner of tmux sessions bearing its generated run prefix.
 type Manager struct {
@@ -46,6 +48,7 @@ type Manager struct {
 	pollInterval     time.Duration
 	registry         *adapters.Registry
 	ringCapacity     int
+	handoffWaiter    func(context.Context, *launchFiles) error
 
 	mu       sync.RWMutex
 	sessions map[string]*managedSession
@@ -178,6 +181,12 @@ func NewManagerWithRegistry(
 		operationsIdle:   closedSignal(),
 		closeGate:        make(chan struct{}, 1),
 		pendingBuffers:   make(map[string]struct{}),
+	}
+	manager.handoffWaiter = options.handoffWaiter
+	if manager.handoffWaiter == nil {
+		manager.handoffWaiter = func(ctx context.Context, files *launchFiles) error {
+			return files.waitForHandoff(ctx)
+		}
 	}
 	manager.closeGate <- struct{}{}
 	return manager, nil
@@ -454,6 +463,14 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 		managed.closeTransport()
 		return terminal.Info{}, fmt.Errorf("libération du helper tmux: %w", err)
 	}
+	handoffCtx, handoffCancel := context.WithTimeout(ctx, commandTimeout)
+	handoffErr := m.handoffWaiter(handoffCtx, files)
+	handoffCancel()
+	if handoffErr != nil {
+		delete(m.sessions, normalized.ID)
+		managed.closeTransport()
+		return terminal.Info{}, handoffErr
+	}
 	cleanupFiles = false
 	created = false
 	return metadata, nil
@@ -504,10 +521,10 @@ func (m *Manager) monitor(target *managedSession) {
 	defer ticker.Stop()
 
 	var (
-		deadSeen     bool
-		deadSequence uint64
-		deadSnapshot Snapshot
-		pollFailures int
+		deadSeen         bool
+		deadSequence     uint64
+		pollFailures     int
+		pendingExitPolls int
 	)
 	for {
 		select {
@@ -522,23 +539,42 @@ func (m *Manager) monitor(target *managedSession) {
 			if target.ctx.Err() != nil {
 				return
 			}
-			pollFailures++
-			if pollFailures >= 3 {
-				if errors.Is(err, errOwnershipInvalid) {
-					m.handleOwnershipLoss(target, err)
-					return
-				}
-				probeCtx, probeCancel := context.WithTimeout(target.ctx, commandTimeout)
-				_, probeErr := m.run(probeCtx, "has-session", "-t", target.sessionID)
-				probeCancel()
-				if isMissingTargetProbe(probeErr) {
-					m.handleMissingTarget(target, err)
-					return
-				}
+			// tmux can report pane_dead before its wait status or signal is
+			// ready. This is a normal intermediate lifecycle state, not a
+			// backend failure worth surfacing to the operator.
+			if errors.Is(err, errPaneExitPending) {
 				pollFailures = 0
-				m.emit(session.Error{SessionID: target.info.ID, Err: errors.Join(err, probeErr)}, false)
+				pendingExitPolls++
+				if pendingExitPolls < pendingExitGracePolls {
+					continue
+				}
+				// Some tmux 3.4 servers leave both wait formats empty even
+				// after pane_dead is stable. The pane is authoritatively closed,
+				// but its exit code is unknown: publish a neutral terminal state
+				// without inventing success, failure or a numeric status.
+				snapshot = Snapshot{ID: target.info.ID, Status: StatusExited}
+			} else {
+				pendingExitPolls = 0
+				pollFailures++
+				if pollFailures >= 3 {
+					if errors.Is(err, errOwnershipInvalid) {
+						m.handleOwnershipLoss(target, err)
+						return
+					}
+					probeCtx, probeCancel := context.WithTimeout(target.ctx, commandTimeout)
+					_, probeErr := m.run(probeCtx, "has-session", "-t", target.sessionID)
+					probeCancel()
+					if isMissingTargetProbe(probeErr) {
+						m.handleMissingTarget(target, err)
+						return
+					}
+					pollFailures = 0
+					m.emit(session.Error{SessionID: target.info.ID, Err: errors.Join(err, probeErr)}, false)
+				}
+				continue
 			}
-			continue
+		} else {
+			pendingExitPolls = 0
 		}
 		pollFailures = 0
 		if snapshot.Running {
@@ -551,10 +587,9 @@ func (m *Manager) monitor(target *managedSession) {
 		if !deadSeen || sequence != deadSequence {
 			deadSeen = true
 			deadSequence = sequence
-			deadSnapshot = snapshot
 			continue
 		}
-		m.finishSession(target, deadSnapshot)
+		m.finishSession(target, snapshot)
 		return
 	}
 }
@@ -886,13 +921,13 @@ func (m *Manager) inspectRaw(ctx context.Context, target *managedSession) (termi
 	}
 	output, err := m.run(ctx,
 		"display-message", "-p", "-t", target.paneID,
-		"#{session_id}\t#{pane_id}\t#{@relayer_owner}\t#{pane_dead}\t#{pane_dead_status}\t#{session_attached}\t#{pane_pipe}",
+		"#{session_id}\t#{pane_id}\t#{@relayer_owner}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_dead_signal}\t#{session_attached}\t#{pane_pipe}",
 	)
 	if err != nil {
 		return terminal.Snapshot{}, false, err
 	}
 	fields := strings.Split(strings.TrimSpace(string(output)), "\t")
-	if len(fields) != 7 {
+	if len(fields) != 8 {
 		// Without the complete immutable IDs and owner marker, the response cannot
 		// be attributed to this Manager. Treat malformed identity output like an
 		// ownership loss instead of probing only for name existence forever.
@@ -901,11 +936,11 @@ func (m *Manager) inspectRaw(ctx context.Context, target *managedSession) (termi
 	if fields[0] != target.sessionID || fields[1] != target.paneID || fields[2] != target.ownerToken {
 		return terminal.Snapshot{}, false, fmt.Errorf("%w: cible inattendue", errOwnershipInvalid)
 	}
-	snapshot, err := parseSnapshot(target.info.ID, strings.Join(fields[3:6], "\t"))
+	snapshot, err := parseSnapshot(target.info.ID, strings.Join(fields[3:7], "\t"))
 	if err != nil {
 		return terminal.Snapshot{}, false, err
 	}
-	pipe, err := strconv.Atoi(strings.TrimSpace(fields[6]))
+	pipe, err := strconv.Atoi(strings.TrimSpace(fields[7]))
 	if err != nil || (pipe != 0 && pipe != 1) {
 		return terminal.Snapshot{}, false, errors.New("indicateur pane_pipe tmux invalide")
 	}
@@ -914,14 +949,20 @@ func (m *Manager) inspectRaw(ctx context.Context, target *managedSession) (termi
 
 func parseSnapshot(id, output string) (terminal.Snapshot, error) {
 	fields := strings.Split(strings.TrimSpace(output), "\t")
-	if len(fields) != 3 {
+	if len(fields) != 3 && len(fields) != 4 {
 		return terminal.Snapshot{}, fmt.Errorf("état tmux invalide")
+	}
+	attachedField := fields[2]
+	deadSignal := ""
+	if len(fields) == 4 {
+		deadSignal = strings.TrimSpace(fields[2])
+		attachedField = fields[3]
 	}
 	dead, err := strconv.Atoi(strings.TrimSpace(fields[0]))
 	if err != nil || (dead != 0 && dead != 1) {
 		return terminal.Snapshot{}, fmt.Errorf("indicateur pane_dead tmux invalide")
 	}
-	attached, err := strconv.Atoi(strings.TrimSpace(fields[2]))
+	attached, err := strconv.Atoi(strings.TrimSpace(attachedField))
 	if err != nil || attached < 0 {
 		return terminal.Snapshot{}, fmt.Errorf("indicateur session_attached tmux invalide")
 	}
@@ -934,7 +975,15 @@ func parseSnapshot(id, output string) (terminal.Snapshot, error) {
 		}
 		return snapshot, nil
 	}
-	code, err := strconv.Atoi(strings.TrimSpace(fields[1]))
+	deadStatus := strings.TrimSpace(fields[1])
+	if deadStatus == "" {
+		if deadSignal != "" {
+			snapshot.Status = StatusFailed
+			return snapshot, nil
+		}
+		return terminal.Snapshot{}, errPaneExitPending
+	}
+	code, err := strconv.Atoi(deadStatus)
 	if err != nil {
 		return terminal.Snapshot{}, fmt.Errorf("code de sortie tmux invalide")
 	}

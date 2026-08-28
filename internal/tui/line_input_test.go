@@ -229,7 +229,7 @@ func TestLineInputPromptEventBeforeResultDefersPolicyUntilTerminalAudit(t *testi
 		entries[3].Kind != audit.KindPolicyEvaluated || entries[4].Kind != audit.KindDecision {
 		t.Fatalf("line/prompt audit order = %#v", entries)
 	}
-	application, _ = updateModel(t, application, executeCommand(t, automatic))
+	updateModel(t, application, executeCommand(t, automatic))
 	if calls := backend.automaticSnapshot(); len(calls) != 1 || calls[0].eventID != event.ID {
 		t.Fatalf("deferred automatic calls = %#v", calls)
 	}

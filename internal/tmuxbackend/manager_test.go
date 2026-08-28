@@ -48,6 +48,8 @@ type fakeIdentity struct {
 	owner     string
 }
 
+func skipLaunchHandoff(context.Context, *launchFiles) error { return nil }
+
 func fakeExitError(diagnostic string) error {
 	err := exec.Command("/usr/bin/false").Run()
 	if err == nil {
@@ -116,12 +118,13 @@ func (r *fakeRunner) Run(ctx context.Context, spec CommandSpec) ([]byte, error) 
 			}
 		case "pipe-pane":
 			fields := strings.Split(strings.TrimSpace(r.display), "\t")
-			if len(fields) == 4 {
+			if len(fields) == 4 || len(fields) == 5 {
 				// A shell command enables capture; tmux's no-command form
 				// disables an existing pane pipe.
-				fields[3] = "0"
+				pipeIndex := len(fields) - 1
+				fields[pipeIndex] = "0"
 				if len(spec.Args) > 3 {
-					fields[3] = "1"
+					fields[pipeIndex] = "1"
 				}
 				r.display = strings.Join(fields, "\t") + "\n"
 			}
@@ -131,7 +134,11 @@ func (r *fakeRunner) Run(ctx context.Context, spec CommandSpec) ([]byte, error) 
 			if identity != nil {
 				switch {
 				case strings.Contains(format, "pane_dead"):
-					output = []byte(identity.sessionID + "\t" + identity.paneID + "\t" + identity.owner + "\t" + r.display)
+					displayFields := strings.Split(strings.TrimSpace(r.display), "\t")
+					if strings.Contains(format, "pane_dead_signal") && len(displayFields) == 4 {
+						displayFields = append(displayFields[:2], append([]string{""}, displayFields[2:]...)...)
+					}
+					output = []byte(identity.sessionID + "\t" + identity.paneID + "\t" + identity.owner + "\t" + strings.Join(displayFields, "\t") + "\n")
 				case strings.Contains(format, "window_id"):
 					output = []byte(identity.sessionID + "\t" + identity.windowID + "\t" + identity.paneID + "\t" + identity.owner + "\n")
 				default:
@@ -530,6 +537,7 @@ func TestManagerStopEventEmissionHonorsCallerDeadline(t *testing.T) {
 		RuntimeDir:    t.TempDir(),
 		RunID:         "bounded-stop-event",
 		PersistOnExit: true,
+		handoffWaiter: skipLaunchHandoff,
 	})
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -1038,6 +1046,7 @@ func TestParseSnapshotStates(t *testing.T) {
 		{text: "0\t\t2\n", status: terminal.StatusAttached, running: true, attached: true},
 		{text: "1\t0\t0\n", status: terminal.StatusExited, exitCode: intPointer(0)},
 		{text: "1\t42\t0\n", status: terminal.StatusFailed, exitCode: intPointer(42)},
+		{text: "1\t\tTERM\t0\n", status: terminal.StatusFailed},
 	} {
 		snapshot, err := parseSnapshot("id", test.text)
 		if err != nil {
@@ -1047,10 +1056,37 @@ func TestParseSnapshotStates(t *testing.T) {
 			t.Fatalf("parse %q = %#v", test.text, snapshot)
 		}
 	}
+	if _, err := parseSnapshot("id", "1\t\t\t0\n"); !errors.Is(err, errPaneExitPending) {
+		t.Fatalf("pending dead-pane status error = %v, want %v", err, errPaneExitPending)
+	}
 	for _, invalid := range []string{"", "0\t0", "x\t0\t0", "1\tx\t0", "0\t\t-1"} {
 		if _, err := parseSnapshot("id", invalid); err == nil {
 			t.Fatalf("invalid snapshot %q accepted", invalid)
 		}
+	}
+}
+
+func TestManagerTreatsStableDeadPaneWithoutWaitStatusAsUnknownExit(t *testing.T) {
+	runner := newFakeRunner()
+	manager, events := newTestManager(t, runner, Options{
+		RunID:         "unknown-exit",
+		PersistOnExit: true,
+		PollInterval:  minimumPollInterval,
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	info, err := manager.Start(context.Background(), testSpec(t, "unknown-exit-agent"), terminal.Size{})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// tmux 3.4 can leave both pane_dead_status and pane_dead_signal empty
+	// after pane_dead becomes stable. Nil ExitCode means unknown, not success.
+	runner.setDisplay("1\t\t0\t1\n")
+	exit := waitForExitEvent(t, events, info.ID)
+	if exit.Metadata["failed"] == "true" || exit.Metadata["exit_code"] != "" {
+		t.Fatalf("unknown exit invented an outcome: %#v", exit)
+	}
+	if probes := runner.callsFor("has-session"); len(probes) != 0 {
+		t.Fatalf("normal pending wait status triggered failure probes: %#v", probes)
 	}
 }
 
@@ -1173,6 +1209,9 @@ func newTestManager(t *testing.T, runner *fakeRunner, options Options) (*Manager
 	if options.RuntimeDir == "" {
 		options.RuntimeDir = t.TempDir()
 	}
+	if options.handoffWaiter == nil {
+		options.handoffWaiter = skipLaunchHandoff
+	}
 	manager, err := NewManager(context.Background(), events, intercept.DefaultPatterns(), 4096, options)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -1205,6 +1244,7 @@ func waitForExitEvent(t *testing.T, events <-chan session.Event, id string) adap
 	t.Helper()
 	deadline := time.NewTimer(3 * time.Second)
 	defer deadline.Stop()
+	var lastError error
 	for {
 		select {
 		case event := <-events:
@@ -1212,8 +1252,11 @@ func waitForExitEvent(t *testing.T, events <-chan session.Event, id string) adap
 				adapterEvent.Event.SessionID == id && adapterEvent.Event.Type == adapters.EventProcessExit {
 				return adapterEvent.Event
 			}
+			if backendError, ok := event.(session.Error); ok && backendError.SessionID == id {
+				lastError = backendError.Err
+			}
 		case <-deadline.C:
-			t.Fatalf("timed out waiting for exit event for %s", id)
+			t.Fatalf("timed out waiting for exit event for %s (last backend error: %v)", id, lastError)
 		}
 	}
 }

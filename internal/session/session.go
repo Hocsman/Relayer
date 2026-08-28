@@ -24,10 +24,11 @@ var (
 )
 
 const (
-	gracefulStopTimeout = 1500 * time.Millisecond
-	forcedStopTimeout   = 500 * time.Millisecond
-	descendantGraceTime = 250 * time.Millisecond
-	groupCheckInterval  = 10 * time.Millisecond
+	gracefulStopTimeout  = 1500 * time.Millisecond
+	forcedStopTimeout    = 500 * time.Millisecond
+	descendantGraceTime  = 250 * time.Millisecond
+	finalOutputDrainTime = 100 * time.Millisecond
+	groupCheckInterval   = 10 * time.Millisecond
 )
 
 // processSession is deliberately private: Manager remains the only owner of
@@ -39,6 +40,7 @@ type processSession struct {
 	cancel    context.CancelFunc
 	processor *adapters.Processor
 	done      chan struct{}
+	readDone  chan struct{}
 	resultMu  sync.RWMutex
 	exited    bool
 	waitErr   error
