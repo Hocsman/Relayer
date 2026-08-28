@@ -339,7 +339,7 @@ func (m *Model) handleActionableEvent(observed adapters.Event) tea.Cmd {
 
 	sessionKey := semanticEventKey(observed.SessionID, observed.ID).sessionID
 	if strings.EqualFold(m.lineInputTarget, observed.SessionID) {
-		m.cancelLineInput(false)
+		m.cancelLineInputForPrompt()
 	}
 	if strings.EqualFold(m.lineWritePending, observed.SessionID) {
 		// SendLine and the processor CAS may already have returned, but Bubble
@@ -445,7 +445,7 @@ func (m *Model) queueHumanEvent(event adapters.Event, evaluation policy.Evaluati
 	// Semantic prompts have priority over a direct line composer, including a
 	// prompt from another session because both modes share one input field.
 	if m.lineInputTarget != "" {
-		m.cancelLineInput(false)
+		m.cancelLineInputForPrompt()
 	}
 	if target.blocked && target.prompt.ID != "" {
 		m.rememberResolved(event.SessionID, target.prompt.ID)

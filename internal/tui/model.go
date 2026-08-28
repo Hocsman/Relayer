@@ -104,6 +104,11 @@ type Model struct {
 	attachReturned        bool
 	execProcess           execProcessFunc
 
+	// lastTitleCount edge-triggers the terminal window title so eight
+	// simultaneous prompts produce one title change rather than eight.
+	lastTitleCount   int
+	titleInitialized bool
+
 	resizeGeneration uint64
 	resizeInFlight   bool
 	resizeRequests   []resizeRequest
@@ -355,7 +360,7 @@ func (m *Model) activateNextPrompt() tea.Cmd {
 
 	m.inputTarget = m.pending[0]
 	if m.lineInputTarget != "" {
-		m.cancelLineInput(false)
+		m.cancelLineInputForPrompt()
 	}
 	targetIndex := m.paneIndex(m.inputTarget)
 	m.setPage(targetIndex / maxAgentsPerPage)
