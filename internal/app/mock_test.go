@@ -244,26 +244,26 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 		t.Fatalf("detected match = %q", detected.Match)
 	}
 	wantGeneratedLines := []string{
-		"Génération ligne 1...",
-		"Génération ligne 2...",
-		"Génération ligne 3...",
-		"Génération ligne 4...",
-		"Génération ligne 5...",
-		"Génération ligne 6...",
-		"Génération ligne 7...",
-		"Génération ligne 8...",
-		"Génération ligne 9...",
-		"Génération ligne 10...",
-		"Génération ligne 11...",
-		"Génération ligne 12...",
-		"Génération ligne 13...",
-		"Génération ligne 14...",
-		"Génération ligne 15...",
-		"Génération ligne 16...",
-		"Génération ligne 17...",
-		"Génération ligne 18...",
-		"Génération ligne 19...",
-		"Génération ligne 20...",
+		"Generating line 1...",
+		"Generating line 2...",
+		"Generating line 3...",
+		"Generating line 4...",
+		"Generating line 5...",
+		"Generating line 6...",
+		"Generating line 7...",
+		"Generating line 8...",
+		"Generating line 9...",
+		"Generating line 10...",
+		"Generating line 11...",
+		"Generating line 12...",
+		"Generating line 13...",
+		"Generating line 14...",
+		"Generating line 15...",
+		"Generating line 16...",
+		"Generating line 17...",
+		"Generating line 18...",
+		"Generating line 19...",
+		"Generating line 20...",
 	}
 	gotGeneratedLines := mockGenerationLines(latestOutput)
 	if !reflect.DeepEqual(gotGeneratedLines, wantGeneratedLines) {
@@ -279,7 +279,7 @@ func TestDefaultMockCommandRunsTwentyLinesAndRelaysAnswer(t *testing.T) {
 		t.Fatalf("sending mock validation: %v", err)
 	}
 
-	finalText := "✅ Vous avez répondu : Y. Fin de la tâche."
+	finalText := "✅ You answered: Y. Task finished."
 	exited := false
 	for !(exited && strings.Contains(latestOutput, finalText)) {
 		select {
@@ -322,7 +322,7 @@ func mockGenerationLines(output string) []string {
 	result := make([]string, 0, 20)
 	for _, line := range strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n") {
 		line = strings.TrimSuffix(line, "\r")
-		if strings.HasPrefix(line, "Génération ligne ") {
+		if strings.HasPrefix(line, "Generating line ") {
 			result = append(result, line)
 		}
 	}

@@ -245,7 +245,7 @@ func TestLineInputTransportErrorFreezesWithoutRetryOrLeak(t *testing.T) {
 	result := executeCommand(t, delivery)
 	application, retry := updateModel(t, application, result)
 	if retry != nil || !application.panes[0].policyFrozen || !application.panes[0].blocked ||
-		application.panes[0].policyTag != "LIVRAISON INCERTAINE" || application.lineWritePending != "" {
+		application.panes[0].policyTag != "DELIVERY UNCERTAIN" || application.lineWritePending != "" {
 		t.Fatalf("uncertain line state = retry=%v pane=%#v pending=%q",
 			retry != nil, application.panes[0], application.lineWritePending)
 	}

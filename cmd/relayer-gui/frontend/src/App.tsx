@@ -75,7 +75,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
 
   if (state.connection === "loading" || !state.app) {
     if (state.connection === "failed") {
-      return <StartupFailure message={state.fatalError || "Le moteur Relayer ne répond pas."} />;
+      return <StartupFailure message={state.fatalError || "The Relayer engine is not responding."} />;
     }
     return <StartupScreen />;
   }
@@ -191,20 +191,20 @@ function RunWorkspace({
 }) {
   const transitionCopy: Partial<Record<RunStatus, { title: string; detail: string }>> = {
     starting: {
-      title: "Démarrage des agents…",
-      detail: "Relayer valide la configuration, l’audit et chaque backend avant d’ouvrir le run.",
+      title: "Starting the agents…",
+      detail: "Relayer validates the configuration, the audit journal and each backend before opening the run.",
     },
     restarting: {
-      title: "Redémarrage sécurisé…",
-      detail: "Les décisions sont verrouillées pendant l’arrêt propre et le lancement du nouveau run.",
+      title: "Secure restart…",
+      detail: "Decisions are locked during the clean stop and the start of the new run.",
     },
     rollback: {
-      title: "Restauration en cours…",
-      detail: "Le nouveau lancement a échoué. Relayer tente de rétablir la configuration active précédente.",
+      title: "Restoring…",
+      detail: "The new start failed. Relayer is trying to restore the previously active configuration.",
     },
     stopping: {
-      title: "Arrêt du run…",
-      detail: "Les livraisons admises sont drainées avant la fermeture des backends et de l’audit.",
+      title: "Stopping the run…",
+      detail: "Accepted deliveries are drained before the backends and the audit journal close.",
     },
   };
   const transition = transitionCopy[status];
@@ -212,7 +212,7 @@ function RunWorkspace({
     return (
       <main className="run-workspace run-workspace--transition" aria-live="polite">
         <span className="settings-spinner" aria-hidden="true" />
-        <span className="eyebrow">Cycle de vie verrouillé</span>
+        <span className="eyebrow">Lifecycle locked</span>
         <h1>{transition.title}</h1>
         <p>{transition.detail}</p>
       </main>
@@ -223,20 +223,20 @@ function RunWorkspace({
   return (
     <main className={`run-workspace${failed ? " run-workspace--failed" : ""}`}>
       <span className="run-workspace__mark" aria-hidden="true">{failed ? "!" : "◇"}</span>
-      <span className="eyebrow">{failed ? "Run indisponible" : "Aucun run actif"}</span>
-      <h1>{failed ? "Le démarrage ou l’arrêt n’a pas abouti" : "Configurez votre équipe d’agents"}</h1>
+      <span className="eyebrow">{failed ? "Run unavailable" : "No active run"}</span>
+      <h1>{failed ? "The start or stop did not complete" : "Configure your agent team"}</h1>
       <p>
         {failed
-          ? "Les décisions restent bloquées. Vérifiez la configuration avant de réessayer; aucun mode simulé n’est activé automatiquement."
-          : "Enregistrez les profils puis démarrez les agents sans fermer Relayer."}
+          ? "Decisions stay blocked. Check the configuration before retrying; no simulation mode is enabled automatically."
+          : "Save the profiles, then start the agents without closing Relayer."}
       </p>
       {failed && errors[0] && <strong className="run-workspace__error">{errors[0]}</strong>}
       <div className="run-workspace__actions">
         <button className="button button--primary" type="button" onClick={onConfigure}>
-          {failed ? "Ouvrir la configuration" : "Configurer les agents"}
+          {failed ? "Open the configuration" : "Configure the agents"}
         </button>
         <button className="button button--ghost" type="button" onClick={onOpenPreflight}>
-          Vérifier l’installation
+          Check the installation
         </button>
       </div>
     </main>
@@ -257,15 +257,15 @@ function StopRunConfirmation({
   return (
     <div className="modal-layer" role="presentation">
       <section className="lifecycle-confirmation" role="alertdialog" aria-modal="true" aria-labelledby="stop-run-title">
-        <span className="eyebrow">Action sur le run courant</span>
-        <h2 id="stop-run-title">Arrêter le run ?</h2>
+        <span className="eyebrow">Action on the current run</span>
+        <h2 id="stop-run-title">Stop the run?</h2>
         <p>
-          {running} agent{running > 1 ? "s" : ""} {running > 1 ? "seront strictement arrêtés" : "sera strictement arrêté"}. La persistance tmux est ignorée pour cet arrêt explicite.
-          {pending > 0 ? ` ${pending} demande${pending > 1 ? "s" : ""} en attente ${pending > 1 ? "seront" : "sera"} annulée${pending > 1 ? "s" : ""}.` : ""}
+          {running} agent{running !== 1 ? "s" : ""} will be stopped outright. tmux persistence is ignored for this explicit stop.
+          {pending > 0 ? ` ${pending} pending supervision request${pending > 1 ? "s" : ""} will be cancelled.` : ""}
         </p>
         <div className="lifecycle-confirmation__actions">
-          <button className="button button--ghost" type="button" onClick={onCancel}>Annuler</button>
-          <button className="button button--danger" type="button" onClick={onConfirm}>Arrêter les agents</button>
+          <button className="button button--ghost" type="button" onClick={onCancel}>Cancel</button>
+          <button className="button button--danger" type="button" onClick={onConfirm}>Stop the agents</button>
         </div>
       </section>
     </div>
@@ -276,9 +276,9 @@ export function StartupFailure({ message }: { message: string }) {
   return (
     <main className="startup startup--failed">
       <span className="startup__mark">R</span>
-      <h1>Connexion au moteur impossible</h1>
+      <h1>Cannot connect to the engine</h1>
       <p>{message}</p>
-      <small>Le mode démo n’est jamais activé automatiquement dans une application empaquetée.</small>
+      <small>Demo mode is never enabled automatically in a packaged application.</small>
     </main>
   );
 }
@@ -288,7 +288,7 @@ function StartupScreen() {
     <main className="startup">
       <span className="startup__mark startup__mark--pulse">R</span>
       <h1>Relayer</h1>
-      <p>Initialisation du plan de contrôle…</p>
+      <p>Initializing the control plane…</p>
     </main>
   );
 }

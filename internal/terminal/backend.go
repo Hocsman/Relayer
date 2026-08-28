@@ -69,7 +69,7 @@ var (
 	ErrClosed          = errors.New("terminal backend closed")
 	ErrSessionNotFound = errors.New("terminal session not found")
 	ErrNotAttachable   = errors.New("terminal session not attachable")
-	ErrUnavailable     = errors.New("backend terminal indisponible")
+	ErrUnavailable     = errors.New("terminal backend unavailable")
 	ErrUnsupported     = errors.New("terminal backend not supported")
 	// These aliases preserve one errors.Is identity from the Processor through
 	// session, backend, router and presentation boundaries.

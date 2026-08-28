@@ -20,7 +20,7 @@ func TestSupervisorTitleShowsHowManyPromptsAreWaiting(t *testing.T) {
 	application := newAuditedModel(t, backend, policy.DefaultConfig(), auditedPanes(), sink)
 
 	// Nothing waiting: no count.
-	if got := application.View(); strings.Contains(got, "EN ATTENTE") {
+	if got := application.View(); strings.Contains(got, "PENDING") {
 		t.Fatalf("an idle supervisor advertised a queue:\n%s", got)
 	}
 
@@ -31,7 +31,7 @@ func TestSupervisorTitleShowsHowManyPromptsAreWaiting(t *testing.T) {
 	application, _ = updateModel(t, application, executeCommand(t, command))
 
 	// A single waiting prompt is already the one being answered and named.
-	if got := application.View(); strings.Contains(got, "EN ATTENTE") {
+	if got := application.View(); strings.Contains(got, "PENDING") {
 		t.Fatalf("a single prompt was counted as a queue:\n%s", got)
 	}
 
@@ -46,7 +46,7 @@ func TestSupervisorTitleShowsHowManyPromptsAreWaiting(t *testing.T) {
 	}
 
 	view := application.View()
-	if !strings.Contains(view, "2 EN ATTENTE") {
+	if !strings.Contains(view, "2 PENDING") {
 		t.Fatalf("the queued prompt was invisible:\n%s", view)
 	}
 }
@@ -85,7 +85,7 @@ func TestPreemptedDirectInstructionIsAnnounced(t *testing.T) {
 		t.Fatal("the composer survived a supervision request")
 	}
 	view := application.View()
-	if !strings.Contains(view, "Consigne directe abandonnée") {
+	if !strings.Contains(view, "Direct instruction discarded") {
 		t.Fatalf("the discarded instruction was not announced:\n%s", view)
 	}
 	// The text itself must never be logged.

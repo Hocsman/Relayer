@@ -13,7 +13,7 @@ const MaxLineBytes = 4096
 
 var (
 	// ErrEventPending reports that an actionable event must be resolved before
-	// ordinary line input can be delivered.
+	// direct instructions can be delivered.
 	ErrEventPending = errors.New("actionable event pending")
 	// ErrInvalidLine reports line input which cannot be encoded unambiguously.
 	ErrInvalidLine = errors.New("invalid terminal line")
@@ -26,7 +26,7 @@ var (
 	ErrLineDeliveryUncertain = errors.New("line delivery uncertain")
 )
 
-// SendLine serializes ordinary line input with event detection and process
+// SendLine serializes direct instructions with event detection and process
 // termination. It never resolves or acknowledges an event. Delivery happens
 // under the same lock as Detect, so either the line is sent first or a prompt
 // becomes pending first; the two outcomes cannot race past one another.

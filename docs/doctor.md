@@ -17,12 +17,12 @@ The report contains three possible outcomes:
 
 | Outcome | Exit status | Meaning |
 | --- | ---: | --- |
-| `PRÊT` | 0 | Every check passed. |
-| `AVERTISSEMENTS` | 0 | Startup is possible, with conservative limitations to review. |
-| `BLOQUÉ` | 1 | At least one condition prevents a ready startup. |
+| `READY` | 0 | Every check passed. |
+| `WARNINGS` | 0 | Startup is possible, with conservative limitations to review. |
+| `BLOCKED` | 1 | At least one condition prevents a ready startup. |
 
-The GUI presents the same report from **Santé** or **Vérifier
-l’installation**.
+The GUI presents the same report from **Health** or **Check the
+installation**.
 
 ## Checks
 

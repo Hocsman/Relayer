@@ -9,7 +9,7 @@ import (
 )
 
 //lint:ignore ST1005 This localized bridge error is rendered directly by Wails.
-var errPreflightUnavailable = errors.New("Le diagnostic local est indisponible.")
+var errPreflightUnavailable = errors.New("The local diagnostic is unavailable.")
 
 // RunPreflight delegates the complete effective-plan resolution to the shared
 // application facade. This bridge neither loads configuration nor probes tools

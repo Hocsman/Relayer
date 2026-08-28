@@ -42,7 +42,7 @@ describe("frontend redaction", () => {
       sensitive: true,
       summary: "password=must-not-appear",
     });
-    expect(safeEventSummary(sensitive)).toBe("Saisie confidentielle requise");
+    expect(safeEventSummary(sensitive)).toBe("Confidential input required");
     expect(safeEventSummary(sensitive)).not.toContain("must-not-appear");
   });
 });

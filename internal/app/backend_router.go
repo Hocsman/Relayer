@@ -49,7 +49,7 @@ func newBackendRouter(parent context.Context, backends ...terminal.Backend) (*ba
 	for _, backend := range backends {
 		if backend == nil {
 			cancel()
-			return nil, errors.New("backend terminal nil")
+			return nil, errors.New("nil terminal backend")
 		}
 		name := strings.ToLower(strings.TrimSpace(backend.Name()))
 		if name == "" || name == agent.BackendAuto {

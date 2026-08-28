@@ -459,7 +459,7 @@ func TestSensitiveManualInputNeverAppearsInDTOsOrAudit(t *testing.T) {
 		t.Fatalf("GetState before decision: %v", err)
 	}
 	assertJSONDoesNotContain(t, before, secret)
-	if len(before.PendingEvents) != 1 || before.PendingEvents[0].Summary != "Saisie sensible requise" {
+	if len(before.PendingEvents) != 1 || before.PendingEvents[0].Summary != "Sensitive input required" {
 		t.Fatalf("sensitive prompt DTO = %#v", before.PendingEvents)
 	}
 
@@ -1433,9 +1433,9 @@ func TestSimulatedAgentsAndStartupNoticesCrossTheBridge(t *testing.T) {
 	engine := newFakeDesktopEngine("real-agent", "demo-agent")
 	engine.sessions[1].Simulated = true
 	engine.startupLogs = []string{
-		"  Mode simulation actif: demo-agent  ",
+		"  Simulation mode active: demo-agent  ",
 		"",
-		"tmux indisponible\x1b[31m: repli PTY\n",
+		"tmux unavailable\x1b[31m: falling back to PTY\n",
 		strings.Repeat("x", 400),
 	}
 	application := newBridgeForTest(engine)
@@ -1457,7 +1457,7 @@ func TestSimulatedAgentsAndStartupNoticesCrossTheBridge(t *testing.T) {
 	if len(state.Notices) != 3 {
 		t.Fatalf("notices = %#v, want the blank line dropped", state.Notices)
 	}
-	if state.Notices[0] != "Mode simulation actif: demo-agent" {
+	if state.Notices[0] != "Simulation mode active: demo-agent" {
 		t.Fatalf("notice not trimmed: %q", state.Notices[0])
 	}
 	for _, notice := range state.Notices {

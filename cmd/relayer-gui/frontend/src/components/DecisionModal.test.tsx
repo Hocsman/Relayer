@@ -27,7 +27,7 @@ function event(overrides: Partial<SupervisionEvent> = {}): SupervisionEvent {
     agentID: "agent-a",
     adapter: "codex",
     type: "permission",
-    summary: "Allow command execution?",
+    summary: "Run the build command?",
     sensitive: false,
     risk: "unknown",
     timestamp: "2026-01-01T00:00:00Z",
@@ -62,28 +62,28 @@ function render(value: SupervisionEvent) {
 describe("DecisionModal semantic answers", () => {
   it("offers both answers when the adapter encodes both", () => {
     const markup = render(event({ decisions: ["allow", "deny"] }));
-    expect(markup).toContain("Autoriser");
-    expect(markup).toContain("Refuser");
-    expect(markup).toContain("Ou répondre manuellement");
+    expect(markup).toContain("Allow");
+    expect(markup).toContain("Deny");
+    expect(markup).toContain("Or answer manually");
   });
 
   it("offers only the answer the occurrence accepts", () => {
     const markup = render(event({ decisions: ["deny"] }));
-    expect(markup).toContain("Refuser");
-    expect(markup).not.toContain("Autoriser");
+    expect(markup).toContain("Deny");
+    expect(markup).not.toContain("Allow");
   });
 
   it("falls back to the manual field when the adapter encodes nothing", () => {
     const markup = render(event({ adapter: "generic", decisions: [] }));
     expect(markup).not.toContain("decision-actions");
-    expect(markup).toContain("Réponse à transmettre");
+    expect(markup).toContain("Answer to submit");
   });
 
   it("drops a value the interface does not recognise instead of rendering it", () => {
     const markup = render(
       event({ decisions: ["allow", "sudo" as unknown as "allow"] }),
     );
-    expect(markup).toContain("Autoriser");
+    expect(markup).toContain("Allow");
     expect(markup).not.toContain("sudo");
   });
 
@@ -102,14 +102,14 @@ describe("DecisionModal semantic answers", () => {
 describe("DecisionModal terminal context", () => {
   it("shows the tail of the pane that stopped", () => {
     const markup = render(event({ decisions: [] }));
-    expect(markup).toContain("Contexte du terminal");
+    expect(markup).toContain("Terminal context");
     expect(markup).toContain("ready");
   });
 
   it("does not reprint a confidential prompt under a masked summary", () => {
     const markup = render(event({ sensitive: true, summary: "Enter your API token" }));
-    expect(markup).not.toContain("Contexte du terminal");
+    expect(markup).not.toContain("Terminal context");
     expect(markup).not.toContain("Enter your API token");
-    expect(markup).toContain("Saisie confidentielle requise");
+    expect(markup).toContain("Confidential input required");
   });
 });

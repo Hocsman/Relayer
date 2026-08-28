@@ -1155,7 +1155,7 @@ func TestMalformedIdentityRollbackNeverKillsAnUnmarkedName(t *testing.T) {
 	runner.setNewSessionOutput("malformed identity\n")
 	manager, _ := newTestManager(t, runner, Options{RunID: "malformed-rollback", PersistOnExit: true})
 	_, err := manager.Start(context.Background(), testSpec(t, "agent"), terminal.Size{})
-	if err == nil || !strings.Contains(err.Error(), "identifiants immuables") {
+	if err == nil || !strings.Contains(err.Error(), "immutable tmux identifiers") {
 		t.Fatalf("Start error = %v, want malformed identity", err)
 	}
 	if _, lookupErr := manager.session("agent"); !errors.Is(lookupErr, ErrSessionNotFound) {

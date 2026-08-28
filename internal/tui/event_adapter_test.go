@@ -87,7 +87,7 @@ func TestAdapterProcessExitClearsPendingStateAndIsIdempotent(t *testing.T) {
 	application, _ = updateModel(t, application, pending)
 	application.input.SetValue("must-be-cleared")
 
-	exit := testAdapterEvent("agent-a", "process-exit", "processus synthétique terminé", false)
+	exit := testAdapterEvent("agent-a", "process-exit", "synthetic process finished", false)
 	exit.Event.Type = adapters.EventProcessExit
 	exit.Event.Match = ""
 	exit.Event.Sensitive = false
@@ -145,7 +145,7 @@ func TestSensitiveAdapterEventNeverRendersOrLogsSummaryMatchOrManualInput(t *tes
 			t.Fatalf("sensitive value %q leaked into View", secret)
 		}
 	}
-	if !strings.Contains(logs, "saisie sensible requise") {
+	if !strings.Contains(logs, "sensitive input required") {
 		t.Fatalf("sensitive event did not use generic safe log text: %q", logs)
 	}
 }

@@ -67,9 +67,9 @@ export function AgentCard({ runID, agent, event, onResize, onStop, onOpenEvent, 
               {agent.simulated && (
                 <span
                   className="simulated-tag"
-                  title="Script Bash de démonstration substitué à un vrai agent. Ce panneau ne supervise aucun outil de code."
+                  title="Demo Bash script substituted for a real agent. This panel supervises no coding tool."
                 >
-                  Simulé
+                  Simulated
                 </span>
               )}
             </h2>
@@ -79,7 +79,7 @@ export function AgentCard({ runID, agent, event, onResize, onStop, onOpenEvent, 
         <StatusBadge status={waiting ? "waiting" : agent.status} />
       </header>
 
-      <div className="agent-card__meta" aria-label="Informations de session">
+      <div className="agent-card__meta" aria-label="Session information">
         <span>{agent.backend.toUpperCase()}</span>
         <span>{agent.adapter}</span>
         <span className="agent-card__session" title={agent.sessionID}>{agent.sessionID}</span>
@@ -89,7 +89,7 @@ export function AgentCard({ runID, agent, event, onResize, onStop, onOpenEvent, 
       <TerminalSnapshotView
         runID={runID}
         sessionID={agent.sessionID}
-        label={`Sortie de ${agent.name}`}
+        label={`Output from ${agent.name}`}
         output={agent.output}
         revision={agent.revision}
         onResize={onResize}
@@ -97,7 +97,7 @@ export function AgentCard({ runID, agent, event, onResize, onStop, onOpenEvent, 
 
       <form className="agent-card__line-input" onSubmit={(event) => void submitLine(event)}>
         <label className="sr-only" htmlFor={`line-${runID}-${agent.sessionID}`}>
-          Envoyer une ligne à {agent.name}
+          Send a line to {agent.name}
         </label>
         <input
           ref={inputRef}
@@ -106,21 +106,21 @@ export function AgentCard({ runID, agent, event, onResize, onStop, onOpenEvent, 
           autoComplete="off"
           spellCheck={false}
           disabled={inputDisabled}
-          placeholder={waiting ? "Traitez la demande en attente" : agent.inputFrozen ? "Session gelée" : "Texte jamais journalisé"}
-          title="Une ligne UTF-8, 4096 octets maximum, sans caractère de contrôle"
-          aria-label={`Ligne pour ${agent.name}`}
+          placeholder={waiting ? "Handle the pending request" : agent.inputFrozen ? "Session frozen" : "Text is never recorded"}
+          title="One UTF-8 line, 4096 bytes maximum, no control character"
+          aria-label={`Line for ${agent.name}`}
         />
         <button className="button button--ghost button--small" type="submit" disabled={inputDisabled}>
-          {submitting ? "Envoi…" : "Envoyer"}
+          {submitting ? "Sending…" : "Send"}
         </button>
       </form>
 
       <footer className="agent-card__footer">
         <span>
           {agent.simulated
-            ? "Agent de démonstration"
+            ? "Demo agent"
             : agent.attached
-              ? "Session attachée"
+              ? "Session attached"
               : "Supervision active"}
         </span>
         <div className="agent-card__actions">
@@ -130,7 +130,7 @@ export function AgentCard({ runID, agent, event, onResize, onStop, onOpenEvent, 
               type="button"
               onClick={() => onOpenEvent(event.runID, event.sessionID, event.id)}
             >
-              Examiner
+              Review
             </button>
           )}
           {agent.running && (
@@ -140,7 +140,7 @@ export function AgentCard({ runID, agent, event, onResize, onStop, onOpenEvent, 
               disabled={submitting}
               onClick={() => void onStop(runID, agent.sessionID)}
             >
-              Arrêter
+              Stop
             </button>
           )}
         </div>

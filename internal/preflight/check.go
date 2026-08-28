@@ -23,60 +23,60 @@ import (
 var ErrNilContext = errors.New("preflight context is nil")
 
 const (
-	summaryConfigurationValid      = "La configuration est valide."
-	summaryConfigurationInvalid    = "La configuration effective est invalide."
-	remediationConfiguration       = "Corrigez la configuration avant de démarrer un agent."
-	summaryPlatformSupported       = "La plateforme permet l'exécution supervisée."
-	summaryPlatformUnsupported     = "L'exécution supervisée n'est pas disponible sur cette plateforme."
-	remediationPlatform            = "Utilisez une plateforme prise en charge ou attendez un backend natif compatible."
-	summaryPolicyValid             = "Les politiques sont valides."
-	summaryPolicyInvalid           = "Les politiques sont invalides."
-	remediationPolicy              = "Corrigez les règles de politique avant de démarrer un agent."
-	summaryPolicyReferencesValid   = "Les références d'agents des politiques sont valides."
-	summaryPolicyReferencesBad     = "Une politique référence un agent absent."
-	remediationPolicyReferences    = "Référencez uniquement des agents présents dans la configuration effective."
-	summaryAuditDisabled           = "Le journal d'audit est désactivé."
-	summaryAuditConfigured         = "La configuration du journal d'audit est valide."
-	summaryAuditInvalid            = "La configuration du journal d'audit est invalide."
-	remediationAudit               = "Corrigez la section audit avant de démarrer un agent."
-	summaryAuditPathReady          = "L'emplacement d'audit sera vérifié et créé au démarrage."
-	summaryAuditPathExisting       = "L'emplacement d'audit existant est privé."
-	summaryAuditPathHarden         = "Les permissions du fichier d'audit seront renforcées à l'ouverture."
-	remediationAuditPermissions    = "Limitez l'accès au fichier d'audit à l'utilisateur courant."
-	summaryAuditPathUnsafe         = "L'emplacement d'audit existant n'est pas sûr."
-	summaryAuditPathForeign        = "Le fichier présent à l'emplacement d'audit n'est pas un journal Relayer."
-	remediationAuditForeign        = "Choisissez un chemin dédié: Relayer prend possession de ce fichier et de ses rotations."
-	remediationAuditPath           = "Choisissez un fichier régulier dans un dossier privé appartenant à l'utilisateur courant."
-	summaryAuditGenerationsNone    = "Aucune génération d'audit existante n'est détectée."
-	summaryAuditGenerationsReady   = "Les générations d'audit existantes sont privées et régulières."
-	summaryAuditGenerationsHarden  = "Les permissions de générations d'audit seront renforcées au démarrage."
-	summaryAuditGenerationsUnsafe  = "Une génération d'audit existante n'est pas sûre."
-	summaryAuditGenerationsUnread  = "Les générations d'audit ne peuvent pas être inspectées."
-	remediationAuditGenerations    = "Vérifiez que chaque génération est un fichier régulier privé appartenant à l'utilisateur courant."
-	remediationAuditReadDir        = "Vérifiez les permissions de lecture du dossier d'audit."
-	summaryToolInstalled           = "L'outil optionnel est détecté."
-	summaryToolMissing             = "L'outil optionnel n'est pas installé."
-	summaryToolUnknown             = "Cet outil optionnel nécessite une sélection explicite."
-	summaryToolInconclusive        = "La détection de l'outil optionnel est indisponible."
-	remediationToolDetection       = "Vérifiez la variable PATH et relancez le diagnostic."
-	summaryAgentExecutableReady    = "L'exécutable de l'agent est détecté."
-	summaryAgentExecutableMissing  = "L'exécutable de l'agent est introuvable."
-	summaryAgentExecutableUnknown  = "La présence de l'exécutable de l'agent ne peut pas être confirmée."
-	remediationAgentExecutable     = "Installez l'outil requis ou corrigez sa commande avant le démarrage."
-	summaryAdapterReady            = "L'adaptateur effectif est disponible."
-	summaryAdapterExperimental     = "L'adaptateur effectif est expérimental."
-	remediationAdapterExperimental = "Conservez une décision humaine pour les interactions non couvertes."
-	summaryAdapterUnavailable      = "L'adaptateur demandé n'est pas disponible."
-	remediationAdapter             = "Choisissez un adaptateur enregistré et implémenté."
-	summaryBackendPTY              = "Le backend effectif est PTY."
-	summaryBackendTmux             = "Le backend effectif est tmux."
-	summaryBackendAutoFallback     = "Le backend auto se repliera sur PTY car tmux est indisponible."
-	remediationBackendAuto         = "Installez tmux pour activer les sessions détachables."
-	summaryBackendUnavailable      = "Le backend tmux demandé est indisponible."
-	remediationBackend             = "Installez tmux ou choisissez PTY ou auto."
-	summaryBackendUnusable         = "Le backend tmux demandé est installé mais ne peut pas exécuter de session."
-	remediationBackendUnusable     = "Mettez tmux à jour, vérifiez qu'il démarre une session, ou choisissez le backend PTY."
-	summaryBackendAutoUnusable     = "Le backend auto se repliera sur PTY car tmux ne peut pas exécuter de session."
+	summaryConfigurationValid      = "The configuration is valid."
+	summaryConfigurationInvalid    = "The effective configuration is invalid."
+	remediationConfiguration       = "Fix the configuration before starting an agent."
+	summaryPlatformSupported       = "The platform supports supervised execution."
+	summaryPlatformUnsupported     = "Supervised execution is not available on this platform."
+	remediationPlatform            = "Use a supported platform or wait for a compatible native backend."
+	summaryPolicyValid             = "The policies are valid."
+	summaryPolicyInvalid           = "The policies are invalid."
+	remediationPolicy              = "Fix the policy rules before starting an agent."
+	summaryPolicyReferencesValid   = "The agent references in the policies are valid."
+	summaryPolicyReferencesBad     = "A policy references a missing agent."
+	remediationPolicyReferences    = "Reference only agents present in the effective configuration."
+	summaryAuditDisabled           = "The audit journal is disabled."
+	summaryAuditConfigured         = "The audit journal configuration is valid."
+	summaryAuditInvalid            = "The audit journal configuration is invalid."
+	remediationAudit               = "Fix the audit section before starting an agent."
+	summaryAuditPathReady          = "The audit location will be checked and created at startup."
+	summaryAuditPathExisting       = "The existing audit location is private."
+	summaryAuditPathHarden         = "The audit file permissions will be hardened on open."
+	remediationAuditPermissions    = "Restrict access to the audit file to the current user."
+	summaryAuditPathUnsafe         = "The existing audit location is not safe."
+	summaryAuditPathForeign        = "The file at the audit location is not a Relayer journal."
+	remediationAuditForeign        = "Choose a dedicated path. Relayer takes ownership of this file and its rotations."
+	remediationAuditPath           = "Choose a regular file in a private directory owned by the current user."
+	summaryAuditGenerationsNone    = "No existing audit generation was detected."
+	summaryAuditGenerationsReady   = "The existing audit generations are private regular files."
+	summaryAuditGenerationsHarden  = "The audit generation permissions will be hardened at startup."
+	summaryAuditGenerationsUnsafe  = "An existing audit generation is not safe."
+	summaryAuditGenerationsUnread  = "The audit generations cannot be inspected."
+	remediationAuditGenerations    = "Check that each generation is a private regular file owned by the current user."
+	remediationAuditReadDir        = "Check the read permissions on the audit directory."
+	summaryToolInstalled           = "The optional tool was detected."
+	summaryToolMissing             = "The optional tool is not installed."
+	summaryToolUnknown             = "This optional tool requires an explicit selection."
+	summaryToolInconclusive        = "Detection of the optional tool is unavailable."
+	remediationToolDetection       = "Check the PATH variable and run the diagnostic again."
+	summaryAgentExecutableReady    = "The agent executable was detected."
+	summaryAgentExecutableMissing  = "The agent executable was not found."
+	summaryAgentExecutableUnknown  = "The presence of the agent executable cannot be confirmed."
+	remediationAgentExecutable     = "Install the required tool or fix its command before startup."
+	summaryAdapterReady            = "The effective adapter is available."
+	summaryAdapterExperimental     = "The effective adapter is experimental."
+	remediationAdapterExperimental = "Keep a human decision for interactions that are not covered."
+	summaryAdapterUnavailable      = "The requested adapter is not available."
+	remediationAdapter             = "Choose a registered and implemented adapter."
+	summaryBackendPTY              = "The effective backend is PTY."
+	summaryBackendTmux             = "The effective backend is tmux."
+	summaryBackendAutoFallback     = "The auto backend will fall back to PTY because tmux is unavailable."
+	remediationBackendAuto         = "Install tmux to enable detachable sessions."
+	summaryBackendUnavailable      = "The requested tmux backend is unavailable."
+	remediationBackend             = "Install tmux, or choose PTY or auto."
+	summaryBackendUnusable         = "The requested tmux backend is installed but cannot run a session."
+	remediationBackendUnusable     = "Update tmux, check that it starts a session, or choose the PTY backend."
+	summaryBackendAutoUnusable     = "The auto backend will fall back to PTY because tmux cannot run a session."
 )
 
 // Check passively validates one effective plan. It never opens an audit sink,
@@ -156,8 +156,8 @@ func FailureReport(kind FailureKind, options Options) Report {
 	texts := map[FailureKind]failureText{
 		FailureConfigMissing: {
 			id: "configuration.missing", scope: ScopeConfiguration,
-			summary:     "Le fichier de configuration est absent.",
-			remediation: "Créez explicitement la configuration avant de relancer le diagnostic.",
+			summary:     "The configuration file is missing.",
+			remediation: "Create the configuration explicitly before running the diagnostic again.",
 		},
 		FailureConfigInvalid: {
 			id: "configuration.invalid", scope: ScopeConfiguration,
@@ -165,13 +165,13 @@ func FailureReport(kind FailureKind, options Options) Report {
 		},
 		FailureConfigUnreadable: {
 			id: "configuration.unreadable", scope: ScopeConfiguration,
-			summary:     "Le fichier de configuration ne peut pas être lu.",
-			remediation: "Vérifiez l'existence et les permissions du fichier de configuration.",
+			summary:     "The configuration file cannot be read.",
+			remediation: "Check the existence and permissions of the configuration file.",
 		},
 		FailureWorkingDirectory: {
 			id: "configuration.working_directory", scope: ScopeConfiguration,
-			summary:     "Le dossier de travail ne peut pas être vérifié.",
-			remediation: "Choisissez un dossier de travail existant et accessible.",
+			summary:     "The working directory cannot be checked.",
+			remediation: "Choose an existing, accessible working directory.",
 		},
 		FailureAgentResolution: {
 			id: "configuration.agents", scope: ScopeAgent,
@@ -187,8 +187,8 @@ func FailureReport(kind FailureKind, options Options) Report {
 		},
 		FailurePreflightInternal: {
 			id: "preflight.internal", scope: ScopeConfiguration,
-			summary:     "Le diagnostic n'a pas pu être terminé de façon sûre.",
-			remediation: "Relancez le diagnostic avant de démarrer un agent.",
+			summary:     "The diagnostic could not be completed safely.",
+			remediation: "Run the diagnostic again before starting an agent.",
 		},
 	}
 	selected, ok := texts[kind]

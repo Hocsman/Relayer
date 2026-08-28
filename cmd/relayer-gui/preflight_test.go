@@ -121,7 +121,7 @@ func TestPreflightReportViewProjectsSafeVersionedReport(t *testing.T) {
 	view.Agents[0].Backend = "mutated"
 	view.Checks[0].Summary = "mutated"
 	if report.Tools[0].ProfileID != toolcatalog.ClaudeCode || report.Agents[0].Backend != "pty" ||
-		report.Checks[0].Summary != "La configuration est valide." {
+		report.Checks[0].Summary != "The configuration is valid." {
 		t.Fatalf("view aliases core report: %#v", report)
 	}
 }

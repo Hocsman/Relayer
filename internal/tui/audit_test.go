@@ -199,7 +199,7 @@ func TestAuditFailureBeforeAutomaticSendFreezesWithoutBackendIO(t *testing.T) {
 	if calls := backend.automaticSnapshot(); len(calls) != 0 {
 		t.Fatalf("backend calls after pre-send audit failure = %#v", calls)
 	}
-	if !application.auditUnavailable || !strings.Contains(application.View(), "AUDIT INDISPONIBLE") {
+	if !application.auditUnavailable || !strings.Contains(application.View(), "AUDIT UNAVAILABLE") {
 		t.Fatalf("audit failure did not freeze and surface the UI: %q", application.View())
 	}
 }

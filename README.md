@@ -134,7 +134,7 @@ backend and makes `auto` fall back to PTY with a distinct warning.
 
 Exit status is `0` when there is no blocker, including when the report contains
 warnings, and `1` when startup should remain blocked. The desktop GUI exposes
-the same report through **Santé** and **Vérifier l’installation**. See the
+the same report through **Health** and **Check the installation**. See the
 [doctor guide](docs/doctor.md) for the checks and their limits.
 
 ### Desktop GUI (alpha)
@@ -168,8 +168,8 @@ command requires re-entering its complete vector. Newly entered argv, including
 an explicit Ollama model identifier, is persisted in the local YAML; Relayer
 never infers a model, and secret-shaped-argument filtering remains heuristic.
 The GUI opens idle and does
-not launch a process until you choose **Enregistrer et démarrer**. While a run
-is active, **Enregistrer** changes only the YAML; **Enregistrer et redémarrer**
+not launch a process until you choose **Save and start**. While a run
+is active, **Save** changes only the YAML; **Save and restart**
 applies it through a guarded lifecycle transaction. Historical configuration
 shapes are shown read-only until migrated to `version: 1`.
 
@@ -400,7 +400,7 @@ Important configuration behavior:
   warning. An explicit unavailable `tmux` backend is an error before startup.
 - `persist_on_exit` concerns detached tmux sessions during ordinary application
   shutdown. PTY sessions remain owned by the Relayer process. An explicit GUI
-  **Arrêter le run** or restart strictly stops both PTY and owned tmux sessions,
+  **Stop the run** or restart strictly stops both PTY and owned tmux sessions,
   regardless of this setting. Relayer never kills the tmux server.
 - `cleanup_on_success` removes a successful Relayer-owned tmux session even
   when persistence is enabled.

@@ -9,8 +9,8 @@ interface SupervisorPanelProps {
   onSelectEvent(runID: string, sessionID: string, eventID: string): void;
 }
 
-const actionLabels = { allow: "Autoriser", ask: "Demander", deny: "Refuser" } as const;
-const riskLabels = { low: "Faible", unknown: "À vérifier", high: "Élevé" } as const;
+const actionLabels = { allow: "Allow", ask: "Ask", deny: "Deny" } as const;
+const riskLabels = { low: "Low", unknown: "To check", high: "High" } as const;
 
 export function SupervisorPanel({
   state,
@@ -19,11 +19,11 @@ export function SupervisorPanel({
   onSelectEvent,
 }: SupervisorPanelProps) {
   return (
-    <aside className="supervisor" aria-label="Superviseur">
+    <aside className="supervisor" aria-label="Supervisor">
       <header className="supervisor__header">
         <div>
-          <span className="eyebrow">Superviseur</span>
-          <h2>File d’intervention</h2>
+          <span className="eyebrow">Supervisor</span>
+          <h2>Action queue</h2>
         </div>
         <span className={`queue-count${state.pendingEvents.length ? " queue-count--active" : ""}`}>
           {state.pendingEvents.length}
@@ -34,8 +34,8 @@ export function SupervisorPanel({
         {state.pendingEvents.length === 0 ? (
           <div className="all-clear">
             <span className="all-clear__icon" aria-hidden="true">✓</span>
-            <strong>Tout est sous contrôle</strong>
-            <p>Aucune validation humaine en attente.</p>
+            <strong>All clear</strong>
+            <p>No human decision is pending.</p>
           </div>
         ) : (
           <div className="event-list">
@@ -63,19 +63,19 @@ export function SupervisorPanel({
               <dd>{state.audit.mode}</dd>
             </div>
             <div>
-              <dt>Politique</dt>
+              <dt>Policy</dt>
               <dd>{state.policy.defaultAction}</dd>
             </div>
             <div>
-              <dt>Décisions</dt>
-              <dd>{state.policy.dryRun ? "simulation" : "actives"}</dd>
+              <dt>Decisions</dt>
+              <dd>{state.policy.dryRun ? "simulated" : "active"}</dd>
             </div>
           </dl>
         </section>
 
         {(state.notices?.length ?? 0) > 0 && (
           <section className="supervisor__section">
-            <h3>Démarrage</h3>
+            <h3>Startup</h3>
             <ul className="notice-list">
               {state.notices?.map((notice, index) => (
                 <li key={`${index}-${notice}`}>{notice}</li>
@@ -86,7 +86,7 @@ export function SupervisorPanel({
 
         {errors.length > 0 && (
           <section className="supervisor__section">
-            <h3>Incidents récents</h3>
+            <h3>Recent incidents</h3>
             <div className="error-list">
               {errors.slice(0, 4).map((error, index) => (
                 <div className="safe-error" key={`${error.timestamp}-${error.code}-${index}`}>
@@ -124,7 +124,7 @@ function EventItem({
         <strong>{safeEventSummary(event)}</strong>
         <span>{agentName || event.agentID} · {event.adapter}</span>
         <span className="event-item__policy">
-          {riskLabels[event.risk]} · {event.evaluation.ruleName || "règle par défaut"} · {actionLabels[event.evaluation.action]}
+          {riskLabels[event.risk]} · {event.evaluation.ruleName || "default rule"} · {actionLabels[event.evaluation.action]}
         </span>
       </span>
       <span className="event-item__arrow" aria-hidden="true">›</span>

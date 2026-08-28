@@ -20,9 +20,9 @@ func requiresSecretHandling(event adapters.Event) bool {
 
 func safeEventSummary(event adapters.Event) string {
 	if requiresSecretHandling(event) {
-		return "Saisie sensible requise"
+		return "Sensitive input required"
 	}
-	return boundedDisplayText(audit.Redact(event.Summary), maxDisplaySummaryRunes, "Événement détecté")
+	return boundedDisplayText(audit.Redact(event.Summary), maxDisplaySummaryRunes, "Event detected")
 }
 
 func safeRuleName(value string) string {
@@ -31,9 +31,9 @@ func safeRuleName(value string) string {
 
 func safeDisplayError(err error) string {
 	if err == nil {
-		return "Erreur inconnue"
+		return "Unknown error"
 	}
-	return boundedDisplayText(audit.Redact(err.Error()), maxDisplayErrorRunes, "Opération impossible")
+	return boundedDisplayText(audit.Redact(err.Error()), maxDisplayErrorRunes, "Operation failed")
 }
 
 func boundedDisplayText(value string, limit int, fallback string) string {

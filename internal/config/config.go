@@ -299,7 +299,7 @@ func createDefault(path string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("serialize default configuration: %w", err)
 	}
-	payload = append([]byte("# Configuration de Relayer; agents: [] active les deux mocks.\n"), payload...)
+	payload = append([]byte("# Relayer configuration; agents: [] enables both mocks.\n"), payload...)
 
 	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, 0o755); err != nil {
@@ -437,7 +437,7 @@ func decodePolicies(configured *configuredPolicies) (policy.Config, error) {
 			return policy.Config{}, fmt.Errorf("missing policies.rules[%d].match", index)
 		}
 		if configuredRule.Action == nil {
-			return policy.Config{}, fmt.Errorf("policies.rules[%d].action manquante", index)
+			return policy.Config{}, fmt.Errorf("missing policies.rules[%d].action", index)
 		}
 		configuredMatch := configuredRule.Match
 		match := policy.Match{Sensitive: configuredMatch.Sensitive}
@@ -597,7 +597,7 @@ func decodeVersionOne(data []byte, root *yaml.Node) (decodedFile, error) {
 		return decodedFile{}, err
 	}
 	if configured.Version == nil {
-		return decodedFile{}, errors.New("version manquante")
+		return decodedFile{}, errors.New("missing version")
 	}
 	if *configured.Version != CurrentVersion {
 		return decodedFile{}, fmt.Errorf("unsupported version %d (expected: %d)", *configured.Version, CurrentVersion)
@@ -638,7 +638,7 @@ func decodeVersionOne(data []byte, root *yaml.Node) (decodedFile, error) {
 		return decodedFile{}, err
 	}
 	if _, err := policy.New(configuredPolicy); err != nil {
-		return decodedFile{}, fmt.Errorf("policies invalides: %w", err)
+		return decodedFile{}, fmt.Errorf("invalid policies: %w", err)
 	}
 	configuredAudit, err := decodeAudit(configured.Audit)
 	if err != nil {
@@ -704,11 +704,11 @@ func validateVersionOneNode(root *yaml.Node) error {
 		value := dereferenceAlias(root.Content[index+1])
 		switch name {
 		case "version":
-			if err := requireScalar(value, "!!int", "version doit être un entier YAML"); err != nil {
+			if err := requireScalar(value, "!!int", "version must be a YAML integer"); err != nil {
 				return err
 			}
 		case "backend":
-			if err := requireScalar(value, "!!str", "backend doit être une chaîne YAML"); err != nil {
+			if err := requireScalar(value, "!!str", "backend must be a YAML string"); err != nil {
 				return err
 			}
 		case "sessions":
@@ -745,15 +745,15 @@ func validateAuditNode(node *yaml.Node) error {
 		value := dereferenceAlias(node.Content[index+1])
 		switch name {
 		case "enabled":
-			if err := requireScalar(value, "!!bool", "audit.enabled doit être un booléen YAML"); err != nil {
+			if err := requireScalar(value, "!!bool", "audit.enabled must be a YAML boolean"); err != nil {
 				return err
 			}
 		case "mode", "path":
-			if err := requireScalar(value, "!!str", "audit."+name+" doit être une chaîne YAML"); err != nil {
+			if err := requireScalar(value, "!!str", "audit."+name+" must be a YAML string"); err != nil {
 				return err
 			}
 		case "max_file_size_mb", "max_files":
-			if err := requireScalar(value, "!!int", "audit."+name+" doit être un entier YAML"); err != nil {
+			if err := requireScalar(value, "!!int", "audit."+name+" must be a YAML integer"); err != nil {
 				return err
 			}
 		}
@@ -770,11 +770,11 @@ func validatePoliciesNode(node *yaml.Node) error {
 		value := dereferenceAlias(node.Content[index+1])
 		switch name {
 		case "default_action":
-			if err := requireScalar(value, "!!str", "policies.default_action doit être une chaîne YAML"); err != nil {
+			if err := requireScalar(value, "!!str", "policies.default_action must be a YAML string"); err != nil {
 				return err
 			}
 		case "dry_run":
-			if err := requireScalar(value, "!!bool", "policies.dry_run doit être un booléen YAML"); err != nil {
+			if err := requireScalar(value, "!!bool", "policies.dry_run must be a YAML boolean"); err != nil {
 				return err
 			}
 		case "rules":
@@ -800,7 +800,7 @@ func validatePolicyRuleNode(node *yaml.Node, index int) error {
 		value := dereferenceAlias(node.Content[fieldIndex+1])
 		switch name {
 		case "name", "action":
-			if err := requireScalar(value, "!!str", fmt.Sprintf("policies.rules[%d].%s doit être une chaîne YAML", index, name)); err != nil {
+			if err := requireScalar(value, "!!str", fmt.Sprintf("policies.rules[%d].%s must be a YAML string", index, name)); err != nil {
 				return err
 			}
 		case "match":
@@ -821,11 +821,11 @@ func validatePolicyMatchNode(node *yaml.Node, ruleIndex int) error {
 		value := dereferenceAlias(node.Content[fieldIndex+1])
 		switch name {
 		case "text_regex":
-			if err := requireScalar(value, "!!str", fmt.Sprintf("policies.rules[%d].match.text_regex doit être une chaîne YAML", ruleIndex)); err != nil {
+			if err := requireScalar(value, "!!str", fmt.Sprintf("policies.rules[%d].match.text_regex must be a YAML string", ruleIndex)); err != nil {
 				return err
 			}
 		case "sensitive":
-			if err := requireScalar(value, "!!bool", fmt.Sprintf("policies.rules[%d].match.sensitive doit être un booléen YAML", ruleIndex)); err != nil {
+			if err := requireScalar(value, "!!bool", fmt.Sprintf("policies.rules[%d].match.sensitive must be a YAML boolean", ruleIndex)); err != nil {
 				return err
 			}
 		case "event_types", "agent_ids", "risk_levels":
@@ -839,7 +839,7 @@ func validatePolicyMatchNode(node *yaml.Node, ruleIndex int) error {
 				if err := requireScalar(
 					dereferenceAlias(element),
 					"!!str",
-					fmt.Sprintf("policies.rules[%d].match.%s[%d] doit être une chaîne YAML", ruleIndex, name, elementIndex),
+					fmt.Sprintf("policies.rules[%d].match.%s[%d] must be a YAML string", ruleIndex, name, elementIndex),
 				); err != nil {
 					return err
 				}
@@ -858,7 +858,7 @@ func validateSessionPolicyNode(node *yaml.Node) error {
 		value := dereferenceAlias(node.Content[index+1])
 		switch name {
 		case "persist_on_exit", "cleanup_on_success":
-			if err := requireScalar(value, "!!bool", "sessions."+name+" doit être un booléen YAML"); err != nil {
+			if err := requireScalar(value, "!!bool", "sessions."+name+" must be a YAML boolean"); err != nil {
 				return err
 			}
 		}
@@ -880,7 +880,7 @@ func validatePatternNode(sequence *yaml.Node) error {
 			name := entry.Content[fieldIndex].Value
 			if name == "pattern" || name == "description" {
 				value := dereferenceAlias(entry.Content[fieldIndex+1])
-				if err := requireScalar(value, "!!str", fmt.Sprintf("pattern %d: %s doit être une chaîne YAML", entryIndex+1, name)); err != nil {
+				if err := requireScalar(value, "!!str", fmt.Sprintf("pattern %d: %s must be a YAML string", entryIndex+1, name)); err != nil {
 					return err
 				}
 			}
@@ -904,7 +904,7 @@ func validateAgentNode(sequence *yaml.Node) error {
 			value := dereferenceAlias(entry.Content[fieldIndex+1])
 			switch name {
 			case "id", "name", "shell", "cwd", "adapter", "backend":
-				if err := requireScalar(value, "!!str", fmt.Sprintf("agent %d: %s doit être une chaîne YAML", entryIndex+1, name)); err != nil {
+				if err := requireScalar(value, "!!str", fmt.Sprintf("agent %d: %s must be a YAML string", entryIndex+1, name)); err != nil {
 					return err
 				}
 			case "command":
@@ -912,7 +912,7 @@ func validateAgentNode(sequence *yaml.Node) error {
 					return fmt.Errorf("agent %d: command must be a YAML list of strings", entryIndex+1)
 				}
 				for argumentIndex, argument := range value.Content {
-					if err := requireScalar(dereferenceAlias(argument), "!!str", fmt.Sprintf("agent %d: command[%d] doit être une chaîne YAML", entryIndex+1, argumentIndex)); err != nil {
+					if err := requireScalar(dereferenceAlias(argument), "!!str", fmt.Sprintf("agent %d: command[%d] must be a YAML string", entryIndex+1, argumentIndex)); err != nil {
 						return err
 					}
 				}
@@ -923,10 +923,10 @@ func validateAgentNode(sequence *yaml.Node) error {
 				for envIndex := 0; envIndex+1 < len(value.Content); envIndex += 2 {
 					key := dereferenceAlias(value.Content[envIndex])
 					envValue := dereferenceAlias(value.Content[envIndex+1])
-					if err := requireScalar(key, "!!str", fmt.Sprintf("agent %d: les noms d'environnement doivent être des chaînes YAML", entryIndex+1)); err != nil {
+					if err := requireScalar(key, "!!str", fmt.Sprintf("agent %d: environment names must be YAML strings", entryIndex+1)); err != nil {
 						return err
 					}
-					if err := requireScalar(envValue, "!!str", fmt.Sprintf("agent %d: env[%s] doit être une chaîne YAML", entryIndex+1, key.Value)); err != nil {
+					if err := requireScalar(envValue, "!!str", fmt.Sprintf("agent %d: env[%s] must be a YAML string", entryIndex+1, key.Value)); err != nil {
 						return err
 					}
 				}

@@ -1,14 +1,14 @@
 import type { SessionStatus } from "../types/relayer";
 
 const labels: Record<SessionStatus, string> = {
-  starting: "Démarrage",
-  running: "Actif",
-  detached: "Détaché",
-  attached: "Attaché",
-  waiting: "Action requise",
-  stopping: "Arrêt en cours",
-  exited: "Terminé",
-  failed: "Erreur",
+  starting: "Starting",
+  running: "Active",
+  detached: "Detached",
+  attached: "Attached",
+  waiting: "Action required",
+  stopping: "Stopping",
+  exited: "Exited",
+  failed: "Error",
 };
 
 export function StatusBadge({ status }: { status: SessionStatus }) {

@@ -205,7 +205,7 @@ func TestDeliveryErrorRequeuesPromptWithoutRestoringSecret(t *testing.T) {
 	if got := application.input.Value(); got != "" {
 		t.Fatalf("failed delivery restored secret: %q", got)
 	}
-	if !strings.Contains(strings.Join(application.logs, "\n"), "Échec de l'envoi") {
+	if !strings.Contains(strings.Join(application.logs, "\n"), "Delivery to") {
 		t.Fatal("failed delivery was not logged")
 	}
 	if strings.Contains(strings.Join(application.logs, "\n"), "secret") {
@@ -220,7 +220,7 @@ func TestSessionEventsRefreshOutputExitAndError(t *testing.T) {
 		t.Fatalf("output event did not refresh pane: %q", application.panes[0].viewport.View())
 	}
 	application, _ = updateModel(t, application, session.Error{SessionID: "agent-a", Err: errFakeBackend})
-	if !strings.Contains(strings.Join(application.logs, "\n"), "Erreur terminal") {
+	if !strings.Contains(strings.Join(application.logs, "\n"), "Terminal error") {
 		t.Fatal("session error was not logged")
 	}
 	application, _ = updateModel(t, application, session.Exited{SessionID: "agent-a"})

@@ -253,7 +253,7 @@ func TestPolicyFailureUsesCurrentPendingAndNeverAutomaticallyRetriesIt(t *testin
 	if !strings.Contains(visible, "status=delivery_uncertain") {
 		t.Fatalf("ambiguous delivery was not identified safely: %q", visible)
 	}
-	if !strings.Contains(visible, "LIVRAISON INCERTAINE") || !strings.Contains(visible, "aucune nouvelle réponse envoyée") {
+	if !strings.Contains(visible, "DELIVERY UNCERTAIN") || !strings.Contains(visible, "no new answer sent") {
 		t.Fatalf("ambiguous delivery did not explain the frozen state: %q", visible)
 	}
 	backend.setPending(current)
@@ -275,7 +275,7 @@ func TestPolicyProcessExitPurgesInFlightAndLateCompletionCannotResurrect(t *test
 	lateResult := executeCommand(t, command)
 	exit := automaticEvent("agent-a", "process-exit")
 	exit.Type = adapters.EventProcessExit
-	exit.Summary = "processus terminé"
+	exit.Summary = "process finished"
 	exit.Match = ""
 	application, _ = updateModel(t, application, session.AdapterEvent{Event: exit})
 	logsAfterExit := len(application.logs)

@@ -11,7 +11,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/policy"
 )
 
-var errAuditUnavailable = errors.New("audit local indisponible")
+var errAuditUnavailable = errors.New("local audit unavailable")
 
 // deliveryGate closes the small gap between returning an asynchronous
 // Bubble Tea command and that command actually calling a backend. A later
@@ -101,7 +101,7 @@ func (m *Model) freezeAudit(paneIndex int) {
 			continue
 		}
 		m.panes[index].policyFrozen = true
-		m.panes[index].policyTag = "AUDIT INDISPONIBLE"
+		m.panes[index].policyTag = "AUDIT UNAVAILABLE"
 	}
 	if paneIndex >= 0 && paneIndex < len(m.panes) && !m.panes[paneIndex].exited {
 		m.panes[paneIndex].blocked = m.panes[paneIndex].blocked || m.panes[paneIndex].prompt.ID != ""
@@ -119,7 +119,7 @@ func (m *Model) freezeAudit(paneIndex int) {
 	m.input.Reset()
 	m.input.Blur()
 	setInputInterceptionStyle(&m.input, false)
-	m.appendLog("Audit local indisponible: aucune nouvelle décision ni aucun nouvel attachement ne sera envoyé")
+	m.appendLog("Local audit unavailable: no new decision or attachment will be sent")
 }
 
 func (m *Model) eventAuditEntry(paneIndex int, kind audit.Kind, event adapters.Event) audit.Entry {

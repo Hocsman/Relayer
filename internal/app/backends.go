@@ -178,14 +178,14 @@ func resolveAgentBackends(
 
 	if result.UsedAuto {
 		if result.AutoFallback {
-			message := "Backend auto: tmux est indisponible, repli explicite sur PTY."
+			message := "Backend auto: tmux is unavailable, explicit fallback to PTY."
 			if probeFailed {
-				message = "Backend auto: tmux est installé mais ne peut pas exécuter de session, repli explicite sur PTY."
+				message = "Backend auto: tmux is installed but cannot run a session, explicit fallback to PTY."
 			}
 			result.Warnings = append(result.Warnings, message)
 		} else {
 			result.Warnings = append(result.Warnings,
-				"Backend auto: tmux détecté et sélectionné.",
+				"Backend auto: tmux detected and selected.",
 			)
 		}
 	}

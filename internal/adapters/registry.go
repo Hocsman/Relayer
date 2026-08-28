@@ -88,7 +88,7 @@ func (r *Registry) Register(descriptor Descriptor, factory Factory) error {
 
 func (r *Registry) register(descriptor Descriptor, factory Factory) error {
 	if r == nil {
-		return errors.New("registry d'adaptateurs nil")
+		return errors.New("nil adapter registry")
 	}
 	id := strings.ToLower(strings.TrimSpace(descriptor.ID))
 	if id == "" {
@@ -133,7 +133,7 @@ func (r *Registry) register(descriptor Descriptor, factory Factory) error {
 // hints only for implemented adapters, then falls back to generic.
 func (r *Registry) Resolve(requestedID, executable string) (Adapter, Descriptor, error) {
 	if r == nil {
-		return nil, Descriptor{}, errors.New("registry d'adaptateurs nil")
+		return nil, Descriptor{}, errors.New("nil adapter registry")
 	}
 	requestedID = strings.ToLower(strings.TrimSpace(requestedID))
 	r.mu.RLock()

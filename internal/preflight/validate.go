@@ -300,14 +300,14 @@ func backendVocabulary(backend string) []checkVocabulary {
 
 func failureVocabulary() map[string][]checkVocabulary {
 	return map[string][]checkVocabulary{
-		"configuration.missing":           {{ScopeConfiguration, CheckBlock, "Le fichier de configuration est absent.", "Créez explicitement la configuration avant de relancer le diagnostic."}},
+		"configuration.missing":           {{ScopeConfiguration, CheckBlock, "The configuration file is missing.", "Create the configuration explicitly before running the diagnostic again."}},
 		"configuration.invalid":           {{ScopeConfiguration, CheckBlock, summaryConfigurationInvalid, remediationConfiguration}},
-		"configuration.unreadable":        {{ScopeConfiguration, CheckBlock, "Le fichier de configuration ne peut pas être lu.", "Vérifiez l'existence et les permissions du fichier de configuration."}},
-		"configuration.working_directory": {{ScopeConfiguration, CheckBlock, "Le dossier de travail ne peut pas être vérifié.", "Choisissez un dossier de travail existant et accessible."}},
+		"configuration.unreadable":        {{ScopeConfiguration, CheckBlock, "The configuration file cannot be read.", "Check the existence and permissions of the configuration file."}},
+		"configuration.working_directory": {{ScopeConfiguration, CheckBlock, "The working directory cannot be checked.", "Choose an existing, accessible working directory."}},
 		"configuration.agents":            {{ScopeAgent, CheckBlock, summaryConfigurationInvalid, remediationConfiguration}},
 		"policy.initialization":           {{ScopePolicy, CheckBlock, summaryPolicyInvalid, remediationPolicy}},
 		"adapter.initialization":          {{ScopeAdapter, CheckBlock, summaryAdapterUnavailable, remediationAdapter}},
-		"preflight.internal":              {{ScopeConfiguration, CheckBlock, "Le diagnostic n'a pas pu être terminé de façon sûre.", "Relancez le diagnostic avant de démarrer un agent."}},
+		"preflight.internal":              {{ScopeConfiguration, CheckBlock, "The diagnostic could not be completed safely.", "Run the diagnostic again before starting an agent."}},
 	}
 }
 

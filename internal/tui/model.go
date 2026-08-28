@@ -181,13 +181,13 @@ func NewModelWithPolicyAndAudit(
 	auditor *audit.Recorder,
 ) (*Model, error) {
 	if backend == nil {
-		return nil, errors.New("backend TUI nil")
+		return nil, errors.New("nil TUI backend")
 	}
 	if evaluator == nil {
 		return nil, errors.New("nil TUI policy engine")
 	}
 	if auditor == nil {
-		return nil, errors.New("enregistreur d'audit TUI nil")
+		return nil, errors.New("nil TUI audit recorder")
 	}
 	if len(panes) < 1 || len(panes) > maxAgentCount {
 		return nil, fmt.Errorf("the TUI requires between 1 and %d agents (received: %d)", maxAgentCount, len(panes))
@@ -207,7 +207,7 @@ func NewModelWithPolicyAndAudit(
 
 	input := textinput.New()
 	input.Prompt = "› "
-	input.Placeholder = "En attente d'une validation interactive…"
+	input.Placeholder = "Waiting for an interactive confirmation…"
 	input.CharLimit = 4096
 	input.Blur()
 	setInputInterceptionStyle(&input, false)
@@ -260,7 +260,7 @@ func NewModelWithPolicyAndAudit(
 		}
 	}
 	result.appendLog(fmt.Sprintf(
-		"Relayer démarré avec %d session(s) • backend %s",
+		"Relayer started with %d session(s) • backend %s",
 		len(panes),
 		result.backendLabel(),
 	))
@@ -344,7 +344,7 @@ func (m *Model) activateNextPrompt() tea.Cmd {
 		}
 		m.input.Blur()
 		m.input.EchoMode = textinput.EchoNormal
-		m.input.Placeholder = "En attente d'une validation interactive…"
+		m.input.Placeholder = "Waiting for an interactive confirmation…"
 		setInputInterceptionStyle(&m.input, false)
 		if m.focus.Kind == FocusSupervisor && len(m.panes) > 0 {
 			m.focus = FocusTarget{Kind: FocusAgent, AgentID: m.panes[0].sessionID}
@@ -367,7 +367,7 @@ func (m *Model) activateNextPrompt() tea.Cmd {
 	} else {
 		m.input.EchoMode = textinput.EchoNormal
 	}
-	m.input.Placeholder = fmt.Sprintf("Réponse pour %s (Entrée pour envoyer)", target.name)
+	m.input.Placeholder = fmt.Sprintf("Answer for %s (Enter to send)", target.name)
 	setInputInterceptionStyle(&m.input, true)
 	return m.input.Focus()
 }

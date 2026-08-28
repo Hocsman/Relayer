@@ -266,7 +266,7 @@ func TestContextResizeFailuresAreLoggedAfterCommandCompletion(t *testing.T) {
 	}
 	application, _ = updateModel(t, application, completion)
 	logs := strings.Join(application.logs, "\n")
-	if !strings.Contains(logs, "Redimensionnement de Agent 2 impossible: "+resizeErr.Error()) {
+	if !strings.Contains(logs, "Cannot resize Agent 2: "+resizeErr.Error()) {
 		t.Fatalf("resize failure missing from supervisor logs: %q", logs)
 	}
 }

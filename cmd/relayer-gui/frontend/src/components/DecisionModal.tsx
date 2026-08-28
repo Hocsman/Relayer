@@ -18,8 +18,8 @@ interface DecisionModalProps {
 }
 
 const decisionLabels: Record<SemanticDecision, string> = {
-  allow: "Autoriser",
-  deny: "Refuser",
+  allow: "Allow",
+  deny: "Deny",
 };
 
 export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDecide }: DecisionModalProps) {
@@ -106,10 +106,10 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
         <header className="decision-modal__header">
           <div className="decision-modal__signal" aria-hidden="true">!</div>
           <div>
-            <span className="eyebrow">Action humaine requise</span>
+            <span className="eyebrow">Human action required</span>
             <h2 id="decision-title">{safeEventSummary(event)}</h2>
           </div>
-          <button className="icon-button" type="button" onClick={onClose} disabled={busy} aria-label="Réduire">
+          <button className="icon-button" type="button" onClick={onClose} disabled={busy} aria-label="Minimize">
             ×
           </button>
         </header>
@@ -121,33 +121,33 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
             {agent?.simulated && (
               <em
                 className="simulated-tag"
-                title="Script Bash de démonstration substitué à un vrai agent."
+                title="Demo Bash script substituted for a real agent."
               >
-                Simulé
+                Simulated
               </em>
             )}
           </div>
-          <div><span>Adaptateur</span><strong>{event.adapter}</strong></div>
-          <div><span>Risque</span><strong className={`risk-text risk-text--${event.risk}`}>{event.risk}</strong></div>
-          <div><span>Règle</span><strong>{event.evaluation.ruleName || "Défaut sûr"}</strong></div>
+          <div><span>Adapter</span><strong>{event.adapter}</strong></div>
+          <div><span>Risk</span><strong className={`risk-text risk-text--${event.risk}`}>{event.risk}</strong></div>
+          <div><span>Rule</span><strong>{event.evaluation.ruleName || "Safe default"}</strong></div>
           <div><span>Action</span><strong>{event.evaluation.action}</strong></div>
-          <div><span>Livraison</span><strong>{event.deliveryStatus}</strong></div>
+          <div><span>Delivery</span><strong>{event.deliveryStatus}</strong></div>
         </div>
 
         {context.length > 0 && (
           <div className="decision-transcript">
-            <span className="eyebrow">Fin de sortie · {agent?.name || event.agentID}</span>
-            <pre ref={transcriptRef} aria-label="Contexte du terminal">{context.join("\n")}</pre>
+            <span className="eyebrow">End of output · {agent?.name || event.agentID}</span>
+            <pre ref={transcriptRef} aria-label="Terminal context">{context.join("\n")}</pre>
           </div>
         )}
 
         {event.evaluation.dryRun && (
-          <p className="dry-run-notice">DRY RUN · La décision reste entièrement manuelle.</p>
+          <p className="dry-run-notice">DRY RUN · The decision stays entirely manual.</p>
         )}
 
         {indeterminateDelivery && (
           <p className="delivery-lock" role="alert">
-            État indéterminé — arrêter ou resynchroniser la session. Aucune nouvelle saisie ne sera envoyée.
+            Indeterminate state — stop or resynchronize the session. No new input will be sent.
           </p>
         )}
 
@@ -164,17 +164,17 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
                 {decisionLabels[decision]}
               </button>
             ))}
-            <span>Réponse encodée par l’adaptateur {event.adapter}.</span>
+            <span>Answer encoded by the {event.adapter} adapter.</span>
           </div>
         )}
 
         <form className="decision-form" onSubmit={(formEvent) => void submit(formEvent)}>
           <label htmlFor="manual-decision">
             {event.sensitive
-              ? "Valeur confidentielle"
+              ? "Confidential value"
               : offered.length > 0
-                ? "Ou répondre manuellement"
-                : "Réponse à transmettre"}
+                ? "Or answer manually"
+                : "Answer to submit"}
           </label>
           <div className="decision-input-row">
             <input
@@ -187,23 +187,23 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
               autoCorrect="off"
               spellCheck={false}
               data-1p-ignore
-              placeholder={event.sensitive ? "••••••••" : "Saisissez votre réponse…"}
+              placeholder={event.sensitive ? "••••••••" : "Type your answer…"}
               disabled={busy || indeterminateDelivery}
             />
             <button className="button button--primary" type="submit" disabled={busy || indeterminateDelivery}>
-              {busy ? "Transmission…" : "Transmettre"}
+              {busy ? "Submitting…" : "Submit"}
             </button>
           </div>
           <p>
             {event.sensitive
-              ? "La valeur est masquée, transmise directement et jamais ajoutée aux logs de l’interface."
-              : "La réponse est envoyée à cette occurrence exacte du prompt."}
+              ? "The value is masked, submitted directly and never added to the interface logs."
+              : "The answer is sent to this exact prompt occurrence."}
           </p>
         </form>
 
         <footer className="decision-modal__footer">
-          <span>{event.sensitive ? "Événement sensible" : `Événement ${event.id}`}</span>
-          {queueSize > 1 && <span>{queueSize - 1} autre{queueSize > 2 ? "s" : ""} en attente</span>}
+          <span>{event.sensitive ? "Sensitive event" : `Event ${event.id}`}</span>
+          {queueSize > 1 && <span>{queueSize - 1} other{queueSize > 2 ? "s" : ""} pending</span>}
         </footer>
       </section>
     </div>

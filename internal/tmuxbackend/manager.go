@@ -101,7 +101,7 @@ func NewManagerWithRegistry(
 		return nil, errors.New("nil tmux event channel")
 	}
 	if registry == nil {
-		return nil, errors.New("registry d'adaptateurs tmux nil")
+		return nil, errors.New("nil tmux adapter registry")
 	}
 	if parent == nil {
 		parent = context.Background()
@@ -382,11 +382,11 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 		return terminal.Info{}, err
 	}
 	if _, err := m.run(ctx, "set-option", "-t", identity.sessionID, "@relayer_owner", m.ownerToken); err != nil {
-		return terminal.Info{}, fmt.Errorf("marquage d'ownership tmux: %w", err)
+		return terminal.Info{}, fmt.Errorf("mark tmux ownership: %w", err)
 	}
 	rollbackMarked = true
 	if _, err := m.run(ctx, "set-option", "-w", "-t", identity.windowID, "remain-on-exit", "on"); err != nil {
-		return terminal.Info{}, fmt.Errorf("configuration remain-on-exit: %w", err)
+		return terminal.Info{}, fmt.Errorf("configure remain-on-exit: %w", err)
 	}
 	if _, err := m.run(ctx, "pipe-pane", "-o", "-t", identity.paneID, pipeCommand(files.outputPath)); err != nil {
 		return terminal.Info{}, fmt.Errorf("configure the tmux capture: %w", err)
@@ -610,7 +610,7 @@ func (m *Manager) handleMissingTarget(target *managedSession, cause error) {
 }
 
 func (m *Manager) handleOwnershipLoss(target *managedSession, cause error) {
-	failure := fmt.Errorf("supervision tmux interrompue: %w", cause)
+	failure := fmt.Errorf("tmux supervision interrupted: %w", cause)
 	if !target.isPresent() {
 		return
 	}
@@ -937,7 +937,7 @@ func (m *Manager) inspectRaw(ctx context.Context, target *managedSession) (termi
 		return terminal.Snapshot{}, false, fmt.Errorf("%w: incomplete inspection", errOwnershipInvalid)
 	}
 	if fields[0] != target.sessionID || fields[1] != target.paneID || fields[2] != target.ownerToken {
-		return terminal.Snapshot{}, false, fmt.Errorf("%w: cible inattendue", errOwnershipInvalid)
+		return terminal.Snapshot{}, false, fmt.Errorf("%w: unexpected target", errOwnershipInvalid)
 	}
 	snapshot, err := parseSnapshot(target.info.ID, strings.Join(fields[3:7], tmuxFieldSeparator))
 	if err != nil {
@@ -1030,7 +1030,7 @@ type tmuxIdentity struct {
 func parseIdentity(output string) (tmuxIdentity, error) {
 	fields := splitTmuxFields(output)
 	if len(fields) != 3 || !validTmuxID(fields[0], '$') || !validTmuxID(fields[1], '@') || !validTmuxID(fields[2], '%') {
-		return tmuxIdentity{}, errors.New("identifiants immuables tmux invalides")
+		return tmuxIdentity{}, errors.New("invalid immutable tmux identifiers")
 	}
 	return tmuxIdentity{sessionID: fields[0], windowID: fields[1], paneID: fields[2]}, nil
 }
@@ -1056,7 +1056,7 @@ func (m *Manager) verifySession(ctx context.Context, target *managedSession) err
 	}
 	fields := splitTmuxFields(string(output))
 	if len(fields) != 2 || fields[0] != target.sessionID || fields[1] != target.ownerToken {
-		return fmt.Errorf("%w: session inattendue", errOwnershipInvalid)
+		return fmt.Errorf("%w: unexpected session", errOwnershipInvalid)
 	}
 	return nil
 }
@@ -1074,7 +1074,7 @@ func (m *Manager) verifyPane(ctx context.Context, target *managedSession) (strin
 	}
 	fields := splitTmuxFields(string(output))
 	if len(fields) != 4 || fields[0] != target.sessionID || fields[2] != target.paneID || fields[3] != target.ownerToken || !validTmuxID(fields[1], '@') {
-		return "", fmt.Errorf("%w: pane inattendu", errOwnershipInvalid)
+		return "", fmt.Errorf("%w: unexpected pane", errOwnershipInvalid)
 	}
 	return fields[1], nil
 }
@@ -1390,7 +1390,7 @@ func conditionalOwnerToken(marked bool, token string) string {
 
 func displayCommand(spec agent.Spec) string {
 	if spec.Shell != "" {
-		return "[shell explicite]"
+		return "[explicit shell]"
 	}
 	parts := make([]string, len(spec.Command))
 	for index, argument := range spec.Command {

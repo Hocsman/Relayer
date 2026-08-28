@@ -186,7 +186,7 @@ func TestEnterOnTmuxAgentExecutesAttachAndResynchronizes(t *testing.T) {
 	if got := application.panes[0].viewport.View(); !strings.Contains(got, "after detach") {
 		t.Fatalf("resynced output is not visible: %q", got)
 	}
-	if !strings.Contains(strings.Join(application.logs, "\n"), "sortie, état, prompts et taille") {
+	if !strings.Contains(strings.Join(application.logs, "\n"), "output, state, prompts and size") {
 		t.Fatal("successful resynchronization is not logged")
 	}
 
@@ -215,7 +215,7 @@ func TestPolicyFrozenTmuxAgentRefusesAttach(t *testing.T) {
 		t.Fatal(err)
 	}
 	application.panes[0].policyFrozen = true
-	application.panes[0].policyTag = "LIVRAISON INCERTAINE"
+	application.panes[0].policyTag = "DELIVERY UNCERTAIN"
 
 	application, command := updateModel(t, application, tea.KeyMsg{Type: tea.KeyEnter})
 	if command != nil {
@@ -229,7 +229,7 @@ func TestPolicyFrozenTmuxAgentRefusesAttach(t *testing.T) {
 		t.Fatalf("attach pending = %q", application.attachPending)
 	}
 	logs := strings.Join(application.logs, "\n")
-	if !strings.Contains(logs, "arrêt requis") {
+	if !strings.Contains(logs, "stop required") {
 		t.Fatalf("frozen attach refusal was not logged safely:\n%s", logs)
 	}
 }
@@ -264,7 +264,7 @@ func TestAutomaticDecisionInFlightRefusesTmuxAttach(t *testing.T) {
 		t.Fatalf("attach pending = %q", application.attachPending)
 	}
 	logs := strings.Join(application.logs, "\n")
-	if !strings.Contains(logs, "décision automatique en cours") {
+	if !strings.Contains(logs, "an automatic decision is in flight") {
 		t.Fatalf("in-flight attach refusal was not logged safely:\n%s", logs)
 	}
 }
@@ -305,7 +305,7 @@ func TestManualDecisionInFlightRefusesTmuxAttach(t *testing.T) {
 	if len(attachCalls) != 0 {
 		t.Fatalf("AttachCommand calls = %#v, want none", attachCalls)
 	}
-	if !strings.Contains(strings.Join(application.logs, "\n"), "réponse manuelle en cours") {
+	if !strings.Contains(strings.Join(application.logs, "\n"), "a manual answer is in flight") {
 		t.Fatal("manual in-flight attach refusal was not logged")
 	}
 }
@@ -334,7 +334,7 @@ func TestTmuxAttachRequiresEventSnapshots(t *testing.T) {
 	if len(attachCalls) != 0 {
 		t.Fatalf("AttachCommand calls = %#v, want none", attachCalls)
 	}
-	if !strings.Contains(strings.Join(application.logs, "\n"), "snapshot d'événement indisponible") {
+	if !strings.Contains(strings.Join(application.logs, "\n"), "event snapshot unavailable") {
 		t.Fatal("missing snapshot capability was not reported")
 	}
 }
@@ -572,8 +572,8 @@ func TestSelectedBackendAndTmuxAttachHelpAreVisible(t *testing.T) {
 		"[PTY]",
 		"[TMUX]",
 		"BACKEND PTY/TMUX",
-		"Entrée: ouvrir/répondre",
-		"Ctrl+B puis D: revenir à Relayer",
+		"Enter: open/answer",
+		"Ctrl+B then D: back to Relayer",
 	} {
 		if !strings.Contains(view, text) {
 			t.Fatalf("view does not expose %q:\n%s", text, view)

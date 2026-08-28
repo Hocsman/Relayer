@@ -65,7 +65,7 @@ func NewManagerWithRegistry(
 		return nil, errors.New("nil session event channel")
 	}
 	if registry == nil {
-		return nil, errors.New("registry d'adaptateurs nil")
+		return nil, errors.New("nil adapter registry")
 	}
 	if _, _, err := registry.Resolve(adapters.GenericID, ""); err != nil {
 		return nil, fmt.Errorf("invalid adapter registry: %w", err)
@@ -482,7 +482,7 @@ func displayCommand(spec agent.Spec) string {
 		// Shell scripts commonly embed credentials or substitutions. Consumers
 		// only need to know that interpreted mode is active; never expose the
 		// script through session metadata or persistent TUI history.
-		return "[shell explicite]"
+		return "[explicit shell]"
 	}
 	parts := make([]string, len(spec.Command))
 	for index, argument := range spec.Command {

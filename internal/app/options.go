@@ -24,14 +24,14 @@ func parseOptions(arguments []string, diagnostics io.Writer) (options, error) {
 	pane1 := flags.String(
 		"pane1",
 		"",
-		"[obsolète] remplace la commande directe du premier agent (guillemets acceptés, sans shell implicite)",
+		"[deprecated] replaces the first agent's direct command (quotes accepted, no implicit shell)",
 	)
 	pane2 := flags.String(
 		"pane2",
 		"",
-		"[obsolète] remplace la commande directe du deuxième agent (guillemets acceptés, sans shell implicite)",
+		"[deprecated] replaces the second agent's direct command (quotes accepted, no implicit shell)",
 	)
-	configPath := flags.String("config", config.DefaultPath, "fichier YAML de configuration")
+	configPath := flags.String("config", config.DefaultPath, "YAML configuration file")
 	if err := flags.Parse(arguments); err != nil {
 		return options{}, err
 	}

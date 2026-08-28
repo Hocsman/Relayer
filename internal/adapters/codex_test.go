@@ -368,7 +368,7 @@ func TestCodexConfiguredPatternTakesPriorityOverVendorRule(t *testing.T) {
 func TestCodexGenericFallbackPreservesInterceptPatternsAndSensitiveInput(t *testing.T) {
 	patterns := []Pattern{
 		{Name: "legacy", Description: "legacy confirmation", Expression: `(?i)approve deployment\?`},
-		{Name: "password", Description: "saisie d'un mot de passe", Expression: `(?im)password:[[:space:]]*$`, Sensitive: true},
+		{Name: "password", Description: "password entry", Expression: `(?im)password:[[:space:]]*$`, Sensitive: true},
 	}
 	adapter := newCodexTestAdapter(t, patterns)
 	state := NewDetectionState("session-codex", "reviewer", CodexID)
