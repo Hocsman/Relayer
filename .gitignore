@@ -3,3 +3,7 @@
 /relayer
 /relayer-demo.mp4
 .DS_Store
+
+# Scratch git worktrees created by coding agents. The rest of .claude/ is
+# deliberately not ignored: project skills and settings belong in the repository.
+.claude/worktrees/
