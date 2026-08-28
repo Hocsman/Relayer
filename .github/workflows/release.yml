@@ -107,6 +107,10 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: write
+      # Keyless signing binds this workflow's OIDC identity into a short-lived
+      # certificate; provenance attestation uses the same identity.
+      id-token: write
+      attestations: write
 
     steps:
       - name: Check out the tagged commit
@@ -121,6 +125,12 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.7.0
+
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0.17.9
+
       - name: Build and publish release artifacts
         uses: goreleaser/goreleaser-action@v7
         with:
@@ -129,3 +139,12 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Independent of the cosign signature: this records who built the
+      # archives and from which commit, verifiable with the gh CLI.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*_checksums.txt
