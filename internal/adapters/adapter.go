@@ -1,14 +1,20 @@
 package adapters
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const detectionWindowSize = 16 * 1024
+
+// codeFenceMarker is compared against the trimmed current line to toggle the
+// fenced-block suppression state.
+var codeFenceMarker = []byte("```")
 
 // Adapter interprets normalized, ANSI-free terminal text. Implementations do
 // not own processes, PTYs, tmux sessions, rendered history or audit sinks.
@@ -96,31 +102,38 @@ func (s *DetectionState) appendDetectionText(chunk []byte) (candidateStart, cand
 	if s == nil || len(chunk) == 0 {
 		return 0, 0, false
 	}
+	// Accumulate into a byte buffer rather than reassigning the string per
+	// rune: `s.detectionText += ...` copied the whole 16 KiB window on every
+	// character, which made this quadratic in chunk size and dominated the
+	// cost of consuming output while holding the processor lock.
+	buffer := make([]byte, 0, len(s.detectionText)+len(chunk))
+	buffer = append(buffer, s.detectionText...)
 	for _, character := range string(chunk) {
 		switch character {
 		case '\r':
-			if index := strings.LastIndexByte(s.detectionText, '\n'); index >= 0 {
-				s.detectionText = s.detectionText[:index+1]
+			if index := bytes.LastIndexByte(buffer, '\n'); index >= 0 {
+				buffer = buffer[:index+1]
 			} else {
-				s.detectionText = ""
+				buffer = buffer[:0]
 			}
 		case '\n':
-			lineStart := strings.LastIndexByte(s.detectionText, '\n') + 1
-			if strings.HasPrefix(strings.TrimSpace(s.detectionText[lineStart:]), "```") {
+			lineStart := bytes.LastIndexByte(buffer, '\n') + 1
+			if bytes.HasPrefix(bytes.TrimSpace(buffer[lineStart:]), codeFenceMarker) {
 				s.inCodeFence = !s.inCodeFence
 			}
-			s.detectionText += string(character)
+			buffer = append(buffer, '\n')
 		case '\t':
-			s.detectionText += string(character)
+			buffer = append(buffer, '\t')
 		default:
 			if character >= 0x20 && (character < 0x7f || character >= 0xa0) {
-				s.detectionText += string(character)
+				buffer = utf8.AppendRune(buffer, character)
 			}
 		}
 	}
-	if len(s.detectionText) > detectionWindowSize {
-		s.detectionText = s.detectionText[len(s.detectionText)-detectionWindowSize:]
+	if len(buffer) > detectionWindowSize {
+		buffer = buffer[len(buffer)-detectionWindowSize:]
 	}
+	s.detectionText = string(buffer)
 	return activeLineRange(s.detectionText)
 }
 
