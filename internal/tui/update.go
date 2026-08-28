@@ -813,12 +813,20 @@ func (m *Model) submitInput() tea.Cmd {
 	if paneIndex < 0 {
 		return nil
 	}
+	value := m.input.Value()
+	// Nothing typed is not an answer. Delivering it would send a bare carriage
+	// return, which the prompt reads as its default. Stop before anything is
+	// recorded or cleared, so the prompt stays pending and the operator can
+	// still answer it.
+	if strings.TrimSpace(value) == "" {
+		m.appendLog("Réponse vide ignorée: saisissez explicitement la réponse à transmettre")
+		return nil
+	}
 	targetID := m.inputTarget
 	event := m.panes[paneIndex].prompt.Clone()
 	if !m.recordDecision(paneIndex, event, audit.DecisionAsk, audit.DecisionByHuman) {
 		return nil
 	}
-	value := m.input.Value()
 
 	// Clear the old waiting state before the asynchronous write. This lets an
 	// immediate second prompt from this session enter the queue.

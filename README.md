@@ -253,7 +253,7 @@ and redirections are not interpreted.
 | `i` on a focused idle agent | Compose one ordinary line for that agent. |
 | `Esc` while composing | Cancel and erase the ordinary line. |
 | `Enter` while composing | Send the ordinary line with one carriage return. |
-| `Enter` on a pending prompt | Send the supervisor input to that agent. |
+| `Enter` on a pending prompt | Send the supervisor input to that agent. An empty field is refused: the answer must be typed. |
 | `Enter` on an idle tmux agent | Attach the native tmux client. |
 | `Ctrl+B`, then `d` | Default tmux detach sequence; custom tmux bindings may differ. |
 | `Ctrl+C` | Stop supervision and begin backend shutdown. |

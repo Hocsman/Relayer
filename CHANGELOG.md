@@ -66,6 +66,16 @@ No release tag has been published at the time of writing.
 
 ### Fixed
 
+- Pressing Enter on an empty supervisor field answered the prompt. The generic
+  adapter encodes a manual decision as the typed text plus a carriage return, so
+  an empty submission delivered a bare carriage return — whatever the prompt
+  treats as its default, frequently the permissive one — and it was recorded as
+  a human decision. Because the field takes focus by itself when a prompt
+  arrives, a reflex keystroke could answer a prompt the operator had not read.
+  An empty or whitespace-only manual decision is now refused in the core, so
+  every interface is covered, and the terminal interface says so instead of
+  doing nothing. The desktop interface already refused to submit an empty field.
+
 - Withdrawing a pending occurrence left no trace. Snapshot reconciliation drops
   a prompt the replayed screen no longer shows — legitimate, since an operator
   attached to tmux may have answered it directly — but the pane simply stopped

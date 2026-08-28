@@ -195,6 +195,9 @@ func (r *backendRouter) SendDecision(ctx context.Context, id string, event adapt
 // ApplyDecision resolves the canonical pending occurrence again immediately
 // before encoding and delivery. This CAS boundary prevents a stale policy or
 // UI result from acknowledging a newer prompt from the same session.
+// ErrEmptyManualDecision reports a manual decision carrying no answer.
+var ErrEmptyManualDecision = errors.New("une décision manuelle ne peut pas être vide")
+
 func (r *backendRouter) ApplyDecision(
 	ctx context.Context,
 	id string,
@@ -202,11 +205,19 @@ func (r *backendRouter) ApplyDecision(
 	decision adapters.Decision,
 	manualInput string,
 ) error {
-	if r.adapters == nil {
-		return errors.New("registry d'adaptateurs indisponible")
-	}
+	// Input validation first: whether an answer is deliverable at all must not
+	// depend on the router's state.
 	switch decision {
 	case adapters.DecisionManual:
+		// An empty manual decision is not an answer. The generic adapter encodes
+		// it as a bare carriage return, which is whatever the prompt treats as
+		// its default - frequently the permissive one. A supervision tool must
+		// not let a reflex keystroke stand in for a decision, so the answer has
+		// to be explicit. The desktop interface already refuses to submit an
+		// empty field; this makes the core agree, for every front end.
+		if strings.TrimSpace(manualInput) == "" {
+			return ErrEmptyManualDecision
+		}
 	case adapters.DecisionAllow, adapters.DecisionDeny:
 		if manualInput != "" {
 			return errors.New("une décision automatique ne peut pas contenir de saisie manuelle")
@@ -216,6 +227,9 @@ func (r *backendRouter) ApplyDecision(
 	}
 	if strings.TrimSpace(event.ID) == "" {
 		return fmt.Errorf("%w: identifiant d'événement vide", adapters.ErrEventMismatch)
+	}
+	if r.adapters == nil {
+		return errors.New("registry d'adaptateurs indisponible")
 	}
 	if !strings.EqualFold(strings.TrimSpace(event.SessionID), strings.TrimSpace(id)) {
 		return fmt.Errorf("%w: événement %q destiné à la session %q, pas %q",
