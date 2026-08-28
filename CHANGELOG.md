@@ -66,6 +66,16 @@ No release tag has been published at the time of writing.
 
 ### Fixed
 
+- The audit sink took ownership of `audit.path` without checking what was
+  already there. Startup truncates a partial trailing line and rotation removes
+  generations beyond `max_files`, both purely by name, so pointing the setting
+  at an ordinary document destroyed it: a file containing no newline at all was
+  truncated to nothing, and neighbours matching `<base>.<n>` were deleted. On a
+  private home directory nothing objected. A non-empty file is now only touched
+  when its first line decodes as a Relayer entry with a known schema version and
+  kind; `doctor` reports a foreign file as a blocker beforehand, and a journal
+  interrupted while writing its first entry still recovers.
+
 - The agent update path validated and re-read configuration files with `Load`,
   which creates a default configuration when the path is absent. Used on the
   temporary file of an in-flight save, a file that disappeared between writing

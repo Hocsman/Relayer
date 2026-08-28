@@ -9,6 +9,26 @@ For the surrounding trust boundaries and failure model, see the
 
 Each line is one independently decodable JSON object. The current `schema_version` is `1`.
 
+
+## Relayer owns the audit path
+
+Relayer takes ownership of `audit.path` and of every rotation that shares its
+base name (`<path>.1`, `<path>.2`, ...). Startup truncates a partial trailing
+line so the journal stays valid JSONL, and rotation removes generations beyond
+`max_files`. Point the setting at a dedicated file, never at an existing
+document.
+
+Both operations are now gated: a non-empty file is only touched when its first
+line decodes as a Relayer entry carrying a known schema version and a kind from
+the closed vocabulary. Anything else is refused, startup fails closed, and
+`doctor` reports it as a blocker beforehand. A journal interrupted while writing
+its very first entry still recovers, because an unterminated first line that
+begins like one of our entries is recognized.
+
+Without that gate, `path: notes.txt` in a private home directory truncated
+`notes.txt` — to nothing when it contained no newline at all — and deleted
+`notes.txt.7`.
+
 ## Configuration
 
 ```yaml

@@ -109,6 +109,7 @@ func validateCompleteReport(report Report) error {
 			{ScopeAudit, CheckPass, summaryAuditPathExisting, ""},
 			{ScopeAudit, CheckWarning, summaryAuditPathHarden, remediationAuditPermissions},
 			{ScopeAudit, CheckBlock, summaryAuditPathUnsafe, remediationAuditPath},
+			{ScopeAudit, CheckBlock, summaryAuditPathForeign, remediationAuditForeign},
 		}
 		if cursor >= len(report.Checks) {
 			return ErrInvalidReport

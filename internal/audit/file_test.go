@@ -145,7 +145,9 @@ func TestFileSinkPrunesGenerationsBeyondConfiguredRetention(t *testing.T) {
 		if index > 0 {
 			candidate = generationPath(path, index)
 		}
-		if err := os.WriteFile(candidate, []byte("{}\n"), 0o600); err != nil {
+		// Rotation only ever touches files it recognizes as its own journals.
+		generation := []byte("{\"schema_version\":1,\"kind\":\"run_started\"}\n")
+		if err := os.WriteFile(candidate, generation, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -179,13 +181,17 @@ func TestFileSinkRecoversAnIncompleteLastLine(t *testing.T) {
 		want     string
 	}{
 		{
+			// The retained prefix must be a real entry: startup refuses to take
+			// ownership of a file it cannot recognize as its own journal.
 			name:     "keeps complete prefix",
-			existing: "{\"sequence\":1}\n{\"sequence\":",
-			want:     "{\"sequence\":1}\n{\"sequence\":2}\n",
+			existing: "{\"schema_version\":1,\"kind\":\"run_started\",\"sequence\":1}\n{\"schema_version\":",
+			want:     "{\"schema_version\":1,\"kind\":\"run_started\",\"sequence\":1}\n{\"sequence\":2}\n",
 		},
 		{
+			// A journal interrupted while writing its very first entry still
+			// recovers, because the partial line is unmistakably one of ours.
 			name:     "drops wholly partial file",
-			existing: "{\"sequence\":",
+			existing: "{\"schema_version\":1,\"kind\":\"run_st",
 			want:     "{\"sequence\":2}\n",
 		},
 	} {
