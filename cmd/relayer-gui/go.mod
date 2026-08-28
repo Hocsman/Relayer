@@ -1,6 +1,6 @@
 module github.com/Hocsman/Relayer/cmd/relayer-gui
 
-go 1.25.8
+go 1.25.11
 
 require (
 	github.com/Hocsman/Relayer v0.0.0

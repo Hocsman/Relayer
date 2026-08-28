@@ -38,6 +38,9 @@ jobs:
       - name: Install locked frontend dependencies
         run: npm ci
 
+      - name: Audit locked frontend dependencies
+        run: npm audit --audit-level=high
+
       - name: Test frontend
         run: npm test
 
@@ -110,8 +113,34 @@ jobs:
           version="$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2)"
           test "$version" = "v2.14.0"
 
+      - name: Verify GUI module files are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
       - name: Vet GUI module
         run: go vet ./...
+
+      # This module carries the dependency surface: echo, gorilla/websocket,
+      # x/net and x/crypto arrive with Wails, while the scanned root module has
+      # far fewer. Running the root module's gates only there pointed the
+      # scanners away from the code that needs them.
+      # Installed and invoked directly rather than through the action the root
+      # workflow uses: the job's working-directory applies to `run` steps but
+      # not to `uses`, and an action pointed at the wrong module would scan the
+      # already-scanned root and report success.
+      - name: Install analysis tools
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/relayer-gui-tools"
+          GOBIN="$RUNNER_TEMP/relayer-gui-tools" go install honnef.co/go/tools/cmd/staticcheck@2026.1
+          GOBIN="$RUNNER_TEMP/relayer-gui-tools" go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+
+      - name: Staticcheck GUI module
+        run: $RUNNER_TEMP/relayer-gui-tools/staticcheck ./...
+
+      - name: Scan GUI dependencies for known vulnerabilities
+        run: $RUNNER_TEMP/relayer-gui-tools/govulncheck ./...
 
       - name: Test GUI module
         run: go test -count=1 -timeout=5m ./...

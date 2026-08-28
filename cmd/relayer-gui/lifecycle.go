@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -44,6 +45,13 @@ func (a *App) SaveAgentProfilesAndRestart(request RestartAgentProfilesRequest) (
 		return AgentLifecycleResult{}, errLifecycleFailed
 	}
 	if !desktopAgentExecutionSupported() {
+		// The platform-specific build carries the actual reason. Reporting the
+		// generic sentinel instead left that explanation unused in the binary,
+		// so an operator on an unsupported platform was told only that it does
+		// not work, never why.
+		if reason := desktopUnsupportedReason(); reason != "" {
+			return AgentLifecycleResult{}, fmt.Errorf("%w %s", errExecutionUnsupported, reason)
+		}
 		return AgentLifecycleResult{}, errExecutionUnsupported
 	}
 
