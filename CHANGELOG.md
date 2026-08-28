@@ -53,6 +53,19 @@ No release tag has been published at the time of writing.
 - Legacy direct pattern lists and `intercept_patterns` wrappers remain readable,
   with conservative defaults and auditing disabled for compatibility.
 
+### Fixed
+
+- The tmux backend could not start a session on tmux 3.7. Machine-readable
+  `-F` and `display-message` formats separated their fields with a tab, and
+  tmux 3.7 rewrites an unprintable byte in rendered format output to `_`
+  whenever `TMUX` is absent from the environment, which is the normal case for
+  a Relayer launched from an ordinary shell. Every identity, ownership and
+  snapshot response therefore failed to parse. Those formats now use a
+  printable separator, guarded by a unit test that rejects an unprintable one
+  on any platform and an integration matrix that pins the wire contract with
+  `TMUX` absent, empty, and pointing at a foreign server. The same rewrite also
+  broke `relayer-capture` and the tmux fixture capture.
+
 ### Security
 
 - Backend and adapter selection, policy validation, and audit initialization

@@ -305,7 +305,7 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 	}()
 
 	startArgs := []string{
-		"new-session", "-d", "-P", "-F", "#{session_id}\t#{window_id}\t#{pane_id}", "-s", tmuxName,
+		"new-session", "-d", "-P", "-F", tmuxFormat("#{session_id}", "#{window_id}", "#{pane_id}"), "-s", tmuxName,
 		"-x", strconv.Itoa(size.Columns), "-y", strconv.Itoa(size.Rows),
 	}
 	if normalized.Cwd != "" {
@@ -921,12 +921,15 @@ func (m *Manager) inspectRaw(ctx context.Context, target *managedSession) (termi
 	}
 	output, err := m.run(ctx,
 		"display-message", "-p", "-t", target.paneID,
-		"#{session_id}\t#{pane_id}\t#{@relayer_owner}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_dead_signal}\t#{session_attached}\t#{pane_pipe}",
+		tmuxFormat(
+			"#{session_id}", "#{pane_id}", "#{@relayer_owner}", "#{pane_dead}",
+			"#{pane_dead_status}", "#{pane_dead_signal}", "#{session_attached}", "#{pane_pipe}",
+		),
 	)
 	if err != nil {
 		return terminal.Snapshot{}, false, err
 	}
-	fields := strings.Split(strings.TrimSpace(string(output)), "\t")
+	fields := splitTmuxFields(string(output))
 	if len(fields) != 8 {
 		// Without the complete immutable IDs and owner marker, the response cannot
 		// be attributed to this Manager. Treat malformed identity output like an
@@ -936,7 +939,7 @@ func (m *Manager) inspectRaw(ctx context.Context, target *managedSession) (termi
 	if fields[0] != target.sessionID || fields[1] != target.paneID || fields[2] != target.ownerToken {
 		return terminal.Snapshot{}, false, fmt.Errorf("%w: cible inattendue", errOwnershipInvalid)
 	}
-	snapshot, err := parseSnapshot(target.info.ID, strings.Join(fields[3:7], "\t"))
+	snapshot, err := parseSnapshot(target.info.ID, strings.Join(fields[3:7], tmuxFieldSeparator))
 	if err != nil {
 		return terminal.Snapshot{}, false, err
 	}
@@ -947,8 +950,30 @@ func (m *Manager) inspectRaw(ctx context.Context, target *managedSession) (termi
 	return snapshot, pipe == 1, nil
 }
 
+// tmux rewrites unprintable bytes while rendering a format: on tmux 3.7 a TAB
+// becomes "_" unless TMUX is present in the environment, which it never is when
+// Relayer runs from an ordinary shell. Every machine-read format therefore uses
+// a printable separator that tmux passes through unchanged. Each field read this
+// way is a tmux ID ($n, @n, %n), a decimal number, a signal name, or the hex
+// owner token, so the separator cannot occur inside a value.
+const tmuxFieldSeparator = "|"
+
+// tmuxFormat builds a machine-readable -F or display-message format. Callers
+// pair it with splitTmuxFields so the separator cannot drift between the
+// request and its parser.
+func tmuxFormat(fields ...string) string {
+	return strings.Join(fields, tmuxFieldSeparator)
+}
+
+// splitTmuxFields parses a response produced by tmuxFormat. Unlike a TAB
+// separator, a trailing empty field survives TrimSpace and is reported as the
+// malformed response it is.
+func splitTmuxFields(output string) []string {
+	return strings.Split(strings.TrimSpace(output), tmuxFieldSeparator)
+}
+
 func parseSnapshot(id, output string) (terminal.Snapshot, error) {
-	fields := strings.Split(strings.TrimSpace(output), "\t")
+	fields := splitTmuxFields(output)
 	if len(fields) != 3 && len(fields) != 4 {
 		return terminal.Snapshot{}, fmt.Errorf("état tmux invalide")
 	}
@@ -1003,7 +1028,7 @@ type tmuxIdentity struct {
 }
 
 func parseIdentity(output string) (tmuxIdentity, error) {
-	fields := strings.Split(strings.TrimSpace(output), "\t")
+	fields := splitTmuxFields(output)
 	if len(fields) != 3 || !validTmuxID(fields[0], '$') || !validTmuxID(fields[1], '@') || !validTmuxID(fields[2], '%') {
 		return tmuxIdentity{}, errors.New("identifiants immuables tmux invalides")
 	}
@@ -1024,12 +1049,12 @@ func (m *Manager) verifySession(ctx context.Context, target *managedSession) err
 	}
 	output, err := m.run(ctx,
 		"display-message", "-p", "-t", target.sessionID,
-		"#{session_id}\t#{@relayer_owner}",
+		tmuxFormat("#{session_id}", "#{@relayer_owner}"),
 	)
 	if err != nil {
 		return err
 	}
-	fields := strings.Split(strings.TrimSpace(string(output)), "\t")
+	fields := splitTmuxFields(string(output))
 	if len(fields) != 2 || fields[0] != target.sessionID || fields[1] != target.ownerToken {
 		return fmt.Errorf("%w: session inattendue", errOwnershipInvalid)
 	}
@@ -1042,12 +1067,12 @@ func (m *Manager) verifyPane(ctx context.Context, target *managedSession) (strin
 	}
 	output, err := m.run(ctx,
 		"display-message", "-p", "-t", target.paneID,
-		"#{session_id}\t#{window_id}\t#{pane_id}\t#{@relayer_owner}",
+		tmuxFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{@relayer_owner}"),
 	)
 	if err != nil {
 		return "", err
 	}
-	fields := strings.Split(strings.TrimSpace(string(output)), "\t")
+	fields := splitTmuxFields(string(output))
 	if len(fields) != 4 || fields[0] != target.sessionID || fields[2] != target.paneID || fields[3] != target.ownerToken || !validTmuxID(fields[1], '@') {
 		return "", fmt.Errorf("%w: pane inattendu", errOwnershipInvalid)
 	}

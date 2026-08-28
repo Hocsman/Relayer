@@ -137,7 +137,7 @@ func captureTmux(ctx context.Context, options Options) (result captureResult, re
 	}
 	serverPresent = true
 	identityOutput, err := runTmux(ctx, tmuxPath, socketPath, false,
-		"list-panes", "-a", "-F", "#{session_id}\t#{pane_id}\t#{pane_pid}",
+		"list-panes", "-a", "-F", tmuxFormat("#{session_id}", "#{pane_id}", "#{pane_pid}"),
 	)
 	if err != nil {
 		return captureResult{}, err
@@ -161,7 +161,7 @@ func captureTmux(ctx context.Context, options Options) (result captureResult, re
 		return captureResult{}, err
 	}
 	identityOutput, err = runTmux(ctx, tmuxPath, socketPath, false,
-		"list-panes", "-a", "-F", "#{session_id}\t#{pane_id}\t#{pane_pid}",
+		"list-panes", "-a", "-F", tmuxFormat("#{session_id}", "#{pane_id}", "#{pane_pid}"),
 	)
 	if err != nil {
 		return captureResult{}, err
@@ -299,12 +299,22 @@ func runTmux(ctx context.Context, path, socket string, initial bool, arguments .
 	return stdout.bytes(), nil
 }
 
+// tmux rewrites unprintable bytes while rendering a format: on tmux 3.7 a TAB
+// becomes "_" unless TMUX is present in the environment. The capture tool builds
+// a deliberately minimal child environment, so it must never depend on TAB
+// surviving. Session, pane and PID fields cannot contain this separator.
+const tmuxFieldSeparator = "|"
+
+func tmuxFormat(fields ...string) string {
+	return strings.Join(fields, tmuxFieldSeparator)
+}
+
 func parseTmuxIdentity(output []byte) (tmuxIdentity, error) {
 	line := strings.TrimSuffix(string(output), "\n")
 	if strings.ContainsAny(line, "\r\n") {
 		return tmuxIdentity{}, errors.New("private tmux returned multiple identities")
 	}
-	fields := strings.Split(line, "\t")
+	fields := strings.Split(line, tmuxFieldSeparator)
 	if len(fields) != 3 || !numericTmuxID(fields[0], '$') || !numericTmuxID(fields[1], '%') {
 		return tmuxIdentity{}, errors.New("private tmux returned an invalid identity")
 	}

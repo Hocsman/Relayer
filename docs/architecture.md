@@ -141,6 +141,10 @@ prefix, immutable session ID, and owner marker separate its resources from
 unrelated tmux use. Cleanup requires ownership verification and never calls
 `kill-server`.
 
+Identity, ownership, and snapshot responses are read through `-F` and
+`display-message` formats built by `tmuxFormat` and parsed by
+`splitTmuxFields`, which share one printable separator.
+
 Launch transport uses a private runtime directory (`0700` on Unix), a launch
 specification and FIFOs (`0600`), and an internal helper mode. The helper reads
 and removes its specification before releasing the target process. Arguments
