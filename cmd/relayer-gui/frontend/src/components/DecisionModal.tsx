@@ -147,7 +147,7 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
         {context.length > 0 && (
           <div className="decision-transcript">
             <span className="eyebrow">End of output · {agent?.name || event.agentID}</span>
-            <pre ref={transcriptRef} aria-label="Terminal context">{context.join("\n")}</pre>
+            <pre ref={transcriptRef} tabIndex={0} aria-label="Terminal context">{context.join("\n")}</pre>
           </div>
         )}
 

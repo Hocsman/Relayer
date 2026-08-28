@@ -327,7 +327,14 @@ export function AgentSettingsPanel({
                 <span className="settings-path" title={view.configPath}>{view.configPath}</span>
                 <span>{dirty ? "Unsaved changes" : "Configuration in sync"}</span>
                 {error && <strong className="settings-save-error" role="alert">{error}</strong>}
-                {notice && <strong className={`settings-notice settings-notice--${notice.tone}`}>{notice.text}</strong>}
+                {notice && (
+                  <strong
+                    className={`settings-notice settings-notice--${notice.tone}`}
+                    role="status"
+                  >
+                    {notice.text}
+                  </strong>
+                )}
                 {view.restartRequired && (
                   <span className="restart-guidance">
                     {runStatus === "running"

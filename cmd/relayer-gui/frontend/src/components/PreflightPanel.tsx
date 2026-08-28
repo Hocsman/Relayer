@@ -98,7 +98,7 @@ export function PreflightPanel({ bridge, onClose }: PreflightPanelProps) {
           </button>
         </header>
 
-        <div className="preflight-panel__body" aria-live="polite">
+        <div className="preflight-panel__body">
           {loading && !report ? (
             <div className="preflight-panel__loading">
               <span className="settings-spinner" aria-hidden="true" />
@@ -152,7 +152,13 @@ export function PreflightReportView({
   );
   return (
     <>
-      <section className={`preflight-overview preflight-overview--${report.status}`}>
+      {/* The verdict, not the whole report: the checks finish without the
+          operator doing anything, and announcing the entire subtree reads out
+          every row. */}
+      <section
+        className={`preflight-overview preflight-overview--${report.status}`}
+        role="status"
+      >
         <span className="preflight-overview__mark" aria-hidden="true">
           {report.status === "ready" ? "✓" : report.status === "warning" ? "!" : "×"}
         </span>

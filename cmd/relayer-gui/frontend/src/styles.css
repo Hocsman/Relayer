@@ -9,8 +9,13 @@
   --border: rgba(146, 163, 194, 0.14);
   --border-strong: rgba(146, 163, 194, 0.25);
   --text: #e8edf7;
+  /* Three text tiers, all above 4.5:1 on the darkest surface they land on:
+     13.7 / 7.7 / 5.1. --faint carries headroom rather than sitting on the
+     threshold, because .decision-modal__glow blurs a warm wash across the very
+     cells where it is smallest and a value that only just passed on paper would
+     not pass under it. */
   --muted: #aab4c6;
-  --faint: #828c9e;
+  --faint: #8792a4;
   --cyan: #42d9e8;
   --cyan-soft: rgba(66, 217, 232, 0.13);
   --violet: #9a8cff;
