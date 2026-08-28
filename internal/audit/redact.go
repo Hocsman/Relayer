@@ -295,7 +295,7 @@ func safeOutcome(value Outcome) Outcome {
 
 func safeEventType(value adapters.EventType) adapters.EventType {
 	switch value {
-	case adapters.EventConfirmation, adapters.EventCredential, adapters.EventProcessExit:
+	case adapters.EventConfirmation, adapters.EventPermission, adapters.EventCredential, adapters.EventProcessExit:
 		return value
 	case "":
 		return ""

@@ -641,7 +641,7 @@ func (m *Model) appendPolicyLog(
 
 func safeEventType(value adapters.EventType) string {
 	switch value {
-	case adapters.EventConfirmation, adapters.EventCredential, adapters.EventProcessExit:
+	case adapters.EventConfirmation, adapters.EventPermission, adapters.EventCredential, adapters.EventProcessExit:
 		return string(value)
 	default:
 		return "unknown"

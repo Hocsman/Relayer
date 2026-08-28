@@ -206,9 +206,12 @@ This can be correct for several reasons:
 - audit delivery is frozen after a write failure;
 - the adapter cannot encode the proposed action.
 
-The current generic adapter can encode manual input only. Therefore generic
-allow and deny proposals fall back to a human ask. This is not a policy parser
-failure. A configured deny is not a request to terminate the process.
+The generic and Claude adapters can encode manual input only. Their allow and
+deny proposals therefore fall back to a human ask. Codex automatic encoding is
+limited to command-approval allow/deny and the selection-independent
+directory-trust deny documented in [adapters](adapters.md). This is not a
+policy parser failure. A configured deny is not a request to terminate the
+process.
 
 Unknown or high risk specifically prevents automatic allow. It does not by
 itself prevent a valid non-sensitive deny proposal, but generic encoding still

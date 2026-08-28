@@ -13,7 +13,7 @@
 
 Relayer starts one to eight interactive command-line agents in local terminal
 sessions, shows their output in a Bubble Tea TUI or an optional alpha Wails
-desktop GUI, and brings detected confirmation or credential prompts to a human
+desktop GUI, and brings detected confirmation, permission, or credential prompts to a human
 supervisor. It can use directly owned PTYs or detached, Relayer-owned tmux
 sessions.
 
@@ -31,6 +31,8 @@ and network behavior.
 - PTY, tmux, automatic tmux-to-PTY selection, and mixed concrete backends.
 - A bounded terminal-output view and bounded streaming prompt detection.
 - A stable, product-neutral `generic` regex adapter.
+- Experimental, fixture-backed Claude Code and Codex CLI adapters with the
+  stable generic detector retained as fallback.
 - First-match approval policies with conservative handling of credentials,
   sensitive events, high or unknown risk, and dry runs.
 - Optional local JSONL audit records with rotation, restrictive Unix
@@ -38,8 +40,9 @@ and network behavior.
 - Two deterministic Bash mock agents when `agents: []` is configured.
 - An optional source-built Wails desktop GUI for macOS and Linux; the TUI
   remains fully available. Its local agent picker can prepare one to eight
-  Claude Code, Codex CLI, MiMo Code, or custom CLI launch profiles, then start,
-  stop, or generation-safely restart them without closing the application.
+  Claude Code, Codex CLI, MiMo Code, Ollama / DeepSeek, or custom CLI
+  launch profiles, then start, stop, or generation-safely restart them without
+  closing the application.
 
 Relayer is not a sandbox, a policy enforcement boundary, a terminal emulator,
 or a substitute for reviewing an agent's work. See the
@@ -108,7 +111,10 @@ Agent panels display bounded, ANSI-stripped text snapshots, not a full VT/ANSI
 terminal. The Bubble Tea TUI and its native tmux attach workflow are preserved.
 Use **Agents** in the top bar to configure exact argv, working directory, and
 backend. Existing argv values are never sent to the WebView: replacing a
-command requires re-entering its complete vector. The GUI opens idle and does
+command requires re-entering its complete vector. Newly entered argv, including
+an explicit Ollama model identifier, is persisted in the local YAML; Relayer
+never infers a model, and secret-shaped-argument filtering remains heuristic.
+The GUI opens idle and does
 not launch a process until you choose **Enregistrer et démarrer**. While a run
 is active, **Enregistrer** changes only the YAML; **Enregistrer et redémarrer**
 applies it through a guarded lifecycle transaction. Historical configuration
@@ -329,9 +335,13 @@ The current generic adapter encodes manual supervisor input only. Consequently,
 an `allow` or `deny` policy evaluated against a generic prompt falls back to a
 human ask. `deny` means an adapter-defined refusal, not process termination.
 
-Only the `generic` adapter is implemented. The `claude` and `codex` identifiers
-are reserved experimental placeholders and fail clearly if selected. Relayer
-does not ship vendor transcripts. See [adapters](docs/adapters.md).
+Three adapters are implemented: stable `generic`, plus version-specific
+experimental `claude` and `codex`. Claude Code coverage is limited to the
+workspace-trust and detected-environment-key prompts observed with 2.1.59;
+Codex coverage is limited to directory trust and command approval observed
+with `codex-cli 0.148.0-alpha.21`. Every other prompt still uses the configured
+`intercept_patterns` fallback. See [adapters](docs/adapters.md) for the exact
+decision bytes and non-claims.
 
 ## Audit log
 
@@ -376,7 +386,8 @@ sensitive repositories.
 
 - An agent may act before emitting a detectable prompt.
 - Prompt-like output can spoof the supervisor; a real prompt can evade regexes.
-- The current adapter cannot automate allow/deny delivery.
+- Generic and Claude cannot automate allow/deny delivery; Codex automation is
+  limited to the exact fixture-backed interactions documented above.
 - Terminal rendering is intentionally bounded and not a complete emulator.
 - tmux persistence can intentionally leave processes running after Relayer
   exits; inspect them with `tmux list-sessions`.

@@ -45,7 +45,7 @@ function boundedOutput(output: string): string {
 }
 
 function actionable(event: SupervisionEvent): boolean {
-  return event.type === "confirmation" || event.type === "credential";
+  return event.type === "confirmation" || event.type === "permission" || event.type === "credential";
 }
 
 function normalizePending(runID: string, events: SupervisionEvent[]): SupervisionEvent[] {

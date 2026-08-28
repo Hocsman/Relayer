@@ -71,9 +71,11 @@ machine.
 - Add a regression test for both the intended detection and likely false
   positives, including quoted text, fenced code, tables, and old log lines.
 - Keep windows and retained output bounded.
-- Do not claim support for a vendor adapter until its parser and decision
-  encoding are implemented and tested. Reserved `claude` and `codex` adapter
-  names are not implemented support.
+- Do not claim support for a vendor interaction until its parser and supported
+  decision encodings are backed by authorized anonymized fixtures and tests.
+  The experimental `claude` and `codex` adapters cover only the exact
+  interactions documented in `docs/adapters.md`; their names are not a claim
+  of complete tool support.
 
 ### Fixtures
 
@@ -84,8 +86,9 @@ tokens, or other confidential data from a real AI CLI session.
 Vendor-specific fixtures require explicit authorization, aggressive
 anonymization, and a documented provenance review. The current
 `internal/adapters/testdata/claude` and `internal/adapters/testdata/codex`
-directories intentionally contain policy notes rather than invented or copied
-transcripts.
+directories contain only the minimal reviewed observations and provenance
+notes for the interactions implemented today. Never expand those claims with
+invented “realistic” output.
 
 ### Configuration and audit changes
 

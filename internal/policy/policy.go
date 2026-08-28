@@ -126,7 +126,8 @@ func New(config Config) (*Engine, error) {
 		}
 
 		for _, eventType := range rule.Match.EventTypes {
-			if eventType != adapters.EventConfirmation && eventType != adapters.EventCredential {
+			if eventType != adapters.EventConfirmation && eventType != adapters.EventPermission &&
+				eventType != adapters.EventCredential {
 				return nil, fmt.Errorf("policy rule %q has invalid event type %q", name, eventType)
 			}
 		}

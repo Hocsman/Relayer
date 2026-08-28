@@ -23,8 +23,8 @@ func TestRegistryDescriptorsAreDeterministicDefensiveAndHonest(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Descriptor{
-		{ID: "claude", Status: StatusExperimental, Implemented: false, Executables: []string{"claude"}},
-		{ID: "codex", Status: StatusExperimental, Implemented: false, Executables: []string{"codex"}},
+		{ID: ClaudeID, Status: StatusExperimental, Implemented: true, Executables: []string{"claude"}},
+		{ID: CodexID, Status: StatusExperimental, Implemented: true, Executables: []string{"codex"}},
 		{ID: GenericID, Status: StatusStable, Implemented: true},
 	}
 	got := registry.Descriptors()
@@ -41,7 +41,7 @@ func TestRegistryDescriptorsAreDeterministicDefensiveAndHonest(t *testing.T) {
 	}
 }
 
-func TestRegistryResolveExplicitUnavailableUnknownAndGenericFallback(t *testing.T) {
+func TestRegistryResolveExplicitBuiltinsUnknownAndExecutableHints(t *testing.T) {
 	registry, err := NewRegistry(DefaultPatterns())
 	if err != nil {
 		t.Fatal(err)
@@ -55,11 +55,11 @@ func TestRegistryResolveExplicitUnavailableUnknownAndGenericFallback(t *testing.
 		t.Fatalf("generic factories did not return independent instances: first %#v second %#v error %v", first, second, err)
 	}
 
-	for _, id := range []string{"claude", "codex"} {
-		adapter, unavailable, err := registry.Resolve(id, "")
-		if adapter != nil || !errors.Is(err, ErrAdapterUnavailable) || unavailable.ID != id ||
-			unavailable.Implemented || unavailable.Status != StatusExperimental {
-			t.Fatalf("Resolve(%q) = adapter %#v descriptor %#v error %v", id, adapter, unavailable, err)
+	for _, id := range []string{ClaudeID, CodexID} {
+		adapter, descriptor, err := registry.Resolve(id, "")
+		if err != nil || adapter == nil || adapter.ID() != id || descriptor.ID != id ||
+			!descriptor.Implemented || descriptor.Status != StatusExperimental {
+			t.Fatalf("Resolve(%q) = adapter %#v descriptor %#v error %v", id, adapter, descriptor, err)
 		}
 	}
 	if adapter, descriptor, err := registry.Resolve("not-registered", ""); adapter != nil ||
@@ -67,12 +67,16 @@ func TestRegistryResolveExplicitUnavailableUnknownAndGenericFallback(t *testing.
 		t.Fatalf("unknown adapter resolution = adapter %#v descriptor %#v error %v", adapter, descriptor, err)
 	}
 
-	// Executable hints for unimplemented placeholders must never imply vendor
-	// support. They deliberately fall back to the stable generic adapter.
-	for _, executable := range []string{"/opt/tools/claude", `C:\tools\codex.exe`} {
-		adapter, descriptor, err := registry.Resolve("", executable)
-		if err != nil || adapter == nil || adapter.ID() != GenericID || descriptor.ID != GenericID {
-			t.Fatalf("fallback for %q = adapter %#v descriptor %#v error %v", executable, adapter, descriptor, err)
+	for _, test := range []struct {
+		executable string
+		adapterID  string
+	}{
+		{executable: "/opt/tools/claude", adapterID: ClaudeID},
+		{executable: `C:\tools\codex.exe`, adapterID: CodexID},
+	} {
+		adapter, descriptor, err := registry.Resolve("", test.executable)
+		if err != nil || adapter == nil || adapter.ID() != test.adapterID || descriptor.ID != test.adapterID {
+			t.Fatalf("hint for %q = adapter %#v descriptor %#v error %v", test.executable, adapter, descriptor, err)
 		}
 	}
 	if adapter, _, err := (*Registry)(nil).Resolve(GenericID, ""); adapter != nil || err == nil {

@@ -35,8 +35,8 @@ type registryEntry struct {
 }
 
 // Registry resolves explicit adapters and executable-name hints. Generic is
-// always installed as the final fallback. Claude and Codex are intentionally
-// only experimental placeholders until anonymized real fixtures exist.
+// always installed as the final fallback. Claude and Codex remain
+// experimental and recognize only interactions backed by anonymized fixtures.
 type Registry struct {
 	mu      sync.RWMutex
 	entries map[string]registryEntry
@@ -59,11 +59,20 @@ func NewRegistry(patterns []Pattern) (*Registry, error) {
 	}); err != nil {
 		return nil, err
 	}
-	for _, descriptor := range []Descriptor{
-		{ID: "claude", Status: StatusExperimental, Executables: []string{"claude"}},
-		{ID: "codex", Status: StatusExperimental, Executables: []string{"codex"}},
+	for _, implementation := range []struct {
+		descriptor Descriptor
+		factory    Factory
+	}{
+		{
+			descriptor: Descriptor{ID: ClaudeID, Status: StatusExperimental, Implemented: true, Executables: []string{"claude"}},
+			factory:    func() (Adapter, error) { return NewClaudeAdapter(patternsCopy) },
+		},
+		{
+			descriptor: Descriptor{ID: CodexID, Status: StatusExperimental, Implemented: true, Executables: []string{"codex"}},
+			factory:    func() (Adapter, error) { return NewCodexAdapter(patternsCopy) },
+		},
 	} {
-		if err := registry.register(descriptor, nil); err != nil {
+		if err := registry.register(implementation.descriptor, implementation.factory); err != nil {
 			return nil, err
 		}
 	}
@@ -204,6 +213,14 @@ func cloneDescriptor(descriptor Descriptor) Descriptor {
 }
 
 func executableName(value string) string {
+	// Configuration may be prepared on a different platform than the current
+	// runtime. Normalize Windows separators before filepath.Base so executable
+	// hints remain deterministic without relying on the host OS.
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	value = strings.ReplaceAll(value, `\`, "/")
 	name := strings.ToLower(strings.TrimSpace(filepath.Base(value)))
 	return strings.TrimSuffix(name, ".exe")
 }

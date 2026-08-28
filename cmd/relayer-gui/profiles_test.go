@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/toolcatalog"
@@ -47,16 +48,23 @@ func TestGetAgentProfilesReturnsSafeCatalogAndLocksAdvancedSpecs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAgentProfiles: %v", err)
 	}
-	if len(view.Catalog) != 4 || view.Catalog[0].ID != string(toolcatalog.ClaudeCode) || !view.Catalog[0].Installed {
+	if len(view.Catalog) != 5 || view.Catalog[0].ID != string(toolcatalog.ClaudeCode) || !view.Catalog[0].Installed {
 		t.Fatalf("catalog = %#v", view.Catalog)
 	}
-	if view.Catalog[1].Installed || view.Catalog[3].InstallStatus != string(toolcatalog.InstallUnknown) {
+	if view.Catalog[1].Installed || view.Catalog[4].InstallStatus != string(toolcatalog.InstallUnknown) {
 		t.Fatalf("catalog installation states = %#v", view.Catalog)
+	}
+	if got := view.Catalog[3].DefaultArgv; len(got) != 3 || got[0] != "ollama" || got[1] != "run" || got[2] != "" {
+		t.Fatalf("Ollama default argv = %#v", got)
+	}
+	if got := view.Catalog[3].ArgumentPrefix; len(got) != 1 || got[0] != "run" {
+		t.Fatalf("Ollama argument prefix = %#v", got)
 	}
 	if len(view.Profiles) != 2 || view.Profiles[0].PresetID != string(toolcatalog.ClaudeCode) {
 		t.Fatalf("profiles = %#v", view.Profiles)
 	}
-	if len(view.Profiles[0].Argv) != 0 || !view.Profiles[0].PreserveOnSave || view.Profiles[0].ExecutableLabel != "claude" {
+	if len(view.Profiles[0].Argv) != 0 || !view.Profiles[0].PreserveOnSave ||
+		view.Profiles[0].ExecutableLabel != "claude" || view.Profiles[0].Adapter != agent.AdapterGeneric {
 		t.Fatalf("existing command was exposed: %#v", view.Profiles[0])
 	}
 	if view.Profiles[1].Locked != true || view.Profiles[1].ReadOnlyReason != "advanced_environment" ||
@@ -75,12 +83,60 @@ func TestGetAgentProfilesReturnsSafeCatalogAndLocksAdvancedSpecs(t *testing.T) {
 
 	view.Profiles[0].Name = "mutated"
 	view.Catalog[0].DefaultArgv[0] = "mutated"
+	view.Catalog[3].ArgumentPrefix[0] = "mutated"
 	fresh, err := application.GetAgentProfiles()
 	if err != nil {
 		t.Fatalf("fresh GetAgentProfiles: %v", err)
 	}
-	if fresh.Profiles[0].Name != "Claude Code" || fresh.Catalog[0].DefaultArgv[0] != "claude" {
+	if fresh.Profiles[0].Name != "Claude Code" || fresh.Catalog[0].DefaultArgv[0] != "claude" ||
+		fresh.Catalog[3].ArgumentPrefix[0] != "run" {
 		t.Fatalf("profile view aliases caller data: %#v", fresh)
+	}
+}
+
+func TestWindowsExecutablePathsRoundTripAsVendorProfiles(t *testing.T) {
+	directory := t.TempDir()
+	specs := []agent.Spec{
+		{ID: "claude", Name: "Claude Code", Command: []string{`C:\tools\claude.exe`}, Cwd: directory, Adapter: adapters.ClaudeID, Backend: agent.BackendPTY},
+		{ID: "codex", Name: "Codex CLI", Command: []string{`C:\tools\codex.EXE`}, Cwd: directory, Adapter: adapters.CodexID, Backend: agent.BackendPTY},
+	}
+	application, path := profileTestApp(t, specs)
+	view, err := application.GetAgentProfiles()
+	if err != nil {
+		t.Fatalf("GetAgentProfiles: %v", err)
+	}
+	wantPresets := []toolcatalog.ProfileID{toolcatalog.ClaudeCode, toolcatalog.CodexCLI}
+	for index, profile := range view.Profiles {
+		if profile.PresetID != string(wantPresets[index]) || profile.Locked || !profile.PreserveOnSave ||
+			profile.Adapter != specs[index].Adapter {
+			t.Fatalf("Windows profile %d = %#v", index, profile)
+		}
+	}
+
+	updated, err := saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
+		ExpectedRevision: view.Revision,
+		Profiles: []AgentProfileInput{
+			{ID: "claude", Name: "Claude Code", PresetID: string(toolcatalog.ClaudeCode), Cwd: directory, Backend: "pty", Adapter: adapters.ClaudeID, Argv: []string{`C:\tools\claude.exe`}},
+			{ID: "codex", Name: "Codex CLI", PresetID: string(toolcatalog.CodexCLI), Cwd: directory, Backend: "pty", Adapter: adapters.CodexID, Argv: []string{`C:\tools\codex.EXE`}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveAgentProfiles: %v", err)
+	}
+	loaded, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load updated config: %v", err)
+	}
+	if got := loaded.Agents[0].Command[0]; got != `C:\tools\claude.exe` {
+		t.Fatalf("Claude executable = %q", got)
+	}
+	if got := loaded.Agents[1].Command[0]; got != `C:\tools\codex.EXE` {
+		t.Fatalf("Codex executable = %q", got)
+	}
+	for index, profile := range updated.Profiles {
+		if profile.PresetID != string(wantPresets[index]) || profile.Locked {
+			t.Fatalf("round-tripped Windows profile %d = %#v", index, profile)
+		}
 	}
 }
 
@@ -93,9 +149,9 @@ func TestSaveAgentProfilesWritesLiteralArgvAndRequiresNextLaunch(t *testing.T) {
 	request := SaveAgentProfilesRequest{
 		ExpectedRevision: view.Revision,
 		Profiles: []AgentProfileInput{
-			{ID: "claude", Name: "Claude Code", PresetID: "claude-code", Cwd: filepath.Dir(path), Backend: "auto", Argv: []string{"claude"}},
-			{ID: "codex", Name: "Codex CLI", PresetID: "codex-cli", Cwd: filepath.Dir(path), Backend: "pty", Argv: []string{"codex", "review", "$(literal)", ""}},
-			{ID: "mimo", Name: "MiMo Code", PresetID: "mimo-code", Cwd: filepath.Dir(path), Backend: "tmux", Argv: []string{"mimo"}},
+			{ID: "claude", Name: "Claude Code", PresetID: "claude-code", Cwd: filepath.Dir(path), Backend: "auto", Adapter: adapters.ClaudeID, Argv: []string{"claude"}},
+			{ID: "codex", Name: "Codex CLI", PresetID: "codex-cli", Cwd: filepath.Dir(path), Backend: "pty", Adapter: adapters.CodexID, Argv: []string{"codex", "review", "$(literal)", ""}},
+			{ID: "mimo", Name: "MiMo Code", PresetID: "mimo-code", Cwd: filepath.Dir(path), Backend: "tmux", Adapter: agent.AdapterGeneric, Argv: []string{"mimo"}},
 		},
 	}
 	updated, err := saveAgentProfilesForTest(application, request)
@@ -115,7 +171,7 @@ func TestSaveAgentProfilesWritesLiteralArgvAndRequiresNextLaunch(t *testing.T) {
 	if got := loaded.Agents[1].Command; len(got) != 4 || got[2] != "$(literal)" || got[3] != "" {
 		t.Fatalf("literal argv = %#v", got)
 	}
-	if loaded.Agents[0].Adapter != agent.AdapterGeneric || loaded.Agents[2].Backend != agent.BackendTmux {
+	if loaded.Agents[0].Adapter != adapters.ClaudeID || loaded.Agents[2].Backend != agent.BackendTmux {
 		t.Fatalf("resolved profile defaults = %#v", loaded.Agents)
 	}
 
@@ -141,6 +197,105 @@ func TestSaveAgentProfilesWritesLiteralArgvAndRequiresNextLaunch(t *testing.T) {
 	}
 	if string(after) != string(before) {
 		t.Fatal("stale profile save mutated configuration")
+	}
+}
+
+func TestClaudeGenericAdapterSurvivesCommandReplacementRoundTrip(t *testing.T) {
+	directory := t.TempDir()
+	application, path := profileTestApp(t, []agent.Spec{{
+		ID: "claude", Name: "Claude", Command: []string{"claude"}, Cwd: directory,
+		Adapter: agent.AdapterGeneric, Backend: agent.BackendPTY,
+	}})
+	view, err := application.GetAgentProfiles()
+	if err != nil {
+		t.Fatalf("GetAgentProfiles: %v", err)
+	}
+	if len(view.Profiles) != 1 || view.Profiles[0].Adapter != agent.AdapterGeneric {
+		t.Fatalf("effective adapter = %#v", view.Profiles)
+	}
+
+	updated, err := saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
+		ExpectedRevision: view.Revision,
+		Profiles: []AgentProfileInput{{
+			ID: "claude", Name: "Claude", PresetID: "claude-code", Cwd: directory,
+			Backend: "pty", Adapter: view.Profiles[0].Adapter, Argv: []string{"claude", "--new-session"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("SaveAgentProfiles: %v", err)
+	}
+	loaded, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Agents[0].Adapter != agent.AdapterGeneric || updated.Profiles[0].Adapter != agent.AdapterGeneric {
+		t.Fatalf("generic adapter changed during replacement: loaded=%#v view=%#v", loaded.Agents[0], updated.Profiles[0])
+	}
+}
+
+func TestSaveAgentProfilesRejectsIncompatibleAdapter(t *testing.T) {
+	application, path := profileTestApp(t, nil)
+	view, err := application.GetAgentProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []AgentProfileInput{
+		{ID: "claude", Name: "Claude", PresetID: "claude-code", Backend: "pty", Adapter: adapters.CodexID, Argv: []string{"claude"}},
+		{ID: "custom", Name: "Custom", PresetID: "custom", Backend: "pty", Adapter: adapters.ClaudeID, Argv: []string{"runner"}},
+		{ID: "unknown", Name: "Unknown", PresetID: "custom", Backend: "pty", Adapter: "unknown-adapter", Argv: []string{"runner"}},
+	} {
+		_, saveErr := saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
+			ExpectedRevision: view.Revision,
+			Profiles:         []AgentProfileInput{input},
+		})
+		if !errors.Is(saveErr, errProfilesInvalid) {
+			t.Fatalf("SaveAgentProfiles(adapter=%q) error = %v", input.Adapter, saveErr)
+		}
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("rejected adapter mutated configuration")
+	}
+}
+
+func TestSaveAgentProfilesRejectsOllamaWithoutExplicitRunAndModel(t *testing.T) {
+	application, path := profileTestApp(t, nil)
+	view, err := application.GetAgentProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, argv := range [][]string{
+		{"ollama"},
+		{"ollama", "run", ""},
+		{"ollama", "serve", "explicit-value"},
+	} {
+		_, err := saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
+			ExpectedRevision: view.Revision,
+			Profiles: []AgentProfileInput{{
+				ID: "local", Name: "Local model", PresetID: "ollama", Backend: "auto", Argv: argv,
+			}},
+		})
+		if !errors.Is(err, errProfilesInvalid) {
+			t.Fatalf("SaveAgentProfiles(%#v) error = %v", argv, err)
+		}
+		after, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if string(after) != string(before) {
+			t.Fatalf("invalid Ollama argv %#v mutated configuration", argv)
+		}
 	}
 }
 

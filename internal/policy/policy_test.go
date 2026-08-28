@@ -258,7 +258,7 @@ func TestNewValidationMatrix(t *testing.T) {
 
 func TestNewAcceptsEverySupportedActionEventAndRisk(t *testing.T) {
 	for _, action := range []Action{ActionAllow, ActionAsk, ActionDeny} {
-		for _, eventType := range []adapters.EventType{adapters.EventConfirmation, adapters.EventCredential} {
+		for _, eventType := range []adapters.EventType{adapters.EventConfirmation, adapters.EventPermission, adapters.EventCredential} {
 			for _, risk := range []adapters.RiskLevel{adapters.RiskLow, adapters.RiskUnknown, adapters.RiskHigh} {
 				name := fmt.Sprintf("%s/%s/%s", action, eventType, risk)
 				t.Run(name, func(t *testing.T) {

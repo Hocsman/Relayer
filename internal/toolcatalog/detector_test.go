@@ -25,6 +25,7 @@ func TestDetectUsesProfileCandidatesOrExactOverride(t *testing.T) {
 		{name: "claude", profile: ClaudeCode, candidates: []string{"claude"}},
 		{name: "codex", profile: CodexCLI, candidates: []string{"codex"}},
 		{name: "mimo", profile: MimoCode, candidates: []string{"mimo"}},
+		{name: "ollama", profile: Ollama, candidates: []string{"ollama"}},
 		{name: "override", profile: ClaudeCode, override: "/opt/claude-preview", candidates: []string{"/opt/claude-preview"}},
 		{name: "custom", profile: Custom, override: "local-cli", candidates: []string{"local-cli"}},
 	}

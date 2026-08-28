@@ -109,6 +109,7 @@ export function AgentSettingsPanel({
         presetID: entry.id,
         cwd: "",
         backend: "auto",
+        adapter: entry.adapter,
         argv,
         locked: false,
       },
@@ -431,7 +432,7 @@ function Catalog({
                 <span className={`catalog-badge ${entry.id === "custom" ? "" : entry.installed ? "catalog-badge--installed" : "catalog-badge--missing"}`}>
                   {entry.id === "custom" ? "Commande libre" : entry.installed ? "Installé" : "Non détecté"}
                 </span>
-                <span className="catalog-badge">Generic · stable</span>
+                <span className="catalog-badge">{entry.adapter} · {entry.adapterStatus}</span>
               </div>
             </div>
             <button
@@ -447,8 +448,9 @@ function Catalog({
         ))}
       </div>
       <p className="catalog-security">
-        Aucune clé fournisseur, variable d’environnement ou sélection de modèle n’est enregistrée ici.
-        DeepSeek et les autres modèles se configurent dans le CLI compatible choisi, jamais comme secrets Relayer.
+        L’argv exact, identifiant de modèle compris, est enregistré dans le YAML local. Relayer
+        n’infère jamais le modèle. Le filtre de secrets est conservateur et heuristique&nbsp;: ne placez
+        aucune clé, variable d’environnement ou credential dans ces arguments.
       </p>
     </aside>
   );
@@ -488,6 +490,7 @@ function ProfileCard({
     onChange({
       ...profile,
       presetID,
+      adapter: next?.adapter ?? "generic",
       preserveOnSave: false,
       argv: unchangedDefault || currentArgv.every((argument) => !argument)
         ? [...(next?.defaultArgv.length ? next.defaultArgv : [""])]
@@ -507,7 +510,9 @@ function ProfileCard({
         <div className="profile-order">{index + 1}</div>
         <div>
           <h3>{profile.name || "Agent sans nom"}</h3>
-          <span>{preset?.name || "Sélection inconnue"} · generic</span>
+          <span>
+            {preset?.name || "Sélection inconnue"} · {profile.adapter || (profile.readOnlyReason === "advanced_adapter" ? "adaptateur avancé" : "adaptateur inconnu")}
+          </span>
         </div>
         <div className="profile-card__controls">
           <button type="button" onClick={() => onMove(-1)} disabled={profile.locked || index === 0} aria-label="Monter cet agent">↑</button>
@@ -657,6 +662,7 @@ function catalogInitial(id: AgentCatalogEntry["id"]): string {
     case "claude-code": return "C";
     case "codex-cli": return "⌁";
     case "mimo-code": return "M";
+    case "ollama": return "O";
     default: return "+";
   }
 }

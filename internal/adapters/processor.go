@@ -32,12 +32,28 @@ type Processor struct {
 	output  *buffer.Buffer
 	hooks   Hooks
 
-	mu                      sync.Mutex
-	semanticHooks           sync.WaitGroup
-	ansiCarry               string
-	lastSnapshotFingerprint string
-	terminated              bool
-	terminalEvent           *Event
+	mu                         sync.Mutex
+	semanticHooks              sync.WaitGroup
+	ansiCarry                  string
+	lastSnapshotFingerprint    string
+	pendingSnapshotFingerprint string
+	terminated                 bool
+	terminalEvent              *Event
+}
+
+// snapshotFingerprintSource is implemented by adapters whose verified prompt
+// structure spans more than the active line. Generic regex detection keeps the
+// historical active-line fingerprint to avoid replay from unrelated history.
+type snapshotFingerprintSource interface {
+	snapshotFingerprintSource(normalized, active string, inCodeFence bool) string
+}
+
+// snapshotOccurrenceClassifier limits fingerprint-based occurrence rollover
+// to fixture-backed vendor events. A configured regex fallback keeps the exact
+// GenericRegexAdapter compatibility contract even when wrapped by a vendor
+// adapter.
+type snapshotOccurrenceClassifier interface {
+	snapshotOccurrenceAware(Event) bool
 }
 
 func NewProcessor(adapter Adapter, state *DetectionState, capacity int, hooks Hooks) (*Processor, error) {
@@ -122,6 +138,9 @@ func (p *Processor) Consume(chunk []byte) error {
 		events, err = p.adapter.Detect(p.state, []byte(detection))
 	}
 	if err == nil && len(events) > 0 {
+		fingerprint := p.snapshotFingerprint(p.state.detectionText)
+		p.lastSnapshotFingerprint = fingerprint
+		p.pendingSnapshotFingerprint = fingerprint
 		// Add is serialized with termination by p.mu. Once terminated is set,
 		// no future Consume can add work, so NewProcessExitEvent may safely
 		// wait for every earlier semantic hook before returning.
@@ -143,17 +162,19 @@ func (p *Processor) Consume(chunk []byte) error {
 	return nil
 }
 
-// ReconcileSnapshot examines only the last active logical line. Repeated
-// snapshots retain the existing occurrence ID; an unchanged snapshot after a
-// successful acknowledgement cannot resurrect the old event.
+// ReconcileSnapshot uses the last active logical line for generic detection.
+// A vendor adapter may additionally fingerprint only its verified prompt
+// block so a resize remains idempotent while a successive prompt discovered
+// after an attach receives a fresh occurrence ID. An unchanged snapshot after
+// a successful acknowledgement cannot resurrect the old event.
 func (p *Processor) ReconcileSnapshot(raw []byte) (*Event, bool, error) {
 	if len(raw) > detectionWindowSize {
 		raw = raw[len(raw)-detectionWindowSize:]
 	}
 	ansiFree := stripansi.Strip(string(raw))
 	normalized := normalizeDetectionText(ansiFree)
-	active, inCodeFence := snapshotActiveLine(normalized)
-	fingerprint := textFingerprint(fmt.Sprintf("%t\x00%s", inCodeFence, active))
+	active, _ := snapshotActiveLine(normalized)
+	fingerprint := p.snapshotFingerprint(normalized)
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -168,6 +189,7 @@ func (p *Processor) ReconcileSnapshot(raw []byte) (*Event, bool, error) {
 	if active == "" {
 		changed := p.state.pending != nil
 		_ = p.state.acknowledge("")
+		p.pendingSnapshotFingerprint = ""
 		return nil, changed, nil
 	}
 	probeState := NewDetectionState(p.state.SessionID, p.state.AgentID, p.adapter.ID())
@@ -178,20 +200,42 @@ func (p *Processor) ReconcileSnapshot(raw []byte) (*Event, bool, error) {
 	if len(candidates) == 0 {
 		changed := p.state.pending != nil
 		_ = p.state.acknowledge("")
+		p.pendingSnapshotFingerprint = ""
 		return nil, changed, nil
 	}
 	candidate := candidates[0]
 	if p.state.pending != nil && p.state.pending.Signature == candidate.Signature {
-		return p.state.Pending(), false, nil
+		occurrenceAware := false
+		if classifier, ok := p.adapter.(snapshotOccurrenceClassifier); ok {
+			occurrenceAware = classifier.snapshotOccurrenceAware(candidate)
+		}
+		if !occurrenceAware || p.pendingSnapshotFingerprint == "" || p.pendingSnapshotFingerprint == fingerprint {
+			p.pendingSnapshotFingerprint = fingerprint
+			return p.state.Pending(), false, nil
+		}
 	}
 	resolved := p.state.replacePending(candidate)
+	p.pendingSnapshotFingerprint = fingerprint
 	return &resolved, true, nil
+}
+
+func (p *Processor) snapshotFingerprint(normalized string) string {
+	active, inCodeFence := snapshotActiveLine(normalized)
+	fingerprintSource := active
+	if adapter, ok := p.adapter.(snapshotFingerprintSource); ok {
+		fingerprintSource = adapter.snapshotFingerprintSource(normalized, active, inCodeFence)
+	}
+	return textFingerprint(fmt.Sprintf("%t\x00%s", inCodeFence, fingerprintSource))
 }
 
 func (p *Processor) Acknowledge(eventID string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.state.acknowledge(eventID)
+	err := p.state.acknowledge(eventID)
+	if err == nil {
+		p.pendingSnapshotFingerprint = ""
+	}
+	return err
 }
 
 func (p *Processor) Restore(event Event) error {
@@ -200,7 +244,12 @@ func (p *Processor) Restore(event Event) error {
 	if p.terminated {
 		return ErrProcessorTerminated
 	}
-	return p.state.restore(event)
+	if err := p.state.restore(event); err != nil {
+		return err
+	}
+	p.lastSnapshotFingerprint = ""
+	p.pendingSnapshotFingerprint = ""
+	return nil
 }
 
 // Resolve serializes a decision with detection. The pending occurrence is
@@ -225,7 +274,11 @@ func (p *Processor) Resolve(eventID string, deliver func() error) error {
 	if err := deliver(); err != nil {
 		return err
 	}
-	return p.state.acknowledge(eventID)
+	if err := p.state.acknowledge(eventID); err != nil {
+		return err
+	}
+	p.pendingSnapshotFingerprint = ""
+	return nil
 }
 
 func (p *Processor) Pending() *Event {
@@ -269,6 +322,7 @@ func (p *Processor) NewProcessExitEvent(exitCode *int, failed bool) Event {
 		return event
 	}
 	_ = p.state.acknowledge("")
+	p.pendingSnapshotFingerprint = ""
 	p.state.sequence++
 	sequence := p.state.sequence
 	sessionID := p.state.SessionID

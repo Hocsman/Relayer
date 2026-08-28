@@ -9,25 +9,24 @@ during alpha; it is not a runtime plugin protocol.
 | ID | Registry status | Implemented | Behavior |
 | --- | --- | --- | --- |
 | `generic` | Stable relative to the built-ins | Yes | Ordered regex prompt detection; manual input encoding. |
-| `claude` | Experimental placeholder | No | Explicit selection fails before backend construction. |
-| `codex` | Experimental placeholder | No | Explicit selection fails before backend construction. |
+| `claude` | Experimental | Yes | Claude Code 2.1.59 workspace trust and environment-key prompts; generic fallback; manual input only. |
+| `codex` | Experimental | Yes | Codex CLI 0.148.0-alpha.21 directory trust and command approval; generic fallback; command allow/deny and directory deny bytes verified. |
 
 “Stable” here is a registry maturity label, not a promise that the alpha API
 will remain source-compatible.
 
-If `agents[].adapter` is blank, the registry considers executable hints only
-for implemented adapters and then falls back to `generic`. Because the Claude
-and Codex descriptors have no implementation, launching an executable named
-`claude` or `codex` with no explicit adapter uses generic detection. Relayer
-does not claim a vendor-aware integration in that case.
+If `agents[].adapter` is blank, the registry considers implemented executable
+hints and then falls back to `generic`. A basename of `claude` or `codex`
+selects the corresponding experimental adapter. Both adapters retain every
+configured `intercept_pattern` as a generic compatibility fallback.
 
-The desktop catalogue's Claude Code, Codex CLI, and MiMo Code entries are
-launch profiles only. They resolve an executable and literal argv into an
-agent specification; they do not change this adapter status or claim
-product-specific prompt compatibility.
+The desktop catalogue also contains generic launch profiles for MiMo Code, a
+combined Ollama / DeepSeek entry, and a custom CLI. A launch profile is not an
+adapter claim. In particular, no MiMo, Ollama, or DeepSeek prompt protocol is
+implemented; those profiles use `generic` detection.
 
-An unknown explicit ID and an unimplemented explicit placeholder are both
-configuration errors before a terminal backend starts.
+An unknown or unavailable explicit ID is a configuration error before a
+terminal backend starts.
 
 ## Event model
 
@@ -37,13 +36,14 @@ An adapter event contains:
 - a monotonically assigned per-state sequence;
 - session and agent IDs;
 - adapter ID;
-- type: `confirmation`, `credential`, or `process_exit`;
+- type: `confirmation`, `permission`, `credential`, or `process_exit`;
 - bounded display summary and the internal matched text;
 - sensitive and risk classification;
 - timestamp and copied metadata.
 
-Confirmation and credential events are actionable. Process exit is a canonical
-lifecycle event and is not sent to policy for automatic approval.
+Confirmation, permission, and credential events are actionable. Process exit
+is a canonical lifecycle event and is not sent to policy for automatic
+approval.
 
 The event match is needed internally for detection, signature, and policy regex
 evaluation. It is not a field in the local audit schema. Sensitive events also
@@ -141,9 +141,39 @@ The TUI does not log or audit the manual value. Delivery errors keep or restore
 human-pending state when it is safe to do so. An uncertain automatic delivery
 is not retried.
 
-A future adapter that supports automatic decisions must define exact semantic
-allow and deny encodings, bind them to a pending occurrence, reject unsupported
+An adapter that supports automatic decisions must define exact semantic allow
+and deny encodings, bind them to a pending occurrence, reject unsupported
 event types, and remain safe across live output and snapshot replay.
+
+### Claude Code 2.1.59 (experimental)
+
+The Claude adapter recognizes only two captured prompt structures:
+
+- workspace trust, emitted as a high-risk `permission`;
+- whether to use a detected environment API key, emitted as a sensitive,
+  high-risk `credential` whose match starts after the displayed key value.
+
+Automatic allow and deny are unsupported because the observed TUI response
+depends on its current highlighted choice. Manual bytes retain generic
+compatibility. No Bash, file-edit, network, MCP, authentication, or other
+Claude prompt is claimed.
+
+### Codex CLI 0.148.0-alpha.21 (experimental)
+
+The Codex adapter recognizes only two captured prompt structures:
+
+- directory trust: human choice `1` maps to the observed default-selection
+  carriage return (`0d`), while deny is the selection-independent `2` (`32`);
+- command approval: allow is `y` (`79`), deny is Escape (`1b`).
+
+Those four byte sequences were verified against disposable local sessions,
+but automatic directory-trust allow remains unsupported because carriage
+return depends on the current highlighted choice.
+The event match is a constant question and never contains the displayed path
+or command. Command approval carries unknown risk and directory trust high
+risk, so the policy engine still refuses automatic allow; a verified,
+non-sensitive deny may be automatic. No file-write, network, credential, MCP,
+review, or other Codex prompt is claimed.
 
 ## Fixtures and test policy
 
@@ -159,9 +189,25 @@ and snapshot cases. Useful cases cover:
 - bounded detection and output state;
 - decision bytes and unsupported decisions.
 
-The `claude` and `codex` fixture directories contain README policy files only.
-They intentionally do not contain fabricated “realistic” vendor transcripts or
-copied user sessions.
+The `claude` and `codex` fixture directories contain minimal anonymized
+observations plus provenance notes. They intentionally exclude account data,
+personal paths, repository content, commands from real projects, credentials,
+hostnames, and unrelated output.
+
+Use the output-only capture utility for new evidence:
+
+```sh
+go run ./cmd/relayer-capture --tool example-cli --adapter generic \
+  --backend pty --output /tmp/example-fixture.json -- example-cli
+go run ./cmd/relayer-capture --validate /tmp/example-fixture.json
+```
+
+The same command accepts `--backend tmux`. It uses a private tmux socket,
+never invokes an implicit shell, and has no stdin, environment-map, or
+credential field. An explicitly selected shell remains an ordinary executable
+with all of that shell's effects. Captures are bounded, redacted before
+persistence, and fail closed on secret-shaped content. See
+[fixture capture](fixture-capture.md).
 
 Do not contribute real transcripts without explicit authorization and a
 provenance/anonymization review. Remove credentials, account and repository

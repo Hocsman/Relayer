@@ -16,7 +16,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/tmuxbackend"
 )
 
-func TestResolveAgentAdaptersUsesGenericFallbackAndReturnsDefensiveCopies(t *testing.T) {
+func TestResolveAgentAdaptersUsesExecutableHintsAndReturnsDefensiveCopies(t *testing.T) {
 	registry, err := adapters.NewRegistry(adapters.DefaultPatterns())
 	if err != nil {
 		t.Fatal(err)
@@ -30,8 +30,8 @@ func TestResolveAgentAdaptersUsesGenericFallbackAndReturnsDefensiveCopies(t *tes
 			Backend: agent.BackendPTY,
 		},
 		{
-			ID: "unimplemented-hint", Name: "Unimplemented executable hint",
-			Command: []string{"claude", "synthetic-argument"},
+			ID: "codex-hint", Name: "Codex executable hint",
+			Command: []string{"codex", "synthetic-argument"},
 			Env:     map[string]string{"EMPTY": ""},
 			Adapter: "",
 			Backend: agent.BackendPTY,
@@ -41,7 +41,7 @@ func TestResolveAgentAdaptersUsesGenericFallbackAndReturnsDefensiveCopies(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resolved) != len(input) || resolved[0].Adapter != adapters.GenericID || resolved[1].Adapter != adapters.GenericID {
+	if len(resolved) != len(input) || resolved[0].Adapter != adapters.GenericID || resolved[1].Adapter != adapters.CodexID {
 		t.Fatalf("resolved adapters = %#v", resolved)
 	}
 	resolved[0].Command[0] = "mutated"
@@ -54,28 +54,28 @@ func TestResolveAgentAdaptersUsesGenericFallbackAndReturnsDefensiveCopies(t *tes
 	}
 }
 
-func TestResolveAgentAdaptersRejectsUnknownAndExperimentalPlaceholders(t *testing.T) {
+func TestResolveAgentAdaptersAcceptsExperimentalBuiltinsAndRejectsUnknown(t *testing.T) {
 	registry, err := adapters.NewRegistry(adapters.DefaultPatterns())
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, test := range []struct {
-		adapter string
-		wantErr error
-	}{
-		{adapter: "not-registered", wantErr: adapters.ErrUnknownAdapter},
-		{adapter: "claude", wantErr: adapters.ErrAdapterUnavailable},
-		{adapter: "codex", wantErr: adapters.ErrAdapterUnavailable},
-	} {
-		t.Run(test.adapter, func(t *testing.T) {
+	for _, adapterID := range []string{adapters.ClaudeID, adapters.CodexID} {
+		t.Run(adapterID, func(t *testing.T) {
 			resolved, err := resolveAgentAdapters([]agent.Spec{{
-				ID: "agent-" + test.adapter, Name: "Synthetic agent",
-				Command: []string{"runner"}, Adapter: test.adapter, Backend: agent.BackendPTY,
+				ID: "agent-" + adapterID, Name: "Synthetic agent",
+				Command: []string{"runner"}, Adapter: adapterID, Backend: agent.BackendPTY,
 			}}, registry)
-			if resolved != nil || !errors.Is(err, test.wantErr) || !strings.Contains(err.Error(), "agent-"+test.adapter) {
-				t.Fatalf("resolve %q = specs %#v error %v", test.adapter, resolved, err)
+			if err != nil || len(resolved) != 1 || resolved[0].Adapter != adapterID {
+				t.Fatalf("resolve %q = specs %#v error %v", adapterID, resolved, err)
 			}
 		})
+	}
+	resolved, err := resolveAgentAdapters([]agent.Spec{{
+		ID: "agent-unknown", Name: "Synthetic agent", Command: []string{"runner"},
+		Adapter: "not-registered", Backend: agent.BackendPTY,
+	}}, registry)
+	if resolved != nil || !errors.Is(err, adapters.ErrUnknownAdapter) || !strings.Contains(err.Error(), "agent-unknown") {
+		t.Fatalf("unknown adapter = specs %#v error %v", resolved, err)
 	}
 }
 
@@ -83,11 +83,7 @@ func TestAdapterResolutionFailsBeforeAnyBackendFactory(t *testing.T) {
 	for _, test := range []struct {
 		adapter string
 		wantErr error
-	}{
-		{adapter: "claude", wantErr: adapters.ErrAdapterUnavailable},
-		{adapter: "codex", wantErr: adapters.ErrAdapterUnavailable},
-		{adapter: "not-registered", wantErr: adapters.ErrUnknownAdapter},
-	} {
+	}{{adapter: "not-registered", wantErr: adapters.ErrUnknownAdapter}} {
 		t.Run(test.adapter, func(t *testing.T) {
 			configPath := writeAdapterPreflightConfig(t, test.adapter)
 			factoryCalls := 0

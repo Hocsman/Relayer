@@ -57,7 +57,7 @@ func productionBackendDependencies() backendDependencies {
 }
 
 // resolveAgentAdapters makes every runtime spec concrete before any terminal
-// backend is constructed. Explicit experimental placeholders fail clearly;
+// backend is constructed. Explicit unavailable descriptors fail clearly;
 // executable-name detection only selects implementations present in Registry.
 func resolveAgentAdapters(specs []agent.Spec, registry *adapters.Registry) ([]agent.Spec, error) {
 	resolved := cloneAgentSpecs(specs)

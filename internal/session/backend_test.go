@@ -19,6 +19,13 @@ func TestNewManagerWithRegistryRejectsNilAndExplicitUnknownAdapters(t *testing.T
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
+	if err := registry.Register(adapters.Descriptor{
+		ID:          "unavailable",
+		Status:      adapters.StatusExperimental,
+		Implemented: false,
+	}, nil); err != nil {
+		t.Fatalf("Register unavailable adapter: %v", err)
+	}
 	manager, err := NewManagerWithRegistry(context.Background(), make(chan Event, 8), registry, 1024)
 	if err != nil {
 		t.Fatalf("NewManagerWithRegistry: %v", err)
@@ -29,7 +36,7 @@ func TestNewManagerWithRegistryRejectsNilAndExplicitUnknownAdapters(t *testing.T
 		want    error
 	}{
 		{adapter: "missing", want: adapters.ErrUnknownAdapter},
-		{adapter: "claude", want: adapters.ErrAdapterUnavailable},
+		{adapter: "unavailable", want: adapters.ErrAdapterUnavailable},
 	} {
 		_, startErr := manager.Start(agent.Spec{
 			ID:      "adapter-" + test.adapter,

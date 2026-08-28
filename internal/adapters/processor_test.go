@@ -91,6 +91,45 @@ func TestProcessorSnapshotFingerprintIncludesActiveCodeFenceContext(t *testing.T
 	}
 }
 
+func TestVendorWrappersKeepGenericFallbackSnapshotDeduplication(t *testing.T) {
+	patterns := []Pattern{{
+		Name:        "legacy-short-match",
+		Description: "legacy confirmation",
+		Expression:  `\[Y/n\]`,
+	}}
+	for _, test := range []struct {
+		name string
+		new  func([]Pattern) (Adapter, error)
+	}{
+		{name: ClaudeID, new: func(patterns []Pattern) (Adapter, error) { return NewClaudeAdapter(patterns) }},
+		{name: CodexID, new: func(patterns []Pattern) (Adapter, error) { return NewCodexAdapter(patterns) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			adapter, err := test.new(patterns)
+			if err != nil {
+				t.Fatal(err)
+			}
+			processor, err := NewProcessor(
+				adapter,
+				NewDetectionState("session-fallback", "agent-fallback", adapter.ID()),
+				4096,
+				Hooks{},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			first, changed, err := processor.ReconcileSnapshot([]byte("Legacy prompt [Y/n]"))
+			if err != nil || first == nil || !changed || first.Metadata["pattern"] != "legacy-short-match" {
+				t.Fatalf("first fallback = event %#v changed %t error %v", first, changed, err)
+			}
+			reflowed, changed, err := processor.ReconcileSnapshot([]byte("Reflowed legacy prompt [Y/n]"))
+			if err != nil || reflowed == nil || changed || reflowed.ID != first.ID {
+				t.Fatalf("reflowed fallback = event %#v changed %t error %v", reflowed, changed, err)
+			}
+		})
+	}
+}
+
 func TestProcessorEmitsTwoIdenticalStreamPromptsAsDistinctOccurrences(t *testing.T) {
 	var events []Event
 	processor := newGenericTestProcessor(t, 4096, Hooks{

@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/config"
@@ -47,6 +48,8 @@ type AgentCatalogEntry struct {
 	AdapterStatus      string   `json:"adapterStatus"`
 	DefaultArgv        []string `json:"defaultArgv"`
 	RequiresCustomArgv bool     `json:"requiresCustomArgv"`
+	MinimumArguments   int      `json:"minimumArguments"`
+	ArgumentPrefix     []string `json:"argumentPrefix"`
 }
 
 // AgentProfile deliberately omits environment values and shell bodies. A
@@ -57,6 +60,7 @@ type AgentProfile struct {
 	PresetID        string   `json:"presetID"`
 	Cwd             string   `json:"cwd"`
 	Backend         string   `json:"backend"`
+	Adapter         string   `json:"adapter"`
 	Argv            []string `json:"argv,omitempty"`
 	ExecutableLabel string   `json:"executableLabel"`
 	ArgumentCount   int      `json:"argumentCount"`
@@ -83,6 +87,7 @@ type AgentProfileInput struct {
 	PresetID string   `json:"presetID"`
 	Cwd      string   `json:"cwd"`
 	Backend  string   `json:"backend"`
+	Adapter  string   `json:"adapter"`
 	Argv     []string `json:"argv"`
 	Preserve bool     `json:"preserve"`
 }
@@ -241,6 +246,14 @@ func (a *App) agentProfilesViewLocked(configuration config.Result, token string)
 func (a *App) catalogViewLocked() []AgentCatalogEntry {
 	descriptors := toolcatalog.Descriptors()
 	result := make([]AgentCatalogEntry, 0, len(descriptors))
+	adapterStatuses := make(map[string]string)
+	if registry, err := adapters.NewRegistry(adapters.DefaultPatterns()); err == nil {
+		for _, descriptor := range registry.Descriptors() {
+			if descriptor.Implemented {
+				adapterStatuses[descriptor.ID] = string(descriptor.Status)
+			}
+		}
+	}
 	detector := a.profileDetector
 	if detector == nil {
 		detector = toolcatalog.DefaultDetector()
@@ -259,7 +272,19 @@ func (a *App) catalogViewLocked() []AgentCatalogEntry {
 		}
 		defaultArgv := []string{}
 		if len(descriptor.Executables) > 0 {
-			defaultArgv = []string{descriptor.Executables[0]}
+			defaultArgv = append(defaultArgv, descriptor.Executables[0])
+			defaultArgv = append(defaultArgv, descriptor.ArgumentPrefix...)
+			for len(defaultArgv)-1 < descriptor.MinimumArguments {
+				// Required values such as an Ollama model remain deliberately
+				// blank: the catalogue may guide the shape of argv but must never
+				// invent a provider or model selection.
+				defaultArgv = append(defaultArgv, "")
+			}
+		}
+		adapterStatus := adapterStatuses[descriptor.DefaultAdapter]
+		if adapterStatus == "" {
+			// An unknown maturity must never be presented as stable.
+			adapterStatus = string(adapters.StatusExperimental)
 		}
 		result = append(result, AgentCatalogEntry{
 			ID:                 string(descriptor.ID),
@@ -268,9 +293,11 @@ func (a *App) catalogViewLocked() []AgentCatalogEntry {
 			InstallStatus:      string(status),
 			Installed:          status == toolcatalog.InstallInstalled,
 			Adapter:            descriptor.DefaultAdapter,
-			AdapterStatus:      "stable",
+			AdapterStatus:      adapterStatus,
 			DefaultArgv:        defaultArgv,
 			RequiresCustomArgv: descriptor.RequiresExecutable,
+			MinimumArguments:   descriptor.MinimumArguments,
+			ArgumentPrefix:     append([]string{}, descriptor.ArgumentPrefix...),
 		})
 	}
 	return result
@@ -279,11 +306,13 @@ func (a *App) catalogViewLocked() []AgentCatalogEntry {
 func profileDescription(id toolcatalog.ProfileID) string {
 	switch id {
 	case toolcatalog.ClaudeCode:
-		return "Profil de lancement Claude Code; détection générique des demandes."
+		return "Claude Code; règles expérimentales 2.1.59 vérifiées, puis fallback générique."
 	case toolcatalog.CodexCLI:
-		return "Profil de lancement Codex CLI; détection générique des demandes."
+		return "Codex CLI; règles expérimentales 0.148.0-alpha.21 vérifiées, puis fallback générique."
 	case toolcatalog.MimoCode:
-		return "Profil de lancement MiMo Code; détection générique des demandes."
+		return "Profil de lancement MiMo Code; commande locale et détection générique."
+	case toolcatalog.Ollama:
+		return "Ollama / DeepSeek local; run et le modèle restent des arguments explicites."
 	default:
 		return "Toute CLI interactive locale avec un argv explicite."
 	}
@@ -297,6 +326,11 @@ func profileView(spec agent.Spec) AgentProfile {
 		Backend: spec.Backend,
 	}
 	reason := lockedProfileReason(spec)
+	if reason != "advanced_adapter" {
+		// Known adapter IDs are safe bridge metadata. An unknown advanced ID is
+		// intentionally kept on the Go side with the rest of its locked spec.
+		profile.Adapter = effectiveProfileAdapter(spec)
+	}
 	if reason != "" {
 		profile.PresetID = string(toolcatalog.Custom)
 		profile.Locked = true
@@ -327,21 +361,50 @@ func safeExecutableLabel(profile toolcatalog.ProfileID) string {
 		return "codex"
 	case toolcatalog.MimoCode:
 		return "mimo"
+	case toolcatalog.Ollama:
+		return "ollama"
 	default:
 		return "commande personnalisée"
 	}
 }
 
+func effectiveProfileAdapter(spec agent.Spec) string {
+	if adapterID := strings.ToLower(strings.TrimSpace(spec.Adapter)); adapterID != "" {
+		return adapterID
+	}
+	if len(spec.Command) > 0 {
+		if descriptor, ok := toolcatalog.Lookup(profileForExecutable(spec.Command[0])); ok {
+			if adapterID := strings.ToLower(strings.TrimSpace(descriptor.DefaultAdapter)); adapterID != "" {
+				return adapterID
+			}
+		}
+	}
+	return agent.AdapterGeneric
+}
+
 func profileForExecutable(executable string) toolcatalog.ProfileID {
-	name := strings.ToLower(filepath.Base(strings.TrimSpace(executable)))
+	name := portableExecutableName(executable)
 	for _, descriptor := range toolcatalog.Descriptors() {
 		for _, candidate := range descriptor.Executables {
-			if strings.EqualFold(name, filepath.Base(candidate)) {
+			if name != "" && name == portableExecutableName(candidate) {
 				return descriptor.ID
 			}
 		}
 	}
 	return toolcatalog.Custom
+}
+
+func portableExecutableName(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	// Configurations can be prepared on another OS. filepath.Base follows the
+	// host separator, so normalize Windows paths before comparing catalog
+	// candidates and ignore the executable suffix just like adapter hints do.
+	value = strings.ReplaceAll(value, `\`, "/")
+	name := strings.ToLower(strings.TrimSpace(filepath.Base(value)))
+	return strings.TrimSuffix(name, ".exe")
 }
 
 func lockedProfileReason(spec agent.Spec) string {
@@ -350,16 +413,31 @@ func lockedProfileReason(spec agent.Spec) string {
 		return "advanced_shell"
 	case len(spec.Env) > 0:
 		return "advanced_environment"
-	case strings.TrimSpace(spec.Adapter) != "" && !strings.EqualFold(spec.Adapter, agent.AdapterGeneric):
-		return "advanced_adapter"
 	case len(spec.Command) == 0:
 		return "invalid_command"
+	case !editableProfileAdapter(spec):
+		return "advanced_adapter"
 	case !profileIDPattern.MatchString(spec.ID) ||
 		utf8.RuneCountInString(spec.Name) > maximumProfileName ||
 		utf8.RuneCountInString(spec.Cwd) > maximumProfileValue:
 		return "legacy_profile_fields"
 	default:
 		return ""
+	}
+}
+
+func editableProfileAdapter(spec agent.Spec) bool {
+	adapterID := strings.ToLower(strings.TrimSpace(spec.Adapter))
+	if adapterID == "" || adapterID == agent.AdapterGeneric {
+		return true
+	}
+	switch profileForExecutable(spec.Command[0]) {
+	case toolcatalog.ClaudeCode:
+		return adapterID == adapters.ClaudeID
+	case toolcatalog.CodexCLI:
+		return adapterID == adapters.CodexID
+	default:
+		return false
 	}
 }
 
@@ -386,6 +464,9 @@ func resolveProfileInputs(inputs []AgentProfileInput, current config.Result, bas
 			if !exists || len(input.Argv) != 0 {
 				return nil, errProfilesInvalid
 			}
+			if input.Adapter != "" && !strings.EqualFold(strings.TrimSpace(input.Adapter), effectiveProfileAdapter(existing)) {
+				return nil, errProfilesInvalid
+			}
 			if isLocked {
 				specs = append(specs, existing)
 				preservedLocked[normalizedID] = struct{}{}
@@ -408,6 +489,10 @@ func resolveProfileInputs(inputs []AgentProfileInput, current config.Result, bas
 			argvContainsInvalidValue(input.Argv) || argvContainsSensitiveValue(input.Argv) {
 			return nil, errProfilesInvalid
 		}
+		adapterID, ok := validatedProfileAdapter(toolcatalog.ProfileID(input.PresetID), input.Adapter)
+		if !ok {
+			return nil, errProfilesInvalid
+		}
 		resolved, err := toolcatalog.Resolve(toolcatalog.LaunchRequest{
 			ProfileID:  toolcatalog.ProfileID(input.PresetID),
 			AgentID:    input.ID,
@@ -415,7 +500,7 @@ func resolveProfileInputs(inputs []AgentProfileInput, current config.Result, bas
 			Executable: input.Argv[0],
 			Args:       append([]string(nil), input.Argv[1:]...),
 			Cwd:        input.Cwd,
-			Adapter:    agent.AdapterGeneric,
+			Adapter:    adapterID,
 			Backend:    input.Backend,
 		})
 		if err != nil {
@@ -431,6 +516,21 @@ func resolveProfileInputs(inputs []AgentProfileInput, current config.Result, bas
 		return nil, errProfilesInvalid
 	}
 	return specs, nil
+}
+
+func validatedProfileAdapter(profileID toolcatalog.ProfileID, value string) (string, bool) {
+	descriptor, ok := toolcatalog.Lookup(profileID)
+	if !ok {
+		return "", false
+	}
+	adapterID := strings.ToLower(strings.TrimSpace(value))
+	if adapterID == "" {
+		adapterID = strings.ToLower(strings.TrimSpace(descriptor.DefaultAdapter))
+	}
+	if adapterID == agent.AdapterGeneric || adapterID == strings.ToLower(strings.TrimSpace(descriptor.DefaultAdapter)) {
+		return adapterID, adapterID != ""
+	}
+	return "", false
 }
 
 func validEditableProfileFields(id, name, cwd string) bool {

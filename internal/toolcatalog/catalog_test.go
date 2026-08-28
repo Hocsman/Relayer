@@ -5,14 +5,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 )
 
 func TestDescriptorsExposeMinimalDeclarativeInventory(t *testing.T) {
 	want := []Descriptor{
-		{ID: ClaudeCode, Name: "Claude Code", Executables: []string{"claude"}, DefaultAdapter: agent.AdapterGeneric},
-		{ID: CodexCLI, Name: "Codex CLI", Executables: []string{"codex"}, DefaultAdapter: agent.AdapterGeneric},
+		{ID: ClaudeCode, Name: "Claude Code", Executables: []string{"claude"}, DefaultAdapter: adapters.ClaudeID},
+		{ID: CodexCLI, Name: "Codex CLI", Executables: []string{"codex"}, DefaultAdapter: adapters.CodexID},
 		{ID: MimoCode, Name: "MiMo Code", Executables: []string{"mimo"}, DefaultAdapter: agent.AdapterGeneric},
+		{ID: Ollama, Name: "Ollama / DeepSeek", Executables: []string{"ollama"}, DefaultAdapter: agent.AdapterGeneric, MinimumArguments: 2, ArgumentPrefix: []string{"run"}},
 		{ID: Custom, Name: "Custom CLI", DefaultAdapter: agent.AdapterGeneric, RequiresExecutable: true},
 	}
 
@@ -23,6 +25,7 @@ func TestDescriptorsExposeMinimalDeclarativeInventory(t *testing.T) {
 
 	got[0].Name = "mutated"
 	got[0].Executables[0] = "mutated"
+	got[3].ArgumentPrefix[0] = "mutated"
 	again := Descriptors()
 	if !reflect.DeepEqual(again, want) {
 		t.Fatalf("catalogue changed through returned descriptor: %#v", again)
@@ -42,6 +45,15 @@ func TestLookupNormalizesIDAndReturnsDefensiveCopy(t *testing.T) {
 	}
 	if _, ok := Lookup("missing"); ok {
 		t.Fatal("unknown profile unexpectedly found")
+	}
+	ollama, ok := Lookup(Ollama)
+	if !ok {
+		t.Fatal("ollama profile missing")
+	}
+	ollama.ArgumentPrefix[0] = "mutated"
+	ollamaAgain, _ := Lookup(Ollama)
+	if !reflect.DeepEqual(ollamaAgain.ArgumentPrefix, []string{"run"}) {
+		t.Fatalf("Lookup retained ArgumentPrefix mutation: %#v", ollamaAgain)
 	}
 }
 
@@ -66,7 +78,7 @@ func TestResolvePreservesExactArgvWithoutInventingToolOptions(t *testing.T) {
 				Name:    "Claude reviewer",
 				Command: []string{"claude", "--print", "value with spaces", "", "$(literal)"},
 				Cwd:     "/workspace",
-				Adapter: agent.AdapterGeneric,
+				Adapter: adapters.ClaudeID,
 				Backend: agent.BackendAuto,
 			},
 		},
@@ -105,6 +117,18 @@ func TestResolvePreservesExactArgvWithoutInventingToolOptions(t *testing.T) {
 			want: agent.Spec{
 				ID: "local", Name: "Local",
 				Command: []string{"./bin/local-agent", "--model-selected-by-caller", "opaque-value"},
+				Adapter: agent.AdapterGeneric,
+			},
+		},
+		{
+			name: "ollama preserves caller selected model",
+			request: LaunchRequest{
+				ProfileID: Ollama, AgentID: "local", Name: "Local model",
+				Args: []string{"run", "model-selected-by-caller"},
+			},
+			want: agent.Spec{
+				ID: "local", Name: "Local model",
+				Command: []string{"ollama", "run", "model-selected-by-caller"},
 				Adapter: agent.AdapterGeneric,
 			},
 		},
@@ -155,6 +179,11 @@ func TestResolveRejectsInvalidRequests(t *testing.T) {
 		{name: "blank name", request: LaunchRequest{ProfileID: ClaudeCode, AgentID: "a"}, part: "agent name"},
 		{name: "custom executable omitted", request: LaunchRequest{ProfileID: Custom, AgentID: "a", Name: "A"}, part: "requires an explicit executable"},
 		{name: "custom executable whitespace", request: LaunchRequest{ProfileID: Custom, AgentID: "a", Name: "A", Executable: "  "}, part: "requires an explicit executable"},
+		{name: "ollama arguments omitted", request: LaunchRequest{ProfileID: Ollama, AgentID: "a", Name: "A"}, part: "requires at least 2 explicit arguments"},
+		{name: "ollama model missing", request: LaunchRequest{ProfileID: Ollama, AgentID: "a", Name: "A", Args: []string{"run"}}, part: "requires at least 2 explicit arguments"},
+		{name: "ollama model blank", request: LaunchRequest{ProfileID: Ollama, AgentID: "a", Name: "A", Args: []string{"run", "  "}}, part: "required argument 1"},
+		{name: "ollama non-run argv", request: LaunchRequest{ProfileID: Ollama, AgentID: "a", Name: "A", Args: []string{"list", "fixture"}}, part: "requires argv prefix"},
+		{name: "removed ambiguous deepseek profile", request: LaunchRequest{ProfileID: "deepseek-via-ollama", AgentID: "a", Name: "A", Args: []string{"run", "explicit-model"}}, part: "unknown tool profile"},
 		{name: "nul executable", request: LaunchRequest{ProfileID: ClaudeCode, AgentID: "a", Name: "A", Executable: "bad\x00tool"}, part: "executable contains"},
 		{name: "nul argument", request: LaunchRequest{ProfileID: ClaudeCode, AgentID: "a", Name: "A", Args: []string{"bad\x00arg"}}, part: "argument 0"},
 		{name: "nul cwd", request: LaunchRequest{ProfileID: ClaudeCode, AgentID: "a", Name: "A", Cwd: "bad\x00dir"}, part: "working directory"},

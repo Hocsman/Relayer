@@ -18,12 +18,17 @@ export type SessionStatus =
   | "failed";
 
 export type RiskLevel = "low" | "unknown" | "high";
-export type EventType = "confirmation" | "credential" | "process_exit";
+export type EventType = "confirmation" | "permission" | "credential" | "process_exit";
 export type PolicyAction = "allow" | "ask" | "deny";
 export type DeliveryStatus = "pending" | "delivering" | "delivered" | "failed" | "uncertain";
-export type AgentPresetID = "claude-code" | "codex-cli" | "mimo-code" | "custom";
+export type AgentPresetID =
+  | "claude-code"
+  | "codex-cli"
+  | "mimo-code"
+  | "ollama"
+  | "custom";
 export type AgentBackend = "auto" | "pty" | "tmux";
-export type AdapterStatus = "stable";
+export type AdapterStatus = "stable" | "experimental";
 export type InstallStatus = "unknown" | "installed" | "not_installed";
 export type ProfileReadOnlyReason =
   | "advanced_shell"
@@ -123,17 +128,20 @@ export interface SafeErrorEvent {
 }
 
 // Agent settings deliberately exclude environment variables, provider
-// credentials, model selectors and shell snippets. Commands remain exact argv.
+// credentials and shell snippets. Commands remain exact argv; a user-entered
+// model identifier is an ordinary argument and is persisted in local YAML.
 export interface AgentCatalogEntry {
   id: AgentPresetID;
   name: string;
   description: string;
   installStatus: InstallStatus;
   installed: boolean;
-  adapter: "generic";
+  adapter: string;
   adapterStatus: AdapterStatus;
   defaultArgv: string[];
   requiresCustomArgv: boolean;
+  minimumArguments: number;
+  argumentPrefix: string[];
 }
 
 export interface AgentProfile {
@@ -142,6 +150,7 @@ export interface AgentProfile {
   presetID: AgentPresetID;
   cwd: string;
   backend: AgentBackend;
+  adapter: string;
   argv?: string[];
   executableLabel?: string;
   argumentCount?: number;
@@ -185,6 +194,7 @@ export interface AgentProfileInput {
   presetID: AgentPresetID;
   cwd: string;
   backend: AgentBackend;
+  adapter: string;
   argv: string[];
   preserve: boolean;
 }

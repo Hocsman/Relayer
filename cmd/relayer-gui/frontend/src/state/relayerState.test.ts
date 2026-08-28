@@ -67,6 +67,14 @@ describe("relayerReducer", () => {
     expect(updated.app?.pendingEvents.find((event) => event.sessionID === "b")?.deliveryStatus).toBe("pending");
   });
 
+  it("keeps permission prompts in the supervisor queue", () => {
+    const state = appState();
+    state.pendingEvents = [{ ...pending("a", "permission-id"), type: "permission" }];
+    const normalized = normalizeState(state);
+    expect(normalized.pendingEvents).toHaveLength(1);
+    expect(normalized.pendingEvents[0].type).toBe("permission");
+  });
+
   it("replaces a complete output snapshot even when semantic revision is unchanged", () => {
     const loaded = relayerReducer(initialRelayerState, { type: "loaded", state: appState() });
     const updated = relayerReducer(loaded, {

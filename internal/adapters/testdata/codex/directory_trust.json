@@ -1,0 +1,17 @@
+{
+  "cli_version": "codex-cli 0.148.0-alpha.21",
+  "interaction": "directory_trust",
+  "capture_mode": "interactive --no-alt-screen --ask-for-approval untrusted --sandbox workspace-write",
+  "normalized": "You are in [fixture-directory]\n\n  Do you trust the contents of this directory? Working with untrusted contents\n  comes with higher risk of prompt injection. Trusting the directory allows\n  project-local config, hooks, and exec policies to load.\n\n› 1. Yes, continue\n  2. No, quit\n\n  Press enter to continue",
+  "chunks": [
+    "You are in [fixture-directory]\n\n  Do you trust the contents of this directory? Working with untrusted contents\n  comes with higher risk of prompt injection. Trusting the directory allows\n  project-local config, hooks, and exec policies to load.\n\n› 1. Yes, con",
+    "tinue\n  2. No, quit\n\n  Press enter to continue"
+  ],
+  "ansi_chunks": [
+    "\u001b[",
+    "1;1H>\u001b[1;3H\u001b[1mYou are in \u001b[22m[fixture-directory]\u001b[3;3HDo\u001b[3;6Hyou\u001b[3;10Htrust\u001b[3;16Hthe\u001b[3;20Hcontents\u001b[3;29Hof\u001b[3;32Hthis\u001b[3;37Hdirectory?\u001b[3;48HWorking\u001b[3;56Hwith\u001b[3;61Huntrusted\u001b[3;71Hcontents\u001b[4;3Hcomes\u001b[4;9Hwith\u001b[4;14Hhigher\u001b[4;21Hrisk\u001b[4;26Hof\u001b[4;29Hprompt\u001b[4;36Hinjection.\u001b[4;47HTrusting\u001b[4;56Hthe\u001b[4;60Hdirectory\u001b[4;70Hallows\u001b[5;3Hproject-local\u001b[5;17Hconfig,\u001b[5;25Hhooks,\u001b[5;32Hand\u001b[5;36Hexec\u001b[5;41Hpolicies\u001b[5;50Hto\u001b[5;53Hload.\u001b[7;1H› 1. Yes, continue\u001b[8;3H2.\u001b[8;6HNo,\u001b[8;10Hquit\u001b[10;3HPress enter to continue\u001b[0m"
+  ],
+  "allow_input_hex": "0d",
+  "deny_input_hex": "32",
+  "risk": "high"
+}

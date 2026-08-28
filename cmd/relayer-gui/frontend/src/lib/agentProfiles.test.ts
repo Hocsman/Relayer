@@ -9,10 +9,12 @@ const catalog: AgentCatalogEntry[] = [
     description: "CLI",
     installStatus: "installed",
     installed: true,
-    adapter: "generic",
-    adapterStatus: "stable",
+    adapter: "claude",
+    adapterStatus: "experimental",
     defaultArgv: ["claude"],
     requiresCustomArgv: false,
+    minimumArguments: 0,
+    argumentPrefix: [],
   },
   {
     id: "mimo-code",
@@ -24,6 +26,21 @@ const catalog: AgentCatalogEntry[] = [
     adapterStatus: "stable",
     defaultArgv: ["mimo"],
     requiresCustomArgv: false,
+    minimumArguments: 0,
+    argumentPrefix: [],
+  },
+  {
+    id: "ollama",
+    name: "Ollama / DeepSeek",
+    description: "local models",
+    installStatus: "installed",
+    installed: true,
+    adapter: "generic",
+    adapterStatus: "stable",
+    defaultArgv: ["ollama", "run", ""],
+    requiresCustomArgv: false,
+    minimumArguments: 2,
+    argumentPrefix: ["run"],
   },
   {
     id: "custom",
@@ -35,6 +52,8 @@ const catalog: AgentCatalogEntry[] = [
     adapterStatus: "stable",
     defaultArgv: [],
     requiresCustomArgv: true,
+    minimumArguments: 0,
+    argumentPrefix: [],
   },
 ];
 
@@ -51,6 +70,7 @@ function profile(overrides: Partial<AgentProfile> = {}): AgentProfile {
     presetID: "claude-code",
     cwd: "",
     backend: "auto",
+    adapter: "generic",
     argv: ["claude"],
     locked: false,
     ...overrides,
@@ -60,6 +80,13 @@ function profile(overrides: Partial<AgentProfile> = {}): AgentProfile {
 describe("agent profile validation", () => {
   it("accepts one valid exact-argv profile", () => {
     expect(validateAgentProfiles([profile()], view).valid).toBe(true);
+    expect(validateAgentProfiles([profile({ adapter: "claude" })], view).valid).toBe(true);
+  });
+
+  it("rejects an adapter that does not belong to the selected catalogue profile", () => {
+    const result = validateAgentProfiles([profile({ adapter: "codex" })], view);
+    expect(result.valid).toBe(false);
+    expect(result.profiles[0].presetID).toContain("Adaptateur incompatible");
   });
 
   it("rejects duplicate case-insensitive identifiers", () => {
@@ -98,6 +125,35 @@ describe("agent profile validation", () => {
     expect(explicit.valid).toBe(true);
   });
 
+  it("requires explicit Ollama arguments without inventing a model", () => {
+    const missing = validateAgentProfiles(
+      [profile({ presetID: "ollama", argv: ["ollama"] })],
+      view,
+    );
+    expect(missing.valid).toBe(false);
+    expect(missing.profiles[0].argv).toContain("modèle choisi");
+
+    const blankModel = validateAgentProfiles(
+      [profile({ presetID: "ollama", argv: ["ollama", "run", ""] })],
+      view,
+    );
+    expect(blankModel.valid).toBe(false);
+    expect(blankModel.profiles[0].argv).toContain("Renseignez explicitement");
+
+    const wrongPrefix = validateAgentProfiles(
+      [profile({ presetID: "ollama", argv: ["ollama", "serve", "model-selected-by-user"] })],
+      view,
+    );
+    expect(wrongPrefix.valid).toBe(false);
+    expect(wrongPrefix.profiles[0].argv).toContain("préfixe exact");
+
+    const explicit = validateAgentProfiles(
+      [profile({ presetID: "ollama", argv: ["ollama", "run", "model-selected-by-user"] })],
+      view,
+    );
+    expect(explicit.valid).toBe(true);
+  });
+
   it("generates a stable unused ID", () => {
     expect(nextProfileID(catalog[0], [profile(), profile({ id: "claude-2" })])).toBe("claude-3");
   });
@@ -127,7 +183,24 @@ describe("agent profile validation", () => {
     });
     expect(validateAgentProfiles([masked], view).valid).toBe(true);
     expect(profilesForSave([masked])).toEqual([
-      expect.objectContaining({ id: "claude", argv: [], preserve: true }),
+      expect.objectContaining({ id: "claude", adapter: "generic", argv: [], preserve: true }),
+    ]);
+  });
+
+  it("keeps an explicit generic adapter when a Claude command is replaced", () => {
+    const replaced = profile({
+      adapter: "generic",
+      argv: ["claude", "--new-session"],
+      preserveOnSave: false,
+    });
+    expect(validateAgentProfiles([replaced], view).valid).toBe(true);
+    expect(profilesForSave([replaced])).toEqual([
+      expect.objectContaining({
+        presetID: "claude-code",
+        adapter: "generic",
+        argv: ["claude", "--new-session"],
+        preserve: false,
+      }),
     ]);
   });
 

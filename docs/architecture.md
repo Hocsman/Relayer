@@ -176,7 +176,9 @@ signature supports replay deduplication. Acknowledging an event permits a later
 occurrence of the same text to become actionable again.
 
 The stable generic adapter applies ordered regular expressions only to the
-active terminal line touched by new output. See [adapters.md](adapters.md).
+active terminal line touched by new output. Experimental Claude and Codex
+adapters recognize only fixture-backed vendor structures, then retain the same
+generic pattern fallback. See [adapters.md](adapters.md).
 
 The older `internal/intercept` package remains as a compatibility facade around
 the same bounded concepts; new app flow uses adapter events.
@@ -195,7 +197,9 @@ the action and sends bytes through the backend assigned to that ID.
 
 Unsupported encoding, stale or resolved events, exited sessions, audit failure,
 transport failure, and post-attach uncertainty do not silently become an
-allow. The generic adapter currently supports manual input only.
+allow. Generic and Claude currently support manual input only. Codex encodes
+only the command allow/deny and directory deny bytes verified in its versioned
+fixtures; directory allow remains a human-only selection.
 
 ## Bubble Tea model
 

@@ -134,17 +134,19 @@ Relayer exits; inspect it separately with tmux.
 ## Agents
 
 The alpha desktop GUI can edit the same `agents` sequence through its
-**Agents** panel. It offers launch presets for the local `claude`, `codex`, and
-`mimo` executables plus a Custom CLI form. These are argv conveniences, not
-vendor-specific adapters: every preset currently uses `generic` detection.
-DeepSeek or another provider/model remains configuration owned by the chosen
-CLI; Relayer does not infer a command, flag, credential, or model name.
+**Agents** panel. It offers launch presets for Claude Code, Codex CLI, MiMo
+Code, a combined Ollama / DeepSeek entry, and a Custom CLI form. Claude and
+Codex use their version-specific experimental adapters; every other preset
+uses stable `generic` detection. A preset never infers credentials or a model
+name. The Ollama / DeepSeek entry requires explicit argv for the `run`
+subcommand and model.
 
 Existing command vectors are masked from the WebView and remain authoritative
 inside Go until the user explicitly replaces the entire argv. Shell commands,
-environment overrides, and non-generic adapters are read-only in the GUI and
-remain editable in YAML. A GUI save is applied on the next application launch,
-not to the currently running sessions. Legacy documents and profiles with
+environment overrides, and unknown advanced adapters are read-only in the GUI
+and remain editable in YAML. A plain GUI save does not mutate running sessions;
+the guarded restart action can apply the saved configuration without closing
+the application. Legacy documents and profiles with
 historical IDs outside the form's conservative syntax remain read-only; Relayer
 does not migrate or normalize them silently.
 
@@ -218,12 +220,12 @@ short-lived inherited environment over plaintext YAML.
 
 ## Adapters and interception patterns
 
-Only `generic` is implemented. Leaving `adapter` blank resolves to an
-implemented executable hint when one exists, then falls back to `generic`.
-Because the current `claude` and `codex` entries are unimplemented experimental
-descriptors, those executable names also fall back to `generic` when adapter is
-omitted. Explicitly setting either placeholder fails before backend creation.
-An unknown explicit adapter also fails.
+`generic` is stable. `claude` and `codex` are implemented experimental
+adapters whose vendor rules are limited to the fixtures documented in
+[adapters](adapters.md). Leaving `adapter` blank selects an implemented
+executable hint for basenames `claude` or `codex`, then otherwise falls back to
+`generic`. All three preserve configured `intercept_patterns`; an unknown
+explicit adapter fails before backend creation.
 
 `intercept_patterns` is an ordered, non-empty list:
 
@@ -265,7 +267,7 @@ inside one list use OR semantics.
 
 | Matcher | Accepted values |
 | --- | --- |
-| `event_types` | Non-empty list of `confirmation` or `credential`. |
+| `event_types` | Non-empty list of `confirmation`, `permission`, or `credential`. |
 | `text_regex` | Non-blank Go regular expression evaluated against summary plus match internally. |
 | `agent_ids` | Non-empty list; every ID must reference a configured agent, case-insensitively. |
 | `risk_levels` | Non-empty list of `low`, `unknown`, or `high`. |

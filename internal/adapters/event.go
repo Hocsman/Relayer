@@ -16,6 +16,7 @@ type EventType string
 
 const (
 	EventConfirmation EventType = "confirmation"
+	EventPermission   EventType = "permission"
 	EventCredential   EventType = "credential"
 	EventProcessExit  EventType = "process_exit"
 )
@@ -94,7 +95,7 @@ func (e Event) Clone() Event {
 // Actionable reports whether Relayer must pause for a human decision.
 func (e Event) Actionable() bool {
 	switch e.Type {
-	case EventConfirmation, EventCredential:
+	case EventConfirmation, EventPermission, EventCredential:
 		return true
 	default:
 		return false

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 )
 
@@ -17,6 +18,7 @@ const (
 	ClaudeCode ProfileID = "claude-code"
 	CodexCLI   ProfileID = "codex-cli"
 	MimoCode   ProfileID = "mimo-code"
+	Ollama     ProfileID = "ollama"
 	Custom     ProfileID = "custom"
 )
 
@@ -28,6 +30,8 @@ type Descriptor struct {
 	Executables        []string
 	DefaultAdapter     string
 	RequiresExecutable bool
+	MinimumArguments   int
+	ArgumentPrefix     []string
 }
 
 // LaunchRequest resolves one profile to Relayer's existing process contract.
@@ -49,19 +53,27 @@ var descriptors = []Descriptor{
 		ID:             ClaudeCode,
 		Name:           "Claude Code",
 		Executables:    []string{"claude"},
-		DefaultAdapter: agent.AdapterGeneric,
+		DefaultAdapter: adapters.ClaudeID,
 	},
 	{
 		ID:             CodexCLI,
 		Name:           "Codex CLI",
 		Executables:    []string{"codex"},
-		DefaultAdapter: agent.AdapterGeneric,
+		DefaultAdapter: adapters.CodexID,
 	},
 	{
 		ID:             MimoCode,
 		Name:           "MiMo Code",
 		Executables:    []string{"mimo"},
 		DefaultAdapter: agent.AdapterGeneric,
+	},
+	{
+		ID:               Ollama,
+		Name:             "Ollama / DeepSeek",
+		Executables:      []string{"ollama"},
+		DefaultAdapter:   agent.AdapterGeneric,
+		MinimumArguments: 2,
+		ArgumentPrefix:   []string{"run"},
 	},
 	{
 		ID:                 Custom,
@@ -136,6 +148,23 @@ func Resolve(request LaunchRequest) (agent.Spec, error) {
 	if err := rejectNUL("executable", executable); err != nil {
 		return agent.Spec{}, err
 	}
+	if len(request.Args) < descriptor.MinimumArguments {
+		return agent.Spec{}, fmt.Errorf(
+			"tool profile %q requires at least %d explicit arguments, including model selection",
+			descriptor.ID,
+			descriptor.MinimumArguments,
+		)
+	}
+	for index := 0; index < descriptor.MinimumArguments; index++ {
+		if strings.TrimSpace(request.Args[index]) == "" {
+			return agent.Spec{}, fmt.Errorf("tool profile %q required argument %d is blank", descriptor.ID, index)
+		}
+	}
+	for index, expected := range descriptor.ArgumentPrefix {
+		if index >= len(request.Args) || request.Args[index] != expected {
+			return agent.Spec{}, fmt.Errorf("tool profile %q requires argv prefix %q", descriptor.ID, descriptor.ArgumentPrefix)
+		}
+	}
 
 	command := make([]string, 1, len(request.Args)+1)
 	command[0] = executable
@@ -166,6 +195,7 @@ func normalizeID(id ProfileID) ProfileID {
 
 func cloneDescriptor(descriptor Descriptor) Descriptor {
 	descriptor.Executables = append([]string(nil), descriptor.Executables...)
+	descriptor.ArgumentPrefix = append([]string(nil), descriptor.ArgumentPrefix...)
 	return descriptor
 }
 

@@ -37,6 +37,7 @@ func TestEventCloneAndActionableContract(t *testing.T) {
 		want      bool
 	}{
 		{eventType: EventConfirmation, want: true},
+		{eventType: EventPermission, want: true},
 		{eventType: EventCredential, want: true},
 		{eventType: EventProcessExit, want: false},
 		{eventType: EventType("future-observation"), want: false},

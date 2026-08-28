@@ -137,9 +137,10 @@ profiles. The built-in catalogue currently provides:
 
 | Profile | Default executable | Detection and decisions |
 | --- | --- | --- |
-| Claude Code | `claude` | Generic regex adapter only. |
-| Codex CLI | `codex` | Generic regex adapter only. |
+| Claude Code | `claude` | Experimental Claude 2.1.59 rules plus generic fallback; manual decisions only. |
+| Codex CLI | `codex` | Experimental Codex 0.148.0-alpha.21 rules plus generic fallback; command allow/deny and directory deny bytes verified. |
 | MiMo Code | `mimo` | Generic regex adapter only. |
+| Ollama / DeepSeek | `ollama run` plus an explicit model argument | Generic regex adapter only; no model is inferred and no DeepSeek protocol is claimed. |
 | Custom CLI | Explicit argv required | Generic regex adapter only. |
 
 The installation badge is a passive `PATH` lookup. It does not execute the
@@ -149,21 +150,23 @@ when the desktop process cannot see the shell's `PATH`.
 
 Each profile controls its display name, stable agent ID, working directory,
 backend (`auto`, `pty`, or `tmux`), and exact argument vector. No shell parses
-that vector. The picker has no fields for environment variables, API keys,
-passwords, provider credentials, or model names. Configure authentication and
-provider/model selection through the chosen CLI's own supported flow.
+that vector. The exact argv, including a model identifier entered for
+`ollama run`, is persisted in the local YAML. The picker has no fields for
+environment variables, API keys, passwords, or provider credentials. Configure
+authentication through the chosen CLI's own supported flow, and never place a
+credential in argv.
 
 DeepSeek is generally a provider or model rather than one canonical local
-executable. Use a compatible installed CLI—MiMo Code or another verified
-OpenAI-compatible client, for example—or the Custom CLI profile with its real
-local executable. Relayer does not invent a `deepseek` command or imply a
-DeepSeek-specific adapter.
+executable. The combined Ollama / DeepSeek catalogue entry requires the exact
+`run` subcommand and a model identifier supplied by the user. Relayer does not
+invent a `deepseek` executable, choose a model, or imply a DeepSeek-specific
+adapter.
 
 For confidentiality, argv already stored in YAML never crosses into the
 WebView. The picker shows only a fixed known executable label (or “commande
 personnalisée”) and an argument count. Select **Remplacer la commande** to
 enter a complete new argv. Profiles using `shell`, environment overrides, or
-advanced adapters remain read-only and are preserved server-side.
+unknown advanced adapters remain read-only and are preserved server-side.
 Profiles whose historical identifiers cannot be represented by the stricter
 form are also preserved read-only. A legacy configuration document must first
 be migrated to `version: 1`; the GUI never rewrites it implicitly.
@@ -173,8 +176,10 @@ Concurrent Relayer writers cannot both publish from the same revision; an
 external editor that does not honor Relayer's lock is still best-effort. The
 lock wait is bounded, and a stale or post-commit-uncertain save reloads the
 authoritative file before another attempt. The Go bridge repeats the
-cardinality, length, identifier, and conservative secret-shaped-argument
-validation rather than trusting validation performed in the WebView.
+cardinality, length, identifier, adapter, required-argv-prefix, and conservative
+secret-shaped-argument validation rather than trusting the WebView. Secret
+detection is a heuristic defense in depth, not a guarantee that arbitrary
+credentials will be recognized.
 
 ## Starting, stopping, and restarting
 

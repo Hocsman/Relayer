@@ -147,9 +147,13 @@ Configuration can propose allow, ask, or deny. Independent invariants apply:
 - dry-run never delivers the proposed automatic action;
 - inability to encode the action falls back to ask.
 
-The generic adapter only supports manual input, so current generic policy allow
-and deny proposals cannot be automatically encoded. A future adapter must define
-its own exact allow and deny bytes and preserve these gates.
+The generic and Claude adapters support manual input only, so their policy
+allow and deny proposals cannot be automatically encoded. Codex supports
+verified command-approval allow/deny bytes and a selection-independent
+directory-trust deny; the directory-trust allow remains human-only. Both
+interactions carry unknown or high risk, so policy still blocks automatic
+allow; a configured non-sensitive deny can be delivered. Any future
+interaction must preserve the same gates.
 
 ### tmux ownership and private transport
 

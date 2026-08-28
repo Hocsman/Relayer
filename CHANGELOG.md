@@ -20,6 +20,13 @@ No release tag has been published at the time of writing.
 - A product-neutral generic regex adapter with ANSI streaming, carriage-return
   handling, active-prompt filtering, occurrence IDs, snapshot reconciliation,
   and bounded state.
+- Experimental, version-specific Claude Code and Codex CLI adapters backed by
+  anonymized terminal fixtures, with the generic regex adapter retained as a
+  compatibility fallback.
+- A bounded output-only PTY/tmux fixture capture command with strict JSON,
+  centralized secret refusal, private tmux isolation, and offline validation.
+- A combined Ollama / DeepSeek launch profile that requires the exact `run`
+  subcommand and a user-selected model instead of inventing either.
 - Strict version 1 YAML for agents, backends, session lifecycle, prompt
   patterns, policies, and audit recording.
 - Conservative first-match policy evaluation with allow, ask, deny, dry-run,

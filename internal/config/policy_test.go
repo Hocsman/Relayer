@@ -55,7 +55,7 @@ func TestLoadVersionOnePoliciesDecodesAllFieldsAndPreservesFirstRule(t *testing.
   rules:
     - name: first-confirmation
       match:
-        event_types: [confirmation, credential]
+        event_types: [confirmation, permission, credential]
         text_regex: '(?i)overwrite'
         agent_ids: [agent-a, agent-b]
         risk_levels: [low, unknown, high]
@@ -83,7 +83,7 @@ func TestLoadVersionOnePoliciesDecodesAllFieldsAndPreservesFirstRule(t *testing.
 		first.Match.TextRegex != `(?i)overwrite` || first.Match.Sensitive == nil || *first.Match.Sensitive {
 		t.Fatalf("first rule scalar fields = %#v", first)
 	}
-	if want := []adapters.EventType{adapters.EventConfirmation, adapters.EventCredential}; !reflect.DeepEqual(first.Match.EventTypes, want) {
+	if want := []adapters.EventType{adapters.EventConfirmation, adapters.EventPermission, adapters.EventCredential}; !reflect.DeepEqual(first.Match.EventTypes, want) {
 		t.Fatalf("first event types = %#v, want %#v", first.Match.EventTypes, want)
 	}
 	if want := []string{"agent-a", "agent-b"}; !reflect.DeepEqual(first.Match.AgentIDs, want) {

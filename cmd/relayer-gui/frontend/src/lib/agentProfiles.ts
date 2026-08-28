@@ -39,6 +39,7 @@ export function profilesForSave(profiles: AgentProfile[]): AgentProfileInput[] {
     presetID: profile.presetID,
     cwd: profile.cwd,
     backend: profile.backend,
+    adapter: profile.adapter,
     argv: profile.preserveOnSave ? [] : [...(profile.argv ?? [])],
     preserve: profile.preserveOnSave === true,
   }));
@@ -94,6 +95,8 @@ export function validateAgentProfiles(
     const preset = catalog.get(profile.presetID);
     if (!preset) {
       errors[index].presetID = "Sélection de catalogue inconnue.";
+    } else if (profile.adapter !== "generic" && profile.adapter !== preset.adapter) {
+      errors[index].presetID = "Adaptateur incompatible avec ce profil de catalogue.";
     }
 
     if (profile.preserveOnSave) {
@@ -107,12 +110,30 @@ export function validateAgentProfiles(
       errors[index].argv = "La commande doit contenir entre 1 et 64 arguments.";
       return;
     }
+    if (preset && argv.length < 1 + Math.max(0, preset.minimumArguments)) {
+      errors[index].argv = "Ce profil exige des arguments explicites, notamment le modèle choisi.";
+      return;
+    }
     if (!argv[0].trim()) {
       errors[index].argv = "Le premier argument doit être un exécutable.";
       return;
     }
     if (argv.some((argument) => argument.length > 4096 || argument.includes("\u0000"))) {
       errors[index].argv = "Un argument est invalide ou trop long.";
+      return;
+    }
+    if (
+      preset &&
+      argv.slice(1, 1 + Math.max(0, preset.minimumArguments)).some((argument) => !argument.trim())
+    ) {
+      errors[index].argv = "Renseignez explicitement la sous-commande et le modèle.";
+      return;
+    }
+    if (
+      preset &&
+      preset.argumentPrefix.some((argument, prefixIndex) => argv[prefixIndex + 1] !== argument)
+    ) {
+      errors[index].argv = "La commande ne respecte pas le préfixe exact exigé par ce profil.";
       return;
     }
     if (argv.some(looksSensitiveArgument)) {
@@ -141,6 +162,7 @@ export function nextProfileID(entry: AgentCatalogEntry, profiles: AgentProfile[]
     "claude-code": "claude",
     "codex-cli": "codex",
     "mimo-code": "mimo",
+    ollama: "ollama",
     custom: "agent",
   };
   const base = baseByPreset[entry.id];

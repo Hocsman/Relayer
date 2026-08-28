@@ -1,0 +1,28 @@
+[
+  {
+    "name": "workspace trust from Claude Code 2.1.59",
+    "source": "anonymized PTY observation from Claude Code 2.1.59",
+    "fixture_id": "claude-2.1.59-workspace-trust",
+    "chunks": [
+      "\u001b[38;5;220m\u001b[1mAccessing\u001b[1Cworkspace:\u001b[22m\u001b[39m\n<WORKSPACE>\n\u001b[1mQuick\u001b[1Csafety\u001b[1Ccheck:\u001b[1CIs\u001b[1Cthis\u001b[1Ca\u001b[1Cproject\u001b[1Cyou\u001b[1Ccreated\u001b[1Cor\u001b[1Cone\u001b[1Cyou\u001b[1Ctrust?\u001b[22m\n",
+      "Claude\u001b[1CCode'll\u001b[1Cbe\u001b[1Cable\u001b[1Cto\u001b[1Cread,\u001b[1Cedit,\u001b[1Cand\u001b[1Cexecute\u001b[1Cfiles\u001b[1Chere.\n\u001b[38;5;246m1.\u001b[39m\u001b[1CYes,\u001b[1CI\u001b[1Ctrust\u001b[1Cthis\u001b[1Cfolder\n\u001b[38;5;246m2.\u001b[39m\u001b[1CNo,\u001b[1Cexit\n",
+      "\u001b[38;5;246mEnter\u001b[1Cto\u001b[1Cconfirm\u001b[1CEsc\u001b[1Cto\u001b[1Ccancel\u001b[39m"
+    ],
+    "event_type": "permission",
+    "sensitive": false,
+    "risk": "high"
+  },
+  {
+    "name": "environment API key from Claude Code 2.1.59",
+    "source": "anonymized PTY observation from Claude Code 2.1.59",
+    "fixture_id": "claude-2.1.59-environment-api-key",
+    "chunks": [
+      "\u001b[38;5;220m\u001b[1mDetected\u001b[1Ca\u001b[1Ccustom\u001b[1CAPI\u001b[1Ckey\u001b[1Cin\u001b[1Cyour\u001b[1Cenvironment\u001b[22m\u001b[39m\nANTHROPIC_API_KEY:\u001b[1C<REDACTED>\n",
+      "Do\u001b[1Cyou\u001b[1Cwant\u001b[1Cto\u001b[1Cuse\u001b[1Cthis\u001b[1CAPI\u001b[1Ckey?\n\u001b[38;5;246m1.\u001b[39m\u001b[1CYes\n\u001b[38;5;246m2.\u001b[39m\u001b[1CNo\u001b[1C(\u001b[1mrecommended\u001b[22m)\n",
+      "\u001b[3mEnter\u001b[1Cto\u001b[1Cconfirm\u001b[1CEsc\u001b[1Cto\u001b[1Ccancel\u001b[23m"
+    ],
+    "event_type": "credential",
+    "sensitive": true,
+    "risk": "high"
+  }
+]
