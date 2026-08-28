@@ -41,7 +41,7 @@ func TestTmuxHelperProcess(t *testing.T) {
 func TestTmuxIntegrationLifecyclePromptInputAndExternalSessionIsolation(t *testing.T) {
 	tmuxPath, err := exec.LookPath("tmux")
 	if err != nil {
-		t.Skipf("tmux integration skipped: %v", err)
+		requireTmux(t, err)
 	}
 	testExecutable, err := os.Executable()
 	if err != nil {
@@ -270,10 +270,7 @@ func unsetEnvForTest(t *testing.T, name string) {
 func TestTmuxFormatSeparatorSurvivesEveryAmbientTmuxVariable(t *testing.T) {
 	tmuxPath, err := exec.LookPath("tmux")
 	if err != nil {
-		if os.Getenv("RELAYER_REQUIRE_TMUX") == "1" {
-			t.Fatalf("tmux is required in this environment: %v", err)
-		}
-		t.Skipf("tmux separator contract skipped: %v", err)
+		requireTmux(t, err)
 	}
 
 	for _, ambient := range []struct {

@@ -245,8 +245,17 @@ jobs:
       - name: Download modules
         run: go mod download
 
-      - name: Run tmux integration test in an isolated server
+      # This job installs tmux, so a test that cannot find it has hit a broken
+      # installation rather than an absent capability. RELAYER_REQUIRE_TMUX
+      # turns that into a failure instead of a skip, which would otherwise be
+      # reported as a green run that exercised nothing.
+      #
+      # internal/fixturecapture is included because its tmux tests are the ones
+      # that were silently skipping while the backend was unusable.
+      - name: Run tmux integration tests in an isolated server
         shell: bash
+        env:
+          RELAYER_REQUIRE_TMUX: "1"
         run: |
           private_tmux_dir="$(mktemp -d "$RUNNER_TEMP/relayer-tmux.XXXXXX")"
           chmod 700 "$private_tmux_dir"
@@ -259,6 +268,7 @@ jobs:
           trap cleanup_tmux EXIT
 
           tmux -V
-          go test -race -count=1 -timeout=3m \
-            -run '^TestTmuxIntegrationLifecyclePromptInputAndExternalSessionIsolation$' \
+          go test -race -count=1 -timeout=5m \
+            -run '^TestTmux' \
             ./internal/tmuxbackend
+          go test -race -count=1 -timeout=5m ./internal/fixturecapture
