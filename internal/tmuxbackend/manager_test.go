@@ -68,7 +68,7 @@ func newFakeRunner() *fakeRunner {
 	return &fakeRunner{
 		lookPath:   "/test/bin/tmux",
 		fail:       make(map[string]error),
-		display:    "0\t\t0\t1\n",
+		display:    "0||0|1\n",
 		identities: make(map[string]*fakeIdentity),
 		removed:    make(map[string]bool),
 	}
@@ -106,7 +106,7 @@ func (r *fakeRunner) Run(ctx context.Context, spec CommandSpec) ([]byte, error) 
 			delete(r.removed, identity.sessionID)
 			delete(r.removed, identity.windowID)
 			delete(r.removed, identity.paneID)
-			output = []byte(identity.sessionID + "\t" + identity.windowID + "\t" + identity.paneID + "\n")
+			output = []byte(identity.sessionID + tmuxFieldSeparator + identity.windowID + tmuxFieldSeparator + identity.paneID + "\n")
 			if r.newOutput != nil {
 				output = []byte(*r.newOutput)
 			}
@@ -117,7 +117,7 @@ func (r *fakeRunner) Run(ctx context.Context, spec CommandSpec) ([]byte, error) 
 				}
 			}
 		case "pipe-pane":
-			fields := strings.Split(strings.TrimSpace(r.display), "\t")
+			fields := strings.Split(strings.TrimSpace(r.display), tmuxFieldSeparator)
 			if len(fields) == 4 || len(fields) == 5 {
 				// A shell command enables capture; tmux's no-command form
 				// disables an existing pane pipe.
@@ -126,7 +126,7 @@ func (r *fakeRunner) Run(ctx context.Context, spec CommandSpec) ([]byte, error) 
 				if len(spec.Args) > 3 {
 					fields[pipeIndex] = "1"
 				}
-				r.display = strings.Join(fields, "\t") + "\n"
+				r.display = strings.Join(fields, tmuxFieldSeparator) + "\n"
 			}
 		case "display-message":
 			identity := r.identities[optionValue(spec.Args, "-t")]
@@ -134,15 +134,15 @@ func (r *fakeRunner) Run(ctx context.Context, spec CommandSpec) ([]byte, error) 
 			if identity != nil {
 				switch {
 				case strings.Contains(format, "pane_dead"):
-					displayFields := strings.Split(strings.TrimSpace(r.display), "\t")
+					displayFields := strings.Split(strings.TrimSpace(r.display), tmuxFieldSeparator)
 					if strings.Contains(format, "pane_dead_signal") && len(displayFields) == 4 {
 						displayFields = append(displayFields[:2], append([]string{""}, displayFields[2:]...)...)
 					}
-					output = []byte(identity.sessionID + "\t" + identity.paneID + "\t" + identity.owner + "\t" + strings.Join(displayFields, "\t") + "\n")
+					output = []byte(identity.sessionID + tmuxFieldSeparator + identity.paneID + tmuxFieldSeparator + identity.owner + tmuxFieldSeparator + strings.Join(displayFields, tmuxFieldSeparator) + "\n")
 				case strings.Contains(format, "window_id"):
-					output = []byte(identity.sessionID + "\t" + identity.windowID + "\t" + identity.paneID + "\t" + identity.owner + "\n")
+					output = []byte(identity.sessionID + tmuxFieldSeparator + identity.windowID + tmuxFieldSeparator + identity.paneID + tmuxFieldSeparator + identity.owner + "\n")
 				default:
-					output = []byte(identity.sessionID + "\t" + identity.owner + "\n")
+					output = []byte(identity.sessionID + tmuxFieldSeparator + identity.owner + "\n")
 				}
 			}
 		case "capture-pane":
@@ -583,9 +583,9 @@ func TestManagerCleanupOnSuccessOnlyAndExactlyOnce(t *testing.T) {
 		cleanup  bool
 		wantKill bool
 	}{
-		{name: "success cleanup", status: "1\t0\t0\t0\n", cleanup: true, wantKill: true},
-		{name: "success retained", status: "1\t0\t0\t0\n", cleanup: false},
-		{name: "failure retained", status: "1\t7\t0\t0\n", cleanup: true},
+		{name: "success cleanup", status: "1|0|0|0\n", cleanup: true, wantKill: true},
+		{name: "success retained", status: "1|0|0|0\n", cleanup: false},
+		{name: "failure retained", status: "1|7|0|0\n", cleanup: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			runner := newFakeRunner()
@@ -767,7 +767,7 @@ func TestManagerMonitorStopsAfterPersistentOwnershipLossWithoutKilling(t *testin
 	identity := runner.identities[target.sessionID]
 	// A hostile marker containing a field separator makes the inspection shape
 	// malformed as well as mismatched; it must still terminalize supervision.
-	identity.owner = "foreign\towner"
+	identity.owner = "foreign|owner"
 	runner.mu.Unlock()
 
 	deadline := time.NewTimer(2 * time.Second)
@@ -1042,11 +1042,11 @@ func TestParseSnapshotStates(t *testing.T) {
 		attached bool
 		exitCode *int
 	}{
-		{text: "0\t\t0\n", status: terminal.StatusDetached, running: true},
-		{text: "0\t\t2\n", status: terminal.StatusAttached, running: true, attached: true},
-		{text: "1\t0\t0\n", status: terminal.StatusExited, exitCode: intPointer(0)},
-		{text: "1\t42\t0\n", status: terminal.StatusFailed, exitCode: intPointer(42)},
-		{text: "1\t\tTERM\t0\n", status: terminal.StatusFailed},
+		{text: "0||0\n", status: terminal.StatusDetached, running: true},
+		{text: "0||2\n", status: terminal.StatusAttached, running: true, attached: true},
+		{text: "1|0|0\n", status: terminal.StatusExited, exitCode: intPointer(0)},
+		{text: "1|42|0\n", status: terminal.StatusFailed, exitCode: intPointer(42)},
+		{text: "1||TERM|0\n", status: terminal.StatusFailed},
 	} {
 		snapshot, err := parseSnapshot("id", test.text)
 		if err != nil {
@@ -1056,10 +1056,10 @@ func TestParseSnapshotStates(t *testing.T) {
 			t.Fatalf("parse %q = %#v", test.text, snapshot)
 		}
 	}
-	if _, err := parseSnapshot("id", "1\t\t\t0\n"); !errors.Is(err, errPaneExitPending) {
+	if _, err := parseSnapshot("id", "1|||0\n"); !errors.Is(err, errPaneExitPending) {
 		t.Fatalf("pending dead-pane status error = %v, want %v", err, errPaneExitPending)
 	}
-	for _, invalid := range []string{"", "0\t0", "x\t0\t0", "1\tx\t0", "0\t\t-1"} {
+	for _, invalid := range []string{"", "0|0", "x|0|0", "1|x|0", "0||-1"} {
 		if _, err := parseSnapshot("id", invalid); err == nil {
 			t.Fatalf("invalid snapshot %q accepted", invalid)
 		}
@@ -1080,7 +1080,7 @@ func TestManagerTreatsStableDeadPaneWithoutWaitStatusAsUnknownExit(t *testing.T)
 	}
 	// tmux 3.4 can leave both pane_dead_status and pane_dead_signal empty
 	// after pane_dead becomes stable. Nil ExitCode means unknown, not success.
-	runner.setDisplay("1\t\t0\t1\n")
+	runner.setDisplay("1||0|1\n")
 	exit := waitForExitEvent(t, events, info.ID)
 	if exit.Metadata["failed"] == "true" || exit.Metadata["exit_code"] != "" {
 		t.Fatalf("unknown exit invented an outcome: %#v", exit)
@@ -1099,7 +1099,7 @@ func TestManagerRestoresDeadPipeAndRevalidatesIt(t *testing.T) {
 	if got := len(runner.callsFor("pipe-pane")); got != 1 {
 		t.Fatalf("initial pipe-pane calls = %d, want 1", got)
 	}
-	runner.setDisplay("0\t\t0\t0\n")
+	runner.setDisplay("0||0|0\n")
 	snapshot, err := manager.Snapshot(context.Background(), "pipe-agent")
 	if err != nil {
 		t.Fatalf("Snapshot did not restore pipe: %v", err)
@@ -1115,13 +1115,13 @@ func TestManagerRestoresDeadPipeAndRevalidatesIt(t *testing.T) {
 
 func TestParseIdentityRequiresImmutableTmuxIDs(t *testing.T) {
 	want := tmuxIdentity{sessionID: "$12", windowID: "@34", paneID: "%56"}
-	got, err := parseIdentity("$12\t@34\t%56\n")
+	got, err := parseIdentity("$12|@34|%56\n")
 	if err != nil || got != want {
 		t.Fatalf("parseIdentity = %#v, %v; want %#v", got, err, want)
 	}
 	for _, invalid := range []string{
-		"", "name\t@1\t%1", "$1\twindow\t%1", "$1\t@1\tpane",
-		"$-1\t@1\t%1", "$1\t@1", "$1\t@1\t%1\textra",
+		"", "name|@1|%1", "$1|window|%1", "$1|@1|pane",
+		"$-1|@1|%1", "$1|@1", "$1|@1|%1|extra",
 	} {
 		if _, err := parseIdentity(invalid); err == nil {
 			t.Fatalf("malformed identity %q accepted", invalid)
@@ -1135,13 +1135,13 @@ func TestExecRunnerKeepsDiagnosticsOutOfMachineReadableOutput(t *testing.T) {
 		Path: "/bin/sh",
 		Args: []string{
 			"-c",
-			`printf '%s\n' 'non-fatal tmux diagnostic' >&2; printf '$12\t@34\t%%56\n'`,
+			`printf '%s\n' 'non-fatal tmux diagnostic' >&2; printf '$12|@34|%%56\n'`,
 		},
 	})
 	if err != nil {
 		t.Fatalf("execRunner.Run: %v", err)
 	}
-	want := "$12\t@34\t%56\n"
+	want := "$12|@34|%56\n"
 	if got := string(output); got != want {
 		t.Fatalf("machine-readable output = %q, want %q", got, want)
 	}
@@ -1272,3 +1272,31 @@ func drainEvents(events <-chan session.Event) {
 }
 
 func intPointer(value int) *int { return &value }
+
+// TestTmuxFieldSeparatorIsPrintable guards the separator on every platform and
+// every tmux version, including CI runners old enough not to reproduce the
+// rewrite themselves.
+//
+// tmux sanitizes unprintable bytes while rendering a format, so a control
+// character silently corrupts every identity, ownership and snapshot response.
+// The integration matrix catches that only on a tmux new enough to perform the
+// rewrite; this unit test encodes the underlying rule unconditionally.
+func TestTmuxFieldSeparatorIsPrintable(t *testing.T) {
+	if tmuxFieldSeparator == "" {
+		t.Fatal("tmux field separator is empty")
+	}
+	for _, character := range tmuxFieldSeparator {
+		if character < 0x21 || character > 0x7e {
+			t.Fatalf("tmux field separator %q contains %q, which tmux may rewrite in format output; "+
+				"use a printable ASCII character that cannot appear in a tmux ID, number or hex token",
+				tmuxFieldSeparator, character)
+		}
+	}
+	// The separator must also be absent from every value it delimits: tmux IDs,
+	// decimal numbers, signal names and the hex owner token.
+	for _, value := range []string{"$12", "@34", "%56", "0", "1", "42", "TERM", "0123456789abcdef"} {
+		if strings.Contains(value, tmuxFieldSeparator) {
+			t.Fatalf("tmux field separator %q occurs inside field value %q", tmuxFieldSeparator, value)
+		}
+	}
+}

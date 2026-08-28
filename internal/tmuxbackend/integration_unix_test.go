@@ -64,10 +64,15 @@ func TestTmuxIntegrationLifecyclePromptInputAndExternalSessionIsolation(t *testi
 	// version and startup lifecycle deterministic across repeated test runs.
 	t.Setenv("TMUX_TMPDIR", socketRoot)
 	// An inherited TMUX points directly at its parent socket and takes priority
-	// over TMUX_TMPDIR. Clear the ambient nesting metadata, then also pass -S in
+	// over TMUX_TMPDIR. Remove the ambient nesting metadata, then also pass -S in
 	// the wrapper so every command has an explicit, test-owned socket target.
-	t.Setenv("TMUX", "")
-	t.Setenv("TMUX_PANE", "")
+	//
+	// These must be unset, not set to the empty string: tmux renders a format
+	// differently depending on whether TMUX is present, and a Relayer launched
+	// from an ordinary shell never has it. Setting it empty made this test pass
+	// while the tmux backend was unable to start on tmux 3.7.
+	unsetEnvForTest(t, "TMUX")
+	unsetEnvForTest(t, "TMUX_PANE")
 	privateSocketPath := filepath.Join(socketRoot, "relayer.sock")
 	isolatedTmuxPath := filepath.Join(runtimeRoot, "isolated tmux")
 	tmuxWrapper := "#!/bin/sh\nexec " + quotePOSIX(tmuxPath) + " -f /dev/null -S " + quotePOSIX(privateSocketPath) + " \"$@\"\n"
@@ -219,15 +224,129 @@ func TestTmuxIntegrationLifecyclePromptInputAndExternalSessionIsolation(t *testi
 	pipeState, err := exec.Command(
 		isolatedTmuxPath,
 		"display-message", "-p", "-t", persistentPaneID,
-		"#{session_id}\t#{pane_dead}\t#{pane_pipe}",
+		tmuxFormat("#{session_id}", "#{pane_dead}", "#{pane_pipe}"),
 	).CombinedOutput()
 	if err != nil {
 		t.Fatalf("inspect persistent pane after Close: %v (%s)", err, pipeState)
 	}
-	if got, want := strings.TrimSpace(string(pipeState)), persistentSessionID+"\t0\t0"; got != want {
+	if got, want := strings.TrimSpace(string(pipeState)), persistentSessionID+tmuxFieldSeparator+"0"+tmuxFieldSeparator+"0"; got != want {
 		t.Fatalf("persistent pane state after Close = %q, want %q", got, want)
 	}
 	if output, err := exec.Command(isolatedTmuxPath, "has-session", "-t", persistentSessionID).CombinedOutput(); err != nil {
 		t.Fatalf("persistent session did not survive Close: %v (%s)", err, output)
+	}
+}
+
+// unsetEnvForTest removes a variable for the duration of the test and restores
+// the ambient value afterwards. t.Setenv cannot express absence, and absence is
+// the production condition for TMUX.
+func unsetEnvForTest(t *testing.T, name string) {
+	t.Helper()
+	previous, existed := os.LookupEnv(name)
+	if err := os.Unsetenv(name); err != nil {
+		t.Fatalf("unset %s: %v", name, err)
+	}
+	t.Cleanup(func() {
+		if existed {
+			_ = os.Setenv(name, previous)
+			return
+		}
+		_ = os.Unsetenv(name)
+	})
+}
+
+// TestTmuxFormatSeparatorSurvivesEveryAmbientTmuxVariable pins the wire contract
+// every identity, ownership and snapshot parser depends on.
+//
+// tmux sanitizes unprintable bytes while rendering a format. On tmux 3.7 a TAB
+// becomes "_" whenever TMUX is absent from the environment, so the previous
+// TAB-separated formats made Manager.Start fail with "identifiants immuables
+// tmux invalides" for every user running Relayer from an ordinary shell. The
+// regression was invisible because the integration test set TMUX to the empty
+// string, and because CI runners ship tmux 3.4.
+//
+// The separator must therefore survive all three ambient states, not just the
+// one a test happens to create.
+func TestTmuxFormatSeparatorSurvivesEveryAmbientTmuxVariable(t *testing.T) {
+	tmuxPath, err := exec.LookPath("tmux")
+	if err != nil {
+		if os.Getenv("RELAYER_REQUIRE_TMUX") == "1" {
+			t.Fatalf("tmux is required in this environment: %v", err)
+		}
+		t.Skipf("tmux separator contract skipped: %v", err)
+	}
+
+	for _, ambient := range []struct {
+		name  string
+		value string
+		set   bool
+	}{
+		{name: "absent"},
+		{name: "empty", value: "", set: true},
+		{name: "foreign", value: "/nonexistent/foreign.sock,1,0", set: true},
+	} {
+		t.Run(ambient.name, func(t *testing.T) {
+			socketRoot, err := os.MkdirTemp("", "rtmx-sep-")
+			if err != nil {
+				t.Fatalf("create private tmux socket root: %v", err)
+			}
+			if err := os.Chmod(socketRoot, 0o700); err != nil {
+				t.Fatalf("restrict private tmux socket root: %v", err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(socketRoot) })
+			t.Setenv("TMUX_TMPDIR", socketRoot)
+			unsetEnvForTest(t, "TMUX_PANE")
+			if ambient.set {
+				t.Setenv("TMUX", ambient.value)
+			} else {
+				unsetEnvForTest(t, "TMUX")
+			}
+
+			socketPath := filepath.Join(socketRoot, "relayer.sock")
+			wrapper := filepath.Join(socketRoot, "isolated tmux")
+			script := "#!/bin/sh\nexec " + quotePOSIX(tmuxPath) + " -f /dev/null -S " + quotePOSIX(socketPath) + " \"$@\"\n"
+			if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+				t.Fatalf("write isolated tmux wrapper: %v", err)
+			}
+			t.Cleanup(func() { _ = exec.Command(wrapper, "kill-server").Run() })
+
+			output, err := exec.Command(wrapper,
+				"new-session", "-d", "-P", "-F",
+				tmuxFormat("#{session_id}", "#{window_id}", "#{pane_id}"),
+				"-s", "relayer-separator-contract", "-x", "80", "-y", "24",
+				"exec /bin/sleep 30",
+			).Output()
+			if err != nil {
+				t.Fatalf("new-session: %v", err)
+			}
+			if !strings.Contains(string(output), tmuxFieldSeparator) {
+				t.Fatalf("tmux rewrote the field separator: %q (tmux must pass %q through unchanged)",
+					string(output), tmuxFieldSeparator)
+			}
+			identity, err := parseIdentity(string(output))
+			if err != nil {
+				t.Fatalf("parseIdentity(%q): %v", string(output), err)
+			}
+			if !validTmuxID(identity.sessionID, '$') || !validTmuxID(identity.windowID, '@') ||
+				!validTmuxID(identity.paneID, '%') {
+				t.Fatalf("identity = %#v", identity)
+			}
+
+			// The ownership marker round-trips through the same format, and its
+			// hex token must not be split or rewritten either.
+			if _, err := exec.Command(wrapper, "set-option", "-t", identity.sessionID,
+				"@relayer_owner", "0123456789abcdef").Output(); err != nil {
+				t.Fatalf("set-option: %v", err)
+			}
+			owned, err := exec.Command(wrapper, "display-message", "-p", "-t", identity.sessionID,
+				tmuxFormat("#{session_id}", "#{@relayer_owner}")).Output()
+			if err != nil {
+				t.Fatalf("display-message: %v", err)
+			}
+			fields := splitTmuxFields(string(owned))
+			if len(fields) != 2 || fields[0] != identity.sessionID || fields[1] != "0123456789abcdef" {
+				t.Fatalf("ownership round trip = %q, fields %#v", string(owned), fields)
+			}
+		})
 	}
 }

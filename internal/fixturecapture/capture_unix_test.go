@@ -715,3 +715,24 @@ func assertPrivateRootsRemoved(t *testing.T, recordPath, parentHome, parentTemp 
 		}
 	}
 }
+
+// TestTmuxFieldSeparatorIsPrintable mirrors the tmuxbackend guard of the same
+// name. The capture tool builds a deliberately minimal child environment, so it
+// is even more exposed to tmux rewriting an unprintable separator in format
+// output than the runtime backend is.
+func TestTmuxFieldSeparatorIsPrintable(t *testing.T) {
+	if tmuxFieldSeparator == "" {
+		t.Fatal("tmux field separator is empty")
+	}
+	for _, character := range tmuxFieldSeparator {
+		if character < 0x21 || character > 0x7e {
+			t.Fatalf("tmux field separator %q contains %q, which tmux may rewrite in format output",
+				tmuxFieldSeparator, character)
+		}
+	}
+	for _, value := range []string{"$0", "%0", "30666"} {
+		if strings.Contains(value, tmuxFieldSeparator) {
+			t.Fatalf("tmux field separator %q occurs inside field value %q", tmuxFieldSeparator, value)
+		}
+	}
+}
