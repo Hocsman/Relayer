@@ -183,15 +183,13 @@ build commands, platform status, and rendering limitations.
 
 ### Releases
 
-There is no published release at the time of writing. After an authorized tag
-has been published, release archives and checksums may appear on the
-[Releases page](https://github.com/Hocsman/Relayer/releases); until then, that
-page may be empty. Do not treat an unreviewed third-party binary as an official
-Relayer release.
+Release archives, checksums, signatures and SBOMs are published on the
+[Releases page](https://github.com/Hocsman/Relayer/releases) for authorized tags
+only. Do not treat an unreviewed third-party binary as an official Relayer
+release; verify the signature as shown below.
 
-Once an alpha release such as `v0.1.0-alpha` actually exists, select a published
-`OS` (`linux` or `darwin`) and `ARCH` (`amd64` or `arm64`), then download and
-verify the matching archive:
+Select a published `OS` (`linux` or `darwin`) and `ARCH` (`amd64` or `arm64`),
+then download and verify the matching archive:
 
 ```bash
 VERSION=0.1.0-alpha

@@ -6,7 +6,12 @@ without implying semantic-versioning stability before the first release.
 
 ## [Unreleased]
 
-No release tag has been published at the time of writing.
+Nothing yet.
+
+## [0.1.0-alpha] - 2026-08-28
+
+First tagged release. Alpha: configuration, adapter, backend and audit APIs may
+still change without compatibility guarantees.
 
 ### Added
 
@@ -220,4 +225,5 @@ No release tag has been published at the time of writing.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/commits/main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.1.0-alpha...main
+[0.1.0-alpha]: https://github.com/Hocsman/Relayer/releases/tag/v0.1.0-alpha
