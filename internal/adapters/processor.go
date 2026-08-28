@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -124,7 +126,7 @@ func (p *Processor) Consume(chunk []byte) error {
 		carry = ""
 	}
 	p.ansiCarry = carry
-	ansiFree := stripansi.Strip(complete)
+	ansiFree := stripansi.Strip(expandCursorForward(complete))
 	detection := normalizeDetectionText(ansiFree)
 	rendered := normalizeRenderedText(ansiFree)
 	if rendered != "" {
@@ -171,7 +173,7 @@ func (p *Processor) ReconcileSnapshot(raw []byte) (*Event, bool, error) {
 	if len(raw) > detectionWindowSize {
 		raw = raw[len(raw)-detectionWindowSize:]
 	}
-	ansiFree := stripansi.Strip(string(raw))
+	ansiFree := stripansi.Strip(expandCursorForward(string(raw)))
 	normalized := normalizeDetectionText(ansiFree)
 	active, _ := snapshotActiveLine(normalized)
 	fingerprint := p.snapshotFingerprint(normalized)
@@ -446,4 +448,50 @@ func ansiSequenceEnd(input string, start int) (int, bool) {
 	default:
 		return start + 2, true
 	}
+}
+
+// cursorForwardPattern matches CUF (cursor forward), the escape a program uses
+// to move right instead of writing spaces.
+var cursorForwardPattern = regexp.MustCompile(`\x1b\[([0-9]*)C`)
+
+// maxCursorForwardExpansion bounds one substitution. Terminal output is
+// untrusted, and the parameter is caller-controlled: without a bound, a single
+// short sequence could inflate the detection window arbitrarily.
+const maxCursorForwardExpansion = 256
+
+// expandCursorForward replaces a cursor-forward escape with the spaces it
+// visually produces, before the ANSI stripper deletes it outright.
+//
+// Some agents lay out a prompt by moving the cursor rather than emitting
+// spaces. Claude Code 2.1.59 does: its recorded prompts contain no literal
+// space at all, only ESC[1C between words. Stripping those without
+// substitution leaves the detector matching against
+// "DoyouwanttousethisAPIkey?", so any configured pattern containing a space
+// can never fire - including the shipped defaults. Words survive, spacing does
+// not, and nothing reports the difference.
+//
+// Only horizontal movement is modelled. Absolute positioning and vertical
+// movement need a screen model, which this package deliberately does not have.
+func expandCursorForward(value string) string {
+	if !strings.Contains(value, "\x1b[") {
+		return value
+	}
+	return cursorForwardPattern.ReplaceAllStringFunc(value, func(match string) string {
+		digits := match[2 : len(match)-1]
+		count := 1
+		if digits != "" {
+			parsed, err := strconv.Atoi(digits)
+			if err != nil {
+				return match
+			}
+			count = parsed
+		}
+		if count <= 0 {
+			return ""
+		}
+		if count > maxCursorForwardExpansion {
+			count = maxCursorForwardExpansion
+		}
+		return strings.Repeat(" ", count)
+	})
 }
