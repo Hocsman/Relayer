@@ -1,0 +1,103 @@
+# A worked example of a real Relayer configuration, for `--config`:
+#
+#     ./relayer --config ./examples/local.yaml
+#
+# The repository's own config.yaml is the synthetic default used by the demo
+# and the quick start: it has no agents, which activates the two Bash mocks.
+# This file shows the shape of an actual supervision session instead. Adjust
+# the commands to tools you have installed, then check it without starting
+# anything:
+#
+#     ./relayer doctor --config ./examples/local.yaml
+version: 1
+
+# pty, tmux, or auto. `auto` selects tmux when it is installed and can run a
+# session, and otherwise falls back to PTY with a visible warning.
+backend: auto
+
+sessions:
+  # Detached tmux sessions are removed when Relayer stops. Set this to true to
+  # keep unfinished work running after you quit.
+  persist_on_exit: false
+  cleanup_on_success: true
+
+policies:
+  # Relayer asks a human by default. Automatic decisions are opt-in, per rule,
+  # and several invariants always win over them: credentials and sensitive
+  # events always ask, and an automatic `allow` additionally requires an
+  # explicit `low` risk level.
+  default_action: ask
+
+  # Set to true to evaluate rules and record what they would have done without
+  # ever delivering the decision. Useful when writing new rules.
+  dry_run: false
+
+  rules:
+    # Deny is allowed to be automatic for a valid, non-sensitive confirmation.
+    # `deny` means the adapter's defined refusal, not killing the process.
+    - name: refuse-reviewer-writes
+      match:
+        agent_ids: [reviewer]
+        event_types: [confirmation]
+        sensitive: false
+        text_regex: '(?i)(overwrite|delete|remove)'
+      action: deny
+
+audit:
+  # Local JSONL, off by default in files created before the audit block
+  # existed. `metadata` records lifecycle and decisions; `detailed` adds a
+  # bounded, redacted summary. Neither ever records terminal output, commands,
+  # environment values, or anything you type.
+  enabled: true
+  mode: metadata
+  # Empty selects the private per-user default location. A relative path is
+  # resolved from this file's directory, and Relayer takes ownership of that
+  # path and its rotations: point it at a dedicated file, never an existing
+  # document.
+  path: ""
+  max_file_size_mb: 10
+  max_files: 5
+
+agents:
+  # `command` is an exact argument vector. It does not invoke a shell, so
+  # quoting, globbing, pipes and redirection are not interpreted. Prefer it.
+  - id: builder
+    name: Builder
+    command: ["claude"]
+    cwd: .
+    env:
+      RELAYER_ROLE: builder
+    # `claude` and `codex` are experimental and version-specific; `generic` is
+    # the stable regex adapter and stays the fallback in every case.
+    adapter: generic
+    backend: tmux
+
+  - id: reviewer
+    name: Local reviewer
+    # Relayer never infers a model: name it explicitly.
+    command: ["ollama", "run", "llama3.2"]
+    adapter: generic
+    backend: pty
+
+  # `shell` is mutually exclusive with `command` and explicitly runs
+  # `/bin/sh -c` on supported Unix systems. Treat its text as code.
+  - id: scripted
+    name: Scripted agent
+    shell: 'printf "ready\n"; exec ./local-agent'
+    adapter: generic
+    backend: auto
+
+# Ordered regular expressions tested against the active terminal line. Regex
+# interception is heuristic: it can miss a prompt, and output that merely looks
+# like one can trigger it. Mark anything that reads a secret as sensitive so
+# Relayer masks it and always requires a human.
+intercept_patterns:
+  - pattern: '(?i)overwrite.*\[y/n\]'
+    description: overwrite confirmation
+  - pattern: '(?i)\((?:y|yes)/(?:n|no)\)'
+    description: parenthesised yes/no confirmation
+  - pattern: '(?i)do you want to continue'
+    description: continuation confirmation
+  - pattern: '(?im)password(?: for [^:]{1,64})?:[ \t]*$'
+    description: credential prompt
+    sensitive: true

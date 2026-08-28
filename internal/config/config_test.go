@@ -251,10 +251,12 @@ func TestLoadPromptPatternsRejectsNonStrictOrMalformedYAML(t *testing.T) {
 				"    description: Typo\n",
 		},
 		{
+			// `sensitive` is a known field; this asserts the strict decoder
+			// still rejects anything outside the modeled set.
 			name: "unknown entry field",
 			content: "- pattern: 'ok'\n" +
 				"  description: Known fields only\n" +
-				"  sensitive: true\n",
+				"  severity: high\n",
 		},
 		{
 			name: "mapping pretending to be one entry",

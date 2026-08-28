@@ -10,6 +10,17 @@ No release tag has been published at the time of writing.
 
 ### Added
 
+- `intercept_patterns` entries accept an optional `sensitive: true`, which masks
+  the operator field and forces a human decision. Sensitivity was inferred from
+  the pattern text alone, so a prompt worded outside that word list was entered
+  unmasked with no way to correct it. The inference also now recognizes
+  one-time-code, 2FA/MFA, recovery-code, private-key and seed-phrase wording in
+  English and French. Declaring the field can only escalate: `sensitive: false`
+  never downgrades an inferred secret.
+- `examples/local.yaml`, a worked configuration showing real agents, mixed
+  backends, a policy rule and a sensitive pattern. The README referenced this
+  path but the file did not exist.
+
 - A Bubble Tea supervisor for one to eight local interactive agents, with
   paging, viewport navigation, mouse scrolling, prompt focus, and bounded logs.
 - PTY sessions with process-group ownership, resize propagation, input routing,

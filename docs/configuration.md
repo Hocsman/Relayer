@@ -43,6 +43,28 @@ intercept_patterns:
 synthetic Bash agents. A non-empty list must contain between one and eight
 valid agents.
 
+### Marking a pattern sensitive
+
+A pattern accepts an optional `sensitive: true`:
+
+```yaml
+intercept_patterns:
+  - pattern: '(?i)enter the code we sent you'
+    description: second factor challenge
+    sensitive: true
+```
+
+A sensitive pattern masks the operator field and always requires a human
+decision, whatever the policies say. Relayer also infers sensitivity from the
+pattern and description text, but that inference is a word list: it recognizes
+passwords, passphrases, tokens, API keys, OTP and second-factor vocabulary, and
+nothing else. Declare the field whenever your prompt reads a secret in wording
+the list would miss — otherwise the value is entered unmasked and the event can
+be decided by a policy.
+
+The field only escalates. `sensitive: false` does not turn off a pattern the
+inference already considers sensitive.
+
 The generated configuration file uses mode `0644` on Unix. It is configuration,
 not a secret store. Do not put passwords, tokens, API keys, or other credentials
 in it.
@@ -78,7 +100,7 @@ or regex text.
 | `policies` | No | First-match action rules. |
 | `audit` | No | Local JSONL recorder. |
 | `agents` | Yes | Zero to eight agent specifications. |
-| `intercept_patterns` | Yes | One or more generic adapter regexes. |
+| `intercept_patterns` | Yes | One or more generic adapter regexes, each optionally `sensitive`. |
 
 If `sessions` is omitted, persistence is false and cleanup on success is true.
 If `policies` is omitted, every actionable event defaults to `ask` and dry-run
