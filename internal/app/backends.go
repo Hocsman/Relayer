@@ -19,8 +19,13 @@ import (
 
 type executableLookup func(string) (string, error)
 
+// tmuxProbe reports whether a resolved tmux executable can actually run a
+// session. It is injected so tests never depend on a real tmux server.
+type tmuxProbe func(context.Context, string) error
+
 type backendDependencies struct {
 	lookup         executableLookup
+	probeTmux      tmuxProbe
 	newAudit       func(audit.Config) (*audit.Recorder, error)
 	newAuditForRun func(audit.Config, string) (*audit.Recorder, error)
 	newPTY         func(context.Context, chan<- session.Event, *adapters.Registry, int) (terminal.Backend, error)
@@ -30,6 +35,9 @@ type backendDependencies struct {
 func productionBackendDependencies() backendDependencies {
 	return backendDependencies{
 		lookup: exec.LookPath,
+		probeTmux: func(ctx context.Context, tmuxPath string) error {
+			return tmuxbackend.Probe(ctx, nil, tmuxPath)
+		},
 		newAudit: func(configuration audit.Config) (*audit.Recorder, error) {
 			return audit.Open(configuration)
 		},
@@ -88,21 +96,42 @@ type backendResolution struct {
 
 // resolveAgentBackends replaces every auto selector with a concrete backend
 // before any process starts. An explicitly requested tmux backend fails early
-// when the executable is absent; auto records a visible PTY fallback instead.
-func resolveAgentBackends(specs []agent.Spec, lookup executableLookup) (backendResolution, error) {
+// when the executable is absent or unusable; auto records a visible PTY
+// fallback instead.
+//
+// Availability is established by running tmux, not merely by finding it: a tmux
+// that cannot serve the machine-readable protocol would otherwise be selected
+// here and fail at the first session start, long after startup reported
+// success.
+func resolveAgentBackends(
+	ctx context.Context,
+	specs []agent.Spec,
+	lookup executableLookup,
+	probe tmuxProbe,
+) (backendResolution, error) {
 	if lookup == nil {
 		lookup = exec.LookPath
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	result := backendResolution{Specs: cloneAgentSpecs(specs)}
 	var (
-		lookedUp  bool
-		tmuxPath  string
-		lookupErr error
+		lookedUp    bool
+		tmuxPath    string
+		lookupErr   error
+		probeFailed bool
 	)
 	resolveTmux := func() (string, error) {
 		if !lookedUp {
 			lookedUp = true
 			tmuxPath, lookupErr = lookup("tmux")
+			if lookupErr == nil && probe != nil {
+				if err := probe(ctx, tmuxPath); err != nil {
+					lookupErr = err
+					probeFailed = true
+				}
+			}
 		}
 		return tmuxPath, lookupErr
 	}
@@ -115,6 +144,13 @@ func resolveAgentBackends(specs []agent.Spec, lookup executableLookup) (backendR
 		case agent.BackendTmux:
 			path, err := resolveTmux()
 			if err != nil {
+				if probeFailed {
+					return backendResolution{}, fmt.Errorf(
+						"backend tmux demandé pour l'agent %q, mais tmux ne peut pas exécuter de session: %w",
+						spec.ID,
+						err,
+					)
+				}
 				return backendResolution{}, fmt.Errorf(
 					"backend tmux demandé pour l'agent %q, mais le binaire tmux est introuvable: %w",
 					spec.ID,
@@ -142,9 +178,11 @@ func resolveAgentBackends(specs []agent.Spec, lookup executableLookup) (backendR
 
 	if result.UsedAuto {
 		if result.AutoFallback {
-			result.Warnings = append(result.Warnings,
-				"Backend auto: tmux est indisponible, repli explicite sur PTY.",
-			)
+			message := "Backend auto: tmux est indisponible, repli explicite sur PTY."
+			if probeFailed {
+				message = "Backend auto: tmux est installé mais ne peut pas exécuter de session, repli explicite sur PTY."
+			}
+			result.Warnings = append(result.Warnings, message)
 		} else {
 			result.Warnings = append(result.Warnings,
 				"Backend auto: tmux détecté et sélectionné.",

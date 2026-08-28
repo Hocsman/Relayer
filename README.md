@@ -34,7 +34,9 @@ and network behavior.
   semantic prompt decisions and guarded by an atomic no-pending-event check.
 - A shared, read-only `doctor` preflight for the CLI and GUI that reports the
   effective tools, adapters, backends, policies, platform, and audit readiness
-  without starting an agent or creating a missing configuration.
+  without starting an agent or creating a missing configuration. When tmux is
+  the effective backend it also proves tmux can run a session, inside its own
+  private socket.
 - A stable, product-neutral `generic` regex adapter.
 - Experimental, fixture-backed Claude Code and Codex CLI adapters with the
   stable generic detector retained as fallback.
@@ -100,11 +102,21 @@ Inspect an existing configuration before starting Relayer:
 ./relayer doctor --config config.yaml
 ```
 
-The command performs passive checks only. It does not create a missing
-configuration, open the audit journal, construct a PTY/tmux backend, execute a
-provider CLI, or start an agent. Its report uses agent ordinals and fixed tool
-catalogue labels; commands, environment values, configured names and IDs, full
-paths, and raw dependency errors are omitted.
+The command does not create a missing configuration, open the audit journal,
+construct a PTY/tmux backend, execute a provider CLI, or start an agent. Its
+report uses agent ordinals and fixed tool catalogue labels; commands,
+environment values, configured names and IDs, full paths, and raw dependency
+errors are omitted.
+
+Checks are passive with one deliberate exception. When tmux is the effective
+backend, doctor runs tmux itself: it creates one short-lived session on a
+private socket inside a `0700` temporary directory, reads its identity, and
+removes that session by name. Finding the tmux binary is not evidence that it
+can serve Relayer's machine-readable protocol, and a report that cannot observe
+that difference would announce a healthy backend immediately before startup
+fails. The probe never reads, attaches to, or modifies your tmux server, and
+never calls `kill-server`. An unusable tmux blocks an explicitly requested tmux
+backend and makes `auto` fall back to PTY with a distinct warning.
 
 Exit status is `0` when there is no blocker, including when the report contains
 warnings, and `1` when startup should remain blocked. The desktop GUI exposes

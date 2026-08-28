@@ -16,6 +16,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/intercept"
 	"github.com/Hocsman/Relayer/internal/policy"
+	"github.com/Hocsman/Relayer/internal/tmuxbackend"
 	"github.com/Hocsman/Relayer/internal/toolcatalog"
 )
 
@@ -71,6 +72,9 @@ const (
 	remediationBackendAuto         = "Installez tmux pour activer les sessions détachables."
 	summaryBackendUnavailable      = "Le backend tmux demandé est indisponible."
 	remediationBackend             = "Installez tmux ou choisissez PTY ou auto."
+	summaryBackendUnusable         = "Le backend tmux demandé est installé mais ne peut pas exécuter de session."
+	remediationBackendUnusable     = "Mettez tmux à jour, vérifiez qu'il démarre une session, ou choisissez le backend PTY."
+	summaryBackendAutoUnusable     = "Le backend auto se repliera sur PTY car tmux ne peut pas exécuter de session."
 )
 
 // Check passively validates one effective plan. It never opens an audit sink,
@@ -126,7 +130,7 @@ func Check(ctx context.Context, input Input, options Options) (Report, error) {
 	if err := checkContext(ctx); err != nil {
 		return Report{}, err
 	}
-	checkAgents(ctx, &report, input, options.Detector)
+	checkAgents(ctx, &report, input, options.Detector, options.TmuxProbe)
 	if err := checkContext(ctx); err != nil {
 		return Report{}, err
 	}
@@ -197,6 +201,11 @@ func FailureReport(kind FailureKind, options Options) Report {
 func normalizeOptions(options Options) Options {
 	options.GOOS = normalizeGOOS(options.GOOS)
 	options.GOARCH = normalizeGOARCH(options.GOARCH)
+	if options.TmuxProbe == nil {
+		options.TmuxProbe = func(ctx context.Context, tmuxPath string) error {
+			return tmuxbackend.Probe(ctx, nil, tmuxPath)
+		}
+	}
 	if options.Detector == nil {
 		options.Detector = toolcatalog.DefaultDetector()
 	}
@@ -469,7 +478,13 @@ func checkTools(ctx context.Context, report *Report, detector toolcatalog.Detect
 	}
 }
 
-func checkAgents(ctx context.Context, report *Report, input Input, detector toolcatalog.Detector) {
+func checkAgents(
+	ctx context.Context,
+	report *Report,
+	input Input,
+	detector toolcatalog.Detector,
+	probe TmuxProbeFunc,
+) {
 	registry, registryErr := adapters.NewRegistry(input.Configuration.Patterns)
 	needsTmux := false
 	for _, spec := range input.Specs {
@@ -479,8 +494,14 @@ func checkAgents(ctx context.Context, report *Report, input Input, detector tool
 		}
 	}
 	tmuxStatus := toolcatalog.InstallUnknown
+	// tmuxUsable is only meaningful when tmuxStatus reports an installation.
+	tmuxUsable := false
 	if needsTmux {
-		tmuxStatus, _ = detectStatus(ctx, detector, []string{"tmux"})
+		var tmuxPath string
+		tmuxStatus, tmuxPath = detectTmux(ctx, detector)
+		if tmuxStatus == toolcatalog.InstallInstalled {
+			tmuxUsable = probe == nil || probe(ctx, tmuxPath) == nil
+		}
 	}
 
 	for index, spec := range input.Specs {
@@ -501,7 +522,7 @@ func checkAgents(ctx context.Context, report *Report, input Input, detector tool
 		}
 		effectiveBackend := spec.Backend
 		if spec.Backend == agent.BackendAuto {
-			if tmuxStatus == toolcatalog.InstallInstalled {
+			if tmuxStatus == toolcatalog.InstallInstalled && tmuxUsable {
 				effectiveBackend = agent.BackendTmux
 			} else {
 				effectiveBackend = agent.BackendPTY
@@ -543,17 +564,24 @@ func checkAgents(ctx context.Context, report *Report, input Input, detector tool
 			info.Backend = agent.BackendPTY
 			addCheck(report, prefix+".backend", ScopeBackend, CheckPass, summaryBackendPTY, "")
 		case agent.BackendTmux:
-			if tmuxStatus == toolcatalog.InstallInstalled {
+			switch {
+			case tmuxStatus == toolcatalog.InstallInstalled && tmuxUsable:
 				info.Backend = agent.BackendTmux
 				addCheck(report, prefix+".backend", ScopeBackend, CheckPass, summaryBackendTmux, "")
-			} else {
+			case tmuxStatus == toolcatalog.InstallInstalled:
+				addCheck(report, prefix+".backend", ScopeBackend, CheckBlock, summaryBackendUnusable, remediationBackendUnusable)
+			default:
 				addCheck(report, prefix+".backend", ScopeBackend, CheckBlock, summaryBackendUnavailable, remediationBackend)
 			}
 		case agent.BackendAuto:
-			if tmuxStatus == toolcatalog.InstallInstalled {
+			switch {
+			case tmuxStatus == toolcatalog.InstallInstalled && tmuxUsable:
 				info.Backend = agent.BackendTmux
 				addCheck(report, prefix+".backend", ScopeBackend, CheckPass, summaryBackendTmux, "")
-			} else {
+			case tmuxStatus == toolcatalog.InstallInstalled:
+				info.Backend = agent.BackendPTY
+				addCheck(report, prefix+".backend", ScopeBackend, CheckWarning, summaryBackendAutoUnusable, remediationBackendUnusable)
+			default:
 				info.Backend = agent.BackendPTY
 				addCheck(report, prefix+".backend", ScopeBackend, CheckWarning, summaryBackendAutoFallback, remediationBackendAuto)
 			}
@@ -562,6 +590,16 @@ func checkAgents(ctx context.Context, report *Report, input Input, detector tool
 		}
 		report.Agents = append(report.Agents, info)
 	}
+}
+
+// detectTmux returns the passive installation status of tmux and, when it is
+// installed, the discovered path the probe must exercise.
+func detectTmux(ctx context.Context, detector toolcatalog.Detector) (toolcatalog.InstallStatus, string) {
+	detection, err := detector.Detect(ctx, []string{"tmux"})
+	if err != nil || !validPassiveDetection(detection) {
+		return toolcatalog.InstallUnknown, ""
+	}
+	return detection.Status, detection.Path
 }
 
 func detectStatus(ctx context.Context, detector toolcatalog.Detector, candidates []string) (toolcatalog.InstallStatus, bool) {

@@ -865,6 +865,10 @@ func testOptions(detector toolcatalog.Detector) Options {
 	return Options{
 		Detector: detector, GOOS: "darwin", GOARCH: "arm64",
 		OwnerCheck: func(fs.FileInfo) OwnerStatus { return OwnerCurrent },
+		// Detector stubs point at fixture executables that are not tmux, so the
+		// default probe would reject every one of them. Tests about discovery
+		// assume a healthy tmux; tests about usability override this.
+		TmuxProbe: func(context.Context, string) error { return nil },
 	}
 }
 
@@ -938,4 +942,113 @@ func statTable(results map[string]statResult) LstatFunc {
 		}
 		return result.info, result.err
 	}
+}
+
+// tmuxOnlyDetector reports tmux as installed at path, and nothing else.
+func tmuxOnlyDetector(path string) toolcatalog.Detector {
+	return detectorFunc(func(ctx context.Context, candidates []string) (toolcatalog.Detection, error) {
+		if len(candidates) == 1 && candidates[0] == "tmux" {
+			return toolcatalog.Detection{
+				Status: toolcatalog.InstallInstalled, Executable: "tmux", Path: path,
+			}, nil
+		}
+		for _, candidate := range candidates {
+			if filepath.Base(candidate) == "runner" {
+				return installed(candidate), nil
+			}
+		}
+		return detectorWithInstalled().Detect(ctx, candidates)
+	})
+}
+
+// A tmux that exists but cannot run a session must not be reported as a healthy
+// backend. Reporting readiness here sends the operator into an opaque startup
+// failure that the preflight exists to prevent.
+func TestCheckBlocksExplicitTmuxThatCannotRunASession(t *testing.T) {
+	input := validInput()
+	input.Configuration.Backend = agent.BackendTmux
+	input.Specs[0].Backend = agent.BackendTmux
+
+	options := testOptions(tmuxOnlyDetector("/usr/bin/tmux"))
+	probed := ""
+	options.TmuxProbe = func(_ context.Context, path string) error {
+		probed = path
+		return errors.New("unusable")
+	}
+
+	report, err := Check(context.Background(), input, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probed != "/usr/bin/tmux" {
+		t.Fatalf("probed path = %q, want the discovered tmux path", probed)
+	}
+	if report.Status != StatusBlocked {
+		t.Fatalf("status = %q, want blocked", report.Status)
+	}
+	backend := lastBackendCheck(t, report)
+	if backend.Status != CheckBlock || backend.Summary != summaryBackendUnusable {
+		t.Fatalf("backend check = %#v", backend)
+	}
+	// The closed display vocabulary must accept the new outcome.
+	if err := ValidateReport(report); err != nil {
+		t.Fatalf("ValidateReport: %v", err)
+	}
+}
+
+func TestCheckAutoFallsBackToPTYWhenTmuxCannotRunASession(t *testing.T) {
+	input := validInput()
+	input.Configuration.Backend = agent.BackendAuto
+	input.Specs[0].Backend = agent.BackendAuto
+
+	options := testOptions(tmuxOnlyDetector("/usr/bin/tmux"))
+	options.TmuxProbe = func(context.Context, string) error { return errors.New("unusable") }
+
+	report, err := Check(context.Background(), input, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Agents[0].Backend != agent.BackendPTY {
+		t.Fatalf("effective backend = %q, want PTY fallback", report.Agents[0].Backend)
+	}
+	backend := lastBackendCheck(t, report)
+	if backend.Status != CheckWarning || backend.Summary != summaryBackendAutoUnusable {
+		t.Fatalf("backend check = %#v", backend)
+	}
+	// An unusable tmux is a warning, not a blocker: PTY still works.
+	if report.Status != StatusWarning {
+		t.Fatalf("status = %q, want warning", report.Status)
+	}
+	if err := ValidateReport(report); err != nil {
+		t.Fatalf("ValidateReport: %v", err)
+	}
+}
+
+// The probe executes a program, so it must never run for a configuration that
+// cannot use tmux at all.
+func TestCheckDoesNotProbeTmuxForPTYOnlyConfigurations(t *testing.T) {
+	input := validInput()
+	options := testOptions(detectorWithInstalled("runner"))
+	probeCalls := 0
+	options.TmuxProbe = func(context.Context, string) error {
+		probeCalls++
+		return nil
+	}
+	if _, err := Check(context.Background(), input, options); err != nil {
+		t.Fatal(err)
+	}
+	if probeCalls != 0 {
+		t.Fatalf("tmux probe calls = %d, want zero for a PTY-only configuration", probeCalls)
+	}
+}
+
+func lastBackendCheck(t *testing.T, report Report) CheckResult {
+	t.Helper()
+	for index := len(report.Checks) - 1; index >= 0; index-- {
+		if report.Checks[index].Scope == ScopeBackend {
+			return report.Checks[index]
+		}
+	}
+	t.Fatal("report contains no backend check")
+	return CheckResult{}
 }
