@@ -73,3 +73,35 @@ describe("AgentCard safe line path", () => {
     expect(JSON.stringify(uncertain)).not.toContain(secret);
   });
 });
+
+// A supervision tool that renders a scripted Bash mock exactly like a real
+// coding agent tells the operator a lie they cannot detect. The distinction
+// has to survive on screen, not only in a startup log.
+describe("AgentCard simulated agents", () => {
+  const render = (value: AgentState) =>
+    renderToStaticMarkup(
+      <AgentCard
+        runID="run-1"
+        agent={value}
+        onResize={async () => {}}
+        onStop={async () => {}}
+        onOpenEvent={() => {}}
+        onSubmitLine={async () => {}}
+      />,
+    );
+
+  it("marks a substituted agent and says so where supervision is claimed", () => {
+    const markup = render({ ...agent(), simulated: true });
+    expect(markup).toContain("agent-card--simulated");
+    expect(markup).toContain("Simulé");
+    expect(markup).toContain("Agent de démonstration");
+    expect(markup).not.toContain("Supervision active");
+  });
+
+  it("leaves a real agent unmarked", () => {
+    const markup = render(agent());
+    expect(markup).not.toContain("agent-card--simulated");
+    expect(markup).not.toContain("simulated-tag");
+    expect(markup).toContain("Supervision active");
+  });
+});

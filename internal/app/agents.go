@@ -11,7 +11,12 @@ import (
 const defaultMockScript = `echo "🤖 Agent démarré..."; for i in {1..20}; do echo "Génération ligne $i..."; sleep 0.1; done; echo "⚠️ Attention: Overwrite file? [Y/n]"; IFS= read -r ans; echo "✅ Vous avez répondu : $ans. Fin de la tâche."`
 
 type agentResolution struct {
-	Specs          []agent.Spec
+	Specs []agent.Spec
+	// Simulated is parallel to Specs and marks the agents whose command is the
+	// built-in Bash mock. Names are not identifying — a configuration may give
+	// two agents the same one — so anything that has to tell a mock from a real
+	// agent per session reads this rather than MockAgentNames.
+	Simulated      []bool
 	MockAgentNames []string
 	Warnings       []string
 }
@@ -30,7 +35,12 @@ func resolveAgentPlans(configuration config.Result, cli options, workingDirector
 	}
 	if len(result.Specs) == 0 {
 		result.Specs = defaultAgentSpecs(workingDirectory, backend)
-		result.MockAgentNames = []string{result.Specs[0].Name, result.Specs[1].Name}
+	}
+	result.Simulated = make([]bool, len(result.Specs))
+	if len(configuration.Agents) == 0 {
+		for index := range result.Simulated {
+			result.Simulated[index] = true
+		}
 	}
 
 	for _, override := range []struct {
@@ -55,12 +65,12 @@ func resolveAgentPlans(configuration config.Result, cli options, workingDirector
 		}
 
 		spec := &result.Specs[override.index]
-		removeName(&result.MockAgentNames, spec.Name)
 		if strings.TrimSpace(override.value) == "" {
 			spec.Command = mockCommand()
 			spec.Shell = ""
-			result.MockAgentNames = append(result.MockAgentNames, spec.Name)
+			result.Simulated[override.index] = true
 		} else {
+			result.Simulated[override.index] = false
 			arguments, err := splitLegacyCommand(override.value)
 			if err != nil {
 				return agentResolution{}, fmt.Errorf("invalid %s: %w", override.flag, err)
@@ -85,6 +95,14 @@ func resolveAgentPlans(configuration config.Result, cli options, workingDirector
 		return agentResolution{}, fmt.Errorf("relayer supports between 1 and 8 agents, got: %d", len(validated))
 	}
 	result.Specs = validated
+	// Derived last so the two representations cannot drift: MockAgentNames is
+	// what the startup log prints, Simulated is what the interface reads.
+	result.MockAgentNames = nil
+	for index, spec := range result.Specs {
+		if result.Simulated[index] {
+			result.MockAgentNames = append(result.MockAgentNames, spec.Name)
+		}
+	}
 	return result, nil
 }
 
@@ -111,14 +129,4 @@ func defaultAgentSpecs(workingDirectory, backend string) []agent.Spec {
 
 func mockCommand() []string {
 	return []string{"bash", "-c", defaultMockScript}
-}
-
-func removeName(names *[]string, name string) {
-	filtered := (*names)[:0]
-	for _, candidate := range *names {
-		if candidate != name {
-			filtered = append(filtered, candidate)
-		}
-	}
-	*names = filtered
 }

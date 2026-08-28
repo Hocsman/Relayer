@@ -73,6 +73,17 @@ export function SupervisorPanel({
           </dl>
         </section>
 
+        {(state.notices?.length ?? 0) > 0 && (
+          <section className="supervisor__section">
+            <h3>Démarrage</h3>
+            <ul className="notice-list">
+              {state.notices?.map((notice, index) => (
+                <li key={`${index}-${notice}`}>{notice}</li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         {errors.length > 0 && (
           <section className="supervisor__section">
             <h3>Incidents récents</h3>

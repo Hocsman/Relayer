@@ -29,6 +29,7 @@ type AgentState struct {
 	Running        bool   `json:"running"`
 	Attached       bool   `json:"attached"`
 	InputFrozen    bool   `json:"inputFrozen"`
+	Simulated      bool   `json:"simulated"`
 	ExitCode       *int   `json:"exitCode,omitempty"`
 }
 
@@ -54,6 +55,11 @@ type SupervisionEvent struct {
 	Timestamp      string           `json:"timestamp"`
 	Evaluation     PolicyEvaluation `json:"evaluation"`
 	DeliveryStatus string           `json:"deliveryStatus"`
+	// Decisions are the semantic answers this event's own adapter can encode,
+	// probed per event rather than assumed per adapter. An interface that
+	// offered an Allow button the adapter has no verified bytes for would be
+	// promising a delivery that fails at the last step.
+	Decisions []string `json:"decisions"`
 }
 
 type AppState struct {
@@ -64,6 +70,13 @@ type AppState struct {
 	Audit         AuditState         `json:"audit"`
 	Agents        []AgentState       `json:"agents"`
 	PendingEvents []SupervisionEvent `json:"pendingEvents"`
+
+	// Notices are the resolution warnings and startup facts the terminal
+	// interface prints. They previously went to standard error, which an
+	// application launched from a file manager does not have, so "tmux is
+	// unavailable, falling back to PTY" and "two demo agents were substituted"
+	// reached nobody.
+	Notices []string `json:"notices"`
 }
 
 type SnapshotEvent struct {

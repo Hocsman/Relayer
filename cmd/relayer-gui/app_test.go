@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
 	appcore "github.com/Hocsman/Relayer/internal/app"
@@ -30,7 +32,9 @@ type fakeLineCall struct {
 }
 
 type fakeDesktopEngine struct {
-	mu sync.Mutex
+	startupLogs        []string
+	supportedDecisions []adapters.Decision
+	mu                 sync.Mutex
 
 	metadata appcore.DesktopMetadata
 	sessions []appcore.DesktopSession
@@ -121,6 +125,16 @@ func newFakeDesktopEngine(sessionIDs ...string) *fakeDesktopEngine {
 }
 
 func (f *fakeDesktopEngine) Metadata() appcore.DesktopMetadata { return f.metadata }
+
+func (f *fakeDesktopEngine) SupportedDecisions(adapters.Event) []adapters.Decision {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]adapters.Decision(nil), f.supportedDecisions...)
+}
+
+func (f *fakeDesktopEngine) StartupLogs() []string {
+	return append([]string(nil), f.startupLogs...)
+}
 
 func (f *fakeDesktopEngine) Sessions() []appcore.DesktopSession {
 	return append([]appcore.DesktopSession(nil), f.sessions...)
@@ -902,7 +916,7 @@ func TestUnsupportedAutomaticDecisionFallsBackToAsk(t *testing.T) {
 	runID := activeRunIDForTest(application)
 	application.mu.Lock()
 	item := application.pending[key]
-	item.view = supervisionView(runID, event, automatic, "delivering")
+	item.view = supervisionView(runID, event, automatic, "delivering", nil)
 	application.pending[key] = item
 	application.rebuildPendingLocked()
 	application.mu.Unlock()
@@ -1053,7 +1067,7 @@ func TestProcessExitDuringAutomaticDeliveryStillRecordsTerminalOutcome(t *testin
 	runID := activeRunIDForTest(application)
 	application.mu.Lock()
 	item := application.pending[key]
-	item.view = supervisionView(runID, prompt, automatic, "delivering")
+	item.view = supervisionView(runID, prompt, automatic, "delivering", nil)
 	application.pending[key] = item
 	application.rebuildPendingLocked()
 	application.mu.Unlock()
@@ -1409,4 +1423,159 @@ func operationIndex(operations []string, expected string) int {
 		}
 	}
 	return -1
+}
+
+// The desktop application has no standard error. Its startup facts — the
+// substituted demo agents, the backend that was actually used — were written
+// there and reached nobody, and nothing on screen separated a scripted Bash
+// mock from a supervised coding agent.
+func TestSimulatedAgentsAndStartupNoticesCrossTheBridge(t *testing.T) {
+	engine := newFakeDesktopEngine("real-agent", "demo-agent")
+	engine.sessions[1].Simulated = true
+	engine.startupLogs = []string{
+		"  Mode simulation actif: demo-agent  ",
+		"",
+		"tmux indisponible\x1b[31m: repli PTY\n",
+		strings.Repeat("x", 400),
+	}
+	application := newBridgeForTest(engine)
+
+	state, err := application.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if len(state.Agents) != 2 {
+		t.Fatalf("agents = %#v", state.Agents)
+	}
+	if state.Agents[0].Simulated {
+		t.Fatal("a real agent was reported as simulated")
+	}
+	if !state.Agents[1].Simulated {
+		t.Fatal("the substituted agent is indistinguishable from a real one")
+	}
+
+	if len(state.Notices) != 3 {
+		t.Fatalf("notices = %#v, want the blank line dropped", state.Notices)
+	}
+	if state.Notices[0] != "Mode simulation actif: demo-agent" {
+		t.Fatalf("notice not trimmed: %q", state.Notices[0])
+	}
+	for _, notice := range state.Notices {
+		for _, r := range notice {
+			if unicode.IsControl(r) {
+				t.Fatalf("a control character reached the interface: %q", notice)
+			}
+		}
+		if len([]rune(notice)) > 240 {
+			t.Fatalf("notice is unbounded: %d runes", len([]rune(notice)))
+		}
+	}
+}
+
+// An engine with nothing to report must not render an empty section.
+func TestStartupNoticesAreAbsentRatherThanEmpty(t *testing.T) {
+	application := newBridgeForTest(newFakeDesktopEngine("agent-a"))
+	state, err := application.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if len(state.Notices) != 0 {
+		t.Fatalf("notices = %#v, want none", state.Notices)
+	}
+}
+
+// The desktop interface used to force the operator to type the keystroke a CLI
+// expects — "y", "2", an escape — for every prompt, while the terminal
+// interface had one-key allow and deny. The answers now come from the adapter,
+// but only where the adapter actually has verified bytes for them.
+func TestSemanticDecisionIsDeliveredWithTheAdaptersOwnEncoding(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	engine.supportedDecisions = []adapters.Decision{adapters.DecisionAllow, adapters.DecisionDeny}
+	application := newBridgeForTest(engine)
+	event := bridgeEvent("agent-a", "prompt-1")
+	application.handleAdapterEvent(event)
+
+	state, err := application.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if got, want := state.PendingEvents[0].Decisions, []string{"allow", "deny"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("offered decisions = %#v, want %#v", got, want)
+	}
+
+	if err := application.SubmitAutomaticDecision(
+		activeRunIDForTest(application), "agent-a", "prompt-1", "deny",
+	); err != nil {
+		t.Fatalf("SubmitAutomaticDecision: %v", err)
+	}
+	calls := engine.applySnapshot()
+	if len(calls) != 1 {
+		t.Fatalf("apply calls = %#v", calls)
+	}
+	if calls[0].decision != adapters.DecisionDeny || calls[0].manualInput != "" {
+		t.Fatalf("delivered %#v, want a bare deny", calls[0])
+	}
+
+	// The journal must name the answer a human gave, not merely that one was
+	// asked for.
+	recorded := false
+	for _, entry := range engine.auditSnapshot() {
+		if entry.Decision == audit.DecisionDeny && entry.DecisionBy == audit.DecisionByHuman {
+			recorded = true
+		}
+	}
+	if !recorded {
+		t.Fatalf("no human deny in the journal: %#v", engine.auditSnapshot())
+	}
+}
+
+// The screen that offered a button may be stale. The core asks the adapter
+// again rather than trusting what arrives over the bridge.
+func TestSemanticDecisionRefusedWhenTheAdapterCannotEncodeIt(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	engine.supportedDecisions = []adapters.Decision{adapters.DecisionDeny}
+	application := newBridgeForTest(engine)
+	application.handleAdapterEvent(bridgeEvent("agent-a", "prompt-1"))
+	runID := activeRunIDForTest(application)
+
+	if got, want := func() []string {
+		state, err := application.GetState()
+		if err != nil {
+			t.Fatalf("GetState: %v", err)
+		}
+		return state.PendingEvents[0].Decisions
+	}(), []string{"deny"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("offered decisions = %#v, want %#v", got, want)
+	}
+
+	if err := application.SubmitAutomaticDecision(runID, "agent-a", "prompt-1", "allow"); !errors.Is(err, errUnsupportedDecision) {
+		t.Fatalf("allow error = %v, want a refusal", err)
+	}
+	if err := application.SubmitAutomaticDecision(runID, "agent-a", "prompt-1", "manual"); !errors.Is(err, errUnsupportedDecision) {
+		t.Fatalf("manual-as-semantic error = %v, want a refusal", err)
+	}
+	if err := application.SubmitAutomaticDecision(runID, "agent-a", "prompt-2", "deny"); !errors.Is(err, errDecisionStale) {
+		t.Fatalf("unknown occurrence error = %v, want a stale refusal", err)
+	}
+	if calls := engine.applySnapshot(); len(calls) != 0 {
+		t.Fatalf("a refused decision still reached the agent: %#v", calls)
+	}
+}
+
+// An empty manual answer is a reflex keystroke, not a decision. The core
+// already refuses it; the bridge must refuse it before any audit entry exists.
+func TestEmptyManualDecisionIsRefusedBeforeDelivery(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	application := newBridgeForTest(engine)
+	application.handleAdapterEvent(bridgeEvent("agent-a", "prompt-1"))
+	runID := activeRunIDForTest(application)
+
+	for _, blank := range []string{"", "   ", "\t"} {
+		if err := application.SubmitDecision(runID, "agent-a", "prompt-1", blank); !errors.Is(err, errEmptyDecision) {
+			t.Fatalf("blank %q error = %v", blank, err)
+		}
+	}
+	if calls := engine.applySnapshot(); len(calls) != 0 {
+		t.Fatalf("an empty answer reached the agent: %#v", calls)
+	}
 }

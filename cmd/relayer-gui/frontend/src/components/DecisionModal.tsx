@@ -1,7 +1,7 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
-import { safeEventSummary } from "../lib/safety";
+import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { promptContextLines, safeEventSummary } from "../lib/safety";
 import { deliveryRequiresResync } from "../lib/delivery";
-import type { AgentState, SupervisionEvent } from "../types/relayer";
+import type { AgentState, SemanticDecision, SupervisionEvent } from "../types/relayer";
 
 interface DecisionModalProps {
   event?: SupervisionEvent;
@@ -9,11 +9,30 @@ interface DecisionModalProps {
   queueSize: number;
   onClose(): void;
   onSubmit(runID: string, sessionID: string, eventID: string, value: string): Promise<boolean>;
+  onDecide(
+    runID: string,
+    sessionID: string,
+    eventID: string,
+    decision: SemanticDecision,
+  ): Promise<boolean>;
 }
 
-export function DecisionModal({ event, agent, queueSize, onClose, onSubmit }: DecisionModalProps) {
+const decisionLabels: Record<SemanticDecision, string> = {
+  allow: "Autoriser",
+  deny: "Refuser",
+};
+
+export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDecide }: DecisionModalProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const transcriptRef = useRef<HTMLPreElement>(null);
   const [busy, setBusy] = useState(false);
+
+  // The prompt is the last thing the pane wrote, so the tail must open at its
+  // end. Opening at the top shows the operator the output before the question.
+  useLayoutEffect(() => {
+    const transcript = transcriptRef.current;
+    if (transcript) transcript.scrollTop = transcript.scrollHeight;
+  });
 
   useEffect(() => {
     if (!event) return;
@@ -35,6 +54,28 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit }: De
   if (!event) return null;
 
   const indeterminateDelivery = deliveryRequiresResync(event);
+  // Only what the adapter reported for this exact occurrence. An unknown value
+  // arriving from a stale bridge is dropped rather than rendered as a button.
+  // What the pane was showing when it stopped. A decision made without it is
+  // made on a one-line summary.
+  //
+  // A sensitive prompt is excluded: safeEventSummary already refuses to repeat
+  // its text here, and reprinting the pane tail underneath would undo that.
+  const context = event.sensitive ? [] : promptContextLines(agent?.output ?? "");
+  const offered = (event.decisions ?? []).filter(
+    (decision): decision is SemanticDecision => decision === "allow" || decision === "deny",
+  );
+
+  const decide = async (decision: SemanticDecision) => {
+    if (busy || indeterminateDelivery) return;
+    setBusy(true);
+    try {
+      const delivered = await onDecide(event.runID, event.sessionID, event.id, decision);
+      if (delivered) onClose();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submit = async (formEvent: FormEvent) => {
     formEvent.preventDefault();
@@ -74,13 +115,31 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit }: De
         </header>
 
         <div className="decision-context">
-          <div><span>Agent</span><strong>{agent?.name || event.agentID}</strong></div>
+          <div>
+            <span>Agent</span>
+            <strong>{agent?.name || event.agentID}</strong>
+            {agent?.simulated && (
+              <em
+                className="simulated-tag"
+                title="Script Bash de démonstration substitué à un vrai agent."
+              >
+                Simulé
+              </em>
+            )}
+          </div>
           <div><span>Adaptateur</span><strong>{event.adapter}</strong></div>
           <div><span>Risque</span><strong className={`risk-text risk-text--${event.risk}`}>{event.risk}</strong></div>
           <div><span>Règle</span><strong>{event.evaluation.ruleName || "Défaut sûr"}</strong></div>
           <div><span>Action</span><strong>{event.evaluation.action}</strong></div>
           <div><span>Livraison</span><strong>{event.deliveryStatus}</strong></div>
         </div>
+
+        {context.length > 0 && (
+          <div className="decision-transcript">
+            <span className="eyebrow">Fin de sortie · {agent?.name || event.agentID}</span>
+            <pre ref={transcriptRef} aria-label="Contexte du terminal">{context.join("\n")}</pre>
+          </div>
+        )}
 
         {event.evaluation.dryRun && (
           <p className="dry-run-notice">DRY RUN · La décision reste entièrement manuelle.</p>
@@ -92,9 +151,30 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit }: De
           </p>
         )}
 
+        {offered.length > 0 && (
+          <div className="decision-actions">
+            {offered.map((decision) => (
+              <button
+                key={decision}
+                type="button"
+                className={`button button--${decision === "deny" ? "danger" : "primary"}`}
+                disabled={busy || indeterminateDelivery}
+                onClick={() => void decide(decision)}
+              >
+                {decisionLabels[decision]}
+              </button>
+            ))}
+            <span>Réponse encodée par l’adaptateur {event.adapter}.</span>
+          </div>
+        )}
+
         <form className="decision-form" onSubmit={(formEvent) => void submit(formEvent)}>
           <label htmlFor="manual-decision">
-            {event.sensitive ? "Valeur confidentielle" : "Réponse à transmettre"}
+            {event.sensitive
+              ? "Valeur confidentielle"
+              : offered.length > 0
+                ? "Ou répondre manuellement"
+                : "Réponse à transmettre"}
           </label>
           <div className="decision-input-row">
             <input

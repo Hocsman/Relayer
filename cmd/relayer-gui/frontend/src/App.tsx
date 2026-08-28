@@ -13,6 +13,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
   const {
     state,
     submitDecision,
+    submitAutomaticDecision,
     submitLine,
     resizeSession,
     stopSession,
@@ -142,6 +143,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
         queueSize={state.app.pendingEvents.length}
         onClose={() => setModalOpen(false)}
         onSubmit={submitDecision}
+        onDecide={submitAutomaticDecision}
       />
       {agentsOpen && (
         <AgentSettingsPanel

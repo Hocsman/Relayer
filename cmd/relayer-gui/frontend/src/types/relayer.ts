@@ -64,6 +64,11 @@ export interface AgentState {
   running: boolean;
   attached: boolean;
   inputFrozen?: boolean;
+  // True when the Go core substituted a scripted Bash agent for a real one.
+  // Nothing else on screen distinguishes the two, and in a supervision tool an
+  // operator must never believe they are watching a coding agent when they are
+  // watching a mock.
+  simulated?: boolean;
   exitCode?: number;
 }
 
@@ -91,7 +96,13 @@ export interface SupervisionEvent {
   timestamp: string;
   evaluation: PolicyEvaluation;
   deliveryStatus: DeliveryStatus;
+  // The semantic answers this exact occurrence accepts, decided by the adapter
+  // that produced it. Never inferred here: an Allow button the adapter has no
+  // bytes for would promise a delivery that fails.
+  decisions?: SemanticDecision[];
 }
+
+export type SemanticDecision = "allow" | "deny";
 
 export interface AppState {
   runID: string;
@@ -101,6 +112,9 @@ export interface AppState {
   audit: AuditState;
   agents: AgentState[];
   pendingEvents: SupervisionEvent[];
+  // Startup facts the terminal interface prints on standard error, which a
+  // desktop application launched from a file manager does not have.
+  notices?: string[];
 }
 
 export interface SnapshotEvent {
@@ -274,6 +288,12 @@ export interface RelayerBridge {
   getState(): Promise<AppState>;
   runPreflight(): Promise<PreflightReport>;
   submitDecision(runID: string, sessionID: string, eventID: string, value: string): Promise<void>;
+  submitAutomaticDecision(
+    runID: string,
+    sessionID: string,
+    eventID: string,
+    decision: SemanticDecision,
+  ): Promise<void>;
   submitLine(runID: string, sessionID: string, line: string): Promise<void>;
   resizeSession(runID: string, sessionID: string, columns: number, rows: number): Promise<void>;
   stopSession(runID: string, sessionID: string): Promise<void>;
