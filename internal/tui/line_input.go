@@ -261,3 +261,18 @@ func (m *Model) finishLineInputOnShutdown() {
 	}
 	m.lineDeferredEvents = make(map[string]adapters.Event)
 }
+
+// cancelLineInputForPrompt discards a half-composed direct instruction because
+// a prompt took the shared input field.
+//
+// The plain cancel is silent, which is right when the session ended or the line
+// was just submitted. Here the operator was mid-sentence and the text vanishes
+// under them, so it has to be said. The value itself is never logged, only that
+// it was dropped.
+func (m *Model) cancelLineInputForPrompt() {
+	if m.lineInputTarget == "" {
+		return
+	}
+	m.cancelLineInput(false)
+	m.appendLog("Consigne directe abandonnée: une demande de supervision a pris la main")
+}

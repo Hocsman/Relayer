@@ -156,6 +156,13 @@ func (m *Model) renderSupervisorPane(outer Rect) string {
 			title += "  →  " + m.panes[paneIndex].name
 		}
 	}
+	// Only the agent being answered is named, and only four are visible per
+	// page. Without a count, an operator answering one prompt has no way to
+	// learn that others are queued behind it, possibly on another page. One
+	// waiting prompt is already the named one, so the count starts at two.
+	if waiting := len(m.pending); waiting > 1 {
+		title += fmt.Sprintf("  •  %d EN ATTENTE", waiting)
+	}
 	title += fmt.Sprintf(
 		"  •  BACKEND %s  •  PAGE %d/%d",
 		m.backendLabel(),

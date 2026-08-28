@@ -10,6 +10,10 @@ No release tag has been published at the time of writing.
 
 ### Added
 
+- The supervisor title shows how many agents are waiting once more than one is.
+  Only the agent being answered was named and only four are visible per page, so
+  a queue building up behind it — on another page — was invisible.
+
 - Release artifacts are signed and attested. The checksum file is signed with
   keyless cosign, so the release workflow's own identity is bound into a
   short-lived certificate and recorded in the public transparency log; build
@@ -87,6 +91,12 @@ No release tag has been published at the time of writing.
   with conservative defaults and auditing disabled for compatibility.
 
 ### Fixed
+
+- A half-composed direct instruction was discarded silently whenever a prompt
+  took the shared input field. Preempting it is correct — a supervision request
+  outranks a note to an agent — but nothing was logged, so the operator's
+  sentence vanished under them with no explanation. The discard is now
+  announced; the text itself is still never recorded.
 
 - Pressing Enter on an empty supervisor field answered the prompt. The generic
   adapter encodes a manual decision as the typed text plus a carriage return, so
