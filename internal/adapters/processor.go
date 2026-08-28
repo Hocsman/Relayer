@@ -190,7 +190,9 @@ func (p *Processor) ReconcileSnapshot(raw []byte) (*Event, bool, error) {
 
 	if active == "" {
 		changed := p.state.pending != nil
-		_ = p.state.acknowledge("")
+		_, _ = p.state.acknowledge("")
+		// The screen is empty, so the retained text no longer describes it.
+		p.state.resetWindow()
 		p.pendingSnapshotFingerprint = ""
 		return nil, changed, nil
 	}
@@ -201,7 +203,10 @@ func (p *Processor) ReconcileSnapshot(raw []byte) (*Event, bool, error) {
 	}
 	if len(candidates) == 0 {
 		changed := p.state.pending != nil
-		_ = p.state.acknowledge("")
+		_, _ = p.state.acknowledge("")
+		// The snapshot is authoritative about the screen: nothing detectable is
+		// on it, so the retained text is stale.
+		p.state.resetWindow()
 		p.pendingSnapshotFingerprint = ""
 		return nil, changed, nil
 	}
@@ -232,12 +237,76 @@ func (p *Processor) snapshotFingerprint(normalized string) string {
 
 func (p *Processor) Acknowledge(eventID string) error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	err := p.state.acknowledge(eventID)
-	if err == nil {
-		p.pendingSnapshotFingerprint = ""
+	signature, err := p.state.acknowledge(eventID)
+	if err != nil {
+		p.mu.Unlock()
+		return err
 	}
-	return err
+	p.pendingSnapshotFingerprint = ""
+	recovered := p.rescanRetainedWindow(signature)
+	p.mu.Unlock()
+	p.emitSemantic(recovered)
+	return nil
+}
+
+// rescanRetainedWindow reports a prompt that arrived while another occurrence
+// was pending and was therefore never examined.
+//
+// Detect returns early while an occurrence is pending, so output consumed
+// during that window reached the retained text and nothing else. Answering the
+// first prompt is the moment that text becomes examinable again.
+//
+// The caller holds p.mu; the returned events must be emitted after releasing
+// it, exactly as Consume does.
+func (p *Processor) rescanRetainedWindow(resolved string) []Event {
+	if p.terminated || p.state.pending != nil || p.state.detectionText == "" {
+		return nil
+	}
+
+	// The window is only worth keeping while it holds an unexamined prompt.
+	// Otherwise drop it, because answered text that stays behind merges with
+	// whatever arrives next: output without a trailing newline would extend the
+	// same active line, and a pattern could then match across the boundary and
+	// report the old prompt instead of the new one.
+	keep := false
+	defer func() {
+		if !keep {
+			p.state.resetWindow()
+		}
+	}()
+
+	probe := NewDetectionState(p.state.SessionID, p.state.AgentID, p.adapter.ID())
+	candidates, err := p.adapter.Detect(probe, []byte(p.state.detectionText))
+	if err != nil || len(candidates) == 0 {
+		return nil
+	}
+	candidate := candidates[0]
+	// The occurrence just answered is still in the window. Re-reporting it
+	// would reblock the session on a decision the operator already made.
+	if resolved != "" && candidate.Signature == resolved {
+		return nil
+	}
+	if !candidate.Actionable() {
+		return nil
+	}
+
+	keep = true
+	event := p.state.replacePending(candidate)
+	fingerprint := p.snapshotFingerprint(p.state.detectionText)
+	p.lastSnapshotFingerprint = fingerprint
+	p.pendingSnapshotFingerprint = fingerprint
+	p.semanticHooks.Add(1)
+	return []Event{event}
+}
+
+// emitSemantic publishes events outside p.mu and balances semanticHooks.
+func (p *Processor) emitSemantic(events []Event) {
+	for _, event := range events {
+		func() {
+			defer p.semanticHooks.Done()
+			p.hooks.OnEvent(event.Clone())
+		}()
+	}
 }
 
 func (p *Processor) Restore(event Event) error {
@@ -263,23 +332,31 @@ func (p *Processor) Resolve(eventID string, deliver func() error) error {
 		return errors.New("livraison de décision nil")
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.terminated {
+		p.mu.Unlock()
 		return ErrProcessorTerminated
 	}
 	if p.state.pending == nil && eventID != "" {
+		p.mu.Unlock()
 		return fmt.Errorf("%w: aucun événement en attente pour %q", ErrEventMismatch, eventID)
 	}
 	if p.state.pending != nil && eventID != "" && p.state.pending.ID != eventID {
+		p.mu.Unlock()
 		return fmt.Errorf("%w: reçu %q, attendu %q", ErrEventMismatch, eventID, p.state.pending.ID)
 	}
 	if err := deliver(); err != nil {
+		p.mu.Unlock()
 		return err
 	}
-	if err := p.state.acknowledge(eventID); err != nil {
+	signature, err := p.state.acknowledge(eventID)
+	if err != nil {
+		p.mu.Unlock()
 		return err
 	}
 	p.pendingSnapshotFingerprint = ""
+	recovered := p.rescanRetainedWindow(signature)
+	p.mu.Unlock()
+	p.emitSemantic(recovered)
 	return nil
 }
 
@@ -323,7 +400,8 @@ func (p *Processor) MarkProcessExitEvent(exitCode *int, failed bool) Event {
 		p.mu.Unlock()
 		return event
 	}
-	_ = p.state.acknowledge("")
+	_, _ = p.state.acknowledge("")
+	p.state.resetWindow()
 	p.pendingSnapshotFingerprint = ""
 	p.state.sequence++
 	sequence := p.state.sequence

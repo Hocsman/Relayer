@@ -66,6 +66,17 @@ No release tag has been published at the time of writing.
 
 ### Fixed
 
+- A prompt that arrived while another one was pending was lost for good.
+  Detection stops examining output while an occurrence is pending, so the second
+  prompt reached the detection window and nowhere else — and answering the first
+  one wiped that window. The second prompt was never evaluated by a policy,
+  never audited, and still on the agent's screen, where the operator's next line
+  or even their refusal of the first prompt would answer it. Claude Code's
+  trust-prompt-then-tool-prompt sequence hits this every time, on both backends;
+  there is no periodic reconciliation to recover it. The window is now retained
+  and re-examined when the pending occurrence is answered, and dropped when
+  nothing unexamined survives.
+
 - A prompt laid out with cursor movement instead of spaces was invisible to
   every configured pattern. Claude Code 2.1.59 emits no literal space in its
   prompts, only `ESC[1C` between words, and those were stripped without

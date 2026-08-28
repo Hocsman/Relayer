@@ -388,9 +388,15 @@ func TestCodexGenericFallbackPreservesInterceptPatternsAndSensitiveInput(t *test
 	if got, err := adapter.EncodeDecision(events[0], DecisionAllow, ""); got != nil || !errors.Is(err, ErrDecisionUnsupported) {
 		t.Fatalf("fallback automatic allow = %v, %v", got, err)
 	}
-	if err := state.acknowledge(events[0].ID); err != nil {
+	if _, err := state.acknowledge(events[0].ID); err != nil {
 		t.Fatal(err)
 	}
+	// acknowledge no longer forgets the screen: the retained window is what
+	// holds a prompt that arrived while this occurrence was pending. Processor
+	// keeps it only when such a prompt survives and resets it otherwise, which
+	// is the case here. This test drives the state directly, so it does the
+	// same thing explicitly.
+	state.resetWindow()
 
 	events, err = adapter.Detect(state, []byte("Password:"))
 	if err != nil || len(events) != 1 || events[0].Type != EventCredential ||

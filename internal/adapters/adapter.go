@@ -60,17 +60,38 @@ func (s *DetectionState) IsBlocked() bool {
 	return s != nil && s.pending != nil
 }
 
-func (s *DetectionState) acknowledge(eventID string) error {
+// acknowledge clears the pending occurrence and returns its signature so the
+// caller can tell it apart from anything else still in the window.
+//
+// The detection window is deliberately retained. Detect stops examining output
+// while an occurrence is pending, so a prompt that arrived during that window
+// is sitting in this text and nowhere else; wiping it here lost that prompt for
+// good, on both backends. Retaining it cannot resurrect the acknowledged
+// occurrence either: Detect only reports a match that reaches the active line
+// produced by new output, which historical text never does.
+//
+// Callers that know the window no longer reflects the screen - an emptied
+// snapshot, a process exit - reset it explicitly.
+func (s *DetectionState) acknowledge(eventID string) (string, error) {
 	if s == nil || s.pending == nil {
-		return nil
+		return "", nil
 	}
 	if eventID != "" && s.pending.ID != eventID {
-		return fmt.Errorf("%w: reçu %q, attendu %q", ErrEventMismatch, eventID, s.pending.ID)
+		return "", fmt.Errorf("%w: reçu %q, attendu %q", ErrEventMismatch, eventID, s.pending.ID)
 	}
+	signature := s.pending.Signature
 	s.pending = nil
+	return signature, nil
+}
+
+// resetWindow drops the retained text. It is for the paths where the window is
+// known to be stale rather than merely answered.
+func (s *DetectionState) resetWindow() {
+	if s == nil {
+		return
+	}
 	s.detectionText = ""
 	s.inCodeFence = false
-	return nil
 }
 
 func (s *DetectionState) restore(event Event) error {
