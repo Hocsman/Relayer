@@ -6,6 +6,7 @@ import type {
   BridgeEventMap,
   BridgeEventName,
   RelayerBridge,
+  PreflightReport,
   SaveAgentProfilesRequest,
   SupervisionEvent,
 } from "../types/relayer";
@@ -277,6 +278,84 @@ export function createDemoBridge(): RelayerBridge {
   return {
     async getState() {
       return structuredClone(state);
+    },
+    async runPreflight(): Promise<PreflightReport> {
+      await delay(180);
+      return {
+        schemaVersion: 1,
+        status: "warning",
+        platform: { os: "darwin", arch: "arm64", supported: true },
+        configuration: {
+          version: 1,
+          legacy: false,
+          agentCount: 2,
+          policyRuleCount: 1,
+        },
+        audit: {
+          enabled: true,
+          mode: "metadata",
+          location: "default",
+          maxFileSizeMB: 10,
+          maxFiles: 5,
+        },
+        tools: [
+          { profileID: "claude-code", installation: "installed" },
+          { profileID: "codex-cli", installation: "installed" },
+        ],
+        agents: [
+          {
+            ordinal: 1,
+            source: "configured",
+            command: "direct",
+            installation: "installed",
+            adapter: "claude",
+            adapterMaturity: "experimental",
+            backend: "pty",
+          },
+          {
+            ordinal: 2,
+            source: "configured",
+            command: "direct",
+            installation: "installed",
+            adapter: "codex",
+            adapterMaturity: "experimental",
+            backend: "tmux",
+          },
+        ],
+        checks: [
+          {
+            id: "configuration",
+            scope: "configuration",
+            status: "pass",
+            summary: "La configuration enregistrée est valide.",
+          },
+          {
+            id: "policy",
+            scope: "policy",
+            status: "pass",
+            summary: "Le moteur de politiques est prêt.",
+          },
+          {
+            id: "audit",
+            scope: "audit",
+            status: "pass",
+            summary: "Le journal local peut être ouvert en mode sécurisé.",
+          },
+          {
+            id: "backend",
+            scope: "backend",
+            status: "pass",
+            summary: "Le backend configuré est disponible.",
+          },
+          {
+            id: "adapter-compatibility",
+            scope: "adapter",
+            status: "warning",
+            summary: "Un adapter expérimental demande une surveillance humaine.",
+            remediation: "Conservez la politique par défaut sur ask.",
+          },
+        ],
+      };
     },
     async submitDecision(runID, sessionID, eventID, _value) {
       requireRun(runID, true);

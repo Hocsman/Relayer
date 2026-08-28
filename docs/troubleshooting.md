@@ -11,6 +11,7 @@ Check the binary first:
 ```bash
 ./relayer --version
 ./relayer -h
+./relayer doctor --config config.yaml
 go version
 ```
 
@@ -29,6 +30,27 @@ Then use an explicit configuration path while diagnosing:
 Relative agent working directories and relative audit paths are resolved from
 the configuration file's directory, not necessarily the shell's current
 directory.
+
+## Use the Relayer doctor before startup
+
+`relayer doctor` and Wails' `wails doctor` are different tools. Wails checks
+desktop build dependencies. Relayer checks an existing runtime configuration:
+
+```bash
+./relayer doctor --config /absolute/path/to/config.yaml
+```
+
+`PRÊT` and `AVERTISSEMENTS` return exit status `0`; `BLOQUÉ` returns `1`.
+Warnings include conservative conditions such as an experimental adapter or a
+safe `auto` fallback to PTY. Blockers include a missing configured executable,
+an unavailable explicit tmux backend, an unknown adapter, an unsupported
+execution platform, or unsafe existing audit storage.
+
+The doctor never creates a missing YAML file. Start Relayer normally to create
+the default configuration, or create and review one explicitly, then rerun the
+doctor. It also never runs `--version`, tests provider authentication, contacts
+a provider, or proves that a configured command is trustworthy. See
+[doctor.md](doctor.md) for the complete boundary.
 
 ## The configuration file was created unexpectedly
 

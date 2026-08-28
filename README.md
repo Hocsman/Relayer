@@ -32,6 +32,9 @@ and network behavior.
 - A bounded terminal-output view and bounded streaming prompt detection.
 - Deliberate single-line operator input in the TUI and GUI, separate from
   semantic prompt decisions and guarded by an atomic no-pending-event check.
+- A shared, read-only `doctor` preflight for the CLI and GUI that reports the
+  effective tools, adapters, backends, policies, platform, and audit readiness
+  without starting an agent or creating a missing configuration.
 - A stable, product-neutral `generic` regex adapter.
 - Experimental, fixture-backed Claude Code and Codex CLI adapters with the
   stable generic detector retained as fallback.
@@ -88,6 +91,25 @@ go build -o relayer main.go
 
 Development builds report `relayer dev (commit unknown)` unless build metadata
 is injected.
+
+### Read-only doctor
+
+Inspect an existing configuration before starting Relayer:
+
+```bash
+./relayer doctor --config config.yaml
+```
+
+The command performs passive checks only. It does not create a missing
+configuration, open the audit journal, construct a PTY/tmux backend, execute a
+provider CLI, or start an agent. Its report uses agent ordinals and fixed tool
+catalogue labels; commands, environment values, configured names and IDs, full
+paths, and raw dependency errors are omitted.
+
+Exit status is `0` when there is no blocker, including when the report contains
+warnings, and `1` when startup should remain blocked. The desktop GUI exposes
+the same report through **Santé** and **Vérifier l’installation**. See the
+[doctor guide](docs/doctor.md) for the checks and their limits.
 
 ### Desktop GUI (alpha)
 

@@ -65,6 +65,83 @@ func TestLoadPromptPatternsCreatesAndReloadsDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestLoadExistingNeverCreatesMissingConfiguration(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "nested", "config.yaml")
+
+	result, err := LoadExisting(path)
+	if err == nil {
+		t.Fatalf("LoadExisting returned %#v for a missing file", result)
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("LoadExisting error = %v, want os.ErrNotExist", err)
+	}
+	if !errors.Is(err, ErrExistingConfigRead) {
+		t.Fatalf("LoadExisting error = %v, want ErrExistingConfigRead", err)
+	}
+	var readError *ExistingConfigReadError
+	if !errors.As(err, &readError) {
+		t.Fatalf("LoadExisting error type = %T, want *ExistingConfigReadError", err)
+	}
+	if strings.Contains(err.Error(), path) || strings.Contains(err.Error(), "nested") {
+		t.Fatalf("LoadExisting rendered the selected path: %q", err)
+	}
+	if cause := errors.Unwrap(err); cause == nil || strings.Contains(cause.Error(), path) || strings.Contains(cause.Error(), "nested") {
+		t.Fatalf("LoadExisting retained an unsafe rendered cause: %v", cause)
+	}
+	if _, statErr := os.Lstat(filepath.Dir(path)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("LoadExisting created the parent directory: %v", statErr)
+	}
+}
+
+func TestLoadExistingValidationPathFailureIsNotASelectedFileReadFailure(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.yaml")
+	missingCWD := "missing-agent-working-directory"
+	content := "version: 1\n" +
+		"backend: pty\n" +
+		"agents:\n" +
+		"  - id: cwd-validation\n" +
+		"    name: CWD validation\n" +
+		"    command: [runner]\n" +
+		"    cwd: " + missingCWD + "\n" +
+		"intercept_patterns:\n" +
+		"  - pattern: continue\n" +
+		"    description: Continue\n"
+	writeConfigTestFile(t, path, []byte(content))
+
+	_, err := LoadExisting(path)
+	if err == nil || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("LoadExisting error = %v, want validation os.ErrNotExist", err)
+	}
+	if errors.Is(err, ErrExistingConfigRead) {
+		t.Fatalf("validation failure was classified as selected-file read failure: %v", err)
+	}
+	var readError *ExistingConfigReadError
+	if errors.As(err, &readError) {
+		t.Fatalf("validation failure has read error type: %T", err)
+	}
+}
+
+func TestLoadExistingMatchesLoadWithoutMutatingExistingConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	original := []byte("- pattern: '(?i)read only check'\n  description: Read-only check\n")
+	writeConfigTestFile(t, path, original)
+
+	readOnly, err := LoadExisting(path)
+	if err != nil {
+		t.Fatalf("LoadExisting: %v", err)
+	}
+	regular, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if readOnly.Created || regular.Created || !reflect.DeepEqual(readOnly, regular) {
+		t.Fatalf("read-only result = %#v, regular result = %#v", readOnly, regular)
+	}
+	assertConfigFileBytes(t, path, original)
+}
+
 func TestCreateDefaultConfigDoesNotOverwriteExistingFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	original := []byte("# user formatting must survive\n- pattern: '(?i)custom gate'\n  description: Custom gate\n")

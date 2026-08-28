@@ -104,3 +104,61 @@ type AgentLifecycleResult struct {
 	State    AppState          `json:"state"`
 	Profiles AgentProfilesView `json:"profiles"`
 }
+
+type PreflightPlatform struct {
+	OS        string `json:"os"`
+	Arch      string `json:"arch"`
+	Supported bool   `json:"supported"`
+}
+
+type PreflightConfiguration struct {
+	Version         int  `json:"version"`
+	Legacy          bool `json:"legacy"`
+	AgentCount      int  `json:"agentCount"`
+	PolicyRuleCount int  `json:"policyRuleCount"`
+}
+
+type PreflightAudit struct {
+	Enabled       bool   `json:"enabled"`
+	Mode          string `json:"mode"`
+	Location      string `json:"location"`
+	MaxFileSizeMB int    `json:"maxFileSizeMB"`
+	MaxFiles      int    `json:"maxFiles"`
+}
+
+type PreflightTool struct {
+	ProfileID    string `json:"profileID"`
+	Installation string `json:"installation"`
+}
+
+type PreflightAgent struct {
+	Ordinal         int    `json:"ordinal"`
+	Source          string `json:"source"`
+	Command         string `json:"command"`
+	Installation    string `json:"installation"`
+	Adapter         string `json:"adapter,omitempty"`
+	AdapterMaturity string `json:"adapterMaturity,omitempty"`
+	Backend         string `json:"backend,omitempty"`
+}
+
+type PreflightCheck struct {
+	ID          string `json:"id"`
+	Scope       string `json:"scope"`
+	Status      string `json:"status"`
+	Summary     string `json:"summary"`
+	Remediation string `json:"remediation,omitempty"`
+}
+
+// PreflightReport is a direct camel-case projection of the versioned,
+// display-safe core report. It intentionally adds no path, argv, environment,
+// agent identity or raw error field.
+type PreflightReport struct {
+	SchemaVersion int                    `json:"schemaVersion"`
+	Status        string                 `json:"status"`
+	Platform      PreflightPlatform      `json:"platform"`
+	Configuration PreflightConfiguration `json:"configuration"`
+	Audit         PreflightAudit         `json:"audit"`
+	Tools         []PreflightTool        `json:"tools"`
+	Agents        []PreflightAgent       `json:"agents"`
+	Checks        []PreflightCheck       `json:"checks"`
+}

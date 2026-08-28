@@ -420,7 +420,7 @@ func prepareExistingGenerations(path string, maxFiles int) error {
 		return fmt.Errorf("lecture du dossier d'audit %s: %w", directory, err)
 	}
 	for _, entry := range entries {
-		index, matches := generationIndex(base, entry.Name())
+		index, matches := AuditGenerationIndex(base, entry.Name())
 		if !matches {
 			continue
 		}
@@ -448,7 +448,10 @@ func prepareExistingGenerations(path string, maxFiles int) error {
 	return nil
 }
 
-func generationIndex(base, name string) (int, bool) {
+// AuditGenerationIndex applies the exact filename recognition used by audit
+// rotation. It is exported within Relayer's internal boundary so passive
+// diagnostics can inspect precisely the files the runtime would mutate.
+func AuditGenerationIndex(base, name string) (int, bool) {
 	if name == base {
 		return 0, true
 	}

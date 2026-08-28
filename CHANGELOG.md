@@ -27,6 +27,9 @@ No release tag has been published at the time of writing.
   centralized secret refusal, private tmux isolation, and offline validation.
 - A bounded, single-line operator input path for the TUI and desktop GUI that
   never acknowledges a pending event and never records the submitted text.
+- A shared read-only doctor/preflight report for the CLI and desktop GUI, with
+  passive executable discovery, effective adapter/backend reporting, static
+  remediation, and no configuration, audit, backend, or process side effects.
 - A combined Ollama / DeepSeek launch profile that requires the exact `run`
   subcommand and a user-selected model instead of inventing either.
 - Strict version 1 YAML for agents, backends, session lifecycle, prompt

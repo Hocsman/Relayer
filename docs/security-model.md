@@ -105,6 +105,22 @@ unavailable explicitly requested tmux before launch.
 Audit initialization and `run_started` recording also happen before the first
 agent starts. A partial multi-agent start is rolled back.
 
+The optional `relayer doctor` command and GUI **Santé** panel provide an
+earlier, read-only readiness view. They use passive `PATH` lookup and metadata
+inspection only: no configuration is created, no audit file is opened, no
+backend is constructed, and no provider executable is invoked. Their report
+contains only catalogue identifiers, agent ordinals, closed statuses, and
+static remediation text; it excludes configured names and IDs, argv,
+environment values, full paths, and raw errors. This is the boundary of the
+preflight report and its GUI DTO, not a claim about the separate configuration
+editor, which must carry the fields it allows the user to edit.
+
+Preflight is advisory, not a security proof. Executable presence does not
+authenticate its publisher, validate its version or login state, inspect its
+future output, or establish that executing it is safe. The normal startup path
+repeats authoritative validation and remains fail-closed independently of a
+previous doctor result.
+
 ### Exact direct execution
 
 `agents[].command` is an exact argument vector. Relayer does not join it into a

@@ -16,6 +16,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/policy"
+	"github.com/Hocsman/Relayer/internal/preflight"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/terminal"
 	"github.com/Hocsman/Relayer/internal/toolcatalog"
@@ -96,6 +97,7 @@ type App struct {
 	prepareEngine    func(appcore.DesktopOptions) (*appcore.DesktopPlan, error)
 	startEngine      func(context.Context, *appcore.DesktopPlan, string) (desktopEngine, error)
 	runIDGenerator   func() (string, error)
+	runPreflight     func(context.Context, appcore.PreflightOptions) (preflight.Report, error)
 
 	mu               sync.RWMutex
 	state            AppState
@@ -161,6 +163,7 @@ func NewApp() *App {
 			return appcore.StartDesktopRuntime(ctx, plan, runID)
 		},
 		runIDGenerator: newOpaqueProfileToken,
+		runPreflight:   appcore.RunPreflight,
 	}
 }
 

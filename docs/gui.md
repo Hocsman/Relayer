@@ -61,6 +61,10 @@ wails dev
 `wails.json` and starts the native development window. The frontend demo is
 never selected as an automatic fallback by a packaged build.
 
+`wails doctor` checks the Wails build environment. It is distinct from
+Relayer's **Santé du système** report, which checks one saved Relayer
+configuration without starting a run.
+
 Build the application locally with:
 
 ```bash
@@ -136,6 +140,36 @@ RELAYER_CONFIG="$PWD/config.yaml" \
 The same version 1 YAML schema is shared by the GUI and TUI. See
 [configuration](configuration.md). Do not put passwords, tokens, or other
 secrets in that file.
+
+## Read-only health report
+
+Open **Santé** in the top bar, or **Vérifier l’installation** from the idle
+workspace. The panel delegates to the same `internal/app.RunPreflight` facade
+as `relayer doctor`; the WebView does not implement its own checks.
+
+The report shows:
+
+- supported platform and configuration/audit metadata;
+- passive installation state for the fixed tool catalogue;
+- each effective agent by ordinal, including demo/configured source, direct or
+  shell mode, executable availability, effective adapter and maturity, and
+  concrete backend or unavailable state;
+- static checks and remediation for policies, adapters, backend selection,
+  audit storage, and configuration readiness.
+
+Opening or refreshing this panel never creates a missing configuration, opens
+the audit journal, constructs a backend, or starts a process. Native errors are
+replaced by a fixed fail-closed message. The preflight report and its bridge DTO
+contain no command, environment value, configured agent identity, full path, or
+raw error. This boundary is specific to preflight; the separate agent-settings
+workflow necessarily carries the editable configuration fields it displays. A
+missing configuration therefore appears as a blocker; create it explicitly
+through the agent configuration workflow or a reviewed normal startup.
+
+The panel is not an authentication or compatibility test. It does not execute
+provider `--version`, contact a service, validate a login, or certify a binary.
+Warnings do not prevent startup, while a blocker means the configuration is not
+ready on the inspected host. See [doctor](doctor.md) for the shared contract.
 
 ## Choosing local agents
 

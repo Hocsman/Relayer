@@ -191,6 +191,65 @@ export interface LifecycleResult {
   profiles: AgentProfilesView;
 }
 
+export type PreflightStatus = "ready" | "warning" | "blocked";
+export type PreflightCheckStatus = "pass" | "warning" | "block";
+export type PreflightScope =
+  | "configuration"
+  | "platform"
+  | "policy"
+  | "audit"
+  | "tool"
+  | "agent"
+  | "adapter"
+  | "backend";
+
+// Preflight data is deliberately display-only. Paths, argv, environment
+// values and native errors never cross the Wails bridge.
+export interface PreflightCheck {
+  id: string;
+  scope: PreflightScope;
+  status: PreflightCheckStatus;
+  summary: string;
+  remediation?: string;
+}
+
+export interface PreflightReport {
+  schemaVersion: number;
+  status: PreflightStatus;
+  platform: {
+    os: string;
+    arch: string;
+    supported: boolean;
+  };
+  configuration: {
+    version: number;
+    legacy: boolean;
+    agentCount: number;
+    policyRuleCount: number;
+  };
+  audit: {
+    enabled: boolean;
+    mode: AuditState["mode"];
+    location: "disabled" | "default" | "custom";
+    maxFileSizeMB: number;
+    maxFiles: number;
+  };
+  tools: Array<{
+    profileID: AgentPresetID;
+    installation: InstallStatus;
+  }>;
+  agents: Array<{
+    ordinal: number;
+    source: "configured" | "demo";
+    command: "direct" | "shell";
+    installation: InstallStatus;
+    adapter?: string;
+    adapterMaturity?: AdapterStatus;
+    backend?: string;
+  }>;
+  checks: PreflightCheck[];
+}
+
 export interface AgentProfileInput {
   id: string;
   name: string;
@@ -213,6 +272,7 @@ export type BridgeEventName = keyof BridgeEventMap;
 
 export interface RelayerBridge {
   getState(): Promise<AppState>;
+  runPreflight(): Promise<PreflightReport>;
   submitDecision(runID: string, sessionID: string, eventID: string, value: string): Promise<void>;
   submitLine(runID: string, sessionID: string, line: string): Promise<void>;
   resizeSession(runID: string, sessionID: string, columns: number, rows: number): Promise<void>;

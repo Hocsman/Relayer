@@ -8,6 +8,9 @@ and internal interfaces are intentionally allowed to change.
 ```text
 strict config + CLI overrides
             │
+            ├── read-only preflight ──► versioned safe report (CLI / GUI)
+            │                          no audit, backend, or child process
+            │
             ▼
 agent validation ── adapter registry ── policy engine ── audit initialization
             │
@@ -28,6 +31,14 @@ terminal backend router ───────────────► PTY man
 No adapter or policy owns a process. Backends own process/session lifecycle;
 adapters turn output into typed events; the policy engine proposes an action;
 the TUI coordinates human input and delivery.
+
+`internal/preflight` accepts an already effective agent plan and performs only
+passive checks. `internal/app.RunPreflight` is the shared composition facade:
+it reads an existing file with `config.LoadExisting`, applies the same empty-
+agent demo fallback as runtime startup, and returns the same versioned report
+to the CLI and Wails bridge. Expected failures become closed static checks;
+raw parser, filesystem, lookup, command, environment, path, and agent identity
+data never enter the report.
 
 ## Composition and validation
 

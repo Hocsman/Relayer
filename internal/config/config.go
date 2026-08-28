@@ -27,6 +27,44 @@ const (
 	maxAgents      = 8
 )
 
+// ErrExistingConfigRead identifies failures while reading the selected file
+// in LoadExisting. Validation errors that happen after the bytes were read,
+// including inaccessible agent working directories, never match this value.
+var ErrExistingConfigRead = errors.New("lecture de la configuration existante impossible")
+
+// ExistingConfigReadError retains only a finite read-failure classification
+// for errors.Is/errors.As while discarding the selected path and raw
+// operating-system details.
+type ExistingConfigReadError struct {
+	classification error
+}
+
+func (err *ExistingConfigReadError) Error() string {
+	return ErrExistingConfigRead.Error()
+}
+
+func (err *ExistingConfigReadError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.classification
+}
+
+func (err *ExistingConfigReadError) Is(target error) bool {
+	return target == ErrExistingConfigRead
+}
+
+func newExistingConfigReadError(cause error) *ExistingConfigReadError {
+	var classification error
+	switch {
+	case errors.Is(cause, os.ErrNotExist):
+		classification = os.ErrNotExist
+	case errors.Is(cause, os.ErrPermission):
+		classification = os.ErrPermission
+	}
+	return &ExistingConfigReadError{classification: classification}
+}
+
 // Result describes the effective interception configuration and whether the
 // loader had to create the file during this call.
 type Result struct {
@@ -155,6 +193,25 @@ func Load(path string) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("lecture de %s: %w", path, err)
 	}
+	return decodeResult(path, data, created)
+}
+
+// LoadExisting reads and validates an existing configuration without ever
+// creating, replacing or otherwise mutating the path. Read-only diagnostics
+// must use this entry point instead of Load so a typo cannot materialize a new
+// default configuration as a side effect.
+func LoadExisting(path string) (Result, error) {
+	if strings.TrimSpace(path) == "" {
+		return Result{}, errors.New("le chemin du fichier de configuration est vide")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Result{}, newExistingConfigReadError(err)
+	}
+	return decodeResult(path, data, false)
+}
+
+func decodeResult(path string, data []byte, created bool) (Result, error) {
 
 	configured, err := decode(data)
 	if err != nil {

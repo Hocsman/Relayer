@@ -60,6 +60,16 @@ func runWithOutput(
 	diagnostics io.Writer,
 	dependencies backendDependencies,
 ) error {
+	return runWithOutputAndPreflight(arguments, output, diagnostics, dependencies, RunPreflight)
+}
+
+func runWithOutputAndPreflight(
+	arguments []string,
+	output io.Writer,
+	diagnostics io.Writer,
+	dependencies backendDependencies,
+	preflightRun preflightRunner,
+) error {
 	versionRequested := false
 	for _, argument := range arguments {
 		if argument == "--version" || argument == "-version" {
@@ -78,6 +88,9 @@ func runWithOutput(
 			return fmt.Errorf("écriture de la version: %w", err)
 		}
 		return nil
+	}
+	if len(arguments) > 0 && arguments[0] == "doctor" {
+		return runDoctor(arguments[1:], output, diagnostics, preflightRun)
 	}
 	return run(arguments, diagnostics, dependencies)
 }

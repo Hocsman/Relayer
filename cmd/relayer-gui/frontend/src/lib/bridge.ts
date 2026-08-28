@@ -4,6 +4,7 @@ import type {
   BridgeEventMap,
   BridgeEventName,
   LifecycleResult,
+  PreflightReport,
   RelayerBridge,
   SaveAgentProfilesRequest,
   SaveAgentProfilesAndRestartRequest,
@@ -13,6 +14,7 @@ type NativeMethod<TArgs extends unknown[], TResult> = (...args: TArgs) => Promis
 
 interface NativeBindings {
   GetState: NativeMethod<[], AppState>;
+  RunPreflight: NativeMethod<[], PreflightReport>;
   SubmitDecision: NativeMethod<[string, string, string, string], void>;
   SubmitLine: NativeMethod<[string, string, string], void>;
   ResizeSession: NativeMethod<[string, string, number, number], void>;
@@ -48,6 +50,7 @@ function resolveBindings(): NativeBindings {
   if (
     !candidate ||
     typeof candidate.GetState !== "function" ||
+    typeof candidate.RunPreflight !== "function" ||
     typeof candidate.SubmitDecision !== "function" ||
     typeof candidate.SubmitLine !== "function" ||
     typeof candidate.ResizeSession !== "function" ||
@@ -77,6 +80,7 @@ export function createWailsBridge(): RelayerBridge {
 
   return {
     getState: () => bindings.GetState(),
+    runPreflight: () => bindings.RunPreflight(),
     submitDecision: (runID, sessionID, eventID, value) =>
       bindings.SubmitDecision(runID, sessionID, eventID, value),
     submitLine: (runID, sessionID, line) =>

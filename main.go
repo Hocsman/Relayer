@@ -21,6 +21,9 @@ func main() {
 		if errors.Is(err, flag.ErrHelp) {
 			return
 		}
+		if errors.Is(err, app.ErrPreflightBlocked) {
+			os.Exit(1)
+		}
 		fmt.Fprintf(os.Stderr, "relayer: %v\n", err)
 		os.Exit(1)
 	}

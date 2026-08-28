@@ -3,6 +3,7 @@ import type { AppState } from "../types/relayer";
 interface TopBarProps {
   state: AppState;
   onOpenAgents(): void;
+  onOpenPreflight(): void;
   onRequestStop(): void;
 }
 
@@ -17,7 +18,7 @@ const runLabels: Record<AppState["runStatus"], string> = {
   failed: "Erreur",
 };
 
-export function TopBar({ state, onOpenAgents, onRequestStop }: TopBarProps) {
+export function TopBar({ state, onOpenAgents, onOpenPreflight, onRequestStop }: TopBarProps) {
   const running = state.agents.filter((agent) => agent.running).length;
   const waiting = state.pendingEvents.length;
   const transitioning = ["starting", "restarting", "rollback", "stopping"].includes(
@@ -50,6 +51,14 @@ export function TopBar({ state, onOpenAgents, onRequestStop }: TopBarProps) {
       <div className="topbar__actions">
         {state.policy.dryRun && <span className="mode-pill">DRY RUN</span>}
         <span className="mode-pill mode-pill--quiet">POLICY {state.policy.defaultAction.toUpperCase()}</span>
+        <button
+          className="button button--health"
+          type="button"
+          onClick={onOpenPreflight}
+          disabled={transitioning}
+        >
+          <span aria-hidden="true">＋</span> Santé
+        </button>
         <button
           className="button button--agents"
           type="button"
