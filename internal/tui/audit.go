@@ -368,3 +368,22 @@ func automaticDeliveryAudit(err error) (audit.Outcome, string) {
 		return audit.OutcomeUnknown, "unknown"
 	}
 }
+
+// recordEventWithdrawn notes that an occurrence stopped awaiting a human
+// without a decision being delivered.
+//
+// Snapshot reconciliation withdraws a pending occurrence when the replayed
+// screen no longer shows it, which is legitimate — the operator may have
+// answered directly in tmux while attached. It is also the one path where a
+// supervision gate opens with nobody recording it, so the audit needs to be
+// able to distinguish "answered" from "stopped being asked". The record carries
+// the occurrence identity only; the matched text is never part of the model.
+func (m *Model) recordEventWithdrawn(paneIndex int, event adapters.Event) {
+	if m.auditUnavailable || !event.Actionable() {
+		return
+	}
+	entry := m.eventAuditEntry(paneIndex, audit.KindEventWithdrawn, event)
+	entry.Outcome = audit.OutcomeCancelled
+	entry.Reason = "resync_withdrew_occurrence"
+	m.recordAudit(paneIndex, entry)
+}

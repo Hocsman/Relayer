@@ -772,7 +772,8 @@ func (m *Model) reconcileEvent(sessionID string, pending *adapters.Event) tea.Cm
 		return nil
 	}
 	wasInputTarget := m.inputTarget == sessionID
-	previousID := m.panes[paneIndex].prompt.ID
+	withdrawn := m.panes[paneIndex].prompt.Clone()
+	previousID := withdrawn.ID
 	m.removePending(sessionID)
 	m.panes[paneIndex].blocked = false
 	m.panes[paneIndex].policyTag = ""
@@ -782,6 +783,12 @@ func (m *Model) reconcileEvent(sessionID string, pending *adapters.Event) tea.Cm
 		m.input.Reset()
 		m.input.Blur()
 		setInputInterceptionStyle(&m.input, false)
+	}
+	// A snapshot that no longer shows the prompt withdraws it. That is a real
+	// state change - the gate opened without a decision being delivered - and
+	// it used to leave no trace at all: the pane simply stopped being blocked.
+	if previousID != "" && (pending == nil || pending.ID != previousID) {
+		m.recordEventWithdrawn(paneIndex, withdrawn)
 	}
 	if pending != nil && !m.panes[paneIndex].exited && !m.eventResolved(sessionID, pending.ID) {
 		current := pending.Clone()

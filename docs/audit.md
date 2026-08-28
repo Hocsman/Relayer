@@ -29,6 +29,21 @@ Without that gate, `path: notes.txt` in a private home directory truncated
 `notes.txt` — to nothing when it contained no newline at all — and deleted
 `notes.txt.7`.
 
+
+## Withdrawn occurrences
+
+`event_withdrawn` records that an occurrence which was awaiting a human stopped
+being pending without a decision being delivered.
+
+Snapshot reconciliation withdraws a pending occurrence when the replayed screen
+no longer shows it. That is legitimate — while attached to tmux the operator may
+have answered directly, where Relayer cannot see it — but it opens the
+supervision gate with nothing recorded, and the journal could not distinguish
+"answered" from "stopped being asked".
+
+The record carries the occurrence identity, adapter, event type and risk. Like
+every other kind, it has no field for the matched terminal text.
+
 ## Configuration
 
 ```yaml
