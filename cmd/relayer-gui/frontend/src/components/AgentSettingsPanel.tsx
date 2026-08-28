@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useDialogKeyboard } from "../hooks/useDialogKeyboard";
 import {
   cloneProfiles,
   nextProfileID,
@@ -133,6 +134,8 @@ export function AgentSettingsPanel({
     setNotice(undefined);
   };
 
+  const dialogRef = useRef<HTMLElement>(null);
+
   const requestClose = () => {
     if (busy) return;
     if (dirty && !closeConfirmation) {
@@ -141,6 +144,8 @@ export function AgentSettingsPanel({
     }
     onClose();
   };
+
+  useDialogKeyboard(dialogRef, { onClose: requestClose });
 
   const save = async () => {
     if (!view || !dirty || !validation.valid || busy) return;
@@ -240,7 +245,13 @@ export function AgentSettingsPanel({
 
   return (
     <div className="agent-settings-layer">
-      <section className="agent-settings" role="dialog" aria-modal="true" aria-labelledby="agents-title">
+      <section
+        ref={dialogRef}
+        className="agent-settings"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="agents-title"
+      >
         <header className="agent-settings__header">
           <div>
             <span className="eyebrow">Local configuration</span>
@@ -277,7 +288,7 @@ export function AgentSettingsPanel({
                 <header className="profile-editor__header">
                   <div>
                     <span className="eyebrow">Configured team</span>
-                    <h2>{draft.length} agent{draft.length > 1 ? "s" : ""}</h2>
+                    <h2>{draft.length} agent{draft.length !== 1 ? "s" : ""}</h2>
                   </div>
                   <span className="profile-limit">{draft.length} / {Math.min(8, view.maxProfiles)}</span>
                 </header>
@@ -377,7 +388,7 @@ export function AgentSettingsPanel({
             </p>
             {pendingEvents.length > 0 && (
               <strong className="lifecycle-confirmation__warning">
-                {pendingEvents.length} pending request{pendingEvents.length > 1 ? "s" : ""},
+                {pendingEvents.length} pending request{pendingEvents.length !== 1 ? "s" : ""},
                 including {pendingEvents.filter((event) => event.deliveryStatus === "delivering").length} being delivered.
               </strong>
             )}
@@ -575,7 +586,7 @@ function ProfileCard({
           <div>
             <strong>Existing command hidden</strong>
             <span>
-              {profile.executableLabel || "Configured command"} · {profile.argumentCount ?? 0} argument{(profile.argumentCount ?? 0) > 1 ? "s" : ""}
+              {profile.executableLabel || "Configured command"} · {profile.argumentCount ?? 0} argument{(profile.argumentCount ?? 0) !== 1 ? "s" : ""}
             </span>
             <small>The existing argv values are never sent to the WebView.</small>
           </div>

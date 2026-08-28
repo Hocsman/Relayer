@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useDialogKeyboard } from "./hooks/useDialogKeyboard";
 import { AgentGrid } from "./components/AgentGrid";
 import { AgentSettingsPanel } from "./components/AgentSettingsPanel";
 import { DecisionModal } from "./components/DecisionModal";
@@ -254,9 +255,17 @@ function StopRunConfirmation({
 }) {
   const running = state.agents.filter((agent) => agent.running).length;
   const pending = state.pendingEvents.length;
+  const dialogRef = useRef<HTMLElement>(null);
+  useDialogKeyboard(dialogRef, { onClose: onCancel });
   return (
     <div className="modal-layer" role="presentation">
-      <section className="lifecycle-confirmation" role="alertdialog" aria-modal="true" aria-labelledby="stop-run-title">
+      <section
+        ref={dialogRef}
+        className="lifecycle-confirmation"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="stop-run-title"
+      >
         <span className="eyebrow">Action on the current run</span>
         <h2 id="stop-run-title">Stop the run?</h2>
         <p>

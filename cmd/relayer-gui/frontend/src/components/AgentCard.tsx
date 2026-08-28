@@ -117,11 +117,15 @@ export function AgentCard({ runID, agent, event, onResize, onStop, onOpenEvent, 
 
       <footer className="agent-card__footer">
         <span>
-          {agent.simulated
-            ? "Demo agent"
-            : agent.attached
-              ? "Session attached"
-              : "Supervision active"}
+          {!agent.running
+            ? agent.status === "failed"
+              ? "Session failed"
+              : "Session finished"
+            : agent.simulated
+              ? "Demo agent"
+              : agent.attached
+                ? "Session attached"
+                : "Supervision active"}
         </span>
         <div className="agent-card__actions">
           {event && (
@@ -137,7 +141,7 @@ export function AgentCard({ runID, agent, event, onResize, onStop, onOpenEvent, 
             <button
               className="button button--ghost button--small"
               type="button"
-              disabled={submitting}
+              disabled={agent.status === "stopping"}
               onClick={() => void onStop(runID, agent.sessionID)}
             >
               Stop

@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useDialogKeyboard } from "../hooks/useDialogKeyboard";
 import { promptContextLines, safeEventSummary } from "../lib/safety";
 import { deliveryRequiresResync } from "../lib/delivery";
 import type { AgentState, SemanticDecision, SupervisionEvent } from "../types/relayer";
@@ -25,6 +26,7 @@ const decisionLabels: Record<SemanticDecision, string> = {
 export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDecide }: DecisionModalProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const transcriptRef = useRef<HTMLPreElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
   const [busy, setBusy] = useState(false);
 
   // The prompt is the last thing the pane wrote, so the tail must open at its
@@ -34,6 +36,19 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
     if (transcript) transcript.scrollTop = transcript.scrollHeight;
   });
 
+  // Resizing the window shrinks this box without re-rendering React, and the
+  // browser keeps scrollTop where it was — so the prompt silently drifts out of
+  // view on the one element that exists to show it.
+  useEffect(() => {
+    const transcript = transcriptRef.current;
+    if (!transcript || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      transcript.scrollTop = transcript.scrollHeight;
+    });
+    observer.observe(transcript);
+    return () => observer.disconnect();
+  }, [event?.runID, event?.sessionID, event?.id]);
+
   useEffect(() => {
     if (!event) return;
     if (inputRef.current) {
@@ -42,14 +57,7 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
     }
   }, [event?.runID, event?.sessionID, event?.id]);
 
-  useEffect(() => {
-    if (!event) return;
-    const onKeyDown = (keyboardEvent: KeyboardEvent) => {
-      if (keyboardEvent.key === "Escape" && !busy) onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [event, busy, onClose]);
+  useDialogKeyboard(dialogRef, { onClose, closable: !busy, active: Boolean(event) });
 
   if (!event) return null;
 
@@ -97,6 +105,7 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
   return (
     <div className="modal-layer" role="presentation">
       <section
+        ref={dialogRef}
         className={`decision-modal${event.sensitive ? " decision-modal--sensitive" : ""}`}
         role="dialog"
         aria-modal="true"
@@ -114,6 +123,7 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
           </button>
         </header>
 
+        <div className="decision-modal__body">
         <div className="decision-context">
           <div>
             <span>Agent</span>
@@ -157,7 +167,7 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
               <button
                 key={decision}
                 type="button"
-                className={`button button--${decision === "deny" ? "danger" : "primary"}`}
+                className={`button button--decision button--decision-${decision}`}
                 disabled={busy || indeterminateDelivery}
                 onClick={() => void decide(decision)}
               >
@@ -190,7 +200,11 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
               placeholder={event.sensitive ? "••••••••" : "Type your answer…"}
               disabled={busy || indeterminateDelivery}
             />
-            <button className="button button--primary" type="submit" disabled={busy || indeterminateDelivery}>
+            <button
+              className={`button button--${offered.length > 0 ? "ghost" : "primary"}`}
+              type="submit"
+              disabled={busy || indeterminateDelivery}
+            >
               {busy ? "Submitting…" : "Submit"}
             </button>
           </div>
@@ -200,6 +214,8 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
               : "The answer is sent to this exact prompt occurrence."}
           </p>
         </form>
+
+        </div>
 
         <footer className="decision-modal__footer">
           <span>{event.sensitive ? "Sensitive event" : `Event ${event.id}`}</span>

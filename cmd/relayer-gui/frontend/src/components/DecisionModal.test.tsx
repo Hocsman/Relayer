@@ -113,3 +113,23 @@ describe("DecisionModal terminal context", () => {
     expect(markup).toContain("Confidential input required");
   });
 });
+
+// The permissive answer must not be the one the eye picks. button--primary is
+// the loudest control in the application — a filled gradient with a glow — and
+// it used to sit on Allow while Deny got a low-opacity tint. In a tool whose
+// purpose is to make a person stop and choose, that is a defect, not a style.
+describe("DecisionModal answer weighting", () => {
+  it("gives Allow and Deny the same weight", () => {
+    const markup = render(event({ decisions: ["allow", "deny"] }));
+    expect(markup).toContain("button--decision-allow");
+    expect(markup).toContain("button--decision-deny");
+    expect(markup).not.toContain("button--primary");
+  });
+
+  // Exactly one primary action per dialog, and never the permissive one. With
+  // no semantic answer the manual field is the only way to answer at all.
+  it("keeps the manual submit primary only when the adapter offers nothing", () => {
+    expect(render(event({ decisions: [] }))).toContain("button--primary");
+    expect(render(event({ decisions: ["allow", "deny"] }))).toContain("button--ghost");
+  });
+});
