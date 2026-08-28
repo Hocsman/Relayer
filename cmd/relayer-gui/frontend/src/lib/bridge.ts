@@ -16,6 +16,7 @@ interface NativeBindings {
   GetState: NativeMethod<[], AppState>;
   RunPreflight: NativeMethod<[], PreflightReport>;
   SubmitDecision: NativeMethod<[string, string, string, string], void>;
+  SubmitAutomaticDecision: NativeMethod<[string, string, string, string], void>;
   SubmitLine: NativeMethod<[string, string, string], void>;
   ResizeSession: NativeMethod<[string, string, number, number], void>;
   StopSession: NativeMethod<[string, string], void>;
@@ -52,6 +53,7 @@ function resolveBindings(): NativeBindings {
     typeof candidate.GetState !== "function" ||
     typeof candidate.RunPreflight !== "function" ||
     typeof candidate.SubmitDecision !== "function" ||
+    typeof candidate.SubmitAutomaticDecision !== "function" ||
     typeof candidate.SubmitLine !== "function" ||
     typeof candidate.ResizeSession !== "function" ||
     typeof candidate.StopSession !== "function" ||
@@ -83,6 +85,8 @@ export function createWailsBridge(): RelayerBridge {
     runPreflight: () => bindings.RunPreflight(),
     submitDecision: (runID, sessionID, eventID, value) =>
       bindings.SubmitDecision(runID, sessionID, eventID, value),
+    submitAutomaticDecision: (runID, sessionID, eventID, decision) =>
+      bindings.SubmitAutomaticDecision(runID, sessionID, eventID, decision),
     submitLine: (runID, sessionID, line) =>
       bindings.SubmitLine(runID, sessionID, line),
     resizeSession: (runID, sessionID, columns, rows) =>

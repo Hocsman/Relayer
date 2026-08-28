@@ -40,7 +40,7 @@ func TestApplyDecisionRejectsAnEmptyManualAnswer(t *testing.T) {
 	if errors.Is(err, ErrEmptyManualDecision) {
 		t.Fatalf("a typed answer was rejected as empty: %v", err)
 	}
-	if err == nil || !strings.Contains(err.Error(), "adaptateurs") {
+	if err == nil || !strings.Contains(err.Error(), "adapter registry") {
 		t.Fatalf("unexpected error for a typed answer: %v", err)
 	}
 }

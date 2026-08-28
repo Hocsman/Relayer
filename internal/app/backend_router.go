@@ -229,7 +229,7 @@ func (r *backendRouter) ApplyDecision(
 		return fmt.Errorf("%w: empty event ID", adapters.ErrEventMismatch)
 	}
 	if r.adapters == nil {
-		return errors.New("registry d'adaptateurs indisponible")
+		return errors.New("the adapter registry is unavailable")
 	}
 	if !strings.EqualFold(strings.TrimSpace(event.SessionID), strings.TrimSpace(id)) {
 		return fmt.Errorf("%w: event %q targets session %q, not %q",
@@ -268,6 +268,35 @@ func (r *backendRouter) ApplyDecision(
 		return sender.SendEvent(ctx, id, canonical.ID, data)
 	}
 	return fmt.Errorf("%w: backend %s without atomic event delivery", terminal.ErrUnsupported, backend.Name())
+}
+
+// SupportedDecisions reports which semantic decisions the event's own adapter
+// can actually encode for it.
+//
+// The encoders are pure functions, so the probe is the encoder itself rather
+// than a table describing it: a second source of truth would eventually promise
+// a button that delivery then refuses. The answer is per event, not per
+// adapter — Codex encodes both answers for a command approval but only a
+// refusal for a directory-trust prompt, and there is no byte sequence that
+// accepts one.
+//
+// DecisionManual is deliberately absent. It is always available for an
+// actionable event, and its own emptiness rule lives in ApplyDecision.
+func (r *backendRouter) SupportedDecisions(event adapters.Event) []adapters.Decision {
+	if r == nil || r.adapters == nil || !event.Actionable() {
+		return nil
+	}
+	adapter, _, err := r.adapters.Resolve(event.Adapter, "")
+	if err != nil {
+		return nil
+	}
+	var supported []adapters.Decision
+	for _, decision := range []adapters.Decision{adapters.DecisionAllow, adapters.DecisionDeny} {
+		if encoded, encodeErr := adapter.EncodeDecision(event, decision, ""); encodeErr == nil && len(encoded) > 0 {
+			supported = append(supported, decision)
+		}
+	}
+	return supported
 }
 
 func (r *backendRouter) AttachCommand(ctx context.Context, id string) (*exec.Cmd, error) {

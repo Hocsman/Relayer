@@ -128,15 +128,24 @@ function initialProfiles(): AgentProfilesView {
   };
 }
 
-function demoEvent(runID: string, sessionID: string, sensitive: boolean): SupervisionEvent {
+function demoEvent(
+  runID: string,
+  sessionID: string,
+  sensitive: boolean,
+  adapter: string,
+): SupervisionEvent {
   return {
     runID,
     id: `${sessionID}-prompt-1`,
     sessionID,
     agentID: sessionID,
-    adapter: "generic",
+    adapter,
     type: sensitive ? "credential" : "confirmation",
-    summary: sensitive ? "Saisie confidentielle requise" : "Overwrite generated file? [Y/n]",
+    summary: sensitive
+      ? "Saisie confidentielle requise"
+      : adapter === "codex"
+        ? "Autoriser l'exécution de la commande ?"
+        : "Overwrite generated file? [Y/n]",
     sensitive,
     risk: sensitive ? "high" : "unknown",
     timestamp: new Date().toISOString(),
@@ -148,6 +157,10 @@ function demoEvent(runID: string, sessionID: string, sensitive: boolean): Superv
       dryRun: false,
     },
     deliveryStatus: "pending",
+    // Mirrors the real probe: only the Codex adapter has verified bytes for
+    // accepting or refusing a command approval. A generic prompt is answered by
+    // typing whatever it asked for.
+    decisions: adapter === "codex" && !sensitive ? ["allow", "deny"] : [],
   };
 }
 
@@ -216,6 +229,33 @@ export function createDemoBridge(): RelayerBridge {
     return structuredClone(profiles);
   };
 
+  const resolveDemoEvent = (runID: string, sessionID: string, eventID: string) => {
+    requireRun(runID, true);
+    const eventIndex = state.pendingEvents.findIndex(
+      (event) => event.runID === runID && event.id === eventID && event.sessionID === sessionID,
+    );
+    if (eventIndex < 0) throw new Error("Événement de démonstration devenu obsolète.");
+    state.pendingEvents.splice(eventIndex, 1);
+    const agent = state.agents.find((candidate) => candidate.sessionID === sessionID);
+    if (!agent) throw new Error("Session de démonstration introuvable.");
+    agent.output += "Décision reçue et transmise.\nTâche terminée.\n";
+    agent.revision += 1;
+    agent.status = "exited";
+    agent.running = false;
+    agent.exitCode = 0;
+    emit("relayer:snapshot", {
+      runID,
+      sessionID,
+      revision: agent.revision,
+      output: agent.output,
+      status: agent.status,
+      running: false,
+      attached: false,
+      inputFrozen: false,
+      exitCode: 0,
+    });
+  };
+
   const demoNotices = (): string[] => [
     "Mode démonstration: aucun agent réel n'est lancé et rien n'est journalisé",
     `${profiles.profiles.length} agent(s) simulé(s) par des scripts du navigateur`,
@@ -261,12 +301,21 @@ export function createDemoBridge(): RelayerBridge {
 
       const threshold = agent.sessionID === "demo-a" ? 8 : 12;
       if (next === threshold) {
-        const event = demoEvent(eventRunID, agent.sessionID, agent.sessionID === "demo-b");
+        const event = demoEvent(
+          eventRunID,
+          agent.sessionID,
+          agent.sessionID === "demo-a",
+          agent.adapter,
+        );
         state.pendingEvents.push(event);
         agent.status = "waiting";
-        agent.output += agent.sessionID === "demo-a"
-          ? "Overwrite generated file? [Y/n]\n"
-          : "Credential required:\n";
+        // Derived from the event so the pane and the queue can never describe
+        // two different prompts.
+        agent.output += event.sensitive
+          ? "Credential required:\n"
+          : event.adapter === "codex"
+            ? "Allow command execution? [y/esc]\n"
+            : "Overwrite generated file? [Y/n]\n";
         agent.revision += 1;
         emit("relayer:snapshot", {
           runID: eventRunID,
@@ -365,31 +414,19 @@ export function createDemoBridge(): RelayerBridge {
         ],
       };
     },
-    async submitDecision(runID, sessionID, eventID, _value) {
-      requireRun(runID, true);
-      const eventIndex = state.pendingEvents.findIndex(
+    async submitAutomaticDecision(runID, sessionID, eventID, decision) {
+      const offered = state.pendingEvents.find(
         (event) => event.runID === runID && event.id === eventID && event.sessionID === sessionID,
-      );
-      if (eventIndex < 0) throw new Error("Événement de démonstration devenu obsolète.");
-      state.pendingEvents.splice(eventIndex, 1);
-      const agent = state.agents.find((candidate) => candidate.sessionID === sessionID);
-      if (!agent) throw new Error("Session de démonstration introuvable.");
-      agent.output += "Décision reçue et transmise.\nTâche terminée.\n";
-      agent.revision += 1;
-      agent.status = "exited";
-      agent.running = false;
-      agent.exitCode = 0;
-      emit("relayer:snapshot", {
-        runID,
-        sessionID,
-        revision: agent.revision,
-        output: agent.output,
-        status: agent.status,
-        running: false,
-        attached: false,
-        inputFrozen: false,
-        exitCode: 0,
-      });
+      )?.decisions;
+      // The demo refuses what the real core refuses: a decision the adapter for
+      // this occurrence cannot encode, whatever the screen was showing.
+      if (!offered?.includes(decision)) {
+        throw new Error("Décision non encodable pour cette demande.");
+      }
+      return resolveDemoEvent(runID, sessionID, eventID);
+    },
+    async submitDecision(runID, sessionID, eventID, _value) {
+      return resolveDemoEvent(runID, sessionID, eventID);
     },
     async submitLine(runID, sessionID, _line) {
       requireRun(runID, true);

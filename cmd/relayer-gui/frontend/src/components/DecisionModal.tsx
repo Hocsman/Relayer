@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { safeEventSummary } from "../lib/safety";
 import { deliveryRequiresResync } from "../lib/delivery";
-import type { AgentState, SupervisionEvent } from "../types/relayer";
+import type { AgentState, SemanticDecision, SupervisionEvent } from "../types/relayer";
 
 interface DecisionModalProps {
   event?: SupervisionEvent;
@@ -9,9 +9,20 @@ interface DecisionModalProps {
   queueSize: number;
   onClose(): void;
   onSubmit(runID: string, sessionID: string, eventID: string, value: string): Promise<boolean>;
+  onDecide(
+    runID: string,
+    sessionID: string,
+    eventID: string,
+    decision: SemanticDecision,
+  ): Promise<boolean>;
 }
 
-export function DecisionModal({ event, agent, queueSize, onClose, onSubmit }: DecisionModalProps) {
+const decisionLabels: Record<SemanticDecision, string> = {
+  allow: "Autoriser",
+  deny: "Refuser",
+};
+
+export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDecide }: DecisionModalProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
 
@@ -35,6 +46,22 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit }: De
   if (!event) return null;
 
   const indeterminateDelivery = deliveryRequiresResync(event);
+  // Only what the adapter reported for this exact occurrence. An unknown value
+  // arriving from a stale bridge is dropped rather than rendered as a button.
+  const offered = (event.decisions ?? []).filter(
+    (decision): decision is SemanticDecision => decision === "allow" || decision === "deny",
+  );
+
+  const decide = async (decision: SemanticDecision) => {
+    if (busy || indeterminateDelivery) return;
+    setBusy(true);
+    try {
+      const delivered = await onDecide(event.runID, event.sessionID, event.id, decision);
+      if (delivered) onClose();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submit = async (formEvent: FormEvent) => {
     formEvent.preventDefault();
@@ -103,9 +130,30 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit }: De
           </p>
         )}
 
+        {offered.length > 0 && (
+          <div className="decision-actions">
+            {offered.map((decision) => (
+              <button
+                key={decision}
+                type="button"
+                className={`button button--${decision === "deny" ? "danger" : "primary"}`}
+                disabled={busy || indeterminateDelivery}
+                onClick={() => void decide(decision)}
+              >
+                {decisionLabels[decision]}
+              </button>
+            ))}
+            <span>Réponse encodée par l’adaptateur {event.adapter}.</span>
+          </div>
+        )}
+
         <form className="decision-form" onSubmit={(formEvent) => void submit(formEvent)}>
           <label htmlFor="manual-decision">
-            {event.sensitive ? "Valeur confidentielle" : "Réponse à transmettre"}
+            {event.sensitive
+              ? "Valeur confidentielle"
+              : offered.length > 0
+                ? "Ou répondre manuellement"
+                : "Réponse à transmettre"}
           </label>
           <div className="decision-input-row">
             <input

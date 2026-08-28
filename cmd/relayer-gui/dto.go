@@ -55,6 +55,11 @@ type SupervisionEvent struct {
 	Timestamp      string           `json:"timestamp"`
 	Evaluation     PolicyEvaluation `json:"evaluation"`
 	DeliveryStatus string           `json:"deliveryStatus"`
+	// Decisions are the semantic answers this event's own adapter can encode,
+	// probed per event rather than assumed per adapter. An interface that
+	// offered an Allow button the adapter has no verified bytes for would be
+	// promising a delivery that fails at the last step.
+	Decisions []string `json:"decisions"`
 }
 
 type AppState struct {

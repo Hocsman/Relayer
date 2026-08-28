@@ -34,17 +34,19 @@ const (
 )
 
 var (
-	errAuditUnavailable  = errors.New("Le journal d'audit est indisponible; aucune décision n'a été envoyée.")
-	errDecisionStale     = errors.New("Cette demande n'est plus l'événement actuellement attendu.")
-	errDecisionInFlight  = errors.New("Une décision est déjà en cours pour cet agent.")
-	errDeliveryUncertain = errors.New("L'état de livraison est indéterminé; arrêtez la session avant toute nouvelle saisie.")
-	errLineInFlight      = errors.New("Une ligne est déjà en cours de livraison pour cet agent.")
-	errLinePromptPending = errors.New("Une demande de supervision doit être traitée avant toute saisie libre.")
-	errLineUnavailable   = errors.New("La session n'accepte pas de saisie libre dans son état actuel.")
-	errLineInvalid       = errors.New("La ligne saisie est invalide.")
-	errLineUnsupported   = errors.New("Ce backend ne prend pas en charge la saisie libre.")
-	errRuntimeStopped    = errors.New("Le moteur Relayer est arrêté.")
-	errRunStale          = errors.New("Ce run Relayer n'est plus actif.")
+	errAuditUnavailable    = errors.New("Le journal d'audit est indisponible; aucune décision n'a été envoyée.")
+	errDecisionStale       = errors.New("Cette demande n'est plus l'événement actuellement attendu.")
+	errDecisionInFlight    = errors.New("Une décision est déjà en cours pour cet agent.")
+	errEmptyDecision       = errors.New("Une réponse vide n'est pas une décision.")
+	errUnsupportedDecision = errors.New("Cette réponse n'est pas encodable pour cette demande.")
+	errDeliveryUncertain   = errors.New("L'état de livraison est indéterminé; arrêtez la session avant toute nouvelle saisie.")
+	errLineInFlight        = errors.New("Une ligne est déjà en cours de livraison pour cet agent.")
+	errLinePromptPending   = errors.New("Une demande de supervision doit être traitée avant toute saisie libre.")
+	errLineUnavailable     = errors.New("La session n'accepte pas de saisie libre dans son état actuel.")
+	errLineInvalid         = errors.New("La ligne saisie est invalide.")
+	errLineUnsupported     = errors.New("Ce backend ne prend pas en charge la saisie libre.")
+	errRuntimeStopped      = errors.New("Le moteur Relayer est arrêté.")
+	errRunStale            = errors.New("Ce run Relayer n'est plus actif.")
 )
 
 type eventKey struct {
@@ -61,6 +63,7 @@ type desktopEngine interface {
 	Metadata() appcore.DesktopMetadata
 	Sessions() []appcore.DesktopSession
 	StartupLogs() []string
+	SupportedDecisions(adapters.Event) []adapters.Decision
 	Events() <-chan session.Event
 	Output(string) (string, error)
 	PendingEvent(context.Context, string) (*adapters.Event, error)
@@ -481,7 +484,7 @@ func (a *App) handleAdapterEventForRun(run *runGeneration, event adapters.Event)
 		return
 	}
 
-	view := supervisionView(run.id, event, evaluation, "pending")
+	view := supervisionView(run.id, event, evaluation, "pending", run.engine.SupportedDecisions(event))
 	a.mu.Lock()
 	a.pending[key] = pendingEvent{event: event.Clone(), view: view}
 	a.setAgentWaitingLocked(event.SessionID)
@@ -754,7 +757,9 @@ func (a *App) fallbackToAsk(key eventKey, reason string) {
 
 func (a *App) addFrozenEvent(run *runGeneration, event adapters.Event, evaluation policy.Evaluation) {
 	key := makeEventKey(event.SessionID, event.ID)
-	view := supervisionView(run.id, event, evaluation, "failed")
+	// A frozen event offers no answer at all: the session is already blocked on
+	// an audit or delivery failure and nothing more may be sent to it.
+	view := supervisionView(run.id, event, evaluation, "failed", nil)
 	a.mu.Lock()
 	a.pending[key] = pendingEvent{event: event.Clone(), view: view}
 	a.frozen[key.sessionID] = true
@@ -842,6 +847,52 @@ func (a *App) reconcilePending(run *runGeneration, sessionID string) {
 // SubmitDecision relays a manual value to the exact canonical occurrence. The
 // value is never copied into application state, events, errors or audit data.
 func (a *App) SubmitDecision(runID, sessionID, eventID, manualInput string) error {
+	if strings.TrimSpace(manualInput) == "" {
+		return errEmptyDecision
+	}
+	return a.applyHumanDecision(runID, sessionID, eventID, adapters.DecisionManual, manualInput)
+}
+
+// SubmitAutomaticDecision relays an answer the adapter encodes itself, so the
+// operator does not have to know the keystroke a given CLI expects.
+//
+// The set of answers a given occurrence accepts is reported on the event, and
+// the adapter is asked again here: a decision that arrived from a stale
+// interface must be refused by the core rather than by the screen that offered
+// it.
+func (a *App) SubmitAutomaticDecision(runID, sessionID, eventID, decision string) error {
+	switch adapters.Decision(decision) {
+	case adapters.DecisionAllow, adapters.DecisionDeny:
+	default:
+		return errUnsupportedDecision
+	}
+	run, runErr := a.activeRun(runID)
+	if runErr != nil {
+		return runErr
+	}
+	a.mu.RLock()
+	item, exists := a.pending[makeEventKey(sessionID, eventID)]
+	a.mu.RUnlock()
+	if !exists {
+		return errDecisionStale
+	}
+	offered := false
+	for _, supported := range run.engine.SupportedDecisions(item.event) {
+		if supported == adapters.Decision(decision) {
+			offered = true
+		}
+	}
+	if !offered {
+		return errUnsupportedDecision
+	}
+	return a.applyHumanDecision(runID, sessionID, eventID, adapters.Decision(decision), "")
+}
+
+func (a *App) applyHumanDecision(
+	runID, sessionID, eventID string,
+	decision adapters.Decision,
+	manualInput string,
+) error {
 	run, runErr := a.activeRun(runID)
 	if runErr != nil {
 		return runErr
@@ -893,15 +944,15 @@ func (a *App) SubmitDecision(runID, sessionID, eventID, manualInput string) erro
 	defer func() { a.finishDecision(run, key, advance) }()
 
 	backend := a.backendFor(run, sessionID)
-	if !a.recordAudit(run, decisionAuditEntry(item.event, backend, audit.DecisionAsk, audit.DecisionByHuman)) {
+	if !a.recordAudit(run, decisionAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman)) {
 		return errAuditUnavailable
 	}
 	ctx, cancel := context.WithTimeout(run.ctx, 8*time.Second)
-	err := run.engine.ApplyDecision(ctx, sessionID, item.event, adapters.DecisionManual, manualInput)
+	err := run.engine.ApplyDecision(ctx, sessionID, item.event, decision, manualInput)
 	cancel()
 	if err != nil {
 		if errors.Is(err, adapters.ErrEventMismatch) {
-			if !a.recordAudit(run, deliveryAuditEntry(item.event, backend, audit.DecisionAsk, audit.DecisionByHuman, audit.OutcomeFallbackStale, "fallback_stale")) {
+			if !a.recordAudit(run, deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackStale, "fallback_stale")) {
 				return errAuditUnavailable
 			}
 			a.resolveEvent(key)
@@ -909,13 +960,13 @@ func (a *App) SubmitDecision(runID, sessionID, eventID, manualInput string) erro
 			advance = true
 			return errDecisionStale
 		}
-		if !a.recordAudit(run, deliveryAuditEntry(item.event, backend, audit.DecisionAsk, audit.DecisionByHuman, audit.OutcomeFallbackDeliveryUncertain, "delivery_uncertain")) {
+		if !a.recordAudit(run, deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackDeliveryUncertain, "delivery_uncertain")) {
 			return errAuditUnavailable
 		}
 		a.freezeSession(run, key, "delivery_uncertain")
 		return errDeliveryUncertain
 	}
-	if !a.recordAudit(run, deliveryAuditEntry(item.event, backend, audit.DecisionAsk, audit.DecisionByHuman, audit.OutcomeApplied, "delivery_applied")) {
+	if !a.recordAudit(run, deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeApplied, "delivery_applied")) {
 		return errAuditUnavailable
 	}
 	a.resolveEvent(key)
@@ -1396,7 +1447,20 @@ func makeEventKey(sessionID, eventID string) eventKey {
 	}
 }
 
-func supervisionView(runID string, event adapters.Event, evaluation policy.Evaluation, delivery string) SupervisionEvent {
+func supervisionView(
+	runID string,
+	event adapters.Event,
+	evaluation policy.Evaluation,
+	delivery string,
+	decisions []adapters.Decision,
+) SupervisionEvent {
+	offered := make([]string, 0, len(decisions))
+	for _, decision := range decisions {
+		switch decision {
+		case adapters.DecisionAllow, adapters.DecisionDeny:
+			offered = append(offered, string(decision))
+		}
+	}
 	timestamp := event.Timestamp
 	if timestamp.IsZero() {
 		timestamp = time.Now().UTC()
@@ -1421,6 +1485,7 @@ func supervisionView(runID string, event adapters.Event, evaluation policy.Evalu
 			DryRun:         evaluation.DryRun,
 		},
 		DeliveryStatus: delivery,
+		Decisions:      offered,
 	}
 }
 
@@ -1487,4 +1552,19 @@ func safeNotices(logs []string) []string {
 		notices = append(notices, cleaned)
 	}
 	return notices
+}
+
+// humanAuditDecision names the answer a human actually gave. A free-text reply
+// stays "ask": the journal records that a human was consulted and answered, not
+// that the answer permitted anything — only the adapter knows what the bytes
+// mean.
+func humanAuditDecision(decision adapters.Decision) audit.Decision {
+	switch decision {
+	case adapters.DecisionAllow:
+		return audit.DecisionAllow
+	case adapters.DecisionDeny:
+		return audit.DecisionDeny
+	default:
+		return audit.DecisionAsk
+	}
 }

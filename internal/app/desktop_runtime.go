@@ -450,6 +450,16 @@ func (r *DesktopRuntime) Evaluate(event adapters.Event) policy.Evaluation {
 	return r.policyEngine.Evaluate(event)
 }
 
+// SupportedDecisions reports the semantic answers the interface may offer for
+// this exact event. An interface that guesses instead would show an Allow
+// button on a prompt whose adapter has no verified bytes for accepting it.
+func (r *DesktopRuntime) SupportedDecisions(event adapters.Event) []adapters.Decision {
+	if r == nil || r.router == nil {
+		return nil
+	}
+	return r.router.SupportedDecisions(event)
+}
+
 func (r *DesktopRuntime) ApplyDecision(
 	ctx context.Context,
 	sessionID string,

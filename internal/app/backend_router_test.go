@@ -838,3 +838,118 @@ func TestBackendRouterSendLineRejectsBackendWithoutAtomicCapability(t *testing.T
 		t.Fatalf("unsupported line fell back to %d raw Send call(s)", rawCalls)
 	}
 }
+
+// An interface that offers a button the adapter cannot encode promises a
+// delivery that fails at the last step. The probe answers per occurrence, not
+// per adapter: Codex encodes both answers for a command approval but only a
+// refusal for a directory-trust prompt, because no verified byte sequence
+// accepts one.
+func TestBackendRouterReportsDecisionsThePromptCanActuallyReceive(t *testing.T) {
+	router, err := newBackendRouter(context.Background(), newRouterFakeBackend(agent.BackendPTY))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	router.adapters, err = adapters.NewRegistry(adapters.DefaultPatterns())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	codexEvent := func(interaction string) adapters.Event {
+		return adapters.Event{
+			ID:        "evt-" + interaction,
+			SessionID: "codex",
+			AgentID:   "codex",
+			Adapter:   adapters.CodexID,
+			Type:      adapters.EventPermission,
+			Metadata:  map[string]string{"interaction": interaction},
+		}
+	}
+
+	for _, test := range []struct {
+		name  string
+		event adapters.Event
+		want  []adapters.Decision
+	}{
+		{
+			name:  "codex command approval accepts and refuses",
+			event: codexEvent("command_approval"),
+			want:  []adapters.Decision{adapters.DecisionAllow, adapters.DecisionDeny},
+		},
+		{
+			name:  "codex directory trust can only be refused",
+			event: codexEvent("directory_trust"),
+			want:  []adapters.Decision{adapters.DecisionDeny},
+		},
+		{
+			name: "the generic adapter answers nothing on its own",
+			event: adapters.Event{
+				ID: "evt-generic", SessionID: "generic", AgentID: "generic",
+				Adapter: adapters.GenericID, Type: adapters.EventConfirmation,
+			},
+			want: nil,
+		},
+		{
+			name: "a terminated process is not a question",
+			event: adapters.Event{
+				ID: "evt-exit", SessionID: "codex", AgentID: "codex",
+				Adapter: adapters.CodexID, Type: adapters.EventProcessExit,
+			},
+			want: nil,
+		},
+		{
+			name: "an unknown adapter offers nothing rather than guessing",
+			event: adapters.Event{
+				ID: "evt-unknown", SessionID: "x", AgentID: "x",
+				Adapter: "no-such-adapter", Type: adapters.EventConfirmation,
+			},
+			want: nil,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := router.SupportedDecisions(test.event); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("supported decisions = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
+// Whatever the probe reports must be exactly what delivery accepts, or the
+// interface is describing a different program than the one running.
+func TestBackendRouterProbeAgreesWithDelivery(t *testing.T) {
+	backend := &routerEventBackend{routerFakeBackend: newRouterFakeBackend(agent.BackendPTY)}
+	router, err := newBackendRouter(context.Background(), backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	router.adapters, err = adapters.NewRegistry(adapters.DefaultPatterns())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := router.Start(context.Background(), agent.Spec{
+		ID: "codex", Name: "Codex", Command: []string{"runner"}, Backend: agent.BackendPTY,
+	}, terminal.Size{}); err != nil {
+		t.Fatal(err)
+	}
+
+	event := adapters.Event{
+		ID: "evt-trust", SessionID: "codex", AgentID: "codex",
+		Adapter: adapters.CodexID, Type: adapters.EventPermission,
+		Metadata: map[string]string{"interaction": "directory_trust"},
+	}
+	backend.pending = eventPointer(event)
+
+	supported := map[adapters.Decision]bool{}
+	for _, decision := range router.SupportedDecisions(event) {
+		supported[decision] = true
+	}
+	for _, decision := range []adapters.Decision{adapters.DecisionAllow, adapters.DecisionDeny} {
+		err := router.ApplyDecision(context.Background(), "codex", event, decision, "")
+		delivered := err == nil
+		if delivered != supported[decision] {
+			t.Fatalf("decision %q: probe said %v, delivery said %v (%v)",
+				decision, supported[decision], delivered, err)
+		}
+	}
+}

@@ -1074,6 +1074,30 @@ input:focus-visible {
   line-height: 1.45;
 }
 
+/* The adapter's own answers, shown only where the adapter has verified bytes
+   for them. They come before the free-text field: typing the keystroke a given
+   CLI expects is the fallback, not the primary path. */
+.decision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 20px 0;
+}
+
+.decision-actions .button {
+  min-width: 108px;
+}
+
+.decision-actions span {
+  color: var(--faint);
+  font-size: 9px;
+}
+
+.decision-actions + .decision-form {
+  padding-top: 13px;
+}
+
 .decision-form {
   padding: 16px 20px 18px;
 }

@@ -96,7 +96,13 @@ export interface SupervisionEvent {
   timestamp: string;
   evaluation: PolicyEvaluation;
   deliveryStatus: DeliveryStatus;
+  // The semantic answers this exact occurrence accepts, decided by the adapter
+  // that produced it. Never inferred here: an Allow button the adapter has no
+  // bytes for would promise a delivery that fails.
+  decisions?: SemanticDecision[];
 }
+
+export type SemanticDecision = "allow" | "deny";
 
 export interface AppState {
   runID: string;
@@ -282,6 +288,12 @@ export interface RelayerBridge {
   getState(): Promise<AppState>;
   runPreflight(): Promise<PreflightReport>;
   submitDecision(runID: string, sessionID: string, eventID: string, value: string): Promise<void>;
+  submitAutomaticDecision(
+    runID: string,
+    sessionID: string,
+    eventID: string,
+    decision: SemanticDecision,
+  ): Promise<void>;
   submitLine(runID: string, sessionID: string, line: string): Promise<void>;
   resizeSession(runID: string, sessionID: string, columns: number, rows: number): Promise<void>;
   stopSession(runID: string, sessionID: string): Promise<void>;
