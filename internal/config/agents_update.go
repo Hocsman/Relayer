@@ -90,7 +90,7 @@ func (snapshot *FileSnapshot) Restore(expectedRevision string) (Result, string, 
 	if err := publishConfigurationBytes(absolutePath, snapshot.data, snapshot.mode); err != nil {
 		return Result{}, "", err
 	}
-	restored, err := Load(absolutePath)
+	restored, err := LoadExisting(absolutePath)
 	if err != nil {
 		return Result{}, snapshot.revision, errors.Join(ErrCommitUncertain, err)
 	}
@@ -143,7 +143,7 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 	}
 	defer unlock()
 
-	current, err := Load(absolutePath)
+	current, err := LoadExisting(absolutePath)
 	if err != nil {
 		return Result{}, "", err
 	}
@@ -208,7 +208,7 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 	if err := temporary.Close(); err != nil {
 		return Result{}, "", errors.New("fermeture de la configuration temporaire impossible")
 	}
-	if _, err := Load(temporaryPath); err != nil {
+	if _, err := LoadExisting(temporaryPath); err != nil {
 		return Result{}, "", fmt.Errorf("configuration mise à jour invalide: %w", err)
 	}
 
@@ -223,7 +223,7 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 		return Result{}, "", errors.New("publication atomique de la configuration impossible")
 	}
 	if err := syncConfigurationDirectory(directory); err != nil {
-		updated, loadErr := Load(absolutePath)
+		updated, loadErr := LoadExisting(absolutePath)
 		if loadErr != nil {
 			return Result{}, contentRevision(rendered), errors.Join(
 				ErrCommitUncertain,
@@ -236,7 +236,7 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 		)
 	}
 
-	updated, err := Load(absolutePath)
+	updated, err := LoadExisting(absolutePath)
 	if err != nil {
 		return Result{}, publishedRevision, errors.Join(ErrCommitUncertain, err)
 	}
@@ -301,7 +301,7 @@ func publishConfigurationBytes(path string, data []byte, mode os.FileMode) error
 	if err := temporary.Close(); err != nil {
 		return errors.New("fermeture de la restauration temporaire impossible")
 	}
-	if _, err := Load(temporaryPath); err != nil {
+	if _, err := LoadExisting(temporaryPath); err != nil {
 		return errors.New("instantané de restauration invalide")
 	}
 	if err := os.Rename(temporaryPath, path); err != nil {

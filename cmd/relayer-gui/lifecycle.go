@@ -69,7 +69,7 @@ func (a *App) SaveAgentProfilesAndRestart(request RestartAgentProfilesRequest) (
 		return AgentLifecycleResult{}, errProfilesSave
 	}
 	defer snapshot.Discard()
-	previous, err := config.Load(path)
+	previous, err := config.LoadExisting(path)
 	if err != nil {
 		return AgentLifecycleResult{}, errProfilesSave
 	}
