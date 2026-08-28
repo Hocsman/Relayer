@@ -18,7 +18,7 @@ testable, and explicit about their failure behavior.
 
 Required:
 
-- Go 1.25.11 or newer;
+- Go 1.25.13 or newer;
 - a supported Linux or macOS development environment;
 - Bash for mock-agent integration tests.
 

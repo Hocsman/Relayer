@@ -87,10 +87,11 @@ still change without compatibility guarantees.
 
 ### Changed
 
-- The minimum build toolchain is Go 1.25.11. The desktop module reached a
-  vulnerable `crypto/x509` path through its Wails dependencies that the root
-  module never calls, so the previous 1.25.8 pin left a reachable standard
-  library vulnerability in the one module CI did not scan.
+- The minimum build toolchain is Go 1.25.13. The desktop module reached two
+  vulnerable standard library paths through its Wails dependencies that the root
+  module never calls — `crypto/x509`, and `encoding/asn1` under the Linux
+  WebKit build tag — so the previous 1.25.8 pin left reachable vulnerabilities
+  in the one module CI did not scan.
 
 - Go error strings are in English. Roughly 40% of them were French, so an
   operator got a mix of two languages and could not search for the message they

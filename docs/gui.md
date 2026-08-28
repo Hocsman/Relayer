@@ -30,7 +30,7 @@ go build -o relayer ./cmd/relayer
 
 The desktop module currently pins:
 
-- Go 1.25.11 or newer;
+- Go 1.25.13 or newer;
 - Wails v2.14.0;
 - Node.js 20.19 or newer, or Node.js 22.12 or newer;
 - npm and the native WebView/build dependencies required by Wails.
