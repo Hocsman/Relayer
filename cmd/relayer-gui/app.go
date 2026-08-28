@@ -525,9 +525,9 @@ func eventDetectedEntry(event adapters.Event, backend string) audit.Entry {
 
 func (a *App) handleProcessExit(run *runGeneration, event adapters.Event, backend string) {
 	key := makeEventKey(event.SessionID, event.ID)
-	if !a.recordAudit(run, eventDetectedEntry(event, backend)) {
-		// Lifecycle state still has to converge even when audit has failed.
-	}
+	// Lifecycle state still has to converge even when audit has failed, so the
+	// result is deliberately ignored rather than short-circuiting the exit.
+	_ = a.recordAudit(run, eventDetectedEntry(event, backend))
 	finished := eventAuditEntry(audit.KindSessionFinished, event, backend)
 	finished.Outcome = audit.OutcomeFinished
 	if event.Metadata["failed"] == "true" {

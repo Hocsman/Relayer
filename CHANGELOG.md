@@ -87,6 +87,11 @@ still change without compatibility guarantees.
 
 ### Changed
 
+- The minimum build toolchain is Go 1.25.11. The desktop module reached a
+  vulnerable `crypto/x509` path through its Wails dependencies that the root
+  module never calls, so the previous 1.25.8 pin left a reachable standard
+  library vulnerability in the one module CI did not scan.
+
 - Go error strings are in English. Roughly 40% of them were French, so an
   operator got a mix of two languages and could not search for the message they
   hit — a genuine support cost: `identifiants immuables tmux invalides` returns
@@ -104,6 +109,11 @@ still change without compatibility guarantees.
   with conservative defaults and auditing disabled for compatibility.
 
 ### Fixed
+
+- An operator on an unsupported platform was told only that agent execution is
+  unavailable, never why. The build carried the explanation — a ConPTY backend
+  must be implemented and tested first — in a function nothing called, which is
+  what a `staticcheck` run on this module reported first.
 
 - A half-composed direct instruction was discarded silently whenever a prompt
   took the shared input field. Preempting it is correct — a supervision request
@@ -221,6 +231,12 @@ still change without compatibility guarantees.
   documentation records it as the one deliberate exception to passive checking.
 
 ### Security
+
+- CI scans the desktop module. It carries the dependency surface — echo,
+  gorilla/websocket, `x/net`, `x/crypto` all arrive with Wails — while the
+  scanned root module has far fewer, so `staticcheck`, `govulncheck` and the
+  `go mod tidy` diff were pointed away from the code that needed them. The
+  frontend job additionally audits its locked dependency tree.
 
 - Backend and adapter selection, policy validation, and audit initialization
   happen before agent startup.
