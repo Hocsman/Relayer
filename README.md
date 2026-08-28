@@ -1,27 +1,41 @@
 # Relayer
 
-**A local human-approval and supervision layer for AI CLI agents.**
+**Run several AI coding agents at once, and answer their prompts from one place.**
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/Hocsman/Relayer)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Build](https://github.com/Hocsman/Relayer/actions/workflows/build.yml/badge.svg)](https://github.com/Hocsman/Relayer/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/Hocsman/Relayer?include_prereleases&sort=semver)](https://github.com/Hocsman/Relayer/releases)
+
+![Two agents run side by side, both stop at a confirmation prompt, and the supervisor answers each one in turn](docs/demo.gif)
+
+Leave an agent unattended and it waits on a question you never see. Watch it and
+you do nothing else. Run four and you are switching terminals to find whichever
+one stopped.
+
+Relayer runs one to eight interactive CLI agents side by side, watches their
+output for confirmation, permission and credential prompts, and holds each agent
+there until a human answers. Every decision is recorded in a local audit log
+that has no field for your terminal output.
+
+**No API key, no per-token billing, no proxy.** Relayer drives the CLI tools you
+already have, with your existing subscriptions and local models. It does not
+provide, proxy, or alter access to any AI service: the tools you launch keep
+their own authentication, billing, usage limits, terms, and network behavior.
+
+Try it in one command — no configuration, no credentials, two synthetic agents:
+
+```bash
+go run github.com/Hocsman/Relayer/cmd/relayer@latest
+```
 
 > [!WARNING]
 > Relayer is alpha software. Configuration, adapter, backend, and audit APIs may
-> change without compatibility guarantees. Use it with disposable work first,
-> review every proposed action, and keep independent backups.
-
-Relayer starts one to eight interactive command-line agents in local terminal
-sessions, shows their output in a Bubble Tea TUI or an optional alpha Wails
-desktop GUI, and brings detected confirmation, permission, or credential prompts to a human
-supervisor. It can use directly owned PTYs or detached, Relayer-owned tmux
-sessions.
-
-No direct per-token API integration is required. Relayer works with your existing CLI tools, subscriptions and local models.
-
-Relayer does not provide, proxy, or alter access to any AI service. The CLI
-tools you launch retain their own authentication, billing, usage limits, terms,
-and network behavior.
+> change without compatibility guarantees. Prompt detection is heuristic: it can
+> miss a prompt, so this is supervision rather than enforcement. Use it with
+> disposable work first, review every proposed action, and keep independent
+> backups. See the [security model](docs/security-model.md) before using it on
+> valuable data.
 
 ## What works today
 
