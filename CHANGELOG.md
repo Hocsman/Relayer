@@ -55,6 +55,15 @@ No release tag has been published at the time of writing.
 
 ### Fixed
 
+- The agent update path validated and re-read configuration files with `Load`,
+  which creates a default configuration when the path is absent. Used on the
+  temporary file of an in-flight save, a file that disappeared between writing
+  and validating would be recreated with defaults and then renamed over the
+  real configuration, replacing the user's agents, policies and audit settings
+  while reporting a successful save. Every update, snapshot, revision and
+  desktop profile call site now uses `LoadExisting`; only first-run bootstrap
+  may create a file.
+
 - Detection throughput was roughly 0.15 MB/s. The normalized detection window
   was rebuilt one rune at a time with `s.detectionText += ...`, copying the
   whole 16 KiB window per character, so consuming output was quadratic in chunk

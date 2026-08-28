@@ -141,7 +141,7 @@ func (a *App) saveAgentProfilesLocked(request SaveAgentProfilesRequest) (config.
 	if err != nil {
 		return config.Result{}, "", errProfilesSave
 	}
-	current, err := config.Load(path)
+	current, err := config.LoadExisting(path)
 	if err != nil {
 		return config.Result{}, "", errProfilesSave
 	}
@@ -179,7 +179,7 @@ func (a *App) saveAgentProfilesLocked(request SaveAgentProfilesRequest) (config.
 		// Rename may have completed even when directory synchronization or the
 		// post-commit read failed. Reconcile the opaque token before returning a
 		// generic failure so a retry can never use stale authority.
-		if reloaded, reloadErr := config.Load(path); reloadErr == nil && reloaded.Revision != current.Revision {
+		if reloaded, reloadErr := config.LoadExisting(path); reloadErr == nil && reloaded.Revision != current.Revision {
 			a.profileRevisionHash = reloaded.Revision
 			a.profileRevisionToken = token
 		}
@@ -195,7 +195,7 @@ func (a *App) loadAgentProfilesLocked() (AgentProfilesView, error) {
 	if err != nil {
 		return AgentProfilesView{}, errProfilesSave
 	}
-	loaded, err := config.Load(path)
+	loaded, err := config.LoadExisting(path)
 	if err != nil {
 		return AgentProfilesView{}, errors.New(safeDisplayError(err))
 	}
