@@ -128,7 +128,7 @@ func ignoredContext(line string, inCodeFence bool) bool {
 	lower := strings.ToLower(trimmed)
 	return inCodeFence ||
 		strings.HasPrefix(trimmed, "> ") ||
-		strings.HasPrefix(trimmed, "| ") ||
+		markdownTableRow(trimmed) ||
 		strings.HasPrefix(trimmed, "```") ||
 		strings.HasPrefix(lower, "log:") ||
 		strings.HasPrefix(lower, "previous:") ||
@@ -164,4 +164,18 @@ func minInt(left, right int) int {
 		return left
 	}
 	return right
+}
+
+// markdownTableRow reports a table row, which is quoted documentation rather
+// than a live question.
+//
+// Leading "| " alone is not enough: an agent that draws its prompt inside an
+// ASCII frame writes "| Overwrite file? [Y/n] |", which has the same prefix and
+// used to be suppressed at every chunk size. A table row separates cells, so it
+// carries more pipes than the two a frame uses to close its sides.
+func markdownTableRow(trimmed string) bool {
+	if !strings.HasPrefix(trimmed, "| ") {
+		return false
+	}
+	return strings.Count(trimmed, "|") > 2
 }
