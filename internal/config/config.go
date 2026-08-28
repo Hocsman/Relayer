@@ -103,6 +103,16 @@ func defaultSessionPolicy() SessionPolicy {
 type ConfigPattern struct {
 	Pattern     string `yaml:"pattern"`
 	Description string `yaml:"description"`
+
+	// Sensitive marks a pattern as reading a secret, which masks the operator
+	// field and forces a human decision. Relayer also infers this from the
+	// pattern text, but that inference is a word list and cannot recognize
+	// every prompt; without this field a missed word means an unmasked
+	// credential entry with no way to correct it.
+	//
+	// It can only escalate. `sensitive: false` does not downgrade a pattern the
+	// inference already considers sensitive.
+	Sensitive *bool `yaml:"sensitive,omitempty"`
 }
 
 type legacyFile struct {
@@ -1032,6 +1042,13 @@ func inferName(pattern ConfigPattern, index int) string {
 	}
 }
 
+// isSensitive combines the declared value with the inferred one. The two are
+// OR-ed rather than overriding each other: an explicit declaration must be able
+// to catch a prompt the word list misses, and must never be able to turn off a
+// masking decision the inference already made.
 func isSensitive(pattern ConfigPattern) bool {
+	if pattern.Sensitive != nil && *pattern.Sensitive {
+		return true
+	}
 	return intercept.IsSensitiveText(pattern.Pattern + " " + pattern.Description)
 }

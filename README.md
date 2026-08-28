@@ -334,6 +334,9 @@ intercept_patterns:
     description: overwrite confirmation
   - pattern: '(?im)password:[[:space:]]*$'
     description: credential prompt
+  - pattern: '(?i)enter the code we sent you'
+    description: second factor challenge
+    sensitive: true
 ```
 
 Important configuration behavior:
