@@ -53,6 +53,36 @@ checksum:
   name_template: "relayer_{{ .Version }}_checksums.txt"
   algorithm: sha256
 
+# A checksum file published beside the binaries proves the download was not
+# corrupted in transit. It proves nothing about who produced it: anyone able to
+# write to the release can replace both. A tampered relayer binary is the
+# highest-value substitution target in a supervision toolchain - it can approve
+# everything and still write a plausible audit log - so the checksum file is
+# signed, and the signature is what a verifier actually checks.
+#
+# Signing is keyless: the GitHub Actions OIDC identity is bound into a
+# short-lived certificate and recorded in the public transparency log. There is
+# no private key to hold, leak, or rotate.
+signs:
+  - id: checksums
+    cmd: cosign
+    artifacts: checksum
+    output: true
+    certificate: "${artifact}.pem"
+    signature: "${artifact}.sig"
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+      - "--yes"
+
+# One SBOM per archive, so a consumer can answer "does this build contain a
+# vulnerable dependency" without rebuilding it.
+sboms:
+  - id: archives
+    artifacts: archive
+
 changelog:
   use: git
   sort: asc

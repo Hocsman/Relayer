@@ -10,6 +10,19 @@ No release tag has been published at the time of writing.
 
 ### Added
 
+- Release artifacts are signed and attested. The checksum file is signed with
+  keyless cosign, so the release workflow's own identity is bound into a
+  short-lived certificate and recorded in the public transparency log; build
+  provenance is attested separately, and each archive ships an SBOM. A checksum
+  published beside the binaries only proves the download was not corrupted, and
+  anyone able to write to the release could replace both — which matters here,
+  because a tampered `relayer` can approve everything and still write a
+  plausible audit log. The README documents `cosign verify-blob`, including the
+  identity flags without which any valid signature would pass.
+- CI now builds the release archives on every change instead of only validating
+  the configuration schema, so the first real run of the release pipeline is no
+  longer the publishing one.
+
 - `F2` and `F3` answer a pending prompt with an explicit allow or deny in the
   terminal interface. The adapters already encoded both and the audit already
   modelled a decision made by a person, but no operator surface could ask for

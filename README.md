@@ -214,8 +214,37 @@ grep "  ${ARCHIVE}$" "relayer_${VERSION}_checksums.txt" | shasum -a 256 -c -
 ```
 
 Compare the reported version with the authorized tag before placing the binary
-on your `PATH`. A checksum downloaded from the same release detects corruption;
-it is not a cryptographic signature or independent publisher authentication.
+on your `PATH`.
+
+A checksum file published beside the binaries only proves the download was not
+corrupted in transit; anyone able to write to the release could replace both.
+Verify the signature over that checksum file instead:
+
+```bash
+curl -fLO "${BASE_URL}/relayer_${VERSION}_checksums.txt.sig"
+curl -fLO "${BASE_URL}/relayer_${VERSION}_checksums.txt.pem"
+
+cosign verify-blob \
+  --certificate "relayer_${VERSION}_checksums.txt.pem" \
+  --signature "relayer_${VERSION}_checksums.txt.sig" \
+  --certificate-identity-regexp '^https://github\.com/Hocsman/Relayer/\.github/workflows/release\.yml@refs/tags/' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  "relayer_${VERSION}_checksums.txt"
+```
+
+Signing is keyless: the release workflow's own identity is bound into a
+short-lived certificate and recorded in the public transparency log, so there
+is no private key to trust or leak. The identity flags are what make the check
+meaningful — without them any valid Sigstore signature would pass.
+
+Build provenance is attested separately and can be checked with the GitHub CLI:
+
+```bash
+gh attestation verify "${ARCHIVE}" --repo Hocsman/Relayer
+```
+
+Each archive also ships an SBOM (`<archive>.sbom.json`) listing what went into
+that build.
 
 ## Quick start with safe mocks
 

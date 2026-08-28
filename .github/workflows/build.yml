@@ -97,6 +97,33 @@ jobs:
           version: v2.17.1
           args: check
 
+      # `check` only validates the schema. Building the archives here means the
+      # first real run of the release pipeline is not the publishing one.
+      # Signing and SBOM generation need cosign and syft, which belong to the
+      # release job, so they are skipped.
+      - name: Build release archives without publishing
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: v2.17.1
+          args: release --snapshot --clean --skip=publish,sign,sbom
+
+      - name: Verify the expected archives were produced
+        shell: bash
+        run: |
+          missing=0
+          for target in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64; do
+            if ! ls dist/relayer_*_"$target".tar.gz >/dev/null 2>&1; then
+              printf 'missing archive for %s\n' "$target" >&2
+              missing=1
+            fi
+          done
+          if ! ls dist/relayer_*_checksums.txt >/dev/null 2>&1; then
+            printf 'missing checksum file\n' >&2
+            missing=1
+          fi
+          exit "$missing"
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
