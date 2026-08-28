@@ -61,7 +61,7 @@ func executeLaunchSpec(specPath, gatePath string) error {
 	os.Clearenv()
 	for name, value := range spec.Env {
 		if err := os.Setenv(name, value); err != nil {
-			return fmt.Errorf("variable d'environnement tmux %q: %w", name, err)
+			return fmt.Errorf("tmux environment variable %q: %w", name, err)
 		}
 	}
 	for name, value := range dynamicTmuxEnvironment {

@@ -109,11 +109,11 @@ export function TerminalSnapshotView({
         onScroll={handleScroll}
         data-revision={revision}
       >
-        {output ? <pre>{output}</pre> : <p className="terminal-snapshot__empty">En attente de sortie…</p>}
+        {output ? <pre>{output}</pre> : <p className="terminal-snapshot__empty">Waiting for output…</p>}
       </div>
       {!following && (
         <button className="follow-button" type="button" onClick={resumeFollowing}>
-          <span aria-hidden="true">↓</span> Reprendre le direct
+          <span aria-hidden="true">↓</span> Resume live
         </button>
       )}
     </div>

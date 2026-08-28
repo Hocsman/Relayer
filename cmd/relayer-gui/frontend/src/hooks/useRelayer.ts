@@ -35,7 +35,7 @@ export function useRelayer(bridge: RelayerBridge) {
     try {
       dispatch({ type: "loaded", state: await bridge.getState() });
     } catch (error) {
-      dispatch({ type: "loadFailed", message: safeError(error, "Impossible de charger Relayer.") });
+      dispatch({ type: "loadFailed", message: safeError(error, "Relayer could not be loaded.") });
     }
   }, [bridge]);
 
@@ -68,7 +68,7 @@ export function useRelayer(bridge: RelayerBridge) {
           error: localError(
             runID,
             "decision_delivery_uncertain",
-            "La livraison est indéterminée. Arrêtez ou resynchronisez la session avant toute nouvelle saisie.",
+            "The delivery is indeterminate. Stop or resynchronize the session before any further input.",
             sessionID,
           ),
         });
@@ -102,7 +102,7 @@ export function useRelayer(bridge: RelayerBridge) {
           error: localError(
             runID,
             "decision_delivery_uncertain",
-            "La livraison est indéterminée. Arrêtez ou resynchronisez la session avant toute nouvelle saisie.",
+            "The delivery is indeterminate. Stop or resynchronize the session before any further input.",
             sessionID,
           ),
         });
@@ -122,7 +122,7 @@ export function useRelayer(bridge: RelayerBridge) {
           error: localError(
             runID,
             "resize_failed",
-            "Le redimensionnement de la session a échoué.",
+            "Resizing the session failed.",
             sessionID,
           ),
         });
@@ -147,7 +147,7 @@ export function useRelayer(bridge: RelayerBridge) {
           error: localError(
             runID,
             "line_delivery_rejected",
-            "La ligne n'a pas pu être confirmée. Vérifiez le superviseur et l'état de la session.",
+            "The line could not be confirmed. Check the supervisor and the session state.",
             sessionID,
           ),
         });
@@ -167,7 +167,7 @@ export function useRelayer(bridge: RelayerBridge) {
       } catch {
         dispatch({
           type: "error",
-          error: localError(runID, "stop_failed", "L’arrêt de la session a échoué.", sessionID),
+          error: localError(runID, "stop_failed", "Stopping the session failed.", sessionID),
         });
       }
     },
@@ -192,7 +192,7 @@ export function useRelayer(bridge: RelayerBridge) {
           error: localError(
             request.expectedRunID,
             "lifecycle_failed",
-            safeError(error, "Le changement de run a échoué."),
+            safeError(error, "The run change failed."),
           ),
         });
         await refresh();
@@ -213,7 +213,7 @@ export function useRelayer(bridge: RelayerBridge) {
         error: localError(
           runID,
           "stop_run_failed",
-          "L’arrêt du run a échoué. Aucun nouveau run ne sera démarré tant que l’état reste incertain.",
+          "Stopping the run failed. No new run will start while the state remains uncertain.",
         ),
       });
       await refresh();

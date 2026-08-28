@@ -9,7 +9,7 @@ import (
 
 func (m *Model) View() string {
 	if m.width == 0 || m.height == 0 {
-		return "Initialisation de Relayer…"
+		return "Initializing Relayer…"
 	}
 	if !m.layoutRenderable() {
 		return lipgloss.NewStyle().
@@ -21,7 +21,7 @@ func (m *Model) View() string {
 			MaxHeight(m.height).
 			Align(lipgloss.Center, lipgloss.Center).
 			Render(fmt.Sprintf(
-				"Terminal trop petit (%dx%d). Agrandissez la fenêtre pour afficher %d agent(s).",
+				"Terminal too small (%dx%d). Enlarge the window to show %d agent(s).",
 				m.width,
 				m.height,
 				len(m.panes),
@@ -87,22 +87,22 @@ func (m *Model) renderAgentPane(cell Cell) string {
 	innerWidth := maxInt(1, cell.Outer.Width-style.GetHorizontalFrameSize())
 	innerHeight := maxInt(1, cell.Outer.Height-style.GetVerticalFrameSize())
 
-	status := "EN COURS"
+	status := "RUNNING"
 	statusColor := agentColor(index)
 	if m.auditUnavailable && !pane.exited {
-		status = "AUDIT INDISPONIBLE"
+		status = "AUDIT UNAVAILABLE"
 		statusColor = colorBlocked
 	} else if pane.policyFrozen {
-		status = "LIVRAISON INCERTAINE"
+		status = "DELIVERY UNCERTAIN"
 		statusColor = colorBlocked
 	} else if pane.blocked {
-		status = "INTERVENTION REQUISE"
+		status = "ACTION REQUIRED"
 		statusColor = colorBlocked
 	} else if pane.exited && pane.exitErr == nil {
-		status = "TERMINÉ"
+		status = "FINISHED"
 		statusColor = colorSuccess
 	} else if pane.exited {
-		status = "ERREUR"
+		status = "ERROR"
 		statusColor = colorBlocked
 	}
 
@@ -131,21 +131,21 @@ func (m *Model) renderSupervisorPane(outer Rect) string {
 	innerWidth := maxInt(1, outer.Width-style.GetHorizontalFrameSize())
 	innerHeight := maxInt(1, outer.Height-style.GetVerticalFrameSize())
 
-	title := "SUPERVISEUR  •  POLITIQUE " + strings.ToUpper(string(m.policyConfig.DefaultAction))
+	title := "SUPERVISOR  •  POLICY " + strings.ToUpper(string(m.policyConfig.DefaultAction))
 	if m.policyConfig.DryRun {
-		title = "SUPERVISEUR  •  DRY RUN"
+		title = "SUPERVISOR  •  DRY RUN"
 	}
 	if m.auditUnavailable {
-		title = "SUPERVISEUR  •  AUDIT INDISPONIBLE  •  ARRÊT REQUIS"
+		title = "SUPERVISOR  •  AUDIT UNAVAILABLE  •  STOP REQUIRED"
 	} else if m.hasFrozenPane() {
-		title = "SUPERVISEUR  •  LIVRAISON INCERTAINE  •  ARRÊT REQUIS"
+		title = "SUPERVISOR  •  DELIVERY UNCERTAIN  •  STOP REQUIRED"
 	} else if intercepting {
-		title = "SUPERVISEUR  •  ACTION HUMAINE REQUISE"
+		title = "SUPERVISOR  •  HUMAN DECISION REQUIRED"
 		if m.policyConfig.DryRun {
 			title += "  •  DRY RUN"
 		}
 	} else if m.lineInputTarget != "" {
-		title = "SUPERVISEUR  •  CONSIGNE DIRECTE"
+		title = "SUPERVISOR  •  DIRECT INSTRUCTION"
 	}
 	if m.inputTarget != "" {
 		if paneIndex := m.paneIndex(m.inputTarget); paneIndex >= 0 {
@@ -161,7 +161,7 @@ func (m *Model) renderSupervisorPane(outer Rect) string {
 	// learn that others are queued behind it, possibly on another page. One
 	// waiting prompt is already the named one, so the count starts at two.
 	if waiting := len(m.pending); waiting > 1 {
-		title += fmt.Sprintf("  •  %d EN ATTENTE", waiting)
+		title += fmt.Sprintf("  •  %d PENDING", waiting)
 	}
 	title += fmt.Sprintf(
 		"  •  BACKEND %s  •  PAGE %d/%d",
@@ -169,22 +169,22 @@ func (m *Model) renderSupervisorPane(outer Rect) string {
 		m.layout.Page+1,
 		m.layout.PageCount,
 	)
-	enterHelp := "Entrée: répondre"
+	enterHelp := "Enter: answer"
 	if m.hasBackend("tmux") {
-		enterHelp = "Entrée: ouvrir/répondre • Ctrl+B puis D: revenir à Relayer"
+		enterHelp = "Enter: open/answer • Ctrl+B then D: back to Relayer"
 	}
 	if m.lineInputTarget != "" {
-		enterHelp = "Entrée: envoyer la consigne • Échap: annuler"
+		enterHelp = "Enter: send the instruction • Esc: cancel"
 	} else {
-		enterHelp += " • I: consigne directe"
+		enterHelp += " • I: direct instruction"
 	}
 	// The semantic answers only exist while a prompt is waiting, so the hint
 	// appears exactly when the keys do something.
 	if m.inputTarget != "" && m.lineInputTarget == "" {
-		enterHelp += " • F2: autoriser • F3: refuser"
+		enterHelp += " • F2: allow • F3: deny"
 	}
 	help := lipgloss.NewStyle().Foreground(colorMuted).MaxWidth(innerWidth).MaxHeight(1).Render(
-		enterHelp + " • Ctrl+←/→: focus • Ctrl+PgUp/PgDn: page • ↑/↓, PgUp/PgDn, molette: historique • Ctrl+C: quitter",
+		enterHelp + " • Ctrl+←/→: focus • Ctrl+PgUp/PgDn: page • ↑/↓, PgUp/PgDn, wheel: history • Ctrl+C: quit",
 	)
 	titleColor := colorMuted
 	if intercepting {

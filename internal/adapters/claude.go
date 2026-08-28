@@ -26,7 +26,7 @@ var claudeObservedRules = []claudeObservedRule{
 	{
 		pattern: Pattern{
 			Name:        claudeWorkspaceTrustPattern,
-			Description: "Claude Code demande l’autorisation d’accéder au dossier",
+			Description: "Claude Code asks for permission to access the folder",
 			// Claude Code renders spaces partly with cursor-forward ANSI
 			// sequences. Processor removes those sequences, so every boundary
 			// deliberately accepts either whitespace or no byte at all.
@@ -39,7 +39,7 @@ var claudeObservedRules = []claudeObservedRule{
 	{
 		pattern: Pattern{
 			Name:        claudeEnvironmentKeyPattern,
-			Description: "Claude Code demande si une clé d’environnement doit être utilisée",
+			Description: "Claude Code asks whether to use an environment key",
 			// The expression begins after the displayed environment value. As a
 			// result Event.Match cannot contain the key, including in memory.
 			Expression: `(?is)Do\s*you\s*want\s*to\s*use\s*this\s*API\s*key\?\s*1\.\s*Yes\s*2\.\s*No\s*\(\s*recommended\s*\)\s*Enter\s*to\s*confirm\s*Esc\s*to\s*cancel`,
@@ -80,7 +80,7 @@ func NewClaudeAdapter(patterns []Pattern) (*ClaudeAdapter, error) {
 	}
 	detector, err := NewGenericRegexAdapter(combined)
 	if err != nil {
-		return nil, fmt.Errorf("initialiser l’adaptateur Claude Code: %w", err)
+		return nil, fmt.Errorf("initialize the Claude Code adapter: %w", err)
 	}
 	return &ClaudeAdapter{detector: detector, rules: rules, configuredNames: configuredNames}, nil
 }

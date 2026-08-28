@@ -55,7 +55,7 @@ func NewProcessExitEvent(sessionID, agentID, adapterID string, sequence uint64, 
 	if sequence == 0 {
 		sequence = 1
 	}
-	summary := "processus terminé"
+	summary := "process exited"
 	metadata := make(map[string]string)
 	if failed {
 		summary = "process exited with error"

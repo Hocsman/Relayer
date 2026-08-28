@@ -27,34 +27,34 @@ func (m *Model) beginLineInput(paneIndex int) tea.Cmd {
 	name := safePolicyField(target.name)
 	switch {
 	case m.auditUnavailable:
-		m.appendLog("Consigne directe refusée: audit indisponible")
+		m.appendLog("Direct instruction refused: audit unavailable")
 		return nil
 	case target.exited:
-		m.appendLog(fmt.Sprintf("Consigne directe refusée pour %s: session terminée", name))
+		m.appendLog(fmt.Sprintf("Direct instruction refused for %s: the session has finished", name))
 		return nil
 	case target.policyFrozen:
-		m.appendLog(fmt.Sprintf("Consigne directe refusée pour %s: état de livraison incertain", name))
+		m.appendLog(fmt.Sprintf("Direct instruction refused for %s: indeterminate delivery state", name))
 		return nil
 	case target.blocked || target.prompt.ID != "" || m.inputTarget != "" || len(m.pending) != 0:
-		m.appendLog("Consigne directe refusée: une réponse superviseur est prioritaire")
+		m.appendLog("Direct instruction refused: a supervisor answer has priority")
 		return nil
 	case m.writePending:
-		m.appendLog("Consigne directe refusée: une réponse manuelle est en cours")
+		m.appendLog("Direct instruction refused: a manual answer is in flight")
 		return nil
 	case m.lineWritePending != "":
-		m.appendLog("Consigne directe refusée: un envoi opérateur est déjà en cours")
+		m.appendLog("Direct instruction refused: another direct instruction is already being sent")
 		return nil
 	case m.attachPending != "":
-		m.appendLog("Consigne directe refusée: un attachement tmux est en cours")
+		m.appendLog("Direct instruction refused: a tmux attachment is in progress")
 		return nil
 	}
 	sessionKey := semanticEventKey(target.sessionID, "unused").sessionID
 	if _, automatic := m.automaticBySession[sessionKey]; automatic {
-		m.appendLog(fmt.Sprintf("Consigne directe refusée pour %s: une décision automatique est en cours", name))
+		m.appendLog(fmt.Sprintf("Direct instruction refused for %s: an automatic decision is in flight", name))
 		return nil
 	}
 	if _, ok := m.backend.(LineInputBackend); !ok {
-		m.appendLog(fmt.Sprintf("Consigne directe indisponible pour %s: backend incompatible", name))
+		m.appendLog(fmt.Sprintf("Direct instruction unavailable for %s: incompatible backend", name))
 		return nil
 	}
 
@@ -62,7 +62,7 @@ func (m *Model) beginLineInput(paneIndex int) tea.Cmd {
 	m.lineInputTarget = target.sessionID
 	m.input.Reset()
 	m.input.EchoMode = textinput.EchoNormal
-	m.input.Placeholder = fmt.Sprintf("Consigne pour %s (Entrée: envoyer • Échap: annuler)", target.name)
+	m.input.Placeholder = fmt.Sprintf("Direct instruction for %s (Enter: send • Esc: cancel)", target.name)
 	setInputInterceptionStyle(&m.input, false)
 	return m.input.Focus()
 }
@@ -75,10 +75,10 @@ func (m *Model) cancelLineInput(announce bool) {
 	m.input.Reset()
 	m.input.Blur()
 	m.input.EchoMode = textinput.EchoNormal
-	m.input.Placeholder = "En attente d'une validation interactive…"
+	m.input.Placeholder = "Waiting for an interactive confirmation…"
 	setInputInterceptionStyle(&m.input, false)
 	if announce && target != "" {
-		m.appendLog("Saisie de consigne directe annulée")
+		m.appendLog("Direct instruction input cancelled")
 	}
 }
 
@@ -117,7 +117,7 @@ func (m *Model) applyLineInputResult(message lineInputDeliveredMsg) tea.Cmd {
 		if !m.recordOperatorInput(paneIndex, audit.OutcomeApplied, "operator_input_applied") {
 			return nil
 		}
-		m.appendLog(fmt.Sprintf("Consigne directe transmise à %s", safePolicyField(m.panes[paneIndex].name)))
+		m.appendLog(fmt.Sprintf("Direct instruction submitted to %s", safePolicyField(m.panes[paneIndex].name)))
 		return m.resumeDeferredLineEvent(message.SessionID, nil, false)
 	case errors.Is(message.Err, errAuditUnavailable):
 		m.freezeAudit(paneIndex)
@@ -127,7 +127,7 @@ func (m *Model) applyLineInputResult(message lineInputDeliveredMsg) tea.Cmd {
 			return nil
 		}
 		m.appendLog(fmt.Sprintf(
-			"Consigne directe non envoyée à %s: prompt détecté, réponse superviseur prioritaire",
+			"Direct instruction not sent to %s: prompt detected, a supervisor answer has priority",
 			safePolicyField(m.panes[paneIndex].name),
 		))
 		return m.resumeDeferredLineEvent(message.SessionID, message.Pending, message.PendingKnown)
@@ -135,13 +135,13 @@ func (m *Model) applyLineInputResult(message lineInputDeliveredMsg) tea.Cmd {
 		if !m.recordOperatorInput(paneIndex, audit.OutcomeSkipped, "operator_input_invalid") {
 			return nil
 		}
-		m.appendLog("Consigne directe refusée: une seule ligne de texte valide est requise")
+		m.appendLog("Direct instruction refused: exactly one valid line of text is required")
 		return m.resumeDeferredLineEvent(message.SessionID, nil, false)
 	case errors.Is(message.Err, terminal.ErrLineUnsupported):
 		if !m.recordOperatorInput(paneIndex, audit.OutcomeSkipped, "operator_input_unsupported") {
 			return nil
 		}
-		m.appendLog("Consigne directe indisponible: backend incompatible")
+		m.appendLog("Direct instruction unavailable: incompatible backend")
 		return m.resumeDeferredLineEvent(message.SessionID, nil, false)
 	default:
 		if !m.recordOperatorInput(
@@ -162,7 +162,7 @@ func (m *Model) freezeLineDelivery(paneIndex int, deferred *adapters.Event) tea.
 	}
 	target := &m.panes[paneIndex]
 	target.policyFrozen = true
-	target.policyTag = "LIVRAISON INCERTAINE"
+	target.policyTag = "DELIVERY UNCERTAIN"
 	target.blocked = true
 	if deferred != nil {
 		target.prompt = deferred.Clone()
@@ -175,7 +175,7 @@ func (m *Model) freezeLineDelivery(paneIndex int, deferred *adapters.Event) tea.
 		setInputInterceptionStyle(&m.input, false)
 	}
 	m.appendLog(fmt.Sprintf(
-		"Consigne directe • agent=%s • status=delivery_uncertain • aucun nouvel envoi automatique • arrêt ou reprise contrôlée requis",
+		"Direct instruction • agent=%s • status=delivery_uncertain • no new automatic send • stop or controlled restart required",
 		safePolicyField(target.name),
 	))
 	if m.inputTarget == "" && !m.writePending {
@@ -274,5 +274,5 @@ func (m *Model) cancelLineInputForPrompt() {
 		return
 	}
 	m.cancelLineInput(false)
-	m.appendLog("Consigne directe abandonnée: une demande de supervision a pris la main")
+	m.appendLog("Direct instruction discarded: a supervision request took over")
 }

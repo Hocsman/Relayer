@@ -29,7 +29,7 @@ type codexPrompt struct {
 var codexPrompts = []codexPrompt{
 	{
 		interaction: codexCommandApproval,
-		summary:     "Codex demande d'exécuter une commande (y=autoriser, esc=refuser)",
+		summary:     "Codex asks to run a command (y=allow, esc=deny)",
 		match:       "Would you like to run the following command?",
 		risk:        RiskUnknown,
 		markers:     []string{"Would you like to run the following command?"},
@@ -39,7 +39,7 @@ var codexPrompts = []codexPrompt{
 	},
 	{
 		interaction: codexDirectoryTrust,
-		summary:     "Codex demande de faire confiance au répertoire (1=continuer, 2=quitter)",
+		summary:     "Codex asks to trust the directory (1=continue, 2=quit)",
 		match:       "Do you trust the contents of this directory?",
 		risk:        RiskHigh,
 		// The compact variants are the same captured screen after ANSI cursor
@@ -321,7 +321,7 @@ func (a *CodexAdapter) EncodeDecision(event Event, decision Decision, manualInpu
 			}
 		}
 	default:
-		return nil, fmt.Errorf("%w: interaction Codex %q", ErrDecisionUnsupported, interaction)
+		return nil, fmt.Errorf("%w: Codex interaction %q", ErrDecisionUnsupported, interaction)
 	}
 	return nil, fmt.Errorf("%w: %q for Codex interaction %q", ErrDecisionUnsupported, decision, interaction)
 }

@@ -260,8 +260,8 @@ func unsetEnvForTest(t *testing.T, name string) {
 //
 // tmux sanitizes unprintable bytes while rendering a format. On tmux 3.7 a TAB
 // becomes "_" whenever TMUX is absent from the environment, so the previous
-// TAB-separated formats made Manager.Start fail with "identifiants immuables
-// tmux invalides" for every user running Relayer from an ordinary shell. The
+// TAB-separated formats made Manager.Start fail with "invalid immutable tmux
+// identifiers" for every user running Relayer from an ordinary shell. The
 // regression was invisible because the integration test set TMUX to the empty
 // string, and because CI runners ship tmux 3.4.
 //

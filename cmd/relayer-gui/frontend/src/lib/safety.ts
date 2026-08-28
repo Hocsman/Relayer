@@ -19,13 +19,13 @@ export function redactForDisplay(value: string): string {
 
 export function safeEventSummary(event: SupervisionEvent): string {
   if (event.sensitive || event.type === "credential") {
-    return "Saisie confidentielle requise";
+    return "Confidential input required";
   }
   const summary = redactForDisplay(event.summary.trim());
-  return summary || "Validation interactive requise";
+  return summary || "Interactive confirmation required";
 }
 
-export function safeError(error: unknown, fallback = "Une opération a échoué."): string {
+export function safeError(error: unknown, fallback = "An operation failed."): string {
   if (error instanceof Error && error.message.trim()) {
     return redactForDisplay(error.message.trim());
   }
@@ -39,7 +39,7 @@ export function sanitizeErrorEvent(event: SafeErrorEvent): SafeErrorEvent {
   return {
     runID: event.runID,
     code: redactForDisplay(event.code || "unknown_error"),
-    message: redactForDisplay(event.message || "Une erreur interne est survenue."),
+    message: redactForDisplay(event.message || "An internal error occurred."),
     sessionID: event.sessionID,
     timestamp: event.timestamp,
   };

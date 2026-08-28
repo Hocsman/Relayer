@@ -8,14 +8,14 @@ interface TopBarProps {
 }
 
 const runLabels: Record<AppState["runStatus"], string> = {
-  idle: "Prêt à démarrer",
-  starting: "Initialisation",
-  running: "En cours",
-  restarting: "Redémarrage",
-  rollback: "Restauration",
-  stopping: "Arrêt en cours",
-  stopped: "Arrêté",
-  failed: "Erreur",
+  idle: "Ready to start",
+  starting: "Initializing",
+  running: "Running",
+  restarting: "Restarting",
+  rollback: "Rolling back",
+  stopping: "Stopping",
+  stopped: "Stopped",
+  failed: "Error",
 };
 
 export function TopBar({ state, onOpenAgents, onOpenPreflight, onRequestStop }: TopBarProps) {
@@ -37,14 +37,14 @@ export function TopBar({ state, onOpenAgents, onOpenPreflight, onRequestStop }: 
         </div>
       </div>
 
-      <div className="topbar__metrics" aria-label="État du run">
+      <div className="topbar__metrics" aria-label="Run state">
         <span className={`run-state run-state--${state.runStatus}`}>
           <i aria-hidden="true" />
           {runLabels[state.runStatus]}
         </span>
-        <span className="topbar__metric"><strong>{running}</strong> actif{running > 1 ? "s" : ""}</span>
+        <span className="topbar__metric"><strong>{running}</strong> active</span>
         <span className={`topbar__metric${waiting ? " topbar__metric--attention" : ""}`}>
-          <strong>{waiting}</strong> en attente
+          <strong>{waiting}</strong> pending
         </span>
       </div>
 
@@ -57,7 +57,7 @@ export function TopBar({ state, onOpenAgents, onOpenPreflight, onRequestStop }: 
           onClick={onOpenPreflight}
           disabled={transitioning}
         >
-          <span aria-hidden="true">＋</span> Santé
+          <span aria-hidden="true">＋</span> Health
         </button>
         <button
           className="button button--agents"
@@ -74,7 +74,7 @@ export function TopBar({ state, onOpenAgents, onOpenPreflight, onRequestStop }: 
             disabled={transitioning}
             onClick={onRequestStop}
           >
-            {state.runStatus === "failed" ? "Réessayer l’arrêt" : "Arrêter le run"}
+            {state.runStatus === "failed" ? "Retry the stop" : "Stop the run"}
           </button>
         )}
       </div>

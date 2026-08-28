@@ -35,12 +35,12 @@ func TestDoctorRendersDeterministicReadyAndWarningReports(t *testing.T) {
 		{
 			name:       "ready",
 			report:     validDoctorReport(t, false),
-			wantStatus: "— PRÊT\n",
+			wantStatus: "— READY\n",
 		},
 		{
 			name:       "warning",
 			report:     validDoctorReport(t, true),
-			wantStatus: "— AVERTISSEMENTS\n",
+			wantStatus: "— WARNINGS\n",
 		},
 	}
 	for _, test := range tests {
@@ -56,7 +56,7 @@ func TestDoctorRendersDeterministicReadyAndWarningReports(t *testing.T) {
 				t.Fatalf("second runDoctor: %v", err)
 			}
 			if first.String() != second.String() || !strings.Contains(first.String(), test.wantStatus) ||
-				!strings.Contains(first.String(), "[OK] Configuration — La configuration est valide.") {
+				!strings.Contains(first.String(), "[OK] Configuration — The configuration is valid.") {
 				t.Fatalf("non-deterministic or incomplete output:\nfirst=%q\nsecond=%q", first.String(), second.String())
 			}
 		})
@@ -70,10 +70,10 @@ func TestDoctorRendersSafeToolAndAgentInventory(t *testing.T) {
 		t.Fatalf("writeDoctorReport: %v", err)
 	}
 	for _, expected := range []string{
-		"  - Codex CLI : détecté\n",
-		"  - Agent #1 : source=configuré, commande=directe, exécutable=détecté, adaptateur=codex (expérimental), backend=pty\n",
-		"[AVERTISSEMENT] Adaptateur — L'adaptateur effectif est expérimental.\n",
-		"[AVERTISSEMENT] Backend — Le backend auto se repliera sur PTY car tmux est indisponible.\n",
+		"  - Codex CLI: detected\n",
+		"  - Agent #1: source=configured, command=direct, executable=detected, adapter=codex (experimental), backend=pty\n",
+		"[WARNING] Adapter — The effective adapter is experimental.\n",
+		"[WARNING] Backend — The auto backend will fall back to PTY because tmux is unavailable.\n",
 	} {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("inventory output missing %q: %q", expected, output.String())
@@ -91,10 +91,10 @@ func TestDoctorWritesBlockedReportThenReturnsSilentExitSentinel(t *testing.T) {
 		t.Fatalf("runDoctor error = %v", err)
 	}
 	want := "Relayer doctor\n" +
-		"Vérifications :\n" +
-		"[BLOQUÉ] Configuration — Le fichier de configuration est absent.\n" +
-		"  Action : Créez explicitement la configuration avant de relancer le diagnostic.\n" +
-		"Bilan : 0 OK, 0 avertissement(s), 1 blocage(s) — BLOQUÉ\n"
+		"Checks:\n" +
+		"[BLOCKED] Configuration — The configuration file is missing.\n" +
+		"  Action: Create the configuration explicitly before running the diagnostic again.\n" +
+		"Summary: 0 OK, 0 warning(s), 1 blocker(s) — BLOCKED\n"
 	if output.String() != want {
 		t.Fatalf("output = %q, want %q", output.String(), want)
 	}
@@ -124,7 +124,7 @@ func TestRunWithOutputDoctorUsesDedicatedReadOnlyPath(t *testing.T) {
 	if called != 1 || requestedPath != "selected.yaml" || diagnostics.Len() != 0 {
 		t.Fatalf("doctor calls=%d path=%q diagnostics=%q", called, requestedPath, diagnostics.String())
 	}
-	if !strings.Contains(output.String(), "— PRÊT") {
+	if !strings.Contains(output.String(), "— READY") {
 		t.Fatalf("doctor output = %q", output.String())
 	}
 }
@@ -211,7 +211,7 @@ func TestDoctorRejectsMalformedReportWithoutPrintingSecret(t *testing.T) {
 	if !errors.Is(err, ErrPreflightBlocked) || strings.Contains(output.String(), secret) {
 		t.Fatalf("runDoctor error=%v output=%q", err, output.String())
 	}
-	if !strings.Contains(output.String(), "Le diagnostic n'a pas pu être terminé de façon sûre.") {
+	if !strings.Contains(output.String(), "The diagnostic could not be completed safely.") {
 		t.Fatalf("safe internal failure not rendered: %q", output.String())
 	}
 

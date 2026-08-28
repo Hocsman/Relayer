@@ -134,7 +134,7 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 		return Result{}, "", errors.New("expected revision is empty")
 	}
 	if len(specs) > maxAgents {
-		return Result{}, "", fmt.Errorf("trop d'agents: maximum %d", maxAgents)
+		return Result{}, "", fmt.Errorf("too many agents: maximum %d", maxAgents)
 	}
 
 	absolutePath, unlock, err := acquireConfigurationUpdateLock(path)
@@ -164,7 +164,7 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 	}
 	validated, err := agent.ValidateAll(specs, baseDir, current.Backend)
 	if err != nil {
-		return Result{}, "", fmt.Errorf("profils d'agents invalides: %w", err)
+		return Result{}, "", fmt.Errorf("invalid agent profiles: %w", err)
 	}
 	if err := validateUpdatedPolicyAgents(current, validated); err != nil {
 		return Result{}, "", err

@@ -38,10 +38,10 @@ func runDoctor(
 	flags := flag.NewFlagSet("relayer doctor", flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
 	flags.Usage = func() {
-		_, _ = fmt.Fprintln(diagnostics, "Usage: relayer doctor [--config fichier]")
+		_, _ = fmt.Fprintln(diagnostics, "Usage: relayer doctor [--config file]")
 		flags.PrintDefaults()
 	}
-	configPath := flags.String("config", config.DefaultPath, "fichier YAML de configuration existant")
+	configPath := flags.String("config", config.DefaultPath, "existing YAML configuration file")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
@@ -82,18 +82,18 @@ func writeDoctorReport(output io.Writer, report preflight.Report) error {
 	var rendered strings.Builder
 	rendered.WriteString("Relayer doctor\n")
 	if len(report.Tools) > 0 {
-		rendered.WriteString("Outils :\n")
+		rendered.WriteString("Tools:\n")
 		for _, tool := range report.Tools {
 			descriptor, ok := toolcatalog.Lookup(tool.ProfileID)
 			installation, valid := doctorInstallationLabel(tool.Installation)
 			if !ok || !valid {
 				return errors.New("invalid doctor report")
 			}
-			_, _ = fmt.Fprintf(&rendered, "  - %s : %s\n", descriptor.Name, installation)
+			_, _ = fmt.Fprintf(&rendered, "  - %s: %s\n", descriptor.Name, installation)
 		}
 	}
 	if len(report.Agents) > 0 {
-		rendered.WriteString("Agents :\n")
+		rendered.WriteString("Agents:\n")
 		for _, inspected := range report.Agents {
 			line, ok := doctorAgentLine(inspected)
 			if !ok {
@@ -103,7 +103,7 @@ func writeDoctorReport(output io.Writer, report preflight.Report) error {
 		}
 	}
 	if len(report.Checks) > 0 {
-		rendered.WriteString("Vérifications :\n")
+		rendered.WriteString("Checks:\n")
 	}
 	passCount, warningCount, blockCount := 0, 0, 0
 	for _, check := range report.Checks {
@@ -113,10 +113,10 @@ func writeDoctorReport(output io.Writer, report preflight.Report) error {
 			label = "OK"
 			passCount++
 		case preflight.CheckWarning:
-			label = "AVERTISSEMENT"
+			label = "WARNING"
 			warningCount++
 		case preflight.CheckBlock:
-			label = "BLOQUÉ"
+			label = "BLOCKED"
 			blockCount++
 		default:
 			return errors.New("invalid doctor report")
@@ -127,24 +127,24 @@ func writeDoctorReport(output io.Writer, report preflight.Report) error {
 		}
 		_, _ = fmt.Fprintf(&rendered, "[%s] %s — %s\n", label, scope, check.Summary)
 		if strings.TrimSpace(check.Remediation) != "" {
-			_, _ = fmt.Fprintf(&rendered, "  Action : %s\n", check.Remediation)
+			_, _ = fmt.Fprintf(&rendered, "  Action: %s\n", check.Remediation)
 		}
 	}
 
 	overall := ""
 	switch report.Status {
 	case preflight.StatusReady:
-		overall = "PRÊT"
+		overall = "READY"
 	case preflight.StatusWarning:
-		overall = "AVERTISSEMENTS"
+		overall = "WARNINGS"
 	case preflight.StatusBlocked:
-		overall = "BLOQUÉ"
+		overall = "BLOCKED"
 	default:
 		return errors.New("invalid doctor report")
 	}
 	_, _ = fmt.Fprintf(
 		&rendered,
-		"Bilan : %d OK, %d avertissement(s), %d blocage(s) — %s\n",
+		"Summary: %d OK, %d warning(s), %d blocker(s) — %s\n",
 		passCount,
 		warningCount,
 		blockCount,
@@ -159,11 +159,11 @@ func writeDoctorReport(output io.Writer, report preflight.Report) error {
 func doctorInstallationLabel(status toolcatalog.InstallStatus) (string, bool) {
 	switch status {
 	case toolcatalog.InstallInstalled:
-		return "détecté", true
+		return "detected", true
 	case toolcatalog.InstallNotInstalled:
-		return "non installé", true
+		return "not installed", true
 	case toolcatalog.InstallUnknown:
-		return "inconnu", true
+		return "unknown", true
 	default:
 		return "", false
 	}
@@ -176,16 +176,16 @@ func doctorAgentLine(inspected preflight.AgentInfo) (string, bool) {
 	source := ""
 	switch inspected.Source {
 	case preflight.AgentConfigured:
-		source = "configuré"
+		source = "configured"
 	case preflight.AgentDemo:
-		source = "démo"
+		source = "demo"
 	default:
 		return "", false
 	}
 	command := ""
 	switch inspected.Command {
 	case preflight.CommandDirect:
-		command = "directe"
+		command = "direct"
 	case preflight.CommandShell:
 		command = "shell"
 	default:
@@ -195,7 +195,7 @@ func doctorAgentLine(inspected preflight.AgentInfo) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	adapter := "indisponible"
+	adapter := "unavailable"
 	if inspected.Adapter != "" {
 		switch inspected.Adapter {
 		case adapters.GenericID, adapters.ClaudeID, adapters.CodexID:
@@ -208,7 +208,7 @@ func doctorAgentLine(inspected preflight.AgentInfo) (string, bool) {
 		case adapters.StatusStable:
 			maturity = "stable"
 		case adapters.StatusExperimental:
-			maturity = "expérimental"
+			maturity = "experimental"
 		default:
 			return "", false
 		}
@@ -216,7 +216,7 @@ func doctorAgentLine(inspected preflight.AgentInfo) (string, bool) {
 	} else if inspected.AdapterMaturity != "" {
 		return "", false
 	}
-	backend := "indisponible"
+	backend := "unavailable"
 	switch inspected.Backend {
 	case agent.BackendPTY, agent.BackendTmux:
 		backend = inspected.Backend
@@ -225,7 +225,7 @@ func doctorAgentLine(inspected preflight.AgentInfo) (string, bool) {
 		return "", false
 	}
 	return fmt.Sprintf(
-		"Agent #%d : source=%s, commande=%s, exécutable=%s, adaptateur=%s, backend=%s",
+		"Agent #%d: source=%s, command=%s, executable=%s, adapter=%s, backend=%s",
 		inspected.Ordinal,
 		source,
 		command,
@@ -240,17 +240,17 @@ func doctorScopeLabel(scope preflight.Scope) (string, bool) {
 	case preflight.ScopeConfiguration:
 		return "Configuration", true
 	case preflight.ScopePlatform:
-		return "Plateforme", true
+		return "Platform", true
 	case preflight.ScopePolicy:
-		return "Politiques", true
+		return "Policies", true
 	case preflight.ScopeAudit:
 		return "Audit", true
 	case preflight.ScopeTool:
-		return "Outil", true
+		return "Tool", true
 	case preflight.ScopeAgent:
 		return "Agent", true
 	case preflight.ScopeAdapter:
-		return "Adaptateur", true
+		return "Adapter", true
 	case preflight.ScopeBackend:
 		return "Backend", true
 	default:

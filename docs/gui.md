@@ -62,7 +62,7 @@ wails dev
 never selected as an automatic fallback by a packaged build.
 
 `wails doctor` checks the Wails build environment. It is distinct from
-Relayer's **Santé du système** report, which checks one saved Relayer
+Relayer's **System health** report, which checks one saved Relayer
 configuration without starting a run.
 
 Build the application locally with:
@@ -143,7 +143,7 @@ secrets in that file.
 
 ## Read-only health report
 
-Open **Santé** in the top bar, or **Vérifier l’installation** from the idle
+Open **Health** in the top bar, or **Check the installation** from the idle
 workspace. The panel delegates to the same `internal/app.RunPreflight` facade
 as `relayer doctor`; the WebView does not implement its own checks.
 
@@ -204,9 +204,9 @@ invent a `deepseek` executable, choose a model, or imply a DeepSeek-specific
 adapter.
 
 For confidentiality, argv already stored in YAML never crosses into the
-WebView. The picker shows only a fixed known executable label (or “commande
-personnalisée”) and an argument count. Select **Remplacer la commande** to
-enter a complete new argv. Profiles using `shell`, environment overrides, or
+WebView. The picker shows only a fixed known executable label (or “custom
+command”) and an argument count. Select **Replace the command** to enter a
+complete new argv. Profiles using `shell`, environment overrides, or
 unknown advanced adapters remain read-only and are preserved server-side.
 Profiles whose historical identifiers cannot be represented by the stricter
 form are also preserved read-only. A legacy configuration document must first
@@ -230,14 +230,14 @@ you explicitly request a run.
 
 The **Agents** panel separates persistence from activation:
 
-- **Enregistrer** atomically updates the YAML only. It never mutates an active
+- **Save** atomically updates the YAML only. It never mutates an active
   run.
-- From `idle`, **Enregistrer et démarrer** saves, validates, preflights, and
+- From `idle`, **Save and start** saves, validates, preflights, and
   starts the candidate configuration.
-- From `running`, **Enregistrer et redémarrer** performs the same save and
+- From `running`, **Save and restart** performs the same save and
   preflight, asks for confirmation, and replaces the active run. If the YAML is
-  already saved, the action is labelled **Redémarrer les agents**.
-- **Arrêter le run** returns the application to an editable `idle` state without
+  already saved, the action is labelled **Restart the agents**.
+- **Stop the run** returns the application to an editable `idle` state without
   closing the window.
 
 Each successful start receives a new opaque `runID`. Snapshots, supervision
@@ -266,7 +266,7 @@ A restart is a fail-closed transaction:
 The explicit GUI stop/restart path intentionally overrides
 `sessions.persist_on_exit`: a tmux session cannot remain alive while a
 replacement run with the same agent identity starts. This exception applies to
-**Arrêter le run** and GUI restart. An ordinary application shutdown continues
+**Stop the run** and GUI restart. An ordinary application shutdown continues
 to honor the configured tmux persistence policy, and Relayer never kills the
 tmux server.
 

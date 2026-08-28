@@ -86,7 +86,7 @@ describe("agent profile validation", () => {
   it("rejects an adapter that does not belong to the selected catalogue profile", () => {
     const result = validateAgentProfiles([profile({ adapter: "codex" })], view);
     expect(result.valid).toBe(false);
-    expect(result.profiles[0].presetID).toContain("Adaptateur incompatible");
+    expect(result.profiles[0].presetID).toContain("Adapter incompatible");
   });
 
   it("rejects duplicate case-insensitive identifiers", () => {
@@ -108,7 +108,7 @@ describe("agent profile validation", () => {
     ["https://alice:secret@example.test"],
   ])("rejects secret-shaped argv %j", (argument) => {
     const result = validateAgentProfiles([profile({ argv: [argument] })], view);
-    expect(result.profiles[0].argv).toContain("Ne placez pas");
+    expect(result.profiles[0].argv).toContain("Do not put");
   });
 
   it("requires an explicit path when a catalog executable is not detected", () => {
@@ -131,21 +131,21 @@ describe("agent profile validation", () => {
       view,
     );
     expect(missing.valid).toBe(false);
-    expect(missing.profiles[0].argv).toContain("modèle choisi");
+    expect(missing.profiles[0].argv).toContain("chosen model");
 
     const blankModel = validateAgentProfiles(
       [profile({ presetID: "ollama", argv: ["ollama", "run", ""] })],
       view,
     );
     expect(blankModel.valid).toBe(false);
-    expect(blankModel.profiles[0].argv).toContain("Renseignez explicitement");
+    expect(blankModel.profiles[0].argv).toContain("Set the subcommand");
 
     const wrongPrefix = validateAgentProfiles(
       [profile({ presetID: "ollama", argv: ["ollama", "serve", "model-selected-by-user"] })],
       view,
     );
     expect(wrongPrefix.valid).toBe(false);
-    expect(wrongPrefix.profiles[0].argv).toContain("préfixe exact");
+    expect(wrongPrefix.profiles[0].argv).toContain("exact prefix");
 
     const explicit = validateAgentProfiles(
       [profile({ presetID: "ollama", argv: ["ollama", "run", "model-selected-by-user"] })],
@@ -208,7 +208,7 @@ describe("agent profile validation", () => {
     const historical = profile({
       id: "Reviewer.V1",
       argv: undefined,
-      executableLabel: "commande personnalisée",
+      executableLabel: "custom command",
       preserveOnSave: true,
     });
     expect(validateAgentProfiles([historical], view).valid).toBe(true);

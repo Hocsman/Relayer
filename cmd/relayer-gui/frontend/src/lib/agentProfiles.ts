@@ -55,7 +55,7 @@ export function validateAgentProfiles(
   const errors = profiles.map(() => ({} as ProfileFieldErrors));
 
   if (profiles.length < minimum || profiles.length > maximum) {
-    global.push(`Configurez entre ${minimum} et ${maximum} agents.`);
+    global.push(`Configure between ${minimum} and ${maximum} agents.`);
   }
 
   const catalog = new Map(view.catalog.map((entry) => [entry.id, entry]));
@@ -66,8 +66,8 @@ export function validateAgentProfiles(
       const normalized = id.toLocaleLowerCase();
       const previous = identifiers.get(normalized);
       if (previous !== undefined) {
-        errors[index].id = `Identifiant déjà utilisé par l’agent ${previous + 1}.`;
-        errors[previous].id = "Cet identifiant est utilisé plusieurs fois.";
+        errors[index].id = `Identifier already used by agent ${previous + 1}.`;
+        errors[previous].id = "This identifier is used more than once.";
       } else {
         identifiers.set(normalized, index);
       }
@@ -81,22 +81,22 @@ export function validateAgentProfiles(
     }
 
     if (!profile.preserveOnSave && !agentIDPattern.test(id)) {
-      errors[index].id = "Utilisez 1 à 64 caractères : minuscules, chiffres, _ ou -.";
+      errors[index].id = "Use 1 to 64 characters: lowercase letters, digits, _ or -.";
     }
 
     const name = profile.name.trim();
     if (!name || name.length > 80 || name.includes("\u0000")) {
-      errors[index].name = "Le nom doit contenir entre 1 et 80 caractères.";
+      errors[index].name = "The name must be 1 to 80 characters long.";
     }
     if (profile.cwd.length > 4096 || profile.cwd.includes("\u0000")) {
-      errors[index].cwd = "Le dossier de travail est invalide ou trop long.";
+      errors[index].cwd = "The working directory is invalid or too long.";
     }
 
     const preset = catalog.get(profile.presetID);
     if (!preset) {
-      errors[index].presetID = "Sélection de catalogue inconnue.";
+      errors[index].presetID = "Unknown catalogue selection.";
     } else if (profile.adapter !== "generic" && profile.adapter !== preset.adapter) {
-      errors[index].presetID = "Adaptateur incompatible avec ce profil de catalogue.";
+      errors[index].presetID = "Adapter incompatible with this catalogue profile.";
     }
 
     if (profile.preserveOnSave) {
@@ -107,37 +107,37 @@ export function validateAgentProfiles(
 
     const argv = profile.argv ?? [];
     if (argv.length < 1 || argv.length > 64) {
-      errors[index].argv = "La commande doit contenir entre 1 et 64 arguments.";
+      errors[index].argv = "The command must contain 1 to 64 arguments.";
       return;
     }
     if (preset && argv.length < 1 + Math.max(0, preset.minimumArguments)) {
-      errors[index].argv = "Ce profil exige des arguments explicites, notamment le modèle choisi.";
+      errors[index].argv = "This profile requires explicit arguments, including the chosen model.";
       return;
     }
     if (!argv[0].trim()) {
-      errors[index].argv = "Le premier argument doit être un exécutable.";
+      errors[index].argv = "The first argument must be an executable.";
       return;
     }
     if (argv.some((argument) => argument.length > 4096 || argument.includes("\u0000"))) {
-      errors[index].argv = "Un argument est invalide ou trop long.";
+      errors[index].argv = "One argument is invalid or too long.";
       return;
     }
     if (
       preset &&
       argv.slice(1, 1 + Math.max(0, preset.minimumArguments)).some((argument) => !argument.trim())
     ) {
-      errors[index].argv = "Renseignez explicitement la sous-commande et le modèle.";
+      errors[index].argv = "Set the subcommand and the model explicitly.";
       return;
     }
     if (
       preset &&
       preset.argumentPrefix.some((argument, prefixIndex) => argv[prefixIndex + 1] !== argument)
     ) {
-      errors[index].argv = "La commande ne respecte pas le préfixe exact exigé par ce profil.";
+      errors[index].argv = "The command does not follow the exact prefix this profile requires.";
       return;
     }
     if (argv.some(looksSensitiveArgument)) {
-      errors[index].argv = "Ne placez pas de clé, token, mot de passe ou credential dans argv.";
+      errors[index].argv = "Do not put a key, token, password or credential in argv.";
       return;
     }
     if (
@@ -146,7 +146,7 @@ export function validateAgentProfiles(
       preset.defaultArgv.length > 0 &&
       argv[0] === preset.defaultArgv[0]
     ) {
-      errors[index].argv = "Exécutable non détecté. Installez-le ou indiquez un chemin explicite.";
+      errors[index].argv = "Executable not detected. Install it or give an explicit path.";
     }
   });
 

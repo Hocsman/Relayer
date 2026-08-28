@@ -103,9 +103,9 @@ func TestDesktopCommandLabelNeverExposesArguments(t *testing.T) {
 		want    string
 	}{
 		{name: "argv", command: []string{"/opt/homebrew/bin/claude", "--token", "fixture-secret"}, want: "claude"},
-		{name: "shell", shell: "echo fixture-secret", want: "[shell explicite]"},
-		{name: "missing", want: "[commande argv]"},
-		{name: "sensitive executable label", command: []string{"password=fixture-secret"}, want: "[commande argv]"},
+		{name: "shell", shell: "echo fixture-secret", want: "[explicit shell]"},
+		{name: "missing", want: "[argv command]"},
+		{name: "sensitive executable label", command: []string{"password=fixture-secret"}, want: "[argv command]"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -204,7 +204,7 @@ intercept_patterns:
 		if err != nil {
 			t.Fatalf("Output(%s): %v", item.ID, err)
 		}
-		if !strings.Contains(output, "Vous avez répondu : n") {
+		if !strings.Contains(output, "You answered: n") {
 			t.Fatalf("final output for %s did not contain relayed answer: %q", item.ID, output)
 		}
 	}

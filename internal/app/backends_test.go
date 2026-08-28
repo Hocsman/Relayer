@@ -99,7 +99,7 @@ func TestResolveAgentBackendsAutoSelectsTmuxWhenAvailable(t *testing.T) {
 			t.Fatalf("auto spec was canonicalized to %q, want tmux", spec.Backend)
 		}
 	}
-	if got := strings.Join(resolution.Warnings, "\n"); !strings.Contains(got, "tmux détecté") {
+	if got := strings.Join(resolution.Warnings, "\n"); !strings.Contains(got, "tmux detected") {
 		t.Fatalf("auto selection is not visible in warnings: %q", got)
 	}
 }
@@ -129,7 +129,7 @@ func TestResolveAgentBackendsAutoFallsBackToPTYWhenTmuxIsUnavailable(t *testing.
 			t.Fatalf("auto spec was canonicalized to %q, want PTY", spec.Backend)
 		}
 	}
-	if got := strings.Join(resolution.Warnings, "\n"); !strings.Contains(got, "repli explicite sur PTY") {
+	if got := strings.Join(resolution.Warnings, "\n"); !strings.Contains(got, "explicit fallback to PTY") {
 		t.Fatalf("auto fallback is not visible in warnings: %q", got)
 	}
 }
@@ -290,7 +290,7 @@ func TestStartupLogsExposeEffectiveMixedBackendAndTmuxPolicyWithoutSecrets(t *te
 			Sessions: config.SessionPolicy{PersistOnExit: true, CleanupOnSuccess: false},
 		},
 		agentResolution{
-			Warnings: []string{"Backend auto: tmux détecté et sélectionné."},
+			Warnings: []string{"Backend auto: tmux detected and selected."},
 			Specs: []agent.Spec{{
 				ID: "secret", Name: "Secret", Command: []string{"runner"}, Env: map[string]string{"TOKEN": secret},
 			}},
@@ -303,8 +303,8 @@ func TestStartupLogsExposeEffectiveMixedBackendAndTmuxPolicyWithoutSecrets(t *te
 	)
 	rendered := strings.Join(logs, "\n")
 	for _, text := range []string{
-		"Backend auto: tmux détecté et sélectionné.",
-		"2 agent(s) démarré(s) via PTY/TMUX",
+		"Backend auto: tmux detected and selected.",
+		"2 agent(s) started via PTY/TMUX",
 		"persist_on_exit=true, cleanup_on_success=false",
 	} {
 		if !strings.Contains(rendered, text) {
@@ -362,7 +362,7 @@ func TestRunAutoAbsenceSelectsPTYAndReportsFallbackBeforeStartup(t *testing.T) {
 	if tmuxConstructed {
 		t.Fatal("tmux backend was constructed after auto fallback")
 	}
-	if !strings.Contains(diagnostics.String(), "repli explicite sur PTY") {
+	if !strings.Contains(diagnostics.String(), "explicit fallback to PTY") {
 		t.Fatalf("fallback is not visible in diagnostics: %q", diagnostics.String())
 	}
 	pty.mu.Lock()
@@ -401,7 +401,7 @@ func TestRunAutoAvailabilitySelectsTmuxAndPassesSessionPolicy(t *testing.T) {
 	if captured.TmuxPath != "/resolved/tmux" || !captured.PersistOnExit || captured.CleanupOnSuccess {
 		t.Fatalf("effective tmux options = %#v", captured)
 	}
-	if !strings.Contains(diagnostics.String(), "tmux détecté et sélectionné") {
+	if !strings.Contains(diagnostics.String(), "tmux detected and selected") {
 		t.Fatalf("auto tmux selection is not visible in diagnostics: %q", diagnostics.String())
 	}
 	tmux.mu.Lock()
@@ -504,7 +504,7 @@ func TestResolveAgentBackendsAutoFallsBackWhenTmuxProbeFails(t *testing.T) {
 	}
 	// The operator must be able to tell "tmux is missing" from "tmux is broken".
 	joined := strings.Join(resolution.Warnings, "\n")
-	if !strings.Contains(joined, "installé mais ne peut pas exécuter de session") {
+	if !strings.Contains(joined, "installed but cannot run a session") {
 		t.Fatalf("warnings = %q, want an unusable-tmux fallback warning", resolution.Warnings)
 	}
 }

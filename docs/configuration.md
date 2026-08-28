@@ -30,13 +30,13 @@ audit:
 agents: []
 intercept_patterns:
   - pattern: '(?i)overwrite.*\[y/n\]'
-    description: confirmation d'écrasement
+    description: overwrite confirmation
   - pattern: '(?i)\[[yn]/[yn]\]'
-    description: confirmation oui/non
+    description: yes/no confirmation
   - pattern: '(?im)password:[[:space:]]*$'
-    description: saisie d'un mot de passe
+    description: password entry
   - pattern: '(?i)do you want to continue'
-    description: confirmation de poursuite
+    description: continue confirmation
 ```
 
 `agents: []` is a deliberate quick-start value. The app substitutes two

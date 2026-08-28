@@ -46,7 +46,7 @@ type ExitError struct {
 }
 
 func (e *ExitError) Error() string {
-	return "le processus tmux s'est terminé avec le code " + strconv.Itoa(e.Code)
+	return "the tmux process exited with code " + strconv.Itoa(e.Code)
 }
 
 // Options controls tmux command execution, retention and private runtime data.

@@ -48,7 +48,7 @@ describe("AgentCard safe line path", () => {
         runID: "run-1",
         sessionID: "agent-a",
         code: "delivery_uncertain",
-        message: "Livraison indéterminée.",
+        message: "Indeterminate delivery.",
         timestamp: "2026-01-01T00:00:00Z",
       },
     });
@@ -68,7 +68,7 @@ describe("AgentCard safe line path", () => {
     );
     expect(input.value).toBe("");
     expect(markup).toContain("disabled");
-    expect(markup).toContain("Session gelée");
+    expect(markup).toContain("Session frozen");
     expect(markup).not.toContain(secret);
     expect(JSON.stringify(uncertain)).not.toContain(secret);
   });
@@ -93,8 +93,8 @@ describe("AgentCard simulated agents", () => {
   it("marks a substituted agent and says so where supervision is claimed", () => {
     const markup = render({ ...agent(), simulated: true });
     expect(markup).toContain("agent-card--simulated");
-    expect(markup).toContain("Simulé");
-    expect(markup).toContain("Agent de démonstration");
+    expect(markup).toContain("Simulated");
+    expect(markup).toContain("Demo agent");
     expect(markup).not.toContain("Supervision active");
   });
 

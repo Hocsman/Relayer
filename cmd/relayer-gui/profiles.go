@@ -33,9 +33,9 @@ var (
 )
 
 var (
-	errProfilesStale   = errors.New("La configuration a changé; rechargez les profils avant de réessayer.")
-	errProfilesInvalid = errors.New("Un ou plusieurs profils d’agents sont invalides.")
-	errProfilesSave    = errors.New("Impossible d’enregistrer les profils d’agents.")
+	errProfilesStale   = errors.New("The configuration has changed. Reload the profiles before trying again.")
+	errProfilesInvalid = errors.New("One or more agent profiles are invalid.")
+	errProfilesSave    = errors.New("The agent profiles could not be saved.")
 )
 
 type AgentCatalogEntry struct {
@@ -306,15 +306,15 @@ func (a *App) catalogViewLocked() []AgentCatalogEntry {
 func profileDescription(id toolcatalog.ProfileID) string {
 	switch id {
 	case toolcatalog.ClaudeCode:
-		return "Claude Code; règles expérimentales 2.1.59 vérifiées, puis fallback générique."
+		return "Claude Code; experimental rules verified on 2.1.59, then generic fallback."
 	case toolcatalog.CodexCLI:
-		return "Codex CLI; règles expérimentales 0.148.0-alpha.21 vérifiées, puis fallback générique."
+		return "Codex CLI; experimental rules verified on 0.148.0-alpha.21, then generic fallback."
 	case toolcatalog.MimoCode:
-		return "Profil de lancement MiMo Code; commande locale et détection générique."
+		return "MiMo Code launch profile; local command and generic detection."
 	case toolcatalog.Ollama:
-		return "Ollama / DeepSeek local; run et le modèle restent des arguments explicites."
+		return "Local Ollama / DeepSeek; the run subcommand and the model stay explicit arguments."
 	default:
-		return "Toute CLI interactive locale avec un argv explicite."
+		return "Any local interactive CLI with an explicit argv."
 	}
 }
 
@@ -337,7 +337,7 @@ func profileView(spec agent.Spec) AgentProfile {
 		profile.PreserveOnSave = true
 		profile.ReadOnlyReason = reason
 		if spec.Shell != "" {
-			profile.ExecutableLabel = "shell explicite"
+			profile.ExecutableLabel = "explicit shell"
 		} else if len(spec.Command) > 0 {
 			profile.ExecutableLabel = safeExecutableLabel(profileForExecutable(spec.Command[0]))
 		}
@@ -364,7 +364,7 @@ func safeExecutableLabel(profile toolcatalog.ProfileID) string {
 	case toolcatalog.Ollama:
 		return "ollama"
 	default:
-		return "commande personnalisée"
+		return "custom command"
 	}
 }
 

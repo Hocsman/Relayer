@@ -180,7 +180,7 @@ describe("relayerReducer", () => {
         runID: "run-1",
         sessionID: "a",
         code: "delivery_uncertain",
-        message: "Livraison indéterminée.",
+        message: "Indeterminate delivery.",
         timestamp: "2026-01-01T00:00:02Z",
       },
     });

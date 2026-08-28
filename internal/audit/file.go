@@ -59,7 +59,7 @@ type Option func(*openOptions) error
 func WithClock(clock func() time.Time) Option {
 	return func(options *openOptions) error {
 		if clock == nil {
-			return errors.New("horloge d'audit nil")
+			return errors.New("nil audit clock")
 		}
 		options.clock = clock
 		return nil
@@ -99,7 +99,7 @@ func Open(config Config, options ...Option) (*Recorder, error) {
 	resolved := openOptions{}
 	for index, option := range options {
 		if option == nil {
-			return nil, fmt.Errorf("option d'audit %d nil", index+1)
+			return nil, fmt.Errorf("audit option %d is nil", index+1)
 		}
 		if err := option(&resolved); err != nil {
 			return nil, err
@@ -188,7 +188,7 @@ func (s *FileSink) Path() string {
 // WriteLine appends and syncs exactly one complete JSONL line.
 func (s *FileSink) WriteLine(line []byte) error {
 	if s == nil {
-		return errors.New("sink fichier d'audit nil")
+		return errors.New("nil audit file sink")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -274,7 +274,7 @@ func (s *FileSink) openActive() error {
 
 func (s *FileSink) rotate() error {
 	if s.file == nil {
-		return errors.New("fichier d'audit actif indisponible")
+		return errors.New("the active audit file is unavailable")
 	}
 	if err := s.file.Sync(); err != nil {
 		return err

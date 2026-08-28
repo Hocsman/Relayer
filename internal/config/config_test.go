@@ -44,7 +44,7 @@ func TestLoadPromptPatternsCreatesAndReloadsDefaultConfig(t *testing.T) {
 			t.Fatalf("generated config has no %q field:\n%s", strings.TrimSpace(required), payload)
 		}
 	}
-	if !strings.HasPrefix(string(payload), "# Configuration de Relayer; agents: [] active les deux mocks.\n") {
+	if !strings.HasPrefix(string(payload), "# Relayer configuration; agents: [] enables both mocks.\n") {
 		t.Fatalf("generated config has no explanatory header:\n%s", payload)
 	}
 

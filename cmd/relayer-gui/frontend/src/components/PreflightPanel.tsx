@@ -8,23 +8,23 @@ interface PreflightPanelProps {
 
 const overallCopy: Record<PreflightReport["status"], { title: string; detail: string }> = {
   ready: {
-    title: "Relayer est prêt",
-    detail: "Aucun blocage n’a été détecté pour la configuration enregistrée.",
+    title: "Relayer is ready",
+    detail: "No blocker was detected for the saved configuration.",
   },
   warning: {
-    title: "Relayer peut démarrer avec précaution",
-    detail: "Le diagnostic a relevé un ou plusieurs points à surveiller.",
+    title: "Relayer can start, with warnings",
+    detail: "Nothing blocks startup, but one or more checks need your attention.",
   },
   blocked: {
-    title: "Le démarrage doit rester bloqué",
-    detail: "Corrigez les blocages signalés avant de lancer les agents.",
+    title: "Startup must stay blocked",
+    detail: "Fix the reported blockers before launching the agents.",
   },
 };
 
 const checkLabels: Record<PreflightCheckStatus, string> = {
-  pass: "Validé",
-  warning: "Attention",
-  block: "Bloquant",
+  pass: "Passed",
+  warning: "Warning",
+  block: "Blocking",
 };
 
 export function PreflightPanel({ bridge, onClose }: PreflightPanelProps) {
@@ -79,15 +79,15 @@ export function PreflightPanel({ bridge, onClose }: PreflightPanelProps) {
       >
         <header className="preflight-panel__header">
           <div>
-            <span className="eyebrow">Diagnostic local en lecture seule</span>
-            <h1 id="preflight-title">Santé du système</h1>
-            <p>Configuration, politiques, audit, backends et outils configurés.</p>
+            <span className="eyebrow">Read-only local checks</span>
+            <h1 id="preflight-title">System health</h1>
+            <p>Configuration, policies, audit, backends and configured tools.</p>
           </div>
           <button
             className="icon-button"
             type="button"
             onClick={onClose}
-            aria-label="Fermer le diagnostic"
+            aria-label="Close system health"
             autoFocus
           >
             ×
@@ -98,14 +98,14 @@ export function PreflightPanel({ bridge, onClose }: PreflightPanelProps) {
           {loading && !report ? (
             <div className="preflight-panel__loading">
               <span className="settings-spinner" aria-hidden="true" />
-              Vérification locale en cours…
+              Local checks running…
             </div>
           ) : error || !report ? (
             <div className="preflight-panel__failure" role="alert">
               <span aria-hidden="true">!</span>
               <div>
-                <strong>Diagnostic indisponible</strong>
-                <p>Aucun détail local n’est affiché. Le démarrage ne doit pas être considéré comme validé.</p>
+                <strong>Checks unavailable</strong>
+                <p>No local detail is shown. Startup must not be considered validated.</p>
               </div>
             </div>
           ) : (
@@ -114,14 +114,14 @@ export function PreflightPanel({ bridge, onClose }: PreflightPanelProps) {
         </div>
 
         <footer className="preflight-panel__footer">
-          <p>Ce rapport n’affiche ni commandes, ni variables d’environnement, ni chemins complets.</p>
+          <p>This report shows no commands, no environment variables and no full paths.</p>
           <button
             className="button button--primary"
             type="button"
             onClick={() => void refresh()}
             disabled={loading}
           >
-            {loading ? "Vérification…" : "Actualiser"}
+            {loading ? "Checking…" : "Refresh"}
           </button>
         </footer>
       </section>
@@ -153,20 +153,20 @@ export function PreflightReportView({
           {report.status === "ready" ? "✓" : report.status === "warning" ? "!" : "×"}
         </span>
         <div>
-          <span className="eyebrow">Résultat global</span>
+          <span className="eyebrow">Overall result</span>
           <h2>{copy.title}</h2>
           <p>{copy.detail}</p>
         </div>
         <dl className="preflight-counts">
-          <div><dt>Validés</dt><dd>{counts.passed}</dd></div>
-          <div><dt>Avertissements</dt><dd>{counts.warnings}</dd></div>
-          <div><dt>Blocages</dt><dd>{counts.blockers}</dd></div>
+          <div><dt>Passed</dt><dd>{counts.passed}</dd></div>
+          <div><dt>Warnings</dt><dd>{counts.warnings}</dd></div>
+          <div><dt>Blockers</dt><dd>{counts.blockers}</dd></div>
         </dl>
       </section>
 
-      <dl className="preflight-facts" aria-label="Contexte du diagnostic">
+      <dl className="preflight-facts" aria-label="Check context">
         <div>
-          <dt>Plateforme</dt>
+          <dt>Platform</dt>
           <dd>{report.platform.os} · {report.platform.arch}</dd>
         </div>
         <div>
@@ -174,20 +174,20 @@ export function PreflightReportView({
           <dd>v{report.configuration.version} · {report.configuration.agentCount} agent{report.configuration.agentCount > 1 ? "s" : ""}</dd>
         </div>
         <div>
-          <dt>Politiques</dt>
-          <dd>{report.configuration.policyRuleCount} règle{report.configuration.policyRuleCount > 1 ? "s" : ""}</dd>
+          <dt>Policies</dt>
+          <dd>{report.configuration.policyRuleCount} rule{report.configuration.policyRuleCount > 1 ? "s" : ""}</dd>
         </div>
         <div>
           <dt>Audit</dt>
-          <dd>{report.audit.enabled ? report.audit.mode : "désactivé"}</dd>
+          <dd>{report.audit.enabled ? report.audit.mode : "disabled"}</dd>
         </div>
       </dl>
 
       {(report.tools.length > 0 || report.agents.length > 0) && (
-        <section className="preflight-inventory" aria-label="Outils et agents">
+        <section className="preflight-inventory" aria-label="Tools and agents">
           {report.tools.length > 0 && (
             <div>
-              <h2>Outils détectés</h2>
+              <h2>Detected tools</h2>
               <ul>
                 {report.tools.map((tool) => (
                   <li key={tool.profileID}>
@@ -202,19 +202,19 @@ export function PreflightReportView({
           )}
           {report.agents.length > 0 && (
             <div>
-              <h2>Plan effectif</h2>
+              <h2>Effective plan</h2>
               <ul>
                 {report.agents.map((agent) => (
                   <li className="preflight-agent" key={agent.ordinal}>
                     <div>
-                      <span>Agent {agent.ordinal}{agent.source === "demo" ? " · démo" : " · configuré"}</span>
+                      <span>Agent {agent.ordinal}{agent.source === "demo" ? " · demo" : " · configured"}</span>
                       <small>
-                        {agent.command === "shell" ? "Commande shell" : "Commande directe"}
+                        {agent.command === "shell" ? "Shell command" : "Direct command"}
                         {` · ${installationLabel(agent.installation)}`}
                       </small>
                     </div>
                     <strong>
-                      {agent.backend || "backend indéterminé"}
+                      {agent.backend || "indeterminate backend"}
                       {agent.adapter ? ` · ${agent.adapter}` : ""}
                       {agent.adapterMaturity ? ` (${maturityLabel(agent.adapterMaturity)})` : ""}
                     </strong>
@@ -228,8 +228,8 @@ export function PreflightReportView({
 
       <div className="preflight-results">
         <div className="preflight-results__heading">
-          <h2>Vérifications</h2>
-          <span>Schéma v{report.schemaVersion}{refreshing ? " · actualisation…" : ""}</span>
+          <h2>Checks</h2>
+          <span>Schema v{report.schemaVersion}{refreshing ? " · refreshing…" : ""}</span>
         </div>
         <ul className="preflight-checks">
           {report.checks.map((check) => (
@@ -248,7 +248,7 @@ export function PreflightReportView({
             </li>
           ))}
           {report.checks.length === 0 && (
-            <li className="preflight-checks__empty">Aucune vérification n’a été renvoyée.</li>
+            <li className="preflight-checks__empty">No check was returned.</li>
           )}
         </ul>
       </div>
@@ -257,23 +257,23 @@ export function PreflightReportView({
 }
 
 function installationLabel(value: PreflightReport["tools"][number]["installation"]): string {
-  if (value === "installed") return "Installé";
-  if (value === "not_installed") return "Absent";
-  return "Indéterminé";
+  if (value === "installed") return "Installed";
+  if (value === "not_installed") return "Missing";
+  return "Indeterminate";
 }
 
 function scopeLabel(value: string): string {
   const labels: Record<string, string> = {
     configuration: "Configuration",
-    platform: "Plateforme",
-    policy: "Politiques",
+    platform: "Platform",
+    policy: "Policies",
     audit: "Audit",
-    tool: "Outil",
+    tool: "Tool",
     agent: "Agent",
     adapter: "Adapter",
     backend: "Backend",
   };
-  return labels[value] || "Système";
+  return labels[value] || "System";
 }
 
 function profileLabel(value: PreflightReport["tools"][number]["profileID"]): string {
@@ -282,11 +282,11 @@ function profileLabel(value: PreflightReport["tools"][number]["profileID"]): str
     "codex-cli": "Codex CLI",
     "mimo-code": "MiMo Code",
     ollama: "Ollama / DeepSeek",
-    custom: "Commande personnalisée",
+    custom: "Custom command",
   };
-  return labels[value] || "Outil configuré";
+  return labels[value] || "Configured tool";
 }
 
 function maturityLabel(value: NonNullable<PreflightReport["agents"][number]["adapterMaturity"]>): string {
-  return value === "stable" ? "stable" : "expérimental";
+  return value === "stable" ? "stable" : "experimental";
 }

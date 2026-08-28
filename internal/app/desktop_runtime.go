@@ -185,7 +185,7 @@ func PrepareDesktopRuntime(options DesktopOptions) (*DesktopPlan, error) {
 // reserved identity shared by GUI events, tmux ownership and audit records.
 func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string) (_ *DesktopRuntime, returnErr error) {
 	if plan == nil {
-		return nil, errors.New("plan desktop nil")
+		return nil, errors.New("nil desktop plan")
 	}
 	if !validDesktopRunID(runID) {
 		return nil, errors.New("invalid desktop run_id")
@@ -296,12 +296,12 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 	runtime.startupLogs = buildStartupLogs(plan.configuration, plan.resolution, runtime.infos, plan.configPath)
 	if auditor.Enabled() {
 		runtime.startupLogs = append(runtime.startupLogs, fmt.Sprintf(
-			"Audit local: mode=%s, fichier=%s",
+			"Local audit: mode=%s, file=%s",
 			plan.configuration.Audit.Mode,
 			auditor.Path(),
 		))
 	} else {
-		runtime.startupLogs = append(runtime.startupLogs, "Audit local désactivé")
+		runtime.startupLogs = append(runtime.startupLogs, "Local audit disabled")
 	}
 
 	cleanup = false
@@ -355,18 +355,18 @@ func optionsFromDesktop() options { return options{} }
 // values must never cross the native/WebView boundary merely for decoration.
 func desktopCommandLabel(command []string, shell string) string {
 	if strings.TrimSpace(shell) != "" {
-		return "[shell explicite]"
+		return "[explicit shell]"
 	}
 	if len(command) == 0 {
-		return "[commande argv]"
+		return "[argv command]"
 	}
 	executable := filepath.Base(strings.TrimSpace(command[0]))
 	if executable == "" || executable == "." || executable == string(filepath.Separator) {
-		return "[commande argv]"
+		return "[argv command]"
 	}
 	redacted := audit.Redact(executable)
 	if strings.Contains(redacted, "[REDACTED]") {
-		return "[commande argv]"
+		return "[argv command]"
 	}
 	return redacted
 }
@@ -491,7 +491,7 @@ func (r *DesktopRuntime) Stop(ctx context.Context, sessionID string) error {
 // decisions. Callers must not perform a backend write when it returns an error.
 func (r *DesktopRuntime) RecordAudit(entry audit.Entry) error {
 	if r == nil || r.auditor == nil {
-		return errors.New("journal d'audit indisponible")
+		return errors.New("the audit journal is unavailable")
 	}
 	return r.auditor.Record(entry)
 }

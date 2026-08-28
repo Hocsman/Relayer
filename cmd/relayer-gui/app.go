@@ -34,19 +34,19 @@ const (
 )
 
 var (
-	errAuditUnavailable    = errors.New("Le journal d'audit est indisponible; aucune décision n'a été envoyée.")
-	errDecisionStale       = errors.New("Cette demande n'est plus l'événement actuellement attendu.")
-	errDecisionInFlight    = errors.New("Une décision est déjà en cours pour cet agent.")
-	errEmptyDecision       = errors.New("Une réponse vide n'est pas une décision.")
-	errUnsupportedDecision = errors.New("Cette réponse n'est pas encodable pour cette demande.")
-	errDeliveryUncertain   = errors.New("L'état de livraison est indéterminé; arrêtez la session avant toute nouvelle saisie.")
-	errLineInFlight        = errors.New("Une ligne est déjà en cours de livraison pour cet agent.")
-	errLinePromptPending   = errors.New("Une demande de supervision doit être traitée avant toute saisie libre.")
-	errLineUnavailable     = errors.New("La session n'accepte pas de saisie libre dans son état actuel.")
-	errLineInvalid         = errors.New("La ligne saisie est invalide.")
-	errLineUnsupported     = errors.New("Ce backend ne prend pas en charge la saisie libre.")
-	errRuntimeStopped      = errors.New("Le moteur Relayer est arrêté.")
-	errRunStale            = errors.New("Ce run Relayer n'est plus actif.")
+	errAuditUnavailable    = errors.New("The audit journal is unavailable. No decision was sent.")
+	errDecisionStale       = errors.New("This request is no longer the event currently awaited.")
+	errDecisionInFlight    = errors.New("A decision is already in progress for this agent.")
+	errEmptyDecision       = errors.New("An empty answer is not a decision.")
+	errUnsupportedDecision = errors.New("This answer cannot be encoded for this request.")
+	errDeliveryUncertain   = errors.New("The delivery state is indeterminate. Stop the session before any further input.")
+	errLineInFlight        = errors.New("A line is already being delivered to this agent.")
+	errLinePromptPending   = errors.New("A supervision request must be answered before any free-text input.")
+	errLineUnavailable     = errors.New("The session does not accept free-text input in its current state.")
+	errLineInvalid         = errors.New("The line entered is invalid.")
+	errLineUnsupported     = errors.New("This backend does not support free-text input.")
+	errRuntimeStopped      = errors.New("The Relayer engine is stopped.")
+	errRunStale            = errors.New("This Relayer run is no longer active.")
 )
 
 type eventKey struct {
@@ -416,7 +416,7 @@ func (a *App) refreshOutputForRun(run *runGeneration, sessionID string) {
 	}
 	output, err := run.engine.Output(sessionID)
 	if err != nil {
-		a.emitSafeError(run, "output_refresh_failed", "Impossible d'actualiser la sortie bornée de la session.", sessionID)
+		a.emitSafeError(run, "output_refresh_failed", "The bounded output of the session could not be refreshed.", sessionID)
 		return
 	}
 	a.mu.Lock()
@@ -448,7 +448,7 @@ func (a *App) handleAdapterEventForRun(run *runGeneration, event adapters.Event)
 	}
 	key := makeEventKey(event.SessionID, event.ID)
 	if key.sessionID == "" || key.eventID == "" {
-		a.emitSafeError(run, "invalid_event", "Un événement invalide a été ignoré.", event.SessionID)
+		a.emitSafeError(run, "invalid_event", "An invalid event was ignored.", event.SessionID)
 		return
 	}
 	if !a.reserveEvent(key) {
@@ -796,7 +796,7 @@ func (a *App) markDelivery(key eventKey, status, reason string) {
 
 func (a *App) freezeSession(run *runGeneration, key eventKey, reason string) {
 	a.markDelivery(key, "uncertain", reason)
-	a.emitSafeError(run, "delivery_uncertain", "Livraison indéterminée: la session est gelée pour éviter une seconde réponse.", key.sessionID)
+	a.emitSafeError(run, "delivery_uncertain", "Delivery is indeterminate. The session is frozen to prevent a second answer.", key.sessionID)
 }
 
 func (a *App) resolveEvent(key eventKey) {
@@ -1022,7 +1022,7 @@ func (a *App) SubmitLine(runID, sessionID, line string) error {
 	if _, busy := a.inFlight[sessionKey]; busy || a.hasPendingForSessionLocked(sessionKey) {
 		a.mu.Unlock()
 		a.reconcilePending(run, sessionID)
-		a.emitSafeError(run, "line_prompt_pending", "Traitez la demande de supervision avant d'envoyer une ligne.", sessionID)
+		a.emitSafeError(run, "line_prompt_pending", "Answer the supervision request before sending a line.", sessionID)
 		return errLinePromptPending
 	}
 	if !agent.Running || agent.Attached || (agent.Status != "running" && agent.Status != "detached") {
@@ -1057,33 +1057,33 @@ func (a *App) SubmitLine(runID, sessionID, line string) error {
 			return errAuditUnavailable
 		}
 		a.reconcilePending(run, sessionID)
-		a.emitSafeError(run, "line_prompt_pending", "Une demande de supervision a précédé la ligne; aucun texte libre n'a été envoyé.", sessionID)
+		a.emitSafeError(run, "line_prompt_pending", "A supervision request arrived before the line. No free text was sent.", sessionID)
 		return errLinePromptPending
 	case errors.Is(err, terminal.ErrInvalidLine):
 		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeSkipped, "operator_input_invalid")) {
 			return errAuditUnavailable
 		}
-		a.emitSafeError(run, "line_invalid", "La saisie doit être une seule ligne UTF-8 sans caractère de contrôle et ne pas dépasser 4096 octets.", sessionID)
+		a.emitSafeError(run, "line_invalid", "The input must be a single UTF-8 line, with no control characters and no more than 4096 bytes.", sessionID)
 		return errLineInvalid
 	case errors.Is(err, terminal.ErrLineUnsupported):
 		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeSkipped, "operator_input_unsupported")) {
 			return errAuditUnavailable
 		}
-		a.emitSafeError(run, "line_unsupported", "Ce backend ne permet pas d'envoyer une ligne de façon fiable.", sessionID)
+		a.emitSafeError(run, "line_unsupported", "This backend cannot send a line reliably.", sessionID)
 		return errLineUnsupported
 	case errors.Is(err, terminal.ErrClosed):
 		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeSkipped, "operator_input_session_unavailable")) {
 			return errAuditUnavailable
 		}
 		a.markLineSessionUnavailable(run, sessionKey, "exited")
-		a.emitSafeError(run, "line_session_unavailable", "La session s'est terminée avant la livraison; aucune ligne n'a été envoyée.", sessionID)
+		a.emitSafeError(run, "line_session_unavailable", "The session ended before delivery. No line was sent.", sessionID)
 		return errLineUnavailable
 	case errors.Is(err, terminal.ErrSessionNotFound):
 		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeSkipped, "operator_input_session_unavailable")) {
 			return errAuditUnavailable
 		}
 		a.markLineSessionUnavailable(run, sessionKey, "failed")
-		a.emitSafeError(run, "line_session_unavailable", "La session n'est plus disponible; aucune ligne n'a été envoyée.", sessionID)
+		a.emitSafeError(run, "line_session_unavailable", "The session is no longer available. No line was sent.", sessionID)
 		return errLineUnavailable
 	default:
 		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeFallbackDeliveryUncertain, "operator_input_delivery_uncertain")) {
@@ -1120,7 +1120,7 @@ func (a *App) freezeLineSession(run *runGeneration, sessionKey string) {
 		displaySessionID = a.state.Agents[index].SessionID
 	}
 	a.mu.Unlock()
-	a.emitSafeError(run, "delivery_uncertain", "Livraison indéterminée: la session est gelée pour éviter un nouvel envoi.", displaySessionID)
+	a.emitSafeError(run, "delivery_uncertain", "Delivery is indeterminate. The session is frozen to prevent another send.", displaySessionID)
 }
 
 func (a *App) markLineSessionUnavailable(run *runGeneration, sessionKey, status string) {
@@ -1143,7 +1143,7 @@ func (a *App) markLineSessionUnavailable(run *runGeneration, sessionKey, status 
 
 func (a *App) ResizeSession(runID, sessionID string, columns, rows int) error {
 	if columns < 1 || rows < 1 || columns > 65535 || rows > 65535 {
-		return errors.New("Dimensions de terminal invalides.")
+		return errors.New("Invalid terminal dimensions.")
 	}
 	run, err := a.activeRun(runID)
 	if err != nil {
@@ -1157,8 +1157,8 @@ func (a *App) ResizeSession(runID, sessionID string, columns, rows int) error {
 	err = run.engine.Resize(ctx, sessionID, terminal.Size{Columns: columns, Rows: rows})
 	cancel()
 	if err != nil {
-		a.emitSafeError(run, "resize_failed", "Le redimensionnement de la session a échoué.", sessionID)
-		return errors.New("Le redimensionnement de la session a échoué.")
+		a.emitSafeError(run, "resize_failed", "Resizing the session failed.", sessionID)
+		return errors.New("Resizing the session failed.")
 	}
 	return nil
 }
@@ -1208,8 +1208,8 @@ func (a *App) StopSession(runID, sessionID string) error {
 		delete(a.stoppingSessions, sessionKey)
 		a.mu.Unlock()
 		a.freezeLineSession(run, sessionKey)
-		a.emitSafeError(run, "stop_failed", "Impossible d'arrêter cette session proprement.", sessionID)
-		return errors.New("Impossible d'arrêter cette session proprement.")
+		a.emitSafeError(run, "stop_failed", "This session could not be stopped cleanly.", sessionID)
+		return errors.New("This session could not be stopped cleanly.")
 	}
 	a.mu.Lock()
 	delete(a.stoppingSessions, sessionKey)
@@ -1238,7 +1238,7 @@ func (a *App) Shutdown() error {
 	})
 	<-a.shutdownDone
 	if a.shutdownErr != nil {
-		return errors.New("La fermeture de Relayer est incomplète; vérifiez les sessions locales.")
+		return errors.New("Relayer did not shut down completely. Check the local sessions.")
 	}
 	return nil
 }
@@ -1288,7 +1288,7 @@ func (a *App) freezeAudit(run *runGeneration) {
 	a.rebuildPendingLocked()
 	a.mu.Unlock()
 	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "audit", Status: "failed"})
-	a.emitSafeError(run, "audit_unavailable", "Audit local indisponible: aucune nouvelle décision ne sera envoyée.", "")
+	a.emitSafeError(run, "audit_unavailable", "The local audit journal is unavailable. No further decision will be sent.", "")
 }
 
 func (a *App) beginDelivery() bool {
@@ -1332,7 +1332,7 @@ func (a *App) markSessionError(run *runGeneration, sessionID, reason string) {
 	}
 	a.mu.Unlock()
 	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: sessionID, Status: "failed"})
-	a.emitSafeError(run, "backend_stream_failed", "Le flux du backend a rencontré une erreur.", sessionID)
+	a.emitSafeError(run, "backend_stream_failed", "The backend stream failed.", sessionID)
 }
 
 func (a *App) markLegacyExit(run *runGeneration, sessionID string) {

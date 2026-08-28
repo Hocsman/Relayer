@@ -59,14 +59,14 @@ export function AgentSettingsPanel({
         if (loaded.restartRequired) {
           setNotice({
             tone: "warning",
-            text: "Configuration enregistrée — elle n’est pas encore active.",
+            text: "Configuration saved — it is not active yet.",
           });
         }
         setLoading(false);
       },
       () => {
         if (!active) return;
-        setError("Impossible de charger la configuration des agents.");
+        setError("The agent configuration could not be loaded.");
         setLoading(false);
       },
     );
@@ -105,7 +105,7 @@ export function AgentSettingsPanel({
       ...current,
       {
         id: nextProfileID(entry, current),
-        name: entry.id === "custom" ? "Nouvel agent" : entry.name,
+        name: entry.id === "custom" ? "New agent" : entry.name,
         presetID: entry.id,
         cwd: "",
         backend: "auto",
@@ -157,11 +157,11 @@ export function AgentSettingsPanel({
       setNotice(result.restartRequired
         ? {
             tone: "warning",
-            text: "Configuration enregistrée — elle sera appliquée au prochain démarrage.",
+            text: "Configuration saved — it will be applied at the next startup.",
           }
         : {
             tone: "success",
-            text: "Configuration enregistrée.",
+            text: "Configuration saved.",
           });
       setCloseConfirmation(false);
     } catch {
@@ -172,9 +172,9 @@ export function AgentSettingsPanel({
         const reloaded = await bridge.getAgentProfiles();
         setView(reloaded);
         setDraft(cloneProfiles(reloaded.profiles));
-        setError("La configuration a changé ou son état était incertain. La version enregistrée a été rechargée.");
+        setError("The configuration changed or its state was uncertain. The saved version has been reloaded.");
       } catch {
-        setError("Impossible d’enregistrer les agents. Aucun détail sensible n’est affiché.");
+        setError("The agents could not be saved. No sensitive detail is shown.");
       }
     } finally {
       setSaving(false);
@@ -199,7 +199,7 @@ export function AgentSettingsPanel({
       if (result.outcome === "rolled_back") {
         setNotice({
           tone: "warning",
-          text: "Le nouveau run n’a pas démarré. Le YAML précédent a été restauré et le plan antérieur a été relancé sous un nouveau run.",
+          text: "The new run did not start. The previous YAML was restored and the earlier plan was relaunched under a new run.",
         });
       } else {
         // The agents are running behind this panel. Leaving it open with a
@@ -218,7 +218,7 @@ export function AgentSettingsPanel({
         // The lifecycle error below is deliberately complete without exposing
         // a native error or any command/configuration value.
       }
-      setError("Le changement de run a échoué. Les décisions restent bloquées tant que le moteur n’est pas revenu à un état sûr.");
+      setError("The run change failed. Decisions stay blocked until the engine is back in a safe state.");
     } finally {
       setActivating(false);
     }
@@ -233,21 +233,21 @@ export function AgentSettingsPanel({
   };
 
   const activationLabel = activating
-    ? runStatus === "running" ? "Redémarrage…" : "Démarrage…"
+    ? runStatus === "running" ? "Restarting…" : "Starting…"
     : runStatus === "running"
-      ? dirty ? "Enregistrer et redémarrer" : "Redémarrer les agents"
-      : dirty ? "Enregistrer et démarrer" : "Démarrer les agents";
+      ? dirty ? "Save and restart" : "Restart the agents"
+      : dirty ? "Save and start" : "Start the agents";
 
   return (
     <div className="agent-settings-layer">
       <section className="agent-settings" role="dialog" aria-modal="true" aria-labelledby="agents-title">
         <header className="agent-settings__header">
           <div>
-            <span className="eyebrow">Configuration locale</span>
+            <span className="eyebrow">Local configuration</span>
             <h1 id="agents-title">Agents</h1>
-            <p>Composez une équipe de 1 à 8 CLI avec des arguments exacts.</p>
+            <p>Build a team of 1 to 8 CLIs with exact arguments.</p>
           </div>
-          <button className="icon-button" type="button" onClick={requestClose} disabled={busy} aria-label="Fermer les agents" autoFocus>
+          <button className="icon-button" type="button" onClick={requestClose} disabled={busy} aria-label="Close agents" autoFocus>
             ×
           </button>
         </header>
@@ -255,13 +255,13 @@ export function AgentSettingsPanel({
         {loading ? (
           <div className="agent-settings__loading">
             <span className="settings-spinner" aria-hidden="true" />
-            Chargement du catalogue…
+            Loading the catalog…
           </div>
         ) : !view ? (
           <div className="agent-settings__failure" role="alert">
-            <strong>Catalogue indisponible</strong>
-            <p>{error || "Le bridge natif n’a retourné aucune configuration."}</p>
-            <button className="button button--ghost" type="button" onClick={onClose}>Retour</button>
+            <strong>Catalog unavailable</strong>
+            <p>{error || "The native bridge returned no configuration."}</p>
+            <button className="button button--ghost" type="button" onClick={onClose}>Back</button>
           </div>
         ) : (
           <>
@@ -273,10 +273,10 @@ export function AgentSettingsPanel({
                 editable={view.editable}
                 onAdd={addProfile}
               />
-              <section className="profile-editor" aria-label="Profils configurés">
+              <section className="profile-editor" aria-label="Configured profiles">
                 <header className="profile-editor__header">
                   <div>
-                    <span className="eyebrow">Équipe configurée</span>
+                    <span className="eyebrow">Configured team</span>
                     <h2>{draft.length} agent{draft.length > 1 ? "s" : ""}</h2>
                   </div>
                   <span className="profile-limit">{draft.length} / {Math.min(8, view.maxProfiles)}</span>
@@ -288,7 +288,7 @@ export function AgentSettingsPanel({
 
                 {!view.editable && (
                   <p className="settings-error" role="alert">
-                    Cette configuration historique est en lecture seule. Migrez-la vers <code>version: 1</code> avant de modifier les agents.
+                    This legacy configuration is read-only. Migrate it to <code>version: 1</code> before editing the agents.
                   </p>
                 )}
 
@@ -314,27 +314,27 @@ export function AgentSettingsPanel({
             <footer className="agent-settings__footer">
               <div className="settings-footer__status">
                 <span className="settings-path" title={view.configPath}>{view.configPath}</span>
-                <span>{dirty ? "Modifications non enregistrées" : "Configuration synchronisée"}</span>
+                <span>{dirty ? "Unsaved changes" : "Configuration in sync"}</span>
                 {error && <strong className="settings-save-error" role="alert">{error}</strong>}
                 {notice && <strong className={`settings-notice settings-notice--${notice.tone}`}>{notice.text}</strong>}
                 {view.restartRequired && (
                   <span className="restart-guidance">
                     {runStatus === "running"
-                      ? "Redémarrez les agents pour appliquer la configuration enregistrée."
-                      : "Démarrez les agents pour appliquer la configuration enregistrée."}
+                      ? "Restart the agents to apply the saved configuration."
+                      : "Start the agents to apply the saved configuration."}
                   </span>
                 )}
                 {runStatus === "failed" && runID !== "" && (
                   <span className="restart-guidance">
-                    L’état de fermeture est incertain. Fermez Relayer et vérifiez les sessions locales avant un nouveau démarrage.
+                    The shutdown state is uncertain. Close Relayer and check the local sessions before starting again.
                   </span>
                 )}
               </div>
               <div className="settings-footer__actions">
                 {closeConfirmation && (
                   <span className="inline-confirm">
-                    Abandonner les modifications ?
-                    <button className="button button--ghost" type="button" onClick={onClose}>Abandonner</button>
+                    Discard the changes?
+                    <button className="button button--ghost" type="button" onClick={onClose}>Discard</button>
                   </span>
                 )}
                 <button
@@ -346,7 +346,7 @@ export function AgentSettingsPanel({
                     void save();
                   }}
                 >
-                  {saving ? "Enregistrement…" : "Enregistrer"}
+                  {saving ? "Saving…" : "Save"}
                 </button>
                 <button
                   className="button button--primary"
@@ -369,27 +369,27 @@ export function AgentSettingsPanel({
             aria-modal="true"
             aria-labelledby="restart-run-title"
           >
-            <span className="eyebrow">Remplacement du run courant</span>
-            <h2 id="restart-run-title">Redémarrer les agents ?</h2>
+            <span className="eyebrow">Replacing the current run</span>
+            <h2 id="restart-run-title">Restart the agents?</h2>
             <p>
-              Les sessions supervisées seront strictement arrêtées. La persistance tmux est ignorée pour ce redémarrage explicite.
-              Les demandes en attente ne seront jamais transférées au nouveau run.
+              The supervised sessions will be stopped outright. tmux persistence is ignored for this explicit restart.
+              Pending requests are never carried over to the new run.
             </p>
             {pendingEvents.length > 0 && (
               <strong className="lifecycle-confirmation__warning">
-                {pendingEvents.length} demande{pendingEvents.length > 1 ? "s" : ""} en attente,
-                dont {pendingEvents.filter((event) => event.deliveryStatus === "delivering").length} en cours de livraison.
+                {pendingEvents.length} pending request{pendingEvents.length > 1 ? "s" : ""},
+                including {pendingEvents.filter((event) => event.deliveryStatus === "delivering").length} being delivered.
               </strong>
             )}
             <p>
-              Si le nouveau lancement échoue, Relayer tentera de relancer la configuration active précédente sous un nouveau runID.
+              If the new launch fails, Relayer will try to relaunch the previously active configuration under a new runID.
             </p>
             <div className="lifecycle-confirmation__actions">
               <button className="button button--ghost" type="button" onClick={() => setRestartConfirmation(false)}>
-                Annuler
+                Cancel
               </button>
               <button className="button button--danger" type="button" disabled={busy} onClick={() => void saveAndRestart()}>
-                Redémarrer
+                Restart
               </button>
             </div>
           </section>
@@ -413,11 +413,11 @@ function Catalog({
   onAdd(entry: AgentCatalogEntry): void;
 }) {
   return (
-    <aside className="agent-catalog" aria-label="Catalogue d’agents">
+    <aside className="agent-catalog" aria-label="Agent catalog">
       <header>
-        <span className="eyebrow">Catalogue</span>
-        <h2>Ajouter un CLI</h2>
-        <p>Les badges d’installation sont détectés par le moteur local.</p>
+        <span className="eyebrow">Catalog</span>
+        <h2>Add a CLI</h2>
+        <p>The installation badges are detected by the local engine.</p>
       </header>
       <div className="catalog-list">
         {entries.map((entry) => (
@@ -430,7 +430,7 @@ function Catalog({
               <p>{entry.description}</p>
               <div className="catalog-badges">
                 <span className={`catalog-badge ${entry.id === "custom" ? "" : entry.installed ? "catalog-badge--installed" : "catalog-badge--missing"}`}>
-                  {entry.id === "custom" ? "Commande libre" : entry.installed ? "Installé" : "Non détecté"}
+                  {entry.id === "custom" ? "Free-form command" : entry.installed ? "Installed" : "Not detected"}
                 </span>
                 <span className="catalog-badge">{entry.adapter} · {entry.adapterStatus}</span>
               </div>
@@ -440,7 +440,7 @@ function Catalog({
               type="button"
               disabled={!editable || count >= maximum}
               onClick={() => onAdd(entry)}
-              aria-label={`Ajouter ${entry.name}`}
+              aria-label={`Add ${entry.name}`}
             >
               +
             </button>
@@ -448,9 +448,9 @@ function Catalog({
         ))}
       </div>
       <p className="catalog-security">
-        L’argv exact, identifiant de modèle compris, est enregistré dans le YAML local. Relayer
-        n’infère jamais le modèle. Le filtre de secrets est conservateur et heuristique&nbsp;: ne placez
-        aucune clé, variable d’environnement ou credential dans ces arguments.
+        The exact argv, model identifier included, is saved in the local YAML. Relayer
+        never infers the model. The secret filter is conservative and heuristic: put no key,
+        environment variable or credential in these arguments.
       </p>
     </aside>
   );
@@ -509,15 +509,15 @@ function ProfileCard({
       <header className="profile-card__header">
         <div className="profile-order">{index + 1}</div>
         <div>
-          <h3>{profile.name || "Agent sans nom"}</h3>
+          <h3>{profile.name || "Unnamed agent"}</h3>
           <span>
-            {preset?.name || "Sélection inconnue"} · {profile.adapter || (profile.readOnlyReason === "advanced_adapter" ? "adaptateur avancé" : "adaptateur inconnu")}
+            {preset?.name || "Unknown selection"} · {profile.adapter || (profile.readOnlyReason === "advanced_adapter" ? "advanced adapter" : "unknown adapter")}
           </span>
         </div>
         <div className="profile-card__controls">
-          <button type="button" onClick={() => onMove(-1)} disabled={profile.locked || index === 0} aria-label="Monter cet agent">↑</button>
-          <button type="button" onClick={() => onMove(1)} disabled={profile.locked || index === count - 1} aria-label="Descendre cet agent">↓</button>
-          <button className="profile-remove" type="button" onClick={onRemove} disabled={profile.locked || count <= minimum} aria-label="Supprimer cet agent">×</button>
+          <button type="button" onClick={() => onMove(-1)} disabled={profile.locked || index === 0} aria-label="Move this agent up">↑</button>
+          <button type="button" onClick={() => onMove(1)} disabled={profile.locked || index === count - 1} aria-label="Move this agent down">↓</button>
+          <button className="profile-remove" type="button" onClick={onRemove} disabled={profile.locked || count <= minimum} aria-label="Remove this agent">×</button>
         </div>
       </header>
 
@@ -525,7 +525,7 @@ function ProfileCard({
         <div className="profile-lock" role="note">
           <span aria-hidden="true">⌁</span>
           <div>
-            <strong>Profil avancé en lecture seule</strong>
+            <strong>Read-only advanced profile</strong>
             <p>{readOnlyReasonLabel(profile.readOnlyReason)}</p>
             <small>{profile.id} · {profile.backend}</small>
           </div>
@@ -534,20 +534,20 @@ function ProfileCard({
         <>
 
       <div className="profile-fields">
-        <Field label="Nom" error={errors.name}>
+        <Field label="Name" error={errors.name}>
           <input value={profile.name} maxLength={80} onChange={(event) => patch("name", event.target.value)} />
         </Field>
-        <Field label="Identifiant" error={errors.id}>
+        <Field label="Identifier" error={errors.id}>
           <input
             value={profile.id}
             maxLength={64}
             spellCheck={false}
             disabled={profile.preserveOnSave}
-            title={profile.preserveOnSave ? "Remplacez d’abord la commande pour changer l’identifiant." : undefined}
+            title={profile.preserveOnSave ? "Replace the command first to change the identifier." : undefined}
             onChange={(event) => patch("id", event.target.value)}
           />
         </Field>
-        <Field label="Catalogue" error={errors.presetID}>
+        <Field label="Catalog" error={errors.presetID}>
           <select value={profile.presetID} onChange={(event) => changePreset(event.target.value as AgentProfile["presetID"])}>
             {catalog.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
           </select>
@@ -559,12 +559,12 @@ function ProfileCard({
             <option value="tmux">tmux</option>
           </select>
         </Field>
-        <Field label="Dossier de travail" error={errors.cwd} wide>
+        <Field label="Working directory" error={errors.cwd} wide>
           <input
             value={profile.cwd}
             maxLength={4096}
             spellCheck={false}
-            placeholder="Vide = dossier par défaut"
+            placeholder="Empty = default directory"
             onChange={(event) => patch("cwd", event.target.value)}
           />
         </Field>
@@ -573,11 +573,11 @@ function ProfileCard({
       {profile.preserveOnSave ? (
         <div className="argv-editor argv-editor--masked" role="note">
           <div>
-            <strong>Commande existante masquée</strong>
+            <strong>Existing command hidden</strong>
             <span>
-              {profile.executableLabel || "Commande configurée"} · {profile.argumentCount ?? 0} argument{(profile.argumentCount ?? 0) > 1 ? "s" : ""}
+              {profile.executableLabel || "Configured command"} · {profile.argumentCount ?? 0} argument{(profile.argumentCount ?? 0) > 1 ? "s" : ""}
             </span>
-            <small>Les valeurs argv existantes ne sont jamais envoyées au WebView.</small>
+            <small>The existing argv values are never sent to the WebView.</small>
           </div>
           <button
             type="button"
@@ -587,15 +587,15 @@ function ProfileCard({
               argv: [...(preset?.defaultArgv.length ? preset.defaultArgv : [""])],
             })}
           >
-            Remplacer la commande
+            Replace the command
           </button>
         </div>
       ) : (
       <div className="argv-editor">
         <div className="argv-editor__title">
           <div>
-            <strong>Arguments exacts</strong>
-            <span>Aucun shell, expansion ou interpolation.</span>
+            <strong>Exact arguments</strong>
+            <span>No shell, expansion or interpolation.</span>
           </div>
           <button
             type="button"
@@ -614,13 +614,13 @@ function ProfileCard({
                 maxLength={4096}
                 spellCheck={false}
                 aria-label={`Argument ${argumentIndex}`}
-                placeholder={argumentIndex === 0 ? "exécutable" : "argument"}
+                placeholder={argumentIndex === 0 ? "executable" : "argument"}
                 onChange={(event) => updateArgument(argumentIndex, event.target.value)}
               />
               <button
                 type="button"
                 disabled={(profile.argv?.length ?? 0) === 1}
-                aria-label={`Supprimer l’argument ${argumentIndex}`}
+                aria-label={`Remove argument ${argumentIndex}`}
                 onClick={() => patch("argv", (profile.argv ?? []).filter((_, current) => current !== argumentIndex))}
               >
                 ×
@@ -670,18 +670,18 @@ function catalogInitial(id: AgentCatalogEntry["id"]): string {
 function readOnlyReasonLabel(reason: AgentProfile["readOnlyReason"]): string {
   switch (reason) {
     case "advanced_shell":
-      return "Ce profil utilise une commande shell qui reste modifiable uniquement dans le YAML.";
+      return "This profile uses a shell command that can only be edited in the YAML.";
     case "advanced_environment":
-      return "Ce profil possède des variables d’environnement qui ne sont jamais exposées ici.";
+      return "This profile has environment variables that are never exposed here.";
     case "advanced_adapter":
-      return "Ce profil utilise un adaptateur avancé que ce formulaire ne peut pas réécrire.";
+      return "This profile uses an advanced adapter that this form cannot rewrite.";
     case "sensitive_arguments":
-      return "Les arguments sont masqués car ils ressemblent à des données sensibles.";
+      return "The arguments are hidden because they look like sensitive data.";
     case "invalid_command":
-      return "La commande existante ne peut pas être représentée sans perte dans ce formulaire.";
+      return "The existing command cannot be represented without loss in this form.";
     case "legacy_profile_fields":
-      return "Ce profil utilise un identifiant ou des champs historiques conservés tels quels dans le YAML.";
+      return "This profile uses a legacy identifier or legacy fields kept as they are in the YAML.";
     default:
-      return "Ce profil utilise des champs avancés qui restent protégés contre une réécriture partielle.";
+      return "This profile uses advanced fields that stay protected against a partial rewrite.";
   }
 }

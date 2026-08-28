@@ -32,22 +32,22 @@ describe("PreflightReportView", () => {
           id: "internal.config.unavailable",
           scope: "configuration",
           status: "block",
-          summary: "La configuration enregistrée n’est pas disponible.",
-          remediation: "Créez une configuration valide avant de démarrer.",
+          summary: "The saved configuration is not available.",
+          remediation: "Create a valid configuration before starting.",
         },
       ],
     };
 
     const markup = renderToStaticMarkup(<PreflightReportView report={report} />);
 
-    expect(markup).toContain("Le démarrage doit rester bloqué");
-    expect(markup).toContain("La configuration enregistrée n’est pas disponible.");
-    expect(markup).toContain("Créez une configuration valide avant de démarrer.");
-    expect(markup).toContain("Bloquant");
+    expect(markup).toContain("Startup must stay blocked");
+    expect(markup).toContain("The saved configuration is not available.");
+    expect(markup).toContain("Create a valid configuration before starting.");
+    expect(markup).toContain("Blocking");
     expect(markup).toContain("Codex CLI");
-    expect(markup).toContain("Agent 1 · configuré");
-    expect(markup).toContain("Commande directe · Installé");
-    expect(markup).toContain("pty · codex (expérimental)");
+    expect(markup).toContain("Agent 1 · configured");
+    expect(markup).toContain("Direct command · Installed");
+    expect(markup).toContain("pty · codex (experimental)");
     expect(markup).not.toContain("internal.config.unavailable");
     expect(markup).not.toContain("argv");
   });
@@ -71,14 +71,14 @@ describe("PreflightReportView", () => {
         id: `pass-${index}`,
         scope: "platform",
         status: "pass" as const,
-        summary: "Vérification validée.",
+        summary: "Check passed.",
       })),
     };
 
     const markup = renderToStaticMarkup(<PreflightReportView report={report} />);
 
-    expect(markup).toContain("Relayer est prêt");
-    expect(markup).toContain("Schéma v1");
+    expect(markup).toContain("Relayer is ready");
+    expect(markup).toContain("Schema v1");
     expect(markup).toContain(">5<");
   });
 });

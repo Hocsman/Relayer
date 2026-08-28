@@ -155,10 +155,10 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 			DecisionBy: audit.DecisionBySystem,
 			Outcome:    outcome,
 		}); recordErr != nil {
-			joinRunError(&returnErr, "écriture de la fin du run dans l'audit", recordErr)
+			joinRunError(&returnErr, "writing the end of the run to the audit", recordErr)
 		}
 		if closeErr := auditor.Close(); closeErr != nil {
-			joinRunError(&returnErr, "fermeture du journal d'audit", closeErr)
+			joinRunError(&returnErr, "closing the audit journal", closeErr)
 		}
 	}()
 	if err := auditor.Record(audit.Entry{
@@ -204,14 +204,14 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 				Outcome:    audit.OutcomeFinished,
 				Reason:     "supervision_ended",
 			}); recordErr != nil {
-				joinRunError(&returnErr, "écriture de la fin de supervision dans l'audit", recordErr)
+				joinRunError(&returnErr, "writing the end of supervision to the audit", recordErr)
 			}
 		}
 		closeContext, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
 		closeErr := router.Close(closeContext)
 		if closeErr != nil {
-			joinRunError(&returnErr, "fermeture des backends", closeErr)
+			joinRunError(&returnErr, "closing the backends", closeErr)
 		}
 		for _, info := range startedInfos {
 			closed, known := router.backendCloseStatus(info.Backend)
@@ -231,7 +231,7 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 				Outcome:    cleanupOutcome,
 				Reason:     cleanupReason,
 			}); recordErr != nil {
-				joinRunError(&returnErr, "écriture du nettoyage des sessions dans l'audit", recordErr)
+				joinRunError(&returnErr, "writing the session cleanup to the audit", recordErr)
 			}
 		}
 	}()
@@ -269,12 +269,12 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 	startupLogs := buildStartupLogs(configuration, resolution, infos, options.configPath)
 	if auditor.Enabled() {
 		startupLogs = append(startupLogs, fmt.Sprintf(
-			"Audit local: mode=%s, fichier=%s",
+			"Local audit: mode=%s, file=%s",
 			configuration.Audit.Mode,
 			auditor.Path(),
 		))
 	} else {
-		startupLogs = append(startupLogs, "Audit local désactivé")
+		startupLogs = append(startupLogs, "Local audit disabled")
 	}
 	application, err := tui.NewModelWithPolicyAndAudit(
 		&tuiBackendAdapter{router: router},
@@ -310,7 +310,7 @@ func initializeAudit(configuration audit.Config, dependencies backendDependencie
 		return recorder, nil
 	}
 	if configuration.Enabled && configuration.Mode != audit.ModeOff {
-		return nil, errors.New("fabrique d'audit indisponible")
+		return nil, errors.New("the audit factory is unavailable")
 	}
 	return audit.NewRecorder(configuration, nil, nil, nil)
 }
@@ -335,7 +335,7 @@ func initializeAuditForRun(configuration audit.Config, dependencies backendDepen
 		return initializeAudit(configuration, dependencies)
 	}
 	if configuration.Enabled && configuration.Mode != audit.ModeOff {
-		return nil, errors.New("fabrique d'audit desktop indisponible")
+		return nil, errors.New("the desktop audit factory is unavailable")
 	}
 	return audit.Open(configuration, audit.WithRunID(runID))
 }
@@ -468,28 +468,28 @@ func buildStartupLogs(
 	logs := make([]string, 0, len(resolution.Warnings)+6)
 	logs = append(logs, resolution.Warnings...)
 	if configuration.Legacy {
-		logs = append(logs, "Configuration historique détectée: les deux agents de démonstration restent actifs")
+		logs = append(logs, "Legacy configuration detected: the two demonstration agents stay active")
 	}
 	if configuration.Created {
-		logs = append(logs, fmt.Sprintf("Configuration par défaut créée: %s", configPath))
+		logs = append(logs, fmt.Sprintf("Default configuration created: %s", configPath))
 	}
 	if len(resolution.MockAgentNames) > 0 {
-		logs = append(logs, "Mode simulation actif: "+strings.Join(resolution.MockAgentNames, ", "))
+		logs = append(logs, "Simulation mode active: "+strings.Join(resolution.MockAgentNames, ", "))
 	}
 	for _, info := range infos {
 		if info.Shell {
 			logs = append(logs, fmt.Sprintf(
-				"Mode shell explicite actif pour %s: les métacaractères sont interprétés",
+				"Explicit shell mode active for %s: metacharacters are interpreted",
 				info.Name,
 			))
 		}
 	}
 	logs = append(logs,
-		fmt.Sprintf("%d agent(s) démarré(s) via %s", len(infos), effectiveBackendLabel(infos)),
-		fmt.Sprintf("Adaptateur(s) actif(s): %s", effectiveAdapterLabel(infos)),
-		fmt.Sprintf("%d patterns chargés depuis %s", len(configuration.Patterns), configPath),
+		fmt.Sprintf("%d agent(s) started via %s", len(infos), effectiveBackendLabel(infos)),
+		fmt.Sprintf("Active adapter(s): %s", effectiveAdapterLabel(infos)),
+		fmt.Sprintf("%d patterns loaded from %s", len(configuration.Patterns), configPath),
 		fmt.Sprintf(
-			"Politiques: default_action=%s, dry_run=%t, %d règle(s)",
+			"Policies: default_action=%s, dry_run=%t, %d rule(s)",
 			configuration.Policies.DefaultAction,
 			configuration.Policies.DryRun,
 			len(configuration.Policies.Rules),
@@ -497,7 +497,7 @@ func buildStartupLogs(
 	)
 	if strings.Contains(strings.ToLower(effectiveBackendLabel(infos)), agent.BackendTmux) {
 		logs = append(logs, fmt.Sprintf(
-			"Sessions tmux: persist_on_exit=%t, cleanup_on_success=%t",
+			"tmux sessions: persist_on_exit=%t, cleanup_on_success=%t",
 			configuration.Sessions.PersistOnExit,
 			configuration.Sessions.CleanupOnSuccess,
 		))
@@ -519,7 +519,7 @@ func effectiveAdapterLabel(infos []session.Info) string {
 	}
 	sort.Strings(names)
 	if len(names) == 0 {
-		return "INCONNU"
+		return "UNKNOWN"
 	}
 	return strings.Join(names, "/")
 }
@@ -538,7 +538,7 @@ func effectiveBackendLabel(infos []session.Info) string {
 	}
 	sort.Strings(names)
 	if len(names) == 0 {
-		return "BACKEND INCONNU"
+		return "UNKNOWN BACKEND"
 	}
 	return strings.Join(names, "/")
 }
@@ -547,7 +547,7 @@ func paneDisplayCommand(info session.Info) string {
 	if info.Shell {
 		// The UI must make the interpreted mode unmistakable without echoing a
 		// potentially sensitive script into the persistent supervisor history.
-		return "[shell explicite]"
+		return "[explicit shell]"
 	}
 	return info.DisplayCommand
 }

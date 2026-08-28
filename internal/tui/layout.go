@@ -221,7 +221,7 @@ func (m *Model) resize(width, height int, scheduleContextual bool) tea.Cmd {
 			request.Rows,
 		); err != nil && m.backend.Context().Err() == nil {
 			m.recordBackendError(index, "resize_failed")
-			m.appendLog("Redimensionnement de " + request.Name + " impossible: " + err.Error())
+			m.appendLog("Cannot resize " + request.Name + ": " + err.Error())
 		}
 	}
 	return nil

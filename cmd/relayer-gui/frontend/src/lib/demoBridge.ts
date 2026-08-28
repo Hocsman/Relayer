@@ -36,7 +36,7 @@ function initialProfiles(): AgentProfilesView {
       {
         id: "claude-code",
         name: "Claude Code",
-        description: "Assistant de développement en ligne de commande.",
+        description: "Command-line development assistant.",
         installStatus: "installed",
         installed: true,
         adapter: "claude",
@@ -49,7 +49,7 @@ function initialProfiles(): AgentProfilesView {
       {
         id: "codex-cli",
         name: "Codex CLI",
-        description: "Agent de code piloté depuis le terminal.",
+        description: "Coding agent driven from the terminal.",
         installStatus: "installed",
         installed: true,
         adapter: "codex",
@@ -62,7 +62,7 @@ function initialProfiles(): AgentProfilesView {
       {
         id: "mimo-code",
         name: "MiMo Code",
-        description: "CLI MiMo Code avec interception générique.",
+        description: "MiMo Code CLI with generic interception.",
         installStatus: "not_installed",
         installed: false,
         adapter: "generic",
@@ -75,7 +75,7 @@ function initialProfiles(): AgentProfilesView {
       {
         id: "ollama",
         name: "Ollama / DeepSeek",
-        description: "CLI locale; run et le modèle restent explicites.",
+        description: "Local CLI; run and the model stay explicit.",
         installStatus: "installed",
         installed: true,
         adapter: "generic",
@@ -88,7 +88,7 @@ function initialProfiles(): AgentProfilesView {
       {
         id: "custom",
         name: "Custom",
-        description: "Commande locale sous forme d’arguments exacts.",
+        description: "Local command as exact arguments.",
         installStatus: "unknown",
         installed: true,
         adapter: "generic",
@@ -142,9 +142,9 @@ function demoEvent(
     adapter,
     type: sensitive ? "credential" : "confirmation",
     summary: sensitive
-      ? "Saisie confidentielle requise"
+      ? "Confidential input required"
       : adapter === "codex"
-        ? "Autoriser l'exécution de la commande ?"
+        ? "Allow command execution?"
         : "Overwrite generated file? [Y/n]",
     sensitive,
     risk: sensitive ? "high" : "unknown",
@@ -183,13 +183,13 @@ export function createDemoBridge(): RelayerBridge {
 
   const requireRun = (runID: string, runningOnly = false) => {
     if (runID !== state.runID || (runningOnly && state.runStatus !== "running")) {
-      throw new Error("Le run de démonstration est devenu obsolète.");
+      throw new Error("The demo run is stale.");
     }
   };
 
   const saveProfiles = (request: SaveAgentProfilesRequest): AgentProfilesView => {
     if (request.expectedRevision !== profiles.revision) {
-      throw new Error("Configuration de démonstration obsolète.");
+      throw new Error("The demo configuration is stale.");
     }
     const revision = Number.parseInt(profiles.revision.replace("demo-", ""), 10) + 1;
     const previousProfiles = profiles.profiles;
@@ -214,7 +214,7 @@ export function createDemoBridge(): RelayerBridge {
         cwd: input.cwd,
         backend: input.backend,
         adapter: input.adapter,
-        executableLabel: input.argv[0] || "commande personnalisée",
+        executableLabel: input.argv[0] || "custom command",
         argumentCount: Math.max(0, input.argv.length - 1),
         locked: false,
         preserveOnSave: true,
@@ -234,11 +234,11 @@ export function createDemoBridge(): RelayerBridge {
     const eventIndex = state.pendingEvents.findIndex(
       (event) => event.runID === runID && event.id === eventID && event.sessionID === sessionID,
     );
-    if (eventIndex < 0) throw new Error("Événement de démonstration devenu obsolète.");
+    if (eventIndex < 0) throw new Error("The demo event is stale.");
     state.pendingEvents.splice(eventIndex, 1);
     const agent = state.agents.find((candidate) => candidate.sessionID === sessionID);
-    if (!agent) throw new Error("Session de démonstration introuvable.");
-    agent.output += "Décision reçue et transmise.\nTâche terminée.\n";
+    if (!agent) throw new Error("The demo session was not found.");
+    agent.output += "Decision received and submitted.\nTask complete.\n";
     agent.revision += 1;
     agent.status = "exited";
     agent.running = false;
@@ -257,19 +257,19 @@ export function createDemoBridge(): RelayerBridge {
   };
 
   const demoNotices = (): string[] => [
-    "Mode démonstration: aucun agent réel n'est lancé et rien n'est journalisé",
-    `${profiles.profiles.length} agent(s) simulé(s) par des scripts du navigateur`,
+    "Demo mode: no real agent is started and nothing is recorded",
+    `${profiles.profiles.length} agent(s) simulated by browser scripts`,
   ];
 
   const agentsFromProfiles = (): AgentState[] => profiles.profiles.map((profile) => ({
     sessionID: profile.id,
     agentID: profile.id,
     name: profile.name,
-    displayCommand: profile.executableLabel || "commande configurée",
+    displayCommand: profile.executableLabel || "configured command",
     backend: profile.backend === "auto" ? "pty" : profile.backend,
     adapter: profile.adapter,
     status: "running",
-    output: "Relayer demo — agent initialisé\n",
+    output: "Relayer demo — agent initialized\n",
     revision: 1,
     running: true,
     attached: false,
@@ -286,7 +286,7 @@ export function createDemoBridge(): RelayerBridge {
       if (agent.status !== "running") continue;
       const next = (lineCounts.get(agent.sessionID) ?? 0) + 1;
       lineCounts.set(agent.sessionID, next);
-      agent.output += `Génération · étape ${next.toString().padStart(2, "0")}\n`;
+      agent.output += `Generating · step ${next.toString().padStart(2, "0")}\n`;
       agent.revision += 1;
       emit("relayer:snapshot", {
         runID: eventRunID,
@@ -384,32 +384,32 @@ export function createDemoBridge(): RelayerBridge {
             id: "configuration",
             scope: "configuration",
             status: "pass",
-            summary: "La configuration enregistrée est valide.",
+            summary: "The saved configuration is valid.",
           },
           {
             id: "policy",
             scope: "policy",
             status: "pass",
-            summary: "Le moteur de politiques est prêt.",
+            summary: "The policy engine is ready.",
           },
           {
             id: "audit",
             scope: "audit",
             status: "pass",
-            summary: "Le journal local peut être ouvert en mode sécurisé.",
+            summary: "The local journal can be opened in secure mode.",
           },
           {
             id: "backend",
             scope: "backend",
             status: "pass",
-            summary: "Le backend configuré est disponible.",
+            summary: "The configured backend is available.",
           },
           {
             id: "adapter-compatibility",
             scope: "adapter",
             status: "warning",
-            summary: "Un adapter expérimental demande une surveillance humaine.",
-            remediation: "Conservez la politique par défaut sur ask.",
+            summary: "An experimental adapter requires human supervision.",
+            remediation: "Keep the default policy on ask.",
           },
         ],
       };
@@ -421,7 +421,7 @@ export function createDemoBridge(): RelayerBridge {
       // The demo refuses what the real core refuses: a decision the adapter for
       // this occurrence cannot encode, whatever the screen was showing.
       if (!offered?.includes(decision)) {
-        throw new Error("Décision non encodable pour cette demande.");
+        throw new Error("This decision cannot be encoded for this request.");
       }
       return resolveDemoEvent(runID, sessionID, eventID);
     },
@@ -432,12 +432,12 @@ export function createDemoBridge(): RelayerBridge {
       requireRun(runID, true);
       const agent = state.agents.find((candidate) => candidate.sessionID === sessionID);
       if (!agent || !agent.running || agent.attached || agent.inputFrozen) {
-        throw new Error("La session de démonstration n'accepte pas cette ligne.");
+        throw new Error("The demo session does not accept this line.");
       }
       if (state.pendingEvents.some((event) => event.sessionID === sessionID)) {
-        throw new Error("Une demande de supervision est en attente.");
+        throw new Error("A supervision request is pending.");
       }
-      agent.output += "Ligne locale transmise (contenu non conservé).\n";
+      agent.output += "Local line submitted (content not kept).\n";
       agent.revision += 1;
       emit("relayer:snapshot", {
         runID,
@@ -452,12 +452,12 @@ export function createDemoBridge(): RelayerBridge {
     },
     async resizeSession(runID, _sessionID, columns, rows) {
       requireRun(runID, true);
-      if (columns < 1 || rows < 1) throw new Error("Dimensions de terminal invalides.");
+      if (columns < 1 || rows < 1) throw new Error("Invalid terminal dimensions.");
     },
     async stopSession(runID, sessionID) {
       requireRun(runID, true);
       const agent = state.agents.find((candidate) => candidate.sessionID === sessionID);
-      if (!agent) throw new Error("Session de démonstration introuvable.");
+      if (!agent) throw new Error("The demo session was not found.");
       agent.status = "exited";
       agent.running = false;
       agent.exitCode = 130;
@@ -470,7 +470,7 @@ export function createDemoBridge(): RelayerBridge {
     async saveAgentProfiles(runID, request) {
       requireRun(runID);
       if (["starting", "restarting", "rollback", "stopping"].includes(state.runStatus)) {
-        throw new Error("Un changement de run est déjà en cours.");
+        throw new Error("A run change is already in progress.");
       }
       return saveProfiles(request);
     },
@@ -478,7 +478,7 @@ export function createDemoBridge(): RelayerBridge {
       requireRun(request.expectedRunID);
       const restarting = state.runStatus === "running";
       if (!restarting && state.runStatus !== "idle" && state.runStatus !== "failed") {
-        throw new Error("Un changement de run est déjà en cours.");
+        throw new Error("A run change is already in progress.");
       }
       const transitionRunID = state.runID;
       state = {
@@ -518,7 +518,7 @@ export function createDemoBridge(): RelayerBridge {
     async stopRun(runID) {
       requireRun(runID);
       if (state.runStatus !== "running" && state.runStatus !== "failed") {
-        throw new Error("Le run ne peut pas être arrêté dans cet état.");
+        throw new Error("The run cannot be stopped in this state.");
       }
       state = { ...state, runStatus: "stopping", pendingEvents: [] };
       emit("relayer:status", { runID, scope: "run", status: "stopping" });

@@ -8,7 +8,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/config"
 )
 
-const defaultMockScript = `echo "🤖 Agent démarré..."; for i in {1..20}; do echo "Génération ligne $i..."; sleep 0.1; done; echo "⚠️ Attention: Overwrite file? [Y/n]"; IFS= read -r ans; echo "✅ Vous avez répondu : $ans. Fin de la tâche."`
+const defaultMockScript = `echo "🤖 Agent started..."; for i in {1..20}; do echo "Generating line $i..."; sleep 0.1; done; echo "⚠️ Warning: Overwrite file? [Y/n]"; IFS= read -r ans; echo "✅ You answered: $ans. Task finished."`
 
 type agentResolution struct {
 	Specs []agent.Spec
@@ -82,8 +82,8 @@ func resolveAgentPlans(configuration config.Result, cli options, workingDirector
 			spec.Shell = ""
 		}
 		result.Warnings = append(result.Warnings,
-			"Avertissement: "+override.flag+" est obsolète; configurez agents dans config.yaml.",
-			"Compatibilité: "+override.flag+" est exécuté en argv direct, sans interprétation par un shell.",
+			"Warning: "+override.flag+" is deprecated; configure agents in config.yaml.",
+			"Compatibility: "+override.flag+" runs as direct argv, with no shell interpretation.",
 		)
 	}
 

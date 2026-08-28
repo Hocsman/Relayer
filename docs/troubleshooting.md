@@ -48,7 +48,7 @@ desktop build dependencies. Relayer checks an existing runtime configuration:
 ./relayer doctor --config /absolute/path/to/config.yaml
 ```
 
-`PRÊT` and `AVERTISSEMENTS` return exit status `0`; `BLOQUÉ` returns `1`.
+`READY` and `WARNINGS` return exit status `0`; `BLOCKED` returns `1`.
 Warnings include conservative conditions such as an experimental adapter or a
 safe `auto` fallback to PTY. Blockers include a missing configured executable,
 an unavailable explicit tmux backend, an unknown adapter, an unsupported

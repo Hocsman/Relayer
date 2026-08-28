@@ -16,13 +16,13 @@ export function AgentGrid({ runID, agents, events, onResize, onStop, onOpenEvent
     return (
       <section className="empty-agents">
         <span className="empty-agents__orb" aria-hidden="true" />
-        <h2>Aucun agent actif</h2>
-        <p>Ajoutez un agent dans la configuration puis redémarrez Relayer.</p>
+        <h2>No active agent</h2>
+        <p>Add an agent in the configuration, then restart Relayer.</p>
       </section>
     );
   }
   return (
-    <section className="agent-grid" aria-label="Agents supervisés">
+    <section className="agent-grid" aria-label="Supervised agents">
       {agents.map((agent) => (
         <AgentCard
           key={`${runID}\u0000${agent.sessionID}`}

@@ -130,9 +130,9 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.panes[paneIndex].exited = true
 			m.panes[paneIndex].exitErr = msg.Err
 			if msg.Err == nil {
-				m.appendLog(fmt.Sprintf("%s terminé", m.panes[paneIndex].name))
+				m.appendLog(fmt.Sprintf("%s finished", m.panes[paneIndex].name))
 			} else {
-				m.appendLog(fmt.Sprintf("%s terminé avec erreur: %v", m.panes[paneIndex].name, msg.Err))
+				m.appendLog(fmt.Sprintf("%s finished with an error: %v", m.panes[paneIndex].name, msg.Err))
 			}
 			wasInputTarget := m.inputTarget == msg.SessionID
 			m.removePending(msg.SessionID)
@@ -151,7 +151,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case session.Error:
 		if paneIndex := m.paneIndex(msg.SessionID); paneIndex >= 0 {
 			m.recordBackendError(paneIndex, "backend_event")
-			m.appendLog(fmt.Sprintf("Erreur terminal de %s: %v", m.panes[paneIndex].name, msg.Err))
+			m.appendLog(fmt.Sprintf("Terminal error from %s: %v", m.panes[paneIndex].name, msg.Err))
 		}
 	case inputDeliveredMsg:
 		m.writePending = false
@@ -182,15 +182,15 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		if msg.Err != nil {
-			m.panes[paneIndex].policyTag = "ASK REQUISE"
-			m.appendLog(fmt.Sprintf("Échec de l'envoi à %s (réponse non acquittée)", m.panes[paneIndex].name))
+			m.panes[paneIndex].policyTag = "ASK REQUIRED"
+			m.appendLog(fmt.Sprintf("Delivery to %s failed (answer not acknowledged)", m.panes[paneIndex].name))
 			if !m.panes[paneIndex].exited && !m.panes[paneIndex].blocked {
 				m.panes[paneIndex].blocked = true
 				m.panes[paneIndex].prompt = msg.Event.Clone()
 				m.prependPending(msg.SessionID)
 			}
 		} else {
-			m.panes[paneIndex].policyTag = "ASK APPLIQUÉE"
+			m.panes[paneIndex].policyTag = "ASK APPLIED"
 			m.rememberResolved(msg.SessionID, msg.Event.ID)
 		}
 		commands = append(commands, m.activateNextPrompt())
@@ -217,9 +217,9 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			// reconciles lifecycle/prompt state but cannot send a decision.
 			m.recordAttach(paneIndex, audit.KindAttachFinished, audit.OutcomeFailed, "attach_client_failed")
 			m.attachFinishedAudited = true
-			m.appendLog(fmt.Sprintf("Session tmux %s interrompue: %v", m.panes[paneIndex].name, msg.Err))
+			m.appendLog(fmt.Sprintf("tmux session %s was interrupted: %v", m.panes[paneIndex].name, msg.Err))
 		} else {
-			m.appendLog(fmt.Sprintf("Retour de la session tmux %s", m.panes[paneIndex].name))
+			m.appendLog(fmt.Sprintf("Back from the tmux session %s", m.panes[paneIndex].name))
 		}
 		attachable, ok := m.backend.(AttachableBackend)
 		if !ok {
@@ -228,7 +228,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.attachFinishedAudited = true
 			}
 			m.recordBackendError(paneIndex, "attach_resync_backend_missing")
-			m.appendLog("Resynchronisation tmux impossible: backend incompatible")
+			m.appendLog("Cannot resynchronize tmux: incompatible backend")
 			m.attachPending = ""
 			m.attachFinishedAudited = false
 			m.attachReturned = false
@@ -262,14 +262,14 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.recordAttach(paneIndex, audit.KindAttachFinished, audit.OutcomeFailed, "detach_resync_failed")
 			}
 			m.recordBackendError(paneIndex, "detach_resync_failed")
-			m.appendLog(fmt.Sprintf("Resynchronisation de %s impossible: %v", m.panes[paneIndex].name, msg.Err))
+			m.appendLog(fmt.Sprintf("Cannot resynchronize %s: %v", m.panes[paneIndex].name, msg.Err))
 			commands = append(commands, m.freezeResyncFailure(paneIndex))
 		} else {
 			if !m.attachFinishedAudited {
 				m.recordAttach(paneIndex, audit.KindAttachFinished, audit.OutcomeSucceeded, "detach_resynced")
 			}
 			commands = append(commands, m.reconcileEvent(msg.SessionID, msg.Pending))
-			m.appendLog(fmt.Sprintf("%s resynchronisé (sortie, état, prompts et taille)", m.panes[paneIndex].name))
+			m.appendLog(fmt.Sprintf("%s resynchronized (output, state, prompts and size)", m.panes[paneIndex].name))
 		}
 		m.attachFinishedAudited = false
 		m.attachReturned = false
@@ -279,7 +279,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			for _, failure := range msg.Failures {
 				paneIndex := m.paneIndex(failure.SessionID)
 				m.recordBackendError(paneIndex, "resize_failed")
-				m.appendLog("Redimensionnement de " + failure.Name + " impossible: " + failure.Err.Error())
+				m.appendLog("Cannot resize " + failure.Name + ": " + failure.Err.Error())
 			}
 		}
 		if msg.Generation < m.resizeGeneration {
@@ -406,7 +406,7 @@ func (m *Model) handleActionableEvent(observed adapters.Event) tea.Cmd {
 	key := semanticEventKey(observed.SessionID, observed.ID)
 	m.automaticInFlight[key] = automaticAttempt{event: observed.Clone(), evaluation: evaluation}
 	m.automaticBySession[sessionKey] = key
-	m.panes[paneIndex].policyTag = "AUTO EN COURS"
+	m.panes[paneIndex].policyTag = "AUTO SENDING"
 	m.appendPolicyLog(paneIndex, observed, evaluation, "in_flight")
 	return deliverAutomaticDecision(m.backend, observed, evaluation, decision, m.auditGate)
 }
@@ -464,11 +464,11 @@ func (m *Model) queueHumanEvent(event adapters.Event, evaluation policy.Evaluati
 	m.removePending(event.SessionID)
 	m.pending = append(m.pending, event.SessionID)
 	m.appendPolicyLog(paneIndex, event, evaluation, status)
-	reason := "confirmation requise"
+	reason := "confirmation required"
 	if requiresSecretHandling(event) {
-		reason = "saisie sensible requise"
+		reason = "sensitive input required"
 	}
-	m.appendLog(fmt.Sprintf("%s attend une intervention humaine (%s)", target.name, reason))
+	m.appendLog(fmt.Sprintf("%s is waiting for a human decision (%s)", target.name, reason))
 	if m.inputTarget == "" && !m.writePending {
 		return m.activateNextPrompt()
 	}
@@ -523,7 +523,7 @@ func (m *Model) applyAutomaticDecisionResult(message automaticDecisionFinishedMs
 	}
 	if message.Err == nil {
 		m.rememberResolved(message.SessionID, message.Event.ID)
-		m.panes[paneIndex].policyTag = "AUTO APPLIQUÉE"
+		m.panes[paneIndex].policyTag = "AUTO APPLIED"
 		m.appendPolicyLog(paneIndex, attempt.event, attempt.evaluation, "applied")
 		if deferred, ok := m.deferredEvents[sessionKey]; ok {
 			delete(m.deferredEvents, sessionKey)
@@ -546,7 +546,7 @@ func (m *Model) applyAutomaticDecisionResult(message automaticDecisionFinishedMs
 	}
 	if message.PendingKnown && message.Pending == nil {
 		m.rememberResolved(message.SessionID, message.Event.ID)
-		m.panes[paneIndex].policyTag = "AUTO NON APPLIQUÉE"
+		m.panes[paneIndex].policyTag = "AUTO NOT APPLIED"
 		return nil
 	}
 	candidate := attempt.event.Clone()
@@ -578,7 +578,7 @@ func (m *Model) freezePolicyDelivery(paneIndex int, event adapters.Event) tea.Cm
 	}
 	target := &m.panes[paneIndex]
 	target.policyFrozen = true
-	target.policyTag = "LIVRAISON INCERTAINE"
+	target.policyTag = "DELIVERY UNCERTAIN"
 	target.blocked = true
 	target.prompt = event.Clone()
 	m.removePending(target.sessionID)
@@ -589,7 +589,7 @@ func (m *Model) freezePolicyDelivery(paneIndex int, event adapters.Event) tea.Cm
 		setInputInterceptionStyle(&m.input, false)
 	}
 	m.appendLog(fmt.Sprintf(
-		"Politique • agent=%s • status=delivery_uncertain • aucune nouvelle réponse envoyée • arrêt ou reprise contrôlée requis",
+		"Policy • agent=%s • status=delivery_uncertain • no new answer sent • stop or controlled restart required",
 		safePolicyField(target.name),
 	))
 	if m.inputTarget == "" && !m.writePending {
@@ -607,7 +607,7 @@ func (m *Model) freezeResyncFailure(paneIndex int) tea.Cmd {
 	}
 	target := &m.panes[paneIndex]
 	target.policyFrozen = true
-	target.policyTag = "ÉTAT TMUX INCERTAIN"
+	target.policyTag = "TMUX STATE UNCERTAIN"
 	target.blocked = true
 	target.prompt = adapters.Event{}
 	m.removePending(target.sessionID)
@@ -618,7 +618,7 @@ func (m *Model) freezeResyncFailure(paneIndex int) tea.Cmd {
 		setInputInterceptionStyle(&m.input, false)
 	}
 	m.appendLog(fmt.Sprintf(
-		"Politique • agent=%s • status=resync_failed • aucune décision envoyée • arrêt requis",
+		"Policy • agent=%s • status=resync_failed • no decision sent • stop required",
 		safePolicyField(target.name),
 	))
 	if m.inputTarget == "" && !m.writePending {
@@ -677,7 +677,7 @@ func (m *Model) appendPolicyLog(
 		risk = adapters.RiskUnknown
 	}
 	m.appendLog(fmt.Sprintf(
-		"Politique • agent=%s • adapter=%s • type=%s • risk=%s • summary=%s • rule=%s • proposed=%s • effective=%s • automatic=%t • mode=%s • status=%s • reason=%s",
+		"Policy • agent=%s • adapter=%s • type=%s • risk=%s • summary=%s • rule=%s • proposed=%s • effective=%s • automatic=%t • mode=%s • status=%s • reason=%s",
 		safePolicyField(m.panes[paneIndex].name),
 		safePolicyField(m.panes[paneIndex].adapter),
 		safeEventType(event.Type),
@@ -835,7 +835,7 @@ func (m *Model) submitInput() tea.Cmd {
 	// recorded or cleared, so the prompt stays pending and the operator can
 	// still answer it.
 	if strings.TrimSpace(value) == "" {
-		m.appendLog("Réponse vide ignorée: saisissez explicitement la réponse à transmettre")
+		m.appendLog("Empty answer ignored: type the answer to submit")
 		return nil
 	}
 	targetID := m.inputTarget
@@ -854,8 +854,8 @@ func (m *Model) submitInput() tea.Cmd {
 	m.input.Blur()
 	setInputInterceptionStyle(&m.input, false)
 	m.writePending = true
-	m.panes[paneIndex].policyTag = "ASK EN COURS"
-	m.appendLog(fmt.Sprintf("Réponse transmise à %s", m.panes[paneIndex].name))
+	m.panes[paneIndex].policyTag = "ASK SENDING"
+	m.appendLog(fmt.Sprintf("Answer submitted to %s", m.panes[paneIndex].name))
 	return deliverInput(m.backend, targetID, value, event, m.auditGate)
 }
 
@@ -888,7 +888,7 @@ func (m *Model) applyProcessExit(event adapters.Event) tea.Cmd {
 	}
 	summary := event.Summary
 	if summary == "" {
-		summary = "processus terminé"
+		summary = "process finished"
 	}
 	m.appendLog(fmt.Sprintf("%s: %s", m.panes[paneIndex].name, summary))
 	if m.inputTarget == "" && !m.writePending {
@@ -906,24 +906,24 @@ func (m *Model) beginAttach(paneIndex int) tea.Cmd {
 		return nil
 	}
 	if pane.policyFrozen {
-		m.appendLog(fmt.Sprintf("Attachement de %s refusé: livraison de politique incertaine; arrêt requis", pane.name))
+		m.appendLog(fmt.Sprintf("Attach to %s refused: policy delivery uncertain; stop required", pane.name))
 		return nil
 	}
 	if m.writePending {
-		m.appendLog(fmt.Sprintf("Attachement de %s différé: réponse manuelle en cours", pane.name))
+		m.appendLog(fmt.Sprintf("Attach to %s deferred: a manual answer is in flight", pane.name))
 		return nil
 	}
 	if m.lineInputTarget != "" {
-		m.appendLog(fmt.Sprintf("Attachement de %s différé: saisie de consigne en cours", pane.name))
+		m.appendLog(fmt.Sprintf("Attach to %s deferred: a direct instruction is being composed", pane.name))
 		return nil
 	}
 	if m.lineWritePending != "" {
-		m.appendLog(fmt.Sprintf("Attachement de %s différé: envoi de consigne en cours", pane.name))
+		m.appendLog(fmt.Sprintf("Attach to %s deferred: a direct instruction is being sent", pane.name))
 		return nil
 	}
 	sessionKey := semanticEventKey(pane.sessionID, "unused").sessionID
 	if _, automatic := m.automaticBySession[sessionKey]; automatic {
-		m.appendLog(fmt.Sprintf("Attachement de %s différé: décision automatique en cours", pane.name))
+		m.appendLog(fmt.Sprintf("Attach to %s deferred: an automatic decision is in flight", pane.name))
 		return nil
 	}
 	if m.attachPending != "" {
@@ -932,12 +932,12 @@ func (m *Model) beginAttach(paneIndex int) tea.Cmd {
 	attachable, ok := m.backend.(AttachableBackend)
 	if !ok {
 		m.recordBackendError(paneIndex, "attach_backend_incompatible")
-		m.appendLog(fmt.Sprintf("Attachement de %s impossible: backend tmux incompatible", pane.name))
+		m.appendLog(fmt.Sprintf("Cannot attach to %s: incompatible tmux backend", pane.name))
 		return nil
 	}
 	if _, ok := m.backend.(EventSnapshotBackend); !ok {
 		m.recordBackendError(paneIndex, "attach_snapshot_unavailable")
-		m.appendLog(fmt.Sprintf("Attachement de %s impossible: snapshot d'événement indisponible", pane.name))
+		m.appendLog(fmt.Sprintf("Cannot attach to %s: event snapshot unavailable", pane.name))
 		return nil
 	}
 	if !m.recordAttach(paneIndex, audit.KindAttachStarted, audit.OutcomeStarted, "attach_requested") {
@@ -946,19 +946,19 @@ func (m *Model) beginAttach(paneIndex int) tea.Cmd {
 	command, err := attachable.AttachCommand(m.backend.Context(), pane.sessionID)
 	if err != nil {
 		m.recordAttachFailure(paneIndex, "attach_command_failed")
-		m.appendLog(fmt.Sprintf("Attachement de %s impossible: %v", pane.name, err))
+		m.appendLog(fmt.Sprintf("Cannot attach to %s: %v", pane.name, err))
 		return nil
 	}
 	if command == nil {
 		m.recordAttachFailure(paneIndex, "attach_command_empty")
-		m.appendLog(fmt.Sprintf("Attachement de %s impossible: commande vide", pane.name))
+		m.appendLog(fmt.Sprintf("Cannot attach to %s: empty command", pane.name))
 		return nil
 	}
 	sessionID := pane.sessionID
 	m.attachPending = sessionID
 	m.attachFinishedAudited = false
 	m.attachReturned = false
-	m.appendLog(fmt.Sprintf("Ouverture interactive de %s via tmux", pane.name))
+	m.appendLog(fmt.Sprintf("Opening %s interactively through tmux", pane.name))
 	executor := m.execProcess
 	if executor == nil {
 		executor = tea.ExecProcess
@@ -1105,20 +1105,20 @@ func (m *Model) submitHumanDecision(decision adapters.Decision) tea.Cmd {
 	setInputInterceptionStyle(&m.input, false)
 	m.writePending = true
 	m.panes[paneIndex].policyTag = humanDecisionTag(decision)
-	m.appendLog(fmt.Sprintf("%s transmis à %s", humanDecisionLabel(decision), m.panes[paneIndex].name))
+	m.appendLog(fmt.Sprintf("%s submitted to %s", humanDecisionLabel(decision), m.panes[paneIndex].name))
 	return deliverHumanDecision(m.backend, targetID, event, decision, m.auditGate)
 }
 
 func humanDecisionLabel(decision adapters.Decision) string {
 	if decision == adapters.DecisionDeny {
-		return "Refus"
+		return "Deny"
 	}
-	return "Autorisation"
+	return "Allow"
 }
 
 func humanDecisionTag(decision adapters.Decision) string {
 	if decision == adapters.DecisionDeny {
-		return "REFUS EN COURS"
+		return "DENY SENDING"
 	}
-	return "AUTORISATION EN COURS"
+	return "ALLOW SENDING"
 }

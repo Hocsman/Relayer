@@ -105,7 +105,7 @@ unavailable explicitly requested tmux before launch.
 Audit initialization and `run_started` recording also happen before the first
 agent starts. A partial multi-agent start is rolled back.
 
-The optional `relayer doctor` command and GUI **Santé** panel provide an
+The optional `relayer doctor` command and GUI **Health** panel provide an
 earlier, read-only readiness view. They use passive `PATH` lookup and metadata
 inspection only: no configuration is created, no audit file is opened, no
 backend is constructed, and no provider executable is invoked. Their report

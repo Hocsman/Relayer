@@ -3,10 +3,10 @@ package adapters
 import "strings"
 
 var defaultPatterns = []Pattern{
-	{Name: "overwrite", Description: "confirmation d'écrasement", Expression: `(?i)overwrite.*\[y/n\]`},
-	{Name: "confirmation", Description: "confirmation oui/non", Expression: `(?i)\[[yn]/[yn]\]`},
-	{Name: "password", Description: "saisie d'un mot de passe", Expression: `(?im)password:[[:space:]]*$`, Sensitive: true},
-	{Name: "continue", Description: "confirmation de poursuite", Expression: `(?i)do you want to continue`},
+	{Name: "overwrite", Description: "overwrite confirmation", Expression: `(?i)overwrite.*\[y/n\]`},
+	{Name: "confirmation", Description: "yes/no confirmation", Expression: `(?i)\[[yn]/[yn]\]`},
+	{Name: "password", Description: "password entry", Expression: `(?im)password:[[:space:]]*$`, Sensitive: true},
+	{Name: "continue", Description: "continue confirmation", Expression: `(?i)do you want to continue`},
 }
 
 func DefaultPatterns() []Pattern {

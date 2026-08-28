@@ -65,7 +65,7 @@ func newRecorder(
 		return result, nil
 	}
 	if sink == nil {
-		return nil, errors.New("sink d'audit nil")
+		return nil, errors.New("nil audit sink")
 	}
 	runID := explicitRunID
 	if runID == "" {

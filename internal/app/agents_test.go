@@ -125,8 +125,8 @@ func TestResolveAgentPlansAppliesOnlyRequestedLegacyOverrides(t *testing.T) {
 		t.Fatal("legacy overrides unexpectedly selected shell mode")
 	}
 	if len(resolution.Warnings) != 4 ||
-		!strings.Contains(strings.Join(resolution.Warnings, "\n"), "obsolète") ||
-		!strings.Contains(strings.Join(resolution.Warnings, "\n"), "sans interprétation par un shell") {
+		!strings.Contains(strings.Join(resolution.Warnings, "\n"), "deprecated") ||
+		!strings.Contains(strings.Join(resolution.Warnings, "\n"), "no shell interpretation") {
 		t.Fatalf("deprecation/direct-mode warnings = %#v", resolution.Warnings)
 	}
 }
@@ -260,13 +260,13 @@ func TestStartupLogsIdentifyShellModeWithoutEchoingCommandsOrSecrets(t *testing.
 		"config.yaml",
 	)
 	rendered := strings.Join(logs, "\n")
-	if !strings.Contains(rendered, "Mode shell explicite actif pour Shell Agent") {
+	if !strings.Contains(rendered, "Explicit shell mode active for Shell Agent") {
 		t.Fatalf("shell mode is not identified in logs: %q", rendered)
 	}
 	if strings.Contains(rendered, script) || strings.Contains(rendered, secret) {
 		t.Fatalf("shell script or secret leaked into logs: %q", rendered)
 	}
-	if got := paneDisplayCommand(session.Info{DisplayCommand: script, Shell: true}); got != "[shell explicite]" {
+	if got := paneDisplayCommand(session.Info{DisplayCommand: script, Shell: true}); got != "[explicit shell]" {
 		t.Fatalf("shell pane label = %q", got)
 	}
 }
@@ -288,10 +288,10 @@ func TestStartupLogsDistinguishLegacyFallbackWithoutLeakingCommands(t *testing.T
 		nil,
 		"config.yaml",
 	), "\n")
-	if !strings.Contains(legacy, "Configuration historique détectée") {
+	if !strings.Contains(legacy, "Legacy configuration detected") {
 		t.Fatalf("legacy fallback is not identified: %q", legacy)
 	}
-	if strings.Contains(versioned, "Configuration historique détectée") {
+	if strings.Contains(versioned, "Legacy configuration detected") {
 		t.Fatalf("versioned fallback was labeled legacy: %q", versioned)
 	}
 	if strings.Contains(legacy, defaultMockScript) || strings.Contains(versioned, defaultMockScript) {

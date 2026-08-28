@@ -62,14 +62,14 @@ function resolveBindings(): NativeBindings {
     typeof candidate.SaveAgentProfilesAndRestart !== "function" ||
     typeof candidate.StopRun !== "function"
   ) {
-    throw new Error("Le bridge natif Relayer n'est pas disponible.");
+    throw new Error("The native Relayer bridge is unavailable.");
   }
   return candidate;
 }
 
 function resolveRuntime(): WailsRuntime {
   if (!window.runtime || typeof window.runtime.EventsOn !== "function") {
-    throw new Error("Le bus d'événements Wails n'est pas disponible.");
+    throw new Error("The Wails event bus is unavailable.");
   }
   return window.runtime;
 }

@@ -82,7 +82,7 @@ func TestManagerLifecyclePromptResizeInputAndFinalOutput(t *testing.T) {
 		t.Fatalf("Start returned an error: %v", err)
 	}
 	if info.ID != "integration" || info.Name != "integration" ||
-		info.DisplayCommand != "[shell explicite]" || !info.Shell {
+		info.DisplayCommand != "[explicit shell]" || !info.Shell {
 		t.Fatalf("Start info = %#v", info)
 	}
 	if strings.Contains(info.DisplayCommand, command) {
