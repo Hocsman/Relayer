@@ -44,6 +44,8 @@ const (
 	summaryAuditPathHarden         = "Les permissions du fichier d'audit seront renforcées à l'ouverture."
 	remediationAuditPermissions    = "Limitez l'accès au fichier d'audit à l'utilisateur courant."
 	summaryAuditPathUnsafe         = "L'emplacement d'audit existant n'est pas sûr."
+	summaryAuditPathForeign        = "Le fichier présent à l'emplacement d'audit n'est pas un journal Relayer."
+	remediationAuditForeign        = "Choisissez un chemin dédié: Relayer prend possession de ce fichier et de ses rotations."
 	remediationAuditPath           = "Choisissez un fichier régulier dans un dossier privé appartenant à l'utilisateur courant."
 	summaryAuditGenerationsNone    = "Aucune génération d'audit existante n'est détectée."
 	summaryAuditGenerationsReady   = "Les générations d'audit existantes sont privées et régulières."
@@ -373,6 +375,14 @@ func checkAudit(report *Report, configuration audit.Config, options Options) {
 	if fileErr != nil || fileInfo.Mode()&os.ModeSymlink != 0 || !fileInfo.Mode().IsRegular() ||
 		ownerRejected(fileInfo, options) || !hasUnixOwnerPermissions(fileInfo, options, 0o600) {
 		addCheck(report, "audit.path", ScopeAudit, CheckBlock, summaryAuditPathUnsafe, remediationAuditPath)
+		return
+	}
+	// Relayer takes ownership of this path: startup truncates a partial
+	// trailing line and rotation removes surplus generations of the same base
+	// name. A document that merely happens to sit here must be reported before
+	// the operator discovers it at startup.
+	if err := audit.VerifyJournalFile(path); err != nil && errors.Is(err, audit.ErrNotAuditJournal) {
+		addCheck(report, "audit.path", ScopeAudit, CheckBlock, summaryAuditPathForeign, remediationAuditForeign)
 		return
 	}
 	if unixPermissionModel(options.GOOS) && fileInfo.Mode().Perm()&0o077 != 0 {

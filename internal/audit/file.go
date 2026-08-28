@@ -2,6 +2,7 @@ package audit
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -363,11 +364,101 @@ func openPrivateRegularFile(path string) (*os.File, error) {
 		_ = file.Close()
 		return nil, fmt.Errorf("identité du fichier d'audit %s non fiable", path)
 	}
+	if err := requireRelayerJournal(file, opened.Size()); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
 	if err := recoverPartialJSONL(file); err != nil {
 		_ = file.Close()
 		return nil, fmt.Errorf("récupération de la dernière ligne d'audit %s: %w", path, err)
 	}
 	return file, nil
+}
+
+// ErrNotAuditJournal reports an audit path that already holds a file Relayer
+// did not write.
+var ErrNotAuditJournal = errors.New("le chemin d'audit contient un fichier étranger")
+
+// maxJournalHeaderBytes bounds the first-line read used for recognition. A
+// Relayer entry is far smaller; anything larger is not one.
+const maxJournalHeaderBytes = 64 * 1024
+
+// journalEntryPrefix is how every entry begins: SchemaVersion is the first
+// field of Entry, so encoding/json always emits it first.
+var journalEntryPrefix = []byte(`{"schema_version":`)
+
+// requireRelayerJournal refuses to touch a non-empty file that Relayer cannot
+// recognize as one of its own journals.
+//
+// The sink takes ownership of what it opens: it truncates a partial trailing
+// line, and rotation removes surplus generations of the same base name. Without
+// this gate an ordinary document at audit.path - a typo, or a deliberate but
+// mistaken choice - is silently destroyed, and a file with no newline at all is
+// truncated to nothing.
+//
+// Recognition is deliberately narrow: the first line must decode as an Entry
+// carrying a known schema version and a kind from the closed vocabulary.
+func requireRelayerJournal(reader io.ReaderAt, size int64) error {
+	if size == 0 {
+		return nil
+	}
+	length := size
+	if length > maxJournalHeaderBytes {
+		length = maxJournalHeaderBytes
+	}
+	header := make([]byte, length)
+	if _, err := reader.ReadAt(header, 0); err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("%w: lecture impossible", ErrNotAuditJournal)
+	}
+	complete := true
+	if index := bytes.IndexByte(header, '\n'); index >= 0 {
+		header = header[:index]
+	} else if size > maxJournalHeaderBytes {
+		// A first line longer than any entry Relayer writes.
+		return ErrNotAuditJournal
+	} else {
+		complete = false
+	}
+
+	header = bytes.TrimSpace(header)
+	var entry Entry
+	if err := json.Unmarshal(header, &entry); err != nil {
+		// A journal interrupted while writing its very first entry has no
+		// complete line to decode. Recovery of that case must survive, so accept
+		// an unterminated line that is unmistakably the start of one of our
+		// entries. Anything else is someone's file.
+		if !complete && bytes.HasPrefix(header, journalEntryPrefix) {
+			return nil
+		}
+		return ErrNotAuditJournal
+	}
+	if entry.SchemaVersion < 1 || entry.SchemaVersion > CurrentSchemaVersion {
+		return ErrNotAuditJournal
+	}
+	if entry.Kind == "" || safeKind(entry.Kind) != entry.Kind || entry.Kind == KindUnknown {
+		return ErrNotAuditJournal
+	}
+	return nil
+}
+
+// VerifyJournalFile reports whether an existing path holds a Relayer audit
+// journal. It only reads, so read-only diagnostics can warn about a foreign
+// file before startup refuses to open it. An absent path is not an error here:
+// callers decide what a missing journal means.
+func VerifyJournalFile(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("inspection de la génération d'audit %s: %w", path, err)
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("inspection de la génération d'audit %s: %w", path, err)
+	}
+	if err := requireRelayerJournal(file, info.Size()); err != nil {
+		return fmt.Errorf("%w: %s", err, path)
+	}
+	return nil
 }
 
 func recoverPartialJSONL(file *os.File) error {
@@ -433,6 +524,11 @@ func prepareExistingGenerations(path string, maxFiles int) error {
 			return fmt.Errorf("génération d'audit %s non régulière", candidate)
 		}
 		if err := requireCurrentUserOwner(info, candidate); err != nil {
+			return err
+		}
+		// Rotation removes and re-permissions files purely by name. A user
+		// document that happens to match `<base>.<n>` must never be touched.
+		if err := VerifyJournalFile(candidate); err != nil {
 			return err
 		}
 		if index >= maxFiles {
