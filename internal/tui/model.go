@@ -104,11 +104,6 @@ type Model struct {
 	attachReturned        bool
 	execProcess           execProcessFunc
 
-	// lastTitleCount edge-triggers the terminal window title so eight
-	// simultaneous prompts produce one title change rather than eight.
-	lastTitleCount   int
-	titleInitialized bool
-
 	resizeGeneration uint64
 	resizeInFlight   bool
 	resizeRequests   []resizeRequest
