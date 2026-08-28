@@ -285,7 +285,7 @@ func sensitiveQueryKey(value string) bool {
 func safeKind(value Kind) Kind {
 	switch value {
 	case KindRunStarted, KindRunFinished, KindSessionStarted, KindSupervisionFinished, KindSessionFinished,
-		KindEventDetected, KindPolicyEvaluated, KindDecision, KindDelivery,
+		KindEventDetected, KindEventWithdrawn, KindPolicyEvaluated, KindDecision, KindDelivery,
 		KindOperatorInput, KindAttachStarted, KindAttachFinished, KindBackendError, KindSessionCleanup:
 		return value
 	case "":

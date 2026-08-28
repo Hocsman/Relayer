@@ -66,6 +66,13 @@ No release tag has been published at the time of writing.
 
 ### Fixed
 
+- Withdrawing a pending occurrence left no trace. Snapshot reconciliation drops
+  a prompt the replayed screen no longer shows — legitimate, since an operator
+  attached to tmux may have answered it directly — but the pane simply stopped
+  being blocked and the journal could not tell "answered" from "stopped being
+  asked". A new `event_withdrawn` record names the occurrence, and like every
+  other kind it has no field for the matched text.
+
 - A prompt drawn inside an ASCII frame was never detected. The line
   `| Overwrite file? [Y/n]        |` shares its `| ` prefix with a markdown
   table row, which the generic adapter suppresses as quoted documentation, so

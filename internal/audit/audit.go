@@ -41,9 +41,13 @@ const (
 	KindSupervisionFinished Kind = "supervision_finished"
 	KindSessionFinished     Kind = "session_finished"
 	KindEventDetected       Kind = "event_detected"
-	KindPolicyEvaluated     Kind = "policy_evaluated"
-	KindDecision            Kind = "decision"
-	KindDelivery            Kind = "delivery"
+	// KindEventWithdrawn records that an occurrence which was awaiting a human
+	// stopped being pending without a decision being delivered. It is the only
+	// evidence that a supervision gate opened on its own.
+	KindEventWithdrawn  Kind = "event_withdrawn"
+	KindPolicyEvaluated Kind = "policy_evaluated"
+	KindDecision        Kind = "decision"
+	KindDelivery        Kind = "delivery"
 	// KindOperatorInput records only the lifecycle of a direct, human line
 	// submission. Entry intentionally has no field for the submitted text,
 	// its length, or the encoded terminal bytes.
