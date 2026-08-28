@@ -70,7 +70,10 @@ No release tag has been published at the time of writing.
   instead of reporting a failure. Its single-slot wait channel could be drained
   by an early-exit path, after which the cleanup receive blocked forever. The
   cleanup now receives under a bounded select and the child has a `WaitDelay`,
-  so a capture that exits early reports its real error in seconds.
+  so a capture that exits early reports its real error in seconds. The test's
+  capture record is also published through an atomic rename instead of a
+  truncating write, so the polling reader can no longer observe a partial file
+  and fail with a JSON error.
 
 - Startup and `doctor` established tmux availability by finding the executable,
   so a tmux that could not run a session was selected anyway and failed at the
