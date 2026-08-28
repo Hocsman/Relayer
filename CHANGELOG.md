@@ -55,6 +55,16 @@ No release tag has been published at the time of writing.
 
 ### Fixed
 
+- Detection throughput was roughly 0.15 MB/s. The normalized detection window
+  was rebuilt one rune at a time with `s.detectionText += ...`, copying the
+  whole 16 KiB window per character, so consuming output was quadratic in chunk
+  size — and it ran while holding the processor lock, serializing detection,
+  operator input, and every snapshot the interfaces poll. A noisy build log
+  could saturate a core and fall behind. The window now accumulates into a byte
+  buffer: about 142x faster and 1650x less allocation on the same input,
+  measured by a new benchmark. A differential test and a fuzz target check the
+  rewrite against the original implementation.
+
 - The tmux backend could not start a session on tmux 3.7. Machine-readable
   `-F` and `display-message` formats separated their fields with a tab, and
   tmux 3.7 rewrites an unprintable byte in rendered format output to `_`
