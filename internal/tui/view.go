@@ -171,6 +171,11 @@ func (m *Model) renderSupervisorPane(outer Rect) string {
 	} else {
 		enterHelp += " • I: consigne directe"
 	}
+	// The semantic answers only exist while a prompt is waiting, so the hint
+	// appears exactly when the keys do something.
+	if m.inputTarget != "" && m.lineInputTarget == "" {
+		enterHelp += " • F2: autoriser • F3: refuser"
+	}
 	help := lipgloss.NewStyle().Foreground(colorMuted).MaxWidth(innerWidth).MaxHeight(1).Render(
 		enterHelp + " • Ctrl+←/→: focus • Ctrl+PgUp/PgDn: page • ↑/↓, PgUp/PgDn, molette: historique • Ctrl+C: quitter",
 	)

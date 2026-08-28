@@ -254,6 +254,7 @@ and redirections are not interpreted.
 | `Esc` while composing | Cancel and erase the ordinary line. |
 | `Enter` while composing | Send the ordinary line with one carriage return. |
 | `Enter` on a pending prompt | Send the supervisor input to that agent. An empty field is refused: the answer must be typed. |
+| `F2`, `F3` on a pending prompt | Answer semantically: allow, or deny. The adapter encodes it, and the audit records the decision as made by a human. Adapters that cannot represent the answer leave the prompt pending. |
 | `Enter` on an idle tmux agent | Attach the native tmux client. |
 | `Ctrl+B`, then `d` | Default tmux detach sequence; custom tmux bindings may differ. |
 | `Ctrl+C` | Stop supervision and begin backend shutdown. |

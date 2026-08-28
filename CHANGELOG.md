@@ -10,6 +10,15 @@ No release tag has been published at the time of writing.
 
 ### Added
 
+- `F2` and `F3` answer a pending prompt with an explicit allow or deny in the
+  terminal interface. The adapters already encoded both and the audit already
+  modelled a decision made by a person, but no operator surface could ask for
+  either, so every human answer went through the free-text field and was
+  recorded as an ask — `decision=deny, by=human` was impossible to produce. An
+  adapter that cannot represent the answer leaves the prompt pending instead of
+  having terminal bytes invented for it; today only the Codex adapter encodes
+  them.
+
 - `intercept_patterns` entries accept an optional `sensitive: true`, which masks
   the operator field and forces a human decision. Sensitivity was inferred from
   the pattern text alone, so a prompt worded outside that word list was entered

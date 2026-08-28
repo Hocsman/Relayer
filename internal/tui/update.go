@@ -63,6 +63,18 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				commands = append(commands, m.submitInput())
 				break
 			}
+			// A supervisor can answer a prompt semantically, not only with free
+			// text. The adapter owns the encoding; these keys only say which
+			// answer a person chose, so the journal can record a refusal made
+			// by a human rather than by a policy.
+			if msg.Type == tea.KeyF2 && m.inputTarget != "" && !m.writePending {
+				commands = append(commands, m.submitHumanDecision(adapters.DecisionAllow))
+				break
+			}
+			if msg.Type == tea.KeyF3 && m.inputTarget != "" && !m.writePending {
+				commands = append(commands, m.submitHumanDecision(adapters.DecisionDeny))
+				break
+			}
 			if m.focus.Kind == FocusSupervisor && isViewportNavigationKey(msg) {
 				var command tea.Cmd
 				m.supervisor, command = m.supervisor.Update(msg)
@@ -153,10 +165,14 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			outcome = audit.OutcomeFailed
 			reason = "delivery_failed"
 		}
+		decision := msg.Decision
+		if decision == "" {
+			decision = audit.DecisionAsk
+		}
 		if !m.recordDelivery(
 			paneIndex,
 			msg.Event,
-			audit.DecisionAsk,
+			decision,
 			audit.DecisionByHuman,
 			outcome,
 			reason,
@@ -1050,4 +1066,59 @@ func (m *Model) handleMouse(message tea.MouseMsg) tea.Cmd {
 		return command
 	}
 	return nil
+}
+
+// submitHumanDecision answers the pending prompt with a semantic decision the
+// operator chose, rather than with text they typed.
+//
+// The audit distinction between a refusal made by a policy and one made by a
+// person had no way to occur: the adapters encode allow and deny, but no
+// operator surface could ask for either, so every human answer was recorded as
+// an ask carrying free-form text.
+//
+// An adapter that cannot represent the answer leaves the occurrence pending
+// and says so, because inventing terminal bytes for a supervisor is exactly
+// what this layer must not do.
+func (m *Model) submitHumanDecision(decision adapters.Decision) tea.Cmd {
+	if m.auditUnavailable {
+		return nil
+	}
+	paneIndex := m.paneIndex(m.inputTarget)
+	if paneIndex < 0 {
+		return nil
+	}
+	targetID := m.inputTarget
+	event := m.panes[paneIndex].prompt.Clone()
+	if !event.Actionable() {
+		return nil
+	}
+	if !m.recordDecision(paneIndex, event, decisionForAdapter(decision), audit.DecisionByHuman) {
+		return nil
+	}
+
+	m.panes[paneIndex].blocked = false
+	m.panes[paneIndex].prompt = adapters.Event{}
+	m.removePending(targetID)
+	m.inputTarget = ""
+	m.input.Reset()
+	m.input.Blur()
+	setInputInterceptionStyle(&m.input, false)
+	m.writePending = true
+	m.panes[paneIndex].policyTag = humanDecisionTag(decision)
+	m.appendLog(fmt.Sprintf("%s transmis à %s", humanDecisionLabel(decision), m.panes[paneIndex].name))
+	return deliverHumanDecision(m.backend, targetID, event, decision, m.auditGate)
+}
+
+func humanDecisionLabel(decision adapters.Decision) string {
+	if decision == adapters.DecisionDeny {
+		return "Refus"
+	}
+	return "Autorisation"
+}
+
+func humanDecisionTag(decision adapters.Decision) string {
+	if decision == adapters.DecisionDeny {
+		return "REFUS EN COURS"
+	}
+	return "AUTORISATION EN COURS"
 }
