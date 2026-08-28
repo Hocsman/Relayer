@@ -44,3 +44,21 @@ export function sanitizeErrorEvent(event: SafeErrorEvent): SafeErrorEvent {
     timestamp: event.timestamp,
   };
 }
+
+// promptContextLines returns the tail of a pane's output for the decision
+// modal.
+//
+// The bytes are the ones already on the agent card, so this exposes nothing
+// new; it puts them where the decision is actually made, instead of behind a
+// dialog the operator has to close to read what led to the prompt. The tail is
+// bounded in both directions so a single enormous line cannot push the controls
+// off the screen.
+export function promptContextLines(output: string, maximumLines = 12): string[] {
+  const lines = output.replace(/\r/g, "").split("\n");
+  while (lines.length > 0 && lines[lines.length - 1].trim() === "") {
+    lines.pop();
+  }
+  return lines
+    .slice(Math.max(0, lines.length - maximumLines))
+    .map((line) => redactForDisplay(line.length > 200 ? `${line.slice(0, 200)}…` : line));
+}

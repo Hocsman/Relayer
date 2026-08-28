@@ -1,5 +1,5 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
-import { safeEventSummary } from "../lib/safety";
+import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { promptContextLines, safeEventSummary } from "../lib/safety";
 import { deliveryRequiresResync } from "../lib/delivery";
 import type { AgentState, SemanticDecision, SupervisionEvent } from "../types/relayer";
 
@@ -24,7 +24,15 @@ const decisionLabels: Record<SemanticDecision, string> = {
 
 export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDecide }: DecisionModalProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const transcriptRef = useRef<HTMLPreElement>(null);
   const [busy, setBusy] = useState(false);
+
+  // The prompt is the last thing the pane wrote, so the tail must open at its
+  // end. Opening at the top shows the operator the output before the question.
+  useLayoutEffect(() => {
+    const transcript = transcriptRef.current;
+    if (transcript) transcript.scrollTop = transcript.scrollHeight;
+  });
 
   useEffect(() => {
     if (!event) return;
@@ -48,6 +56,12 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
   const indeterminateDelivery = deliveryRequiresResync(event);
   // Only what the adapter reported for this exact occurrence. An unknown value
   // arriving from a stale bridge is dropped rather than rendered as a button.
+  // What the pane was showing when it stopped. A decision made without it is
+  // made on a one-line summary.
+  //
+  // A sensitive prompt is excluded: safeEventSummary already refuses to repeat
+  // its text here, and reprinting the pane tail underneath would undo that.
+  const context = event.sensitive ? [] : promptContextLines(agent?.output ?? "");
   const offered = (event.decisions ?? []).filter(
     (decision): decision is SemanticDecision => decision === "allow" || decision === "deny",
   );
@@ -119,6 +133,13 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
           <div><span>Action</span><strong>{event.evaluation.action}</strong></div>
           <div><span>Livraison</span><strong>{event.deliveryStatus}</strong></div>
         </div>
+
+        {context.length > 0 && (
+          <div className="decision-transcript">
+            <span className="eyebrow">Fin de sortie · {agent?.name || event.agentID}</span>
+            <pre ref={transcriptRef} aria-label="Contexte du terminal">{context.join("\n")}</pre>
+          </div>
+        )}
 
         {event.evaluation.dryRun && (
           <p className="dry-run-notice">DRY RUN · La décision reste entièrement manuelle.</p>

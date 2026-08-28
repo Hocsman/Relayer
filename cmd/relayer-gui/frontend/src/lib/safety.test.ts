@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { redactForDisplay, safeEventSummary } from "./safety";
+import { promptContextLines, redactForDisplay, safeEventSummary } from "./safety";
 import type { SupervisionEvent } from "../types/relayer";
 
 function event(overrides: Partial<SupervisionEvent> = {}): SupervisionEvent {
@@ -44,5 +44,33 @@ describe("frontend redaction", () => {
     });
     expect(safeEventSummary(sensitive)).toBe("Saisie confidentielle requise");
     expect(safeEventSummary(sensitive)).not.toContain("must-not-appear");
+  });
+});
+
+// The decision modal shows the tail of the pane so a decision is not made on a
+// one-line summary. The bytes are already on the agent card, but this surface
+// applies the same redaction as every other safe display.
+describe("promptContextLines", () => {
+  it("keeps only the last lines and drops trailing blanks", () => {
+    const output = Array.from({ length: 40 }, (_, index) => `line ${index}`).join("\n") + "\n\n\n";
+    const lines = promptContextLines(output, 5);
+    expect(lines).toEqual(["line 35", "line 36", "line 37", "line 38", "line 39"]);
+  });
+
+  it("redacts a credential that scrolled into the tail", () => {
+    const lines = promptContextLines("exporting\napi_key=sk-live-4b91ce\nready");
+    expect(lines.join("\n")).not.toContain("sk-live-4b91ce");
+    expect(lines.join("\n")).toContain("[REDACTED]");
+  });
+
+  it("truncates a single enormous line instead of widening the dialog", () => {
+    const lines = promptContextLines("x".repeat(5000));
+    expect(lines).toHaveLength(1);
+    expect(lines[0].length).toBeLessThanOrEqual(201);
+  });
+
+  it("returns nothing for a pane that produced no output", () => {
+    expect(promptContextLines("")).toEqual([]);
+    expect(promptContextLines("\n\n  \n")).toEqual([]);
   });
 });

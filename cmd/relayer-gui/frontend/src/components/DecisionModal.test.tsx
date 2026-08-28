@@ -95,3 +95,21 @@ describe("DecisionModal semantic answers", () => {
     expect(actions.slice(0, actions.indexOf("</div>")).match(/disabled/g)?.length).toBe(2);
   });
 });
+
+// A decision taken from a one-line summary is taken blind. The pane tail is
+// already on the agent card; the modal puts it where the choice is made — with
+// the one exception the project already makes for confidential prompts.
+describe("DecisionModal terminal context", () => {
+  it("shows the tail of the pane that stopped", () => {
+    const markup = render(event({ decisions: [] }));
+    expect(markup).toContain("Contexte du terminal");
+    expect(markup).toContain("ready");
+  });
+
+  it("does not reprint a confidential prompt under a masked summary", () => {
+    const markup = render(event({ sensitive: true, summary: "Enter your API token" }));
+    expect(markup).not.toContain("Contexte du terminal");
+    expect(markup).not.toContain("Enter your API token");
+    expect(markup).toContain("Saisie confidentielle requise");
+  });
+});

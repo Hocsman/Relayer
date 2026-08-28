@@ -202,12 +202,12 @@ export function AgentSettingsPanel({
           text: "Le nouveau run n’a pas démarré. Le YAML précédent a été restauré et le plan antérieur a été relancé sous un nouveau run.",
         });
       } else {
-        setNotice({
-          tone: "success",
-          text: result.outcome === "started"
-            ? "Configuration enregistrée — agents démarrés."
-            : "Configuration enregistrée — agents redémarrés.",
-        });
+        // The agents are running behind this panel. Leaving it open with a
+        // green line makes the operator dismiss a dialog to reach the thing
+        // they just asked for; the dashboard is the confirmation.
+        setActivating(false);
+        onClose();
+        return;
       }
     } catch {
       try {

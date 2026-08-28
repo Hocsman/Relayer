@@ -1077,6 +1077,28 @@ input:focus-visible {
 /* The adapter's own answers, shown only where the adapter has verified bytes
    for them. They come before the free-text field: typing the keystroke a given
    CLI expects is the fallback, not the primary path. */
+.decision-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 14px 20px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.decision-transcript pre {
+  max-height: 158px;
+  margin: 0;
+  overflow: auto;
+  color: #b5c0d2;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
 .decision-actions {
   display: flex;
   flex-wrap: wrap;
