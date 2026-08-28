@@ -159,6 +159,8 @@ func testSIGTERMCleanup(t *testing.T, backend, tmuxPath string) {
 	arguments = append(arguments, "--")
 	arguments = append(arguments, targetArgv...)
 	runner := exec.Command(os.Args[0], arguments...)
+	// Bound Wait so a child that ignores Kill cannot hold the cleanup open.
+	runner.WaitDelay = 5 * time.Second
 	if err := runner.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -166,9 +168,18 @@ func testSIGTERMCleanup(t *testing.T, backend, tmuxPath string) {
 	go func() { waited <- runner.Wait() }()
 	finished := false
 	defer func() {
-		if !finished {
-			_ = runner.Process.Kill()
-			<-waited
+		if finished {
+			return
+		}
+		_ = runner.Process.Kill()
+		// waited carries exactly one value, and an early-exit path may already
+		// have consumed it before failing. Receiving unconditionally here made
+		// a genuine capture failure block until the whole `go test` timeout
+		// expired, hiding the real error behind a package-wide panic.
+		select {
+		case <-waited:
+		case <-time.After(10 * time.Second):
+			t.Logf("capture runner did not report an exit after Kill")
 		}
 	}()
 

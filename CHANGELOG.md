@@ -66,6 +66,12 @@ No release tag has been published at the time of writing.
   `TMUX` absent, empty, and pointing at a foreign server. The same rewrite also
   broke `relayer-capture` and the tmux fixture capture.
 
+- The `relayer-capture` SIGTERM test consumed the whole `go test` timeout
+  instead of reporting a failure. Its single-slot wait channel could be drained
+  by an early-exit path, after which the cleanup receive blocked forever. The
+  cleanup now receives under a bounded select and the child has a `WaitDelay`,
+  so a capture that exits early reports its real error in seconds.
+
 ### Security
 
 - Backend and adapter selection, policy validation, and audit initialization
