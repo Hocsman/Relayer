@@ -125,6 +125,18 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
+      # GoReleaser is installed before cosign on purpose. The action verifies
+      # its own download with whatever cosign it finds on PATH, and the cosign
+      # we install for signing cannot read the bundle format that verification
+      # uses: it fails with "bundle does not contain cert for verification".
+      # Installing GoReleaser first keeps its self-check on its own tooling.
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: v2.17.1
+          install-only: true
+
       - name: Install cosign
         uses: sigstore/cosign-installer@v3.7.0
 
@@ -132,11 +144,7 @@ jobs:
         uses: anchore/sbom-action/download-syft@v0.17.9
 
       - name: Build and publish release artifacts
-        uses: goreleaser/goreleaser-action@v7
-        with:
-          distribution: goreleaser
-          version: v2.17.1
-          args: release --clean
+        run: goreleaser release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
