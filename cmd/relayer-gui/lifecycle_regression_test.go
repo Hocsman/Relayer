@@ -25,7 +25,7 @@ func newLifecycleApp(t *testing.T, oldEngine *fakeDesktopEngine) (*App, string, 
 	t.Helper()
 	directory := t.TempDir()
 	path := filepath.Join(directory, "config.yaml")
-	loaded, err := config.Load(path)
+	loaded, err := config.LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load default config: %v", err)
 	}
@@ -104,7 +104,7 @@ func installLifecycleStarter(
 		result := results[index]
 		index++
 		if result.engine != nil {
-			loaded, err := config.Load(path)
+			loaded, err := config.LoadOrCreate(path)
 			if err != nil {
 				return nil, err
 			}
@@ -186,7 +186,7 @@ func TestLifecycleRestartSuccessClosesOldBeforePublishingCandidate(t *testing.T)
 		oldEngine.mu.Lock()
 		startedAfterOldClose = oldEngine.closed
 		oldEngine.mu.Unlock()
-		loaded, err := config.Load(path)
+		loaded, err := config.LoadOrCreate(path)
 		if err != nil {
 			return nil, err
 		}
@@ -540,7 +540,7 @@ func TestLifecycleCleanupUncertainCandidateDoesNotRestoreOrStartRollback(t *test
 	if bytes.Equal(after, before) {
 		t.Fatal("cleanup-uncertain candidate unexpectedly restored the previous configuration")
 	}
-	loaded, loadErr := config.Load(path)
+	loaded, loadErr := config.LoadOrCreate(path)
 	if loadErr != nil {
 		t.Fatalf("Load retained candidate config: %v", loadErr)
 	}

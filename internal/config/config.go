@@ -173,10 +173,16 @@ type decodedFile struct {
 	Audit    audit.Config
 }
 
-// Load reads path before any PTY is started. It accepts both a direct list and
-// the intercept_patterns wrapper documented in the README. A missing file is
-// populated atomically with the built-in defaults.
-func Load(path string) (Result, error) {
+// LoadOrCreate reads path before any PTY is started. It accepts both a direct
+// list and the intercept_patterns wrapper documented in the README. A missing
+// file is populated atomically with the built-in defaults.
+//
+// Creating a file is a first-run bootstrap behaviour and belongs to the two
+// application entry points alone. Everything else - validating a temporary
+// file, re-reading after a commit, answering a desktop query - must use
+// LoadExisting, so a path that vanished cannot be resurrected with defaults
+// and published over the user's real configuration.
+func LoadOrCreate(path string) (Result, error) {
 	if strings.TrimSpace(path) == "" {
 		return Result{}, errors.New("le chemin du fichier de configuration est vide")
 	}
@@ -197,9 +203,10 @@ func Load(path string) (Result, error) {
 }
 
 // LoadExisting reads and validates an existing configuration without ever
-// creating, replacing or otherwise mutating the path. Read-only diagnostics
-// must use this entry point instead of Load so a typo cannot materialize a new
-// default configuration as a side effect.
+// creating, replacing or otherwise mutating the path. Everything except
+// first-run bootstrap must use this entry point instead of LoadOrCreate, so a
+// typo or a vanished file cannot materialize a new default configuration as a
+// side effect.
 func LoadExisting(path string) (Result, error) {
 	if strings.TrimSpace(path) == "" {
 		return Result{}, errors.New("le chemin du fichier de configuration est vide")

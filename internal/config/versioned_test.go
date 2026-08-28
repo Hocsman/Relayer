@@ -17,7 +17,7 @@ func TestLoadVersionOneAcceptsEveryAgentCountFromOneThroughEight(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.yaml")
 			writeConfigTestFile(t, path, []byte(versionOneDocument(commandAgents(count))))
 
-			result, err := Load(path)
+			result, err := LoadOrCreate(path)
 			if err != nil {
 				t.Fatalf("Load returned an error: %v", err)
 			}
@@ -43,7 +43,7 @@ func TestLoadVersionOneAllowsZeroAgentsForApplicationFallback(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	writeConfigTestFile(t, path, []byte(versionOneDocument("[]")))
 
-	result, err := Load(path)
+	result, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load returned an error: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestLoadVersionOnePreservesArgumentsEnvironmentAndResolvesCwd(t *testing.T)
     backend: pty`)
 	writeConfigTestFile(t, path, []byte(content))
 
-	result, err := Load(path)
+	result, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load returned an error: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestLoadVersionOneAcceptsExplicitShell(t *testing.T) {
     shell: "  printf '%s' 'preserved verbatim'  "`)
 	writeConfigTestFile(t, path, []byte(content))
 
-	result, err := Load(path)
+	result, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load returned an error: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestLoadVersionOneRejectsAgentSemanticErrors(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.yaml")
 			writeConfigTestFile(t, path, []byte(versionOneDocument(test.agents)))
-			_, err := Load(path)
+			_, err := LoadOrCreate(path)
 			if err == nil || !strings.Contains(err.Error(), test.wantMessage) {
 				t.Fatalf("Load error = %v, want substring %q", err, test.wantMessage)
 			}
@@ -231,7 +231,7 @@ func TestLoadVersionOneRejectsCoercedTypesAndUnknownFields(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.yaml")
 			writeConfigTestFile(t, path, []byte(test.content))
-			if result, err := Load(path); err == nil {
+			if result, err := LoadOrCreate(path); err == nil {
 				t.Fatalf("Load accepted invalid YAML and returned %#v", result)
 			}
 		})
@@ -256,7 +256,7 @@ func TestLoadVersionOneRequiresKnownVersionBackendAgentsAndPatterns(t *testing.T
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.yaml")
 			writeConfigTestFile(t, path, []byte(test.content))
-			if result, err := Load(path); err == nil {
+			if result, err := LoadOrCreate(path); err == nil {
 				t.Fatalf("Load accepted incomplete v1 YAML and returned %#v", result)
 			}
 		})
@@ -270,7 +270,7 @@ func TestLoadLegacyDocumentsExposeCompatibilityMetadata(t *testing.T) {
 	} {
 		path := filepath.Join(t.TempDir(), "config.yaml")
 		writeConfigTestFile(t, path, []byte(content))
-		result, err := Load(path)
+		result, err := LoadOrCreate(path)
 		if err != nil {
 			t.Fatalf("Load legacy document: %v", err)
 		}

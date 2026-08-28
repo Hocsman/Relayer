@@ -33,7 +33,7 @@ func TestLoadPoliciesUsesSafeDefaultsWhenAbsentOrLegacy(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.yaml")
 			writeConfigTestFile(t, path, []byte(test.content))
 
-			result, err := Load(path)
+			result, err := LoadOrCreate(path)
 			if err != nil {
 				t.Fatalf("Load returned an error: %v", err)
 			}
@@ -67,7 +67,7 @@ func TestLoadVersionOnePoliciesDecodesAllFieldsAndPreservesFirstRule(t *testing.
       action: deny`)
 	writeConfigTestFile(t, path, []byte(content))
 
-	result, err := Load(path)
+	result, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load returned an error: %v\n%s", err, content)
 	}
@@ -152,7 +152,7 @@ func TestLoadVersionOnePoliciesRejectsWrongTypesUnknownAndMissingFields(t *testi
 			original := []byte(content)
 			writeConfigTestFile(t, path, original)
 
-			if result, err := Load(path); err == nil {
+			if result, err := LoadOrCreate(path); err == nil {
 				t.Fatalf("Load accepted invalid policies and returned %#v\n%s", result, content)
 			}
 			assertConfigFileBytes(t, path, original)
@@ -199,7 +199,7 @@ func TestLoadVersionOnePoliciesRejectsInvalidSemanticsAndEmptyMatcherLists(t *te
 			original := []byte(content)
 			writeConfigTestFile(t, path, original)
 
-			_, err := Load(path)
+			_, err := LoadOrCreate(path)
 			if err == nil || !strings.Contains(err.Error(), test.wantMessage) {
 				t.Fatalf("Load error = %v, want substring %q\n%s", err, test.wantMessage, content)
 			}
@@ -210,7 +210,7 @@ func TestLoadVersionOnePoliciesRejectsInvalidSemanticsAndEmptyMatcherLists(t *te
 
 func TestGeneratedConfigPublishesSafePolicyDefaultsAndDoesNotOverwrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	result, err := Load(path)
+	result, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load missing config: %v", err)
 	}

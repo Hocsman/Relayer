@@ -13,7 +13,7 @@ import (
 func TestReplaceAgentsPreservesConfigurationAndPublishesAtomically(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "config.yaml")
-	if _, err := Load(path); err != nil {
+	if _, err := LoadOrCreate(path); err != nil {
 		t.Fatalf("create default config: %v", err)
 	}
 	revision, err := FileRevision(path)
@@ -67,7 +67,7 @@ func TestReplaceAgentsPreservesConfigurationAndPublishesAtomically(t *testing.T)
 func TestReplaceAgentsRejectsStaleRevisionWithoutMutation(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "config.yaml")
-	if _, err := Load(path); err != nil {
+	if _, err := LoadOrCreate(path); err != nil {
 		t.Fatalf("create default config: %v", err)
 	}
 	before, err := os.ReadFile(path)
@@ -109,7 +109,7 @@ func TestReplaceAgentsRejectsLegacyAndInvalidSpecsWithoutMutation(t *testing.T) 
 	}
 
 	path := filepath.Join(directory, "config.yaml")
-	if _, err := Load(path); err != nil {
+	if _, err := LoadOrCreate(path); err != nil {
 		t.Fatalf("create default: %v", err)
 	}
 	revision, err = FileRevision(path)
@@ -147,7 +147,7 @@ func TestReplaceAgentsPreservesAdvancedAgentDataWhenPassedBackFromCore(t *testin
 	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	loaded, err := Load(path)
+	loaded, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestReplaceAgentsRejectsRemovedPolicyAgent(t *testing.T) {
 func TestReplaceAgentsReportsCommitUncertainAfterDirectorySyncFailure(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "config.yaml")
-	loaded, err := Load(path)
+	loaded, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load default: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestReplaceAgentsReportsCommitUncertainAfterDirectorySyncFailure(t *testing
 	if revision == "" || revision == loaded.Revision || len(updated.Agents) != 1 || updated.Agents[0].ID != "agent" {
 		t.Fatalf("post-commit state was not returned: revision=%q updated=%#v", revision, updated)
 	}
-	fresh, loadErr := Load(path)
+	fresh, loadErr := LoadOrCreate(path)
 	if loadErr != nil {
 		t.Fatalf("Load committed config: %v", loadErr)
 	}
@@ -256,7 +256,7 @@ func TestReplaceAgentsPreservesPortableWorkingDirectories(t *testing.T) {
 	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	loaded, err := Load(path)
+	loaded, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

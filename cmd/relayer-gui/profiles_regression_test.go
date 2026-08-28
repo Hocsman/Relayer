@@ -35,7 +35,7 @@ func TestSaveAgentProfilesAcceptsEveryCardinalityFromOneThroughEight(t *testing.
 			if len(updated.Profiles) != count || !updated.RestartRequired {
 				t.Fatalf("updated view = %#v", updated)
 			}
-			loaded, err := config.Load(path)
+			loaded, err := config.LoadOrCreate(path)
 			if err != nil {
 				t.Fatalf("Load saved config: %v", err)
 			}
@@ -389,7 +389,7 @@ func TestPreservedProfileKeepsOpaqueArgvAndRelativeWorkingDirectory(t *testing.T
 	if err := os.Mkdir(workspace, 0o700); err != nil {
 		t.Fatalf("mkdir workspace: %v", err)
 	}
-	loaded, err := config.Load(path)
+	loaded, err := config.LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load default config: %v", err)
 	}
@@ -422,7 +422,7 @@ func TestPreservedProfileKeepsOpaqueArgvAndRelativeWorkingDirectory(t *testing.T
 	if !strings.Contains(string(payload), "cwd: workspace\n") || strings.Contains(string(payload), "cwd: "+workspace) {
 		t.Fatalf("relative working directory was not preserved:\n%s", payload)
 	}
-	fresh, err := config.Load(path)
+	fresh, err := config.LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load updated config: %v", err)
 	}
@@ -437,7 +437,7 @@ func TestPreservedProfileKeepsOpaqueArgvAndRelativeWorkingDirectory(t *testing.T
 func TestConcurrentProfileSavesAcrossAppsHaveOneCASWinner(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "config.yaml")
-	loaded, err := config.Load(path)
+	loaded, err := config.LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load default config: %v", err)
 	}
@@ -508,7 +508,7 @@ func TestSaveAgentProfilesLeavesActiveRunUntouched(t *testing.T) {
 	application := newBridgeForTest(engine)
 	directory := t.TempDir()
 	path := filepath.Join(directory, "config.yaml")
-	loaded, err := config.Load(path)
+	loaded, err := config.LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

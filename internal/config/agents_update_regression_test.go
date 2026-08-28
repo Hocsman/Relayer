@@ -16,7 +16,7 @@ import (
 func TestReplaceAgentsConcurrentCASAllowsExactlyOnePublisher(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "config.yaml")
-	loaded, err := Load(path)
+	loaded, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load default config: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestReplaceAgentsConcurrentCASAllowsExactlyOnePublisher(t *testing.T) {
 		t.Fatalf("successful CAS publishers = %v, want exactly one", successes)
 	}
 
-	final, err := Load(path)
+	final, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load final config: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestReplaceAgentsConcurrentCASAllowsExactlyOnePublisher(t *testing.T) {
 func TestReplaceAgentsReturnsDefensiveCopies(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "config.yaml")
-	loaded, err := Load(path)
+	loaded, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load default config: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestReplaceAgentsReturnsDefensiveCopies(t *testing.T) {
 
 	updated.Agents[0].Command[1] = "mutated result"
 	updated.Agents[0].Env["MODE"] = "mutated result"
-	fresh, err := Load(path)
+	fresh, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load fresh config: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestReplaceAgentsReturnsDefensiveCopies(t *testing.T) {
 func TestReplaceAgentsRejectsExternalPostCommitWriteWithoutLosingItsRevision(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "config.yaml")
-	loaded, err := Load(path)
+	loaded, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load default config: %v", err)
 	}

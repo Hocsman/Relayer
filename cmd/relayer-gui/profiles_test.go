@@ -123,7 +123,7 @@ func TestWindowsExecutablePathsRoundTripAsVendorProfiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveAgentProfiles: %v", err)
 	}
-	loaded, err := config.Load(path)
+	loaded, err := config.LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load updated config: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestSaveAgentProfilesWritesLiteralArgvAndRequiresNextLaunch(t *testing.T) {
 	if !updated.RestartRequired || updated.Revision == view.Revision {
 		t.Fatalf("updated view = %#v", updated)
 	}
-	loaded, err := config.Load(path)
+	loaded, err := config.LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load updated config: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestClaudeGenericAdapterSurvivesCommandReplacementRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveAgentProfiles: %v", err)
 	}
-	loaded, err := config.Load(path)
+	loaded, err := config.LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -364,7 +364,7 @@ func TestSaveAgentProfilesPreservesLockedSpecInsideGo(t *testing.T) {
 	if len(updated.Profiles) != 2 || !updated.Profiles[1].Locked || len(updated.Profiles[1].Argv) != 0 {
 		t.Fatalf("updated locked profile = %#v", updated.Profiles)
 	}
-	loaded, err := config.Load(path)
+	loaded, err := config.LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -402,7 +402,7 @@ func TestSaveAgentProfilesEditsMetadataWithoutExposingExistingArgv(t *testing.T)
 	if len(updated.Profiles[0].Argv) != 0 || !updated.Profiles[0].PreserveOnSave {
 		t.Fatalf("saved argv was exposed: %#v", updated.Profiles[0])
 	}
-	loaded, err := config.Load(path)
+	loaded, err := config.LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -419,7 +419,7 @@ func TestSaveAgentProfilesDoesNotRestartActiveEngine(t *testing.T) {
 	application := newBridgeForTest(engine)
 	directory := t.TempDir()
 	path := filepath.Join(directory, "config.yaml")
-	loaded, err := config.Load(path)
+	loaded, err := config.LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -482,7 +482,7 @@ func profileTestApp(t *testing.T, specs []agent.Spec) (*App, string) {
 	t.Helper()
 	directory := t.TempDir()
 	path := filepath.Join(directory, "config.yaml")
-	loaded, err := config.Load(path)
+	loaded, err := config.LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load default config: %v", err)
 	}

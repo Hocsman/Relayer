@@ -104,7 +104,7 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 		return err
 	}
 
-	configuration, err := config.Load(options.configPath)
+	configuration, err := config.LoadOrCreate(options.configPath)
 	if err != nil {
 		return err
 	}

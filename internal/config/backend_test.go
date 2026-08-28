@@ -21,7 +21,7 @@ func TestLoadVersionOneAcceptsBackendSelectorsAndAgentsInheritGlobalBackend(t *t
 			)
 			writeConfigTestFile(t, path, []byte(content))
 
-			result, err := Load(path)
+			result, err := LoadOrCreate(path)
 			if err != nil {
 				t.Fatalf("Load returned an error: %v", err)
 			}
@@ -42,7 +42,7 @@ func TestLoadVersionOneAcceptsExplicitAgentBackendSelectors(t *testing.T) {
 			content := versionOneDocument("\n  - id: explicit\n    name: Explicit backend\n    command: [runner]\n    backend: " + backend)
 			writeConfigTestFile(t, path, []byte(content))
 
-			result, err := Load(path)
+			result, err := LoadOrCreate(path)
 			if err != nil {
 				t.Fatalf("Load returned an error: %v", err)
 			}
@@ -57,7 +57,7 @@ func TestLoadVersionOneDefaultsSessionPolicyWhenSessionsAreOmitted(t *testing.T)
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	writeConfigTestFile(t, path, []byte(versionOneDocument("[]")))
 
-	result, err := Load(path)
+	result, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load returned an error: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestLoadVersionOneMergesPartialSessionPolicyWithDefaults(t *testing.T) {
 			)
 			writeConfigTestFile(t, path, []byte(content))
 
-			result, err := Load(path)
+			result, err := LoadOrCreate(path)
 			if err != nil {
 				t.Fatalf("Load returned an error: %v\n%s", err, content)
 			}
@@ -130,7 +130,7 @@ func TestLoadVersionOneRejectsInvalidSessionPolicyShapesAndTypes(t *testing.T) {
 			)
 			writeConfigTestFile(t, path, []byte(content))
 
-			if result, err := Load(path); err == nil {
+			if result, err := LoadOrCreate(path); err == nil {
 				t.Fatalf("Load accepted invalid sessions YAML and returned %#v\n%s", result, content)
 			}
 		})
@@ -144,7 +144,7 @@ func TestLoadVersionOneRejectsUnknownOrNonCanonicalBackend(t *testing.T) {
 			content := strings.Replace(versionOneDocument("[]"), "backend: pty", "backend: '"+backend+"'", 1)
 			writeConfigTestFile(t, path, []byte(content))
 
-			if result, err := Load(path); err == nil {
+			if result, err := LoadOrCreate(path); err == nil {
 				t.Fatalf("Load accepted backend %q and returned %#v", backend, result)
 			}
 		})
@@ -159,7 +159,7 @@ func TestLegacyDocumentsUsePTYAndDefaultSessionPolicy(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "config.yaml")
 		writeConfigTestFile(t, path, []byte(content))
 
-		result, err := Load(path)
+		result, err := LoadOrCreate(path)
 		if err != nil {
 			t.Fatalf("Load legacy document: %v", err)
 		}
@@ -171,7 +171,7 @@ func TestLegacyDocumentsUsePTYAndDefaultSessionPolicy(t *testing.T) {
 
 func TestGeneratedConfigPublishesExplicitSessionDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	result, err := Load(path)
+	result, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load missing config: %v", err)
 	}

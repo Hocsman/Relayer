@@ -15,7 +15,7 @@ import (
 func TestReplaceAgentsReturnsBusyWithinBoundWhenAnotherProcessLockIsHeld(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "config.yaml")
-	loaded, err := Load(path)
+	loaded, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load default config: %v", err)
 	}
