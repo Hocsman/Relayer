@@ -97,6 +97,14 @@ are therefore distinguishable without inventing vendor-specific markers.
 significant: the first applicable match is emitted, and no additional
 actionable event is emitted while one occurrence is pending.
 
+Output produced during that window is retained rather than discarded. Answering
+the pending occurrence is the moment it becomes examinable, so a prompt the
+agent asked while the first one was unresolved is reported then instead of
+being lost. The occurrence just answered is not reported again: it is
+recognized by its signature and skipped. If nothing unexamined survives, the
+retained text is dropped, so answered output can never merge with what arrives
+next.
+
 A generic match must overlap the active terminal line affected by the newest
 normalized chunk. This prevents old retained output from becoming actionable
 simply because a new unrelated line arrived.
