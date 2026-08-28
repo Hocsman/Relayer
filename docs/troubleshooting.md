@@ -149,6 +149,25 @@ That is intentional: it will not guess whether a prompt changed while direct
 attach bypassed interception. Inspect tmux and restart supervision rather than
 forcing a stale response.
 
+## Ordinary line input is unavailable
+
+In the TUI, focus an agent and press `i`; use Enter to send or Escape to erase
+the composer. In the GUI, use the one-line field below the bounded output.
+Relayer refuses ordinary input when:
+
+- that session has a detected prompt or decision in flight;
+- the session is attached, exited, stopping, or restarting;
+- another line for the same presentation is still being delivered;
+- audit or transport uncertainty froze the session;
+- the text is not valid UTF-8, contains a Unicode control character, or
+  exceeds 4096 bytes;
+- the backend does not implement the atomic line capability.
+
+Do not use this field for passwords or other secrets. It is not masked, and the
+target may echo or retain it even though Relayer never puts its value or length
+in the audit log. A delivery error is deliberately not retried because some or
+all bytes may already have reached the target.
+
 ## Terminal output looks incomplete or corrupted
 
 The TUI stores bounded text and is not a complete VT emulator. Alternate screen

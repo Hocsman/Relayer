@@ -24,10 +24,25 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		commands = append(commands, m.resize(msg.Width, msg.Height, true))
 	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyCtrlC:
+		if msg.Type == tea.KeyCtrlC {
+			m.finishLineInputOnShutdown()
 			m.backend.BeginShutdown()
 			return m, tea.Quit
+		}
+		if m.lineInputTarget != "" {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.cancelLineInput(true)
+			case tea.KeyEnter:
+				commands = append(commands, m.submitLineInput())
+			default:
+				var command tea.Cmd
+				m.input, command = m.input.Update(msg)
+				commands = append(commands, command)
+			}
+			break
+		}
+		switch msg.Type {
 		case tea.KeyCtrlLeft:
 			m.moveFocus(-1)
 			commands = append(commands, m.syncFocus())
@@ -63,6 +78,10 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if paneIndex := m.focusedPaneIndex(); paneIndex >= 0 {
+				if isLineInputKey(msg) {
+					commands = append(commands, m.beginLineInput(paneIndex))
+					break
+				}
 				if msg.Type == tea.KeyEnter {
 					commands = append(commands, m.beginAttach(paneIndex))
 					break
@@ -93,6 +112,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if m.panes[paneIndex].exited {
 				break
 			}
+			m.finishLineInputOnExit(paneIndex)
 			m.clearAutomaticState(msg.SessionID)
 			m.refreshPaneOutput(paneIndex)
 			m.panes[paneIndex].exited = true
@@ -158,6 +178,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.rememberResolved(msg.SessionID, msg.Event.ID)
 		}
 		commands = append(commands, m.activateNextPrompt())
+	case lineInputDeliveredMsg:
+		commands = append(commands, m.applyLineInputResult(msg))
 	case automaticDecisionFinishedMsg:
 		commands = append(commands, m.applyAutomaticDecisionResult(msg))
 	case attachFinishedMsg:
@@ -250,6 +272,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case backendStoppedMsg:
+		m.finishLineInputOnShutdown()
 		return m, tea.Quit
 	}
 
@@ -299,6 +322,16 @@ func (m *Model) handleActionableEvent(observed adapters.Event) tea.Cmd {
 	}
 
 	sessionKey := semanticEventKey(observed.SessionID, observed.ID).sessionID
+	if strings.EqualFold(m.lineInputTarget, observed.SessionID) {
+		m.cancelLineInput(false)
+	}
+	if strings.EqualFold(m.lineWritePending, observed.SessionID) {
+		// SendLine and the processor CAS may already have returned, but Bubble
+		// Tea can reduce the emitted prompt before the command result. Keep policy
+		// and its audit records behind the operator-input terminal record.
+		m.lineDeferredEvents[sessionKey] = observed.Clone()
+		return nil
+	}
 	if active, exists := m.automaticBySession[sessionKey]; exists {
 		if active == semanticEventKey(observed.SessionID, observed.ID) {
 			return nil
@@ -392,6 +425,11 @@ func (m *Model) queueHumanEvent(event adapters.Event, evaluation policy.Evaluati
 	target := &m.panes[paneIndex]
 	if target.blocked && target.prompt.ID == event.ID {
 		return nil
+	}
+	// Semantic prompts have priority over a direct line composer, including a
+	// prompt from another session because both modes share one input field.
+	if m.lineInputTarget != "" {
+		m.cancelLineInput(false)
 	}
 	if target.blocked && target.prompt.ID != "" {
 		m.rememberResolved(event.SessionID, target.prompt.ID)
@@ -795,6 +833,7 @@ func (m *Model) applyProcessExit(event adapters.Event) tea.Cmd {
 	if paneIndex < 0 || m.panes[paneIndex].exited {
 		return nil
 	}
+	m.finishLineInputOnExit(paneIndex)
 	// The canonical adapter event is the only source of a session_finished
 	// fact. Legacy Exited messages only reduce UI state and never duplicate it.
 	m.recordProcessExit(paneIndex, event)
@@ -841,6 +880,14 @@ func (m *Model) beginAttach(paneIndex int) tea.Cmd {
 	}
 	if m.writePending {
 		m.appendLog(fmt.Sprintf("Attachement de %s différé: réponse manuelle en cours", pane.name))
+		return nil
+	}
+	if m.lineInputTarget != "" {
+		m.appendLog(fmt.Sprintf("Attachement de %s différé: saisie de consigne en cours", pane.name))
+		return nil
+	}
+	if m.lineWritePending != "" {
+		m.appendLog(fmt.Sprintf("Attachement de %s différé: envoi de consigne en cours", pane.name))
 		return nil
 	}
 	sessionKey := semanticEventKey(pane.sessionID, "unused").sessionID
@@ -953,6 +1000,9 @@ func (m *Model) handleMouse(message tea.MouseMsg) tea.Cmd {
 	}
 
 	if event.Action == tea.MouseActionPress && event.Button == tea.MouseButtonLeft {
+		if m.lineInputTarget != "" {
+			return nil
+		}
 		for _, cell := range m.layout.Cells {
 			if cell.Outer.Contains(event.X, event.Y) {
 				m.focus = FocusTarget{Kind: FocusAgent, AgentID: m.panes[cell.AgentIndex].sessionID}

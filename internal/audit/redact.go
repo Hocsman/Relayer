@@ -82,6 +82,19 @@ func SanitizeEntry(entry Entry, mode Mode) Entry {
 	}
 	result.Summary = ""
 	result.Metadata = nil
+	if result.Kind == KindOperatorInput {
+		// Operator input is a deliberately closed record shape regardless of
+		// mode or caller. A future or faulty caller cannot smuggle line content
+		// through fields normally available to other audit kinds.
+		result.EventID = ""
+		result.EventType = ""
+		result.Risk = ""
+		result.Rule = ""
+		result.Decision = ""
+		result.Sensitive = false
+		result.Reason = safeOperatorInputReason(result.Reason)
+		return result
+	}
 
 	if mode != ModeDetailed {
 		return result
@@ -125,6 +138,21 @@ func SanitizeEntry(entry Entry, mode Mode) Entry {
 		}
 	}
 	return result
+}
+
+func safeOperatorInputReason(value string) string {
+	switch value {
+	case "operator_input_started", "operator_input_applied",
+		"operator_input_prompt_pending", "operator_input_invalid",
+		"operator_input_unsupported", "operator_input_delivery_uncertain",
+		"operator_input_session_exit", "operator_input_shutdown",
+		"operator_input_session_unavailable":
+		return value
+	case "":
+		return ""
+	default:
+		return "unknown"
+	}
 }
 
 func sanitizeText(value string) string {
@@ -258,7 +286,7 @@ func safeKind(value Kind) Kind {
 	switch value {
 	case KindRunStarted, KindRunFinished, KindSessionStarted, KindSupervisionFinished, KindSessionFinished,
 		KindEventDetected, KindPolicyEvaluated, KindDecision, KindDelivery,
-		KindAttachStarted, KindAttachFinished, KindBackendError, KindSessionCleanup:
+		KindOperatorInput, KindAttachStarted, KindAttachFinished, KindBackendError, KindSessionCleanup:
 		return value
 	case "":
 		return ""

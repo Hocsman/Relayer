@@ -71,7 +71,17 @@ var (
 	ErrNotAttachable   = errors.New("session terminal non attachable")
 	ErrUnavailable     = errors.New("backend terminal indisponible")
 	ErrUnsupported     = errors.New("backend terminal non pris en charge")
+	// These aliases preserve one errors.Is identity from the Processor through
+	// session, backend, router and presentation boundaries.
+	ErrEventPending          = adapters.ErrEventPending
+	ErrInvalidLine           = adapters.ErrInvalidLine
+	ErrLineUnsupported       = adapters.ErrLineUnsupported
+	ErrLineDeliveryUncertain = adapters.ErrLineDeliveryUncertain
 )
+
+// MaxLineBytes is the maximum line size before the core appends one carriage
+// return. It aliases the Processor limit so transports cannot drift.
+const MaxLineBytes = adapters.MaxLineBytes
 
 // OperationError adds safe context to a backend failure without requiring an
 // implementation to expose command arguments or environment values.
@@ -110,6 +120,13 @@ type Backend interface {
 // Implementations acknowledge eventID only after data is written successfully.
 type EventSender interface {
 	SendEvent(context.Context, SessionID, string, []byte) error
+}
+
+// LineSender is the optional, atomic ordinary-input boundary. Implementations
+// must reject input while an actionable event is pending and must append the
+// line terminator in the core rather than accepting pre-encoded raw bytes.
+type LineSender interface {
+	SendLine(context.Context, SessionID, string) error
 }
 
 // PendingEventProvider returns only cached semantic state. Implementations must

@@ -423,6 +423,15 @@ func (r *DesktopRuntime) PendingEvent(ctx context.Context, sessionID string) (*a
 	return r.router.PendingEvent(ctx, sessionID)
 }
 
+// SendLine submits ordinary single-line text through the backend's atomic
+// processor boundary. It never falls back to raw Send or decision resolution.
+func (r *DesktopRuntime) SendLine(ctx context.Context, sessionID, line string) error {
+	if err := r.available(); err != nil {
+		return err
+	}
+	return r.router.SendLine(ctx, sessionID, line)
+}
+
 func (r *DesktopRuntime) Evaluate(event adapters.Event) policy.Evaluation {
 	if r == nil || r.policyEngine == nil {
 		return policy.Evaluation{Action: policy.ActionAsk, ProposedAction: policy.ActionAsk, Reason: policy.ReasonNoEngine}

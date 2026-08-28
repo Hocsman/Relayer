@@ -227,6 +227,7 @@ export function createDemoBridge(): RelayerBridge {
     revision: 1,
     running: true,
     attached: false,
+    inputFrozen: false,
   }));
 
   window.setInterval(() => {
@@ -246,6 +247,7 @@ export function createDemoBridge(): RelayerBridge {
         status: agent.status,
         running: agent.running,
         attached: agent.attached,
+        inputFrozen: Boolean(agent.inputFrozen),
       });
 
       const threshold = agent.sessionID === "demo-a" ? 8 : 12;
@@ -265,6 +267,7 @@ export function createDemoBridge(): RelayerBridge {
           status: agent.status,
           running: true,
           attached: false,
+          inputFrozen: false,
         });
         emit("relayer:event", event);
       }
@@ -297,7 +300,30 @@ export function createDemoBridge(): RelayerBridge {
         status: agent.status,
         running: false,
         attached: false,
+        inputFrozen: false,
         exitCode: 0,
+      });
+    },
+    async submitLine(runID, sessionID, _line) {
+      requireRun(runID, true);
+      const agent = state.agents.find((candidate) => candidate.sessionID === sessionID);
+      if (!agent || !agent.running || agent.attached || agent.inputFrozen) {
+        throw new Error("La session de démonstration n'accepte pas cette ligne.");
+      }
+      if (state.pendingEvents.some((event) => event.sessionID === sessionID)) {
+        throw new Error("Une demande de supervision est en attente.");
+      }
+      agent.output += "Ligne locale transmise (contenu non conservé).\n";
+      agent.revision += 1;
+      emit("relayer:snapshot", {
+        runID,
+        sessionID,
+        revision: agent.revision,
+        output: agent.output,
+        status: agent.status,
+        running: true,
+        attached: false,
+        inputFrozen: false,
       });
     },
     async resizeSession(runID, _sessionID, columns, rows) {

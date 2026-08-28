@@ -5,7 +5,7 @@ export type RunStatus =
   | "restarting"
   | "rollback"
   | "stopping"
-	| "stopped"
+  | "stopped"
   | "failed";
 
 export type SessionStatus =
@@ -14,6 +14,7 @@ export type SessionStatus =
   | "detached"
   | "attached"
   | "waiting"
+  | "stopping"
   | "exited"
   | "failed";
 
@@ -62,6 +63,7 @@ export interface AgentState {
   revision: number;
   running: boolean;
   attached: boolean;
+  inputFrozen?: boolean;
   exitCode?: number;
 }
 
@@ -109,6 +111,7 @@ export interface SnapshotEvent {
   status: SessionStatus;
   running: boolean;
   attached: boolean;
+  inputFrozen?: boolean;
   exitCode?: number;
 }
 
@@ -211,6 +214,7 @@ export type BridgeEventName = keyof BridgeEventMap;
 export interface RelayerBridge {
   getState(): Promise<AppState>;
   submitDecision(runID: string, sessionID: string, eventID: string, value: string): Promise<void>;
+  submitLine(runID: string, sessionID: string, line: string): Promise<void>;
   resizeSession(runID: string, sessionID: string, columns: number, rows: number): Promise<void>;
   stopSession(runID: string, sessionID: string): Promise<void>;
   getAgentProfiles(): Promise<AgentProfilesView>;

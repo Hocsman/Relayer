@@ -24,6 +24,11 @@ type fakeApplyCall struct {
 	manualInput string
 }
 
+type fakeLineCall struct {
+	sessionID string
+	line      string
+}
+
 type fakeDesktopEngine struct {
 	mu sync.Mutex
 
@@ -44,6 +49,12 @@ type fakeDesktopEngine struct {
 	applyStarted      chan struct{}
 	applyRelease      <-chan struct{}
 
+	lineCalls   []fakeLineCall
+	lineErr     error
+	lineErrByID map[string]error
+	lineStarted chan string
+	lineRelease <-chan struct{}
+
 	auditEntries         []audit.Entry
 	auditCalls           int
 	auditFailAt          int
@@ -58,6 +69,8 @@ type fakeDesktopEngine struct {
 	resizeCalls   []string
 	stopErr       error
 	stopCalls     []string
+	stopStarted   chan string
+	stopRelease   <-chan struct{}
 	restartErr    error
 	restartCalls  int
 	restartStart  chan struct{}
@@ -102,7 +115,8 @@ func newFakeDesktopEngine(sessionIDs ...string) *fakeDesktopEngine {
 			ProposedAction: policy.ActionAsk,
 			Reason:         policy.ReasonDefault,
 		},
-		pending: make(map[string]*adapters.Event),
+		pending:     make(map[string]*adapters.Event),
+		lineErrByID: make(map[string]error),
 	}
 }
 
@@ -186,6 +200,29 @@ func (f *fakeDesktopEngine) ApplyDecision(
 	return err
 }
 
+func (f *fakeDesktopEngine) SendLine(_ context.Context, sessionID, line string) error {
+	f.mu.Lock()
+	f.lineCalls = append(f.lineCalls, fakeLineCall{sessionID: sessionID, line: line})
+	f.operations = append(f.operations, "line:start:"+strings.ToLower(sessionID))
+	started := f.lineStarted
+	release := f.lineRelease
+	err := f.lineErr
+	if selected, found := f.lineErrByID[strings.ToLower(sessionID)]; found {
+		err = selected
+	}
+	f.mu.Unlock()
+	if started != nil {
+		started <- sessionID
+	}
+	if release != nil {
+		<-release
+	}
+	f.mu.Lock()
+	f.operations = append(f.operations, "line:return:"+strings.ToLower(sessionID))
+	f.mu.Unlock()
+	return err
+}
+
 func (f *fakeDesktopEngine) Resize(_ context.Context, sessionID string, _ terminal.Size) error {
 	f.mu.Lock()
 	f.resizeCalls = append(f.resizeCalls, sessionID)
@@ -196,7 +233,15 @@ func (f *fakeDesktopEngine) Resize(_ context.Context, sessionID string, _ termin
 func (f *fakeDesktopEngine) Stop(_ context.Context, sessionID string) error {
 	f.mu.Lock()
 	f.stopCalls = append(f.stopCalls, sessionID)
+	started := f.stopStarted
+	release := f.stopRelease
 	f.mu.Unlock()
+	if started != nil {
+		started <- sessionID
+	}
+	if release != nil {
+		<-release
+	}
 	return f.stopErr
 }
 
@@ -281,6 +326,12 @@ func (f *fakeDesktopEngine) applySnapshot() []fakeApplyCall {
 	result := make([]fakeApplyCall, len(f.applyCalls))
 	copy(result, f.applyCalls)
 	return result
+}
+
+func (f *fakeDesktopEngine) lineSnapshot() []fakeLineCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]fakeLineCall(nil), f.lineCalls...)
 }
 
 func (f *fakeDesktopEngine) auditSnapshot() []audit.Entry {
@@ -418,6 +469,387 @@ func TestSensitiveManualInputNeverAppearsInDTOsOrAudit(t *testing.T) {
 		if entry.DecisionBy == audit.DecisionByHuman && (entry.Summary != "" || entry.Metadata != nil) {
 			t.Fatalf("human audit entry retained content: %#v", entry)
 		}
+	}
+}
+
+func TestSubmitLineSuccessAuditsOnlyStaticMetadata(t *testing.T) {
+	const secret = "line-secret-sentinel-7fd28c"
+	engine := newFakeDesktopEngine("agent-a")
+	application := newBridgeForTest(engine)
+	application.ctx = context.Background()
+	var (
+		emittedMu sync.Mutex
+		emitted   []interface{}
+	)
+	application.emitFn = func(_ context.Context, _ string, payloads ...interface{}) {
+		emittedMu.Lock()
+		emitted = append(emitted, payloads...)
+		emittedMu.Unlock()
+	}
+
+	if err := application.SubmitLine(activeRunIDForTest(application), "agent-a", secret); err != nil {
+		t.Fatalf("SubmitLine: %v", err)
+	}
+	calls := engine.lineSnapshot()
+	if len(calls) != 1 || calls[0].sessionID != "agent-a" || calls[0].line != secret {
+		t.Fatalf("line transport calls = %#v", calls)
+	}
+	entries := engine.auditSnapshot()
+	if len(entries) != 2 || entries[0].Kind != audit.KindOperatorInput ||
+		entries[0].Outcome != audit.OutcomeInFlight || entries[1].Outcome != audit.OutcomeApplied {
+		t.Fatalf("operator input audit = %#v", entries)
+	}
+	for _, entry := range entries {
+		if entry.Decision != "" || entry.Summary != "" || entry.Metadata != nil ||
+			entry.EventID != "" || entry.DecisionBy != audit.DecisionByHuman {
+			t.Fatalf("operator audit retained a free-form field: %#v", entry)
+		}
+	}
+	state, err := application.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	emittedMu.Lock()
+	emittedCopy := append([]interface{}(nil), emitted...)
+	emittedMu.Unlock()
+	assertJSONDoesNotContain(t, state, secret)
+	assertJSONDoesNotContain(t, entries, secret)
+	assertJSONDoesNotContain(t, emittedCopy, secret)
+	operations := engine.operationSnapshot()
+	preAudit := operationIndex(operations, "audit:operator_input:in_flight")
+	write := operationIndex(operations, "line:start:agent-a")
+	postAudit := operationIndex(operations, "audit:operator_input:applied")
+	if preAudit < 0 || write < 0 || postAudit < 0 || !(preAudit < write && write < postAudit) {
+		t.Fatalf("unsafe line/audit order: %#v", operations)
+	}
+}
+
+func TestSubmitLineRejectsStaleRunAndPendingPromptBeforeTransport(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	application := newBridgeForTest(engine)
+	if err := application.SubmitLine("run-stale", "agent-a", "hello"); !errors.Is(err, errRunStale) {
+		t.Fatalf("stale SubmitLine error = %v, want stale run", err)
+	}
+	if calls := engine.lineSnapshot(); len(calls) != 0 {
+		t.Fatalf("stale run reached transport: %#v", calls)
+	}
+
+	prompt := bridgeEvent("agent-a", "pending-before-line")
+	application.handleAdapterEvent(prompt)
+	if err := application.SubmitLine(activeRunIDForTest(application), "agent-a", "hello"); !errors.Is(err, errLinePromptPending) {
+		t.Fatalf("pending SubmitLine error = %v, want prompt pending", err)
+	}
+	if calls := engine.lineSnapshot(); len(calls) != 0 {
+		t.Fatalf("pending prompt reached transport: %#v", calls)
+	}
+	state, err := application.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if len(state.PendingEvents) != 1 || state.PendingEvents[0].ID != prompt.ID || state.Agents[0].InputFrozen {
+		t.Fatalf("pending prompt was not safely retained: %#v", state)
+	}
+}
+
+func TestConcurrentSubmitLineSerializesOneSession(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	engine.lineStarted = started
+	engine.lineRelease = release
+	application := newBridgeForTest(engine)
+	runID := activeRunIDForTest(application)
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- application.SubmitLine(runID, "agent-a", "first") }()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first line did not reach runtime")
+	}
+	if err := application.SubmitLine(runID, "agent-a", "second"); !errors.Is(err, errLineInFlight) {
+		t.Fatalf("second SubmitLine error = %v, want line in flight", err)
+	}
+	close(release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first SubmitLine: %v", err)
+	}
+	if calls := engine.lineSnapshot(); len(calls) != 1 || calls[0].line != "first" {
+		t.Fatalf("same-session calls = %#v, want exactly first", calls)
+	}
+}
+
+func TestConcurrentSubmitLineAllowsIndependentSessions(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a", "agent-b")
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	engine.lineStarted = started
+	engine.lineRelease = release
+	application := newBridgeForTest(engine)
+	runID := activeRunIDForTest(application)
+	done := make(chan error, 2)
+	go func() { done <- application.SubmitLine(runID, "agent-a", "left") }()
+	go func() { done <- application.SubmitLine(runID, "agent-b", "right") }()
+	for count := 0; count < 2; count++ {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatal("independent sessions did not enter runtime concurrently")
+		}
+	}
+	close(release)
+	for count := 0; count < 2; count++ {
+		if err := <-done; err != nil {
+			t.Fatalf("independent SubmitLine: %v", err)
+		}
+	}
+	if calls := engine.lineSnapshot(); len(calls) != 2 {
+		t.Fatalf("independent line calls = %#v", calls)
+	}
+}
+
+func TestStopSessionAndSubmitLineCannotCrossForOneSession(t *testing.T) {
+	t.Run("line already in flight blocks stop", func(t *testing.T) {
+		engine := newFakeDesktopEngine("agent-a")
+		lineStarted := make(chan string, 1)
+		lineRelease := make(chan struct{})
+		engine.lineStarted = lineStarted
+		engine.lineRelease = lineRelease
+		application := newBridgeForTest(engine)
+		runID := activeRunIDForTest(application)
+
+		lineDone := make(chan error, 1)
+		go func() { lineDone <- application.SubmitLine(runID, "agent-a", "ordinary") }()
+		select {
+		case <-lineStarted:
+		case <-time.After(2 * time.Second):
+			t.Fatal("line did not enter runtime")
+		}
+		if err := application.StopSession(runID, "agent-a"); !errors.Is(err, errLineInFlight) {
+			t.Fatalf("StopSession error = %v, want line in flight", err)
+		}
+		engine.mu.Lock()
+		stopCalls := append([]string(nil), engine.stopCalls...)
+		engine.mu.Unlock()
+		if len(stopCalls) != 0 {
+			t.Fatalf("stop crossed line delivery: %#v", stopCalls)
+		}
+		close(lineRelease)
+		if err := <-lineDone; err != nil {
+			t.Fatalf("SubmitLine: %v", err)
+		}
+	})
+
+	t.Run("stop already in flight blocks line and clears running state", func(t *testing.T) {
+		engine := newFakeDesktopEngine("agent-a")
+		stopStarted := make(chan string, 1)
+		stopRelease := make(chan struct{})
+		engine.stopStarted = stopStarted
+		engine.stopRelease = stopRelease
+		application := newBridgeForTest(engine)
+		runID := activeRunIDForTest(application)
+
+		stopDone := make(chan error, 1)
+		go func() { stopDone <- application.StopSession(runID, "agent-a") }()
+		select {
+		case <-stopStarted:
+		case <-time.After(2 * time.Second):
+			t.Fatal("stop did not enter runtime")
+		}
+		if err := application.SubmitLine(runID, "agent-a", "must-not-cross-stop"); !errors.Is(err, errLineUnavailable) {
+			t.Fatalf("SubmitLine during stop error = %v, want unavailable", err)
+		}
+		if calls := engine.lineSnapshot(); len(calls) != 0 {
+			t.Fatalf("line crossed stop: %#v", calls)
+		}
+		close(stopRelease)
+		if err := <-stopDone; err != nil {
+			t.Fatalf("StopSession: %v", err)
+		}
+		state, err := application.GetState()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(state.Agents) != 1 || state.Agents[0].Running || state.Agents[0].Status != "exited" {
+			t.Fatalf("state after stop = %#v", state.Agents)
+		}
+	})
+}
+
+func TestSubmitLinePromptRaceReconcilesWithoutFreezing(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	prompt := bridgeEvent("agent-a", "won-race")
+	engine.pending["agent-a"] = &prompt
+	engine.lineErr = terminal.ErrEventPending
+	application := newBridgeForTest(engine)
+	if err := application.SubmitLine(activeRunIDForTest(application), "agent-a", "ordinary text"); !errors.Is(err, errLinePromptPending) {
+		t.Fatalf("prompt-race SubmitLine error = %v", err)
+	}
+	state, err := application.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if len(state.PendingEvents) != 1 || state.PendingEvents[0].ID != prompt.ID || state.Agents[0].InputFrozen {
+		t.Fatalf("prompt race state = %#v", state)
+	}
+	if err := application.SubmitLine(activeRunIDForTest(application), "agent-a", "must-not-retry"); !errors.Is(err, errLinePromptPending) {
+		t.Fatalf("post-race SubmitLine error = %v", err)
+	}
+	if calls := engine.lineSnapshot(); len(calls) != 1 {
+		t.Fatalf("prompt race retried transport: %#v", calls)
+	}
+}
+
+func TestSubmitLineFailsClosedForExitAttachShutdownAndAudit(t *testing.T) {
+	t.Run("known exit", func(t *testing.T) {
+		engine := newFakeDesktopEngine("agent-a")
+		application := newBridgeForTest(engine)
+		application.mu.Lock()
+		application.state.Agents[0].Running = false
+		application.state.Agents[0].Status = "exited"
+		application.mu.Unlock()
+		if err := application.SubmitLine(activeRunIDForTest(application), "agent-a", "hello"); !errors.Is(err, errLineUnavailable) {
+			t.Fatalf("SubmitLine error = %v", err)
+		}
+		if calls := engine.lineSnapshot(); len(calls) != 0 {
+			t.Fatalf("exited session writes = %#v", calls)
+		}
+	})
+	t.Run("attached", func(t *testing.T) {
+		engine := newFakeDesktopEngine("agent-a")
+		application := newBridgeForTest(engine)
+		application.mu.Lock()
+		application.state.Agents[0].Attached = true
+		application.state.Agents[0].Status = "attached"
+		application.mu.Unlock()
+		if err := application.SubmitLine(activeRunIDForTest(application), "agent-a", "hello"); !errors.Is(err, errLineUnavailable) {
+			t.Fatalf("SubmitLine error = %v", err)
+		}
+		if calls := engine.lineSnapshot(); len(calls) != 0 {
+			t.Fatalf("attached session writes = %#v", calls)
+		}
+	})
+	t.Run("shutdown", func(t *testing.T) {
+		engine := newFakeDesktopEngine("agent-a")
+		application := newBridgeForTest(engine)
+		application.mu.Lock()
+		application.shuttingDown = true
+		application.mu.Unlock()
+		if err := application.SubmitLine(activeRunIDForTest(application), "agent-a", "hello"); !errors.Is(err, errRuntimeStopped) {
+			t.Fatalf("SubmitLine error = %v", err)
+		}
+		if calls := engine.lineSnapshot(); len(calls) != 0 {
+			t.Fatalf("shutdown writes = %#v", calls)
+		}
+	})
+	t.Run("audit preflight", func(t *testing.T) {
+		engine := newFakeDesktopEngine("agent-a")
+		engine.auditFailAt = 1
+		application := newBridgeForTest(engine)
+		if err := application.SubmitLine(activeRunIDForTest(application), "agent-a", "hello"); !errors.Is(err, errAuditUnavailable) {
+			t.Fatalf("SubmitLine error = %v", err)
+		}
+		if calls := engine.lineSnapshot(); len(calls) != 0 {
+			t.Fatalf("audit failure writes = %#v", calls)
+		}
+		state, _ := application.GetState()
+		if state.Audit.Status != "failed" || !state.Agents[0].InputFrozen {
+			t.Fatalf("audit failure state = %#v", state)
+		}
+	})
+}
+
+func TestSubmitLineClosedBeforeWriteDoesNotFreeze(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	engine.lineErr = terminal.ErrClosed
+	application := newBridgeForTest(engine)
+	if err := application.SubmitLine(activeRunIDForTest(application), "agent-a", "hello"); !errors.Is(err, errLineUnavailable) {
+		t.Fatalf("SubmitLine error = %v", err)
+	}
+	state, _ := application.GetState()
+	if state.Agents[0].InputFrozen || state.Agents[0].Running || state.Agents[0].Status != "exited" {
+		t.Fatalf("known zero-I/O close froze session: %#v", state.Agents[0])
+	}
+}
+
+func TestSubmitLineTransportErrorFreezesWithoutLeakingOrRetrying(t *testing.T) {
+	const secret = "line-secret-sentinel-transport-1a92"
+	engine := newFakeDesktopEngine("agent-a")
+	engine.lineErr = errors.New("unsafe backend detail " + secret)
+	application := newBridgeForTest(engine)
+	application.ctx = context.Background()
+	var (
+		emittedMu sync.Mutex
+		emitted   []interface{}
+	)
+	application.emitFn = func(_ context.Context, _ string, payloads ...interface{}) {
+		emittedMu.Lock()
+		emitted = append(emitted, payloads...)
+		emittedMu.Unlock()
+	}
+	err := application.SubmitLine(activeRunIDForTest(application), "agent-a", secret)
+	if !errors.Is(err, errDeliveryUncertain) {
+		t.Fatalf("SubmitLine error = %v, want delivery uncertain", err)
+	}
+	state, stateErr := application.GetState()
+	if stateErr != nil {
+		t.Fatalf("GetState: %v", stateErr)
+	}
+	if !state.Agents[0].InputFrozen {
+		t.Fatalf("transport uncertainty did not freeze input: %#v", state.Agents[0])
+	}
+	if retryErr := application.SubmitLine(activeRunIDForTest(application), "agent-a", "retry"); !errors.Is(retryErr, errDeliveryUncertain) {
+		t.Fatalf("retry error = %v", retryErr)
+	}
+	if calls := engine.lineSnapshot(); len(calls) != 1 {
+		t.Fatalf("uncertain delivery was retried: %#v", calls)
+	}
+	emittedMu.Lock()
+	emittedCopy := append([]interface{}(nil), emitted...)
+	emittedMu.Unlock()
+	assertJSONDoesNotContain(t, state, secret)
+	assertJSONDoesNotContain(t, engine.auditSnapshot(), secret)
+	assertJSONDoesNotContain(t, emittedCopy, secret)
+	assertJSONDoesNotContain(t, err.Error(), secret)
+}
+
+func TestShutdownDrainsAdmittedSubmitLineBeforeClosingAuditAndEngine(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	started := make(chan string, 1)
+	release := make(chan struct{})
+	engine.lineStarted = started
+	engine.lineRelease = release
+	application := newBridgeForTest(engine)
+	runID := activeRunIDForTest(application)
+
+	lineDone := make(chan error, 1)
+	go func() { lineDone <- application.SubmitLine(runID, "agent-a", "ordinary text") }()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("admitted line never reached runtime")
+	}
+	shutdownDone := make(chan error, 1)
+	go func() { shutdownDone <- application.Shutdown() }()
+	waitForCondition(t, 2*time.Second, func() bool {
+		return operationIndex(engine.operationSnapshot(), "shutdown:begin") >= 0
+	})
+	if operationIndex(engine.operationSnapshot(), "close:start") >= 0 {
+		t.Fatal("engine closed before admitted line completed")
+	}
+	close(release)
+	if err := <-lineDone; err != nil {
+		t.Fatalf("SubmitLine: %v", err)
+	}
+	if err := <-shutdownDone; err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	operations := engine.operationSnapshot()
+	lineReturn := operationIndex(operations, "line:return:agent-a")
+	postAudit := operationIndex(operations, "audit:operator_input:applied")
+	closeStart := operationIndex(operations, "close:start")
+	if lineReturn < 0 || postAudit < 0 || closeStart < 0 || !(lineReturn < postAudit && postAudit < closeStart) {
+		t.Fatalf("unsafe line shutdown ordering: %#v", operations)
 	}
 }
 

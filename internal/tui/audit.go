@@ -113,6 +113,9 @@ func (m *Model) freezeAudit(paneIndex int) {
 	m.pending = nil
 	m.inputTarget = ""
 	m.writePending = false
+	m.lineInputTarget = ""
+	m.lineWritePending = ""
+	m.lineDeferredEvents = make(map[string]adapters.Event)
 	m.input.Reset()
 	m.input.Blur()
 	setInputInterceptionStyle(&m.input, false)
@@ -281,6 +284,29 @@ func (m *Model) recordDelivery(
 	entry.Reason = reason
 	entry.Summary = ""
 	entry.Metadata = nil
+	return m.recordAudit(paneIndex, entry)
+}
+
+// recordOperatorInput persists only static lifecycle metadata. The submitted
+// line and its length are intentionally not accepted as arguments.
+func (m *Model) recordOperatorInput(
+	paneIndex int,
+	outcome audit.Outcome,
+	reason string,
+) bool {
+	entry := audit.Entry{
+		Kind:       audit.KindOperatorInput,
+		DecisionBy: audit.DecisionByHuman,
+		Outcome:    outcome,
+		Reason:     reason,
+	}
+	if paneIndex >= 0 && paneIndex < len(m.panes) {
+		pane := m.panes[paneIndex]
+		entry.SessionID = pane.sessionID
+		entry.AgentID = pane.sessionID
+		entry.Backend = pane.backend
+		entry.Adapter = pane.adapter
+	}
 	return m.recordAudit(paneIndex, entry)
 }
 

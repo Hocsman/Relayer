@@ -30,6 +30,8 @@ and network behavior.
   commands on supported Unix systems.
 - PTY, tmux, automatic tmux-to-PTY selection, and mixed concrete backends.
 - A bounded terminal-output view and bounded streaming prompt detection.
+- Deliberate single-line operator input in the TUI and GUI, separate from
+  semantic prompt decisions and guarded by an atomic no-pending-event check.
 - A stable, product-neutral `generic` regex adapter.
 - Experimental, fixture-backed Claude Code and Codex CLI adapters with the
   stable generic detector retained as fallback.
@@ -109,6 +111,9 @@ with an explicit `PATH` when required.
 
 Agent panels display bounded, ANSI-stripped text snapshots, not a full VT/ANSI
 terminal. The Bubble Tea TUI and its native tmux attach workflow are preserved.
+Each running card also has a single-line composer for ordinary agent
+instructions. Its text is cleared before the native call and is never written
+to the audit log; only static attempt/outcome metadata is recorded.
 Use **Agents** in the top bar to configure exact argv, working directory, and
 backend. Existing argv values are never sent to the WebView: replacing a
 command requires re-entering its complete vector. Newly entered argv, including
@@ -211,6 +216,9 @@ and redirections are not interpreted.
 | `Up`, `Down`, `PageUp`, `PageDown` | Scroll the focused viewport. |
 | Mouse wheel | Scroll the viewport under the pointer. |
 | Left click | Select an agent or the supervisor. |
+| `i` on a focused idle agent | Compose one ordinary line for that agent. |
+| `Esc` while composing | Cancel and erase the ordinary line. |
+| `Enter` while composing | Send the ordinary line with one carriage return. |
 | `Enter` on a pending prompt | Send the supervisor input to that agent. |
 | `Enter` on an idle tmux agent | Attach the native tmux client. |
 | `Ctrl+B`, then `d` | Default tmux detach sequence; custom tmux bindings may differ. |
@@ -220,6 +228,13 @@ When a prompt is pending, Relayer highlights the pane and focuses the
 supervisor. Credential and sensitive inputs are masked in the TUI. Masking does
 not prevent the target program from echoing the value into its own terminal or
 tmux scrollback.
+
+Ordinary input is application text, not raw terminal passthrough: it must be
+valid UTF-8, contain no Unicode control character, and fit within 4096 bytes.
+It is refused if that session already has a detected prompt, a decision or
+attach is in flight, the session exited, or delivery state is uncertain. A
+prompt already emitted by the target but not yet read by Relayer remains a
+fundamental observation race; the input action is not a policy approval.
 
 The in-TUI viewport is a bounded text view, not a full VT emulator. Use native
 tmux attach for full-screen interactive applications.
@@ -350,10 +365,11 @@ created before the audit block existed and legacy pattern-only configurations
 remain disabled for compatibility.
 
 The audit is JSONL and records Relayer lifecycle, event, policy, delivery,
-attach, and cleanup metadata. It never has fields for raw terminal output,
-commands, environment values, manual input, encoded decision bytes, or raw
-errors. Detailed summaries are bounded and redacted. Sensitive events use a
-constant summary and omit derivative event IDs.
+ordinary-input outcome, attach, and cleanup metadata. It never has fields for
+raw terminal output, commands, environment values, manual or ordinary input
+values, encoded decision bytes, or raw errors. Detailed summaries are bounded
+and redacted. Sensitive events use a constant summary and omit derivative
+event IDs.
 
 On Unix, the dedicated audit directory and files are checked for restrictive
 ownership, type, and permissions. Writes are synchronized line by line, and
@@ -385,6 +401,8 @@ sensitive repositories.
 ## Limits worth knowing
 
 - An agent may act before emitting a detectable prompt.
+- An ordinary line can precede a prompt that the target emitted but Relayer has
+  not read yet; the no-pending CAS protects only events already detected.
 - Prompt-like output can spoof the supervisor; a real prompt can evade regexes.
 - Generic and Claude cannot automate allow/deny delivery; Codex automation is
   limited to the exact fixture-backed interactions documented above.

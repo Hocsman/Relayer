@@ -171,4 +171,43 @@ describe("relayerReducer", () => {
     });
     expect(normalized.pendingEvents).toEqual([pending("a")]);
   });
+
+  it("freezes one line composer immediately on delivery uncertainty", () => {
+    const loaded = relayerReducer(initialRelayerState, { type: "loaded", state: appState() });
+    const frozen = relayerReducer(loaded, {
+      type: "error",
+      error: {
+        runID: "run-1",
+        sessionID: "a",
+        code: "delivery_uncertain",
+        message: "Livraison indéterminée.",
+        timestamp: "2026-01-01T00:00:02Z",
+      },
+    });
+    expect(frozen.app?.agents.find((agent) => agent.sessionID === "a")?.inputFrozen).toBe(true);
+    expect(frozen.app?.agents.find((agent) => agent.sessionID === "b")?.inputFrozen).not.toBe(true);
+
+    const refreshedOutput = relayerReducer(frozen, {
+      type: "snapshot",
+      snapshot: {
+        runID: "run-1",
+        sessionID: "a",
+        revision: 5,
+        output: "new output",
+        status: "running",
+        running: true,
+        attached: false,
+      },
+    });
+    expect(refreshedOutput.app?.agents.find((agent) => agent.sessionID === "a")?.inputFrozen).toBe(true);
+  });
+
+  it("freezes every running composer as soon as audit fails", () => {
+    const loaded = relayerReducer(initialRelayerState, { type: "loaded", state: appState() });
+    const frozen = relayerReducer(loaded, {
+      type: "status",
+      status: { runID: "run-1", scope: "audit", status: "failed" },
+    });
+    expect(frozen.app?.agents.every((agent) => agent.inputFrozen)).toBe(true);
+  });
 });

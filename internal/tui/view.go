@@ -144,9 +144,15 @@ func (m *Model) renderSupervisorPane(outer Rect) string {
 		if m.policyConfig.DryRun {
 			title += "  •  DRY RUN"
 		}
+	} else if m.lineInputTarget != "" {
+		title = "SUPERVISEUR  •  CONSIGNE DIRECTE"
 	}
 	if m.inputTarget != "" {
 		if paneIndex := m.paneIndex(m.inputTarget); paneIndex >= 0 {
+			title += "  →  " + m.panes[paneIndex].name
+		}
+	} else if m.lineInputTarget != "" {
+		if paneIndex := m.paneIndex(m.lineInputTarget); paneIndex >= 0 {
 			title += "  →  " + m.panes[paneIndex].name
 		}
 	}
@@ -159,6 +165,11 @@ func (m *Model) renderSupervisorPane(outer Rect) string {
 	enterHelp := "Entrée: répondre"
 	if m.hasBackend("tmux") {
 		enterHelp = "Entrée: ouvrir/répondre • Ctrl+B puis D: revenir à Relayer"
+	}
+	if m.lineInputTarget != "" {
+		enterHelp = "Entrée: envoyer la consigne • Échap: annuler"
+	} else {
+		enterHelp += " • I: consigne directe"
 	}
 	help := lipgloss.NewStyle().Foreground(colorMuted).MaxWidth(innerWidth).MaxHeight(1).Render(
 		enterHelp + " • Ctrl+←/→: focus • Ctrl+PgUp/PgDn: page • ↑/↓, PgUp/PgDn, molette: historique • Ctrl+C: quitter",

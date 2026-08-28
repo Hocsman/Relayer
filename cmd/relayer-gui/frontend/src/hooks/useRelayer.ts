@@ -96,6 +96,35 @@ export function useRelayer(bridge: RelayerBridge) {
     [bridge],
   );
 
+  const submitLine = useCallback(
+    async (runID: string, sessionID: string, line: string) => {
+      try {
+        const pending = bridge.submitLine(runID, sessionID, line);
+        line = "";
+        await pending;
+      } catch {
+        line = "";
+        // Native errors are deliberately not reflected: they could retain a
+        // transport wrapper. The UI only creates this static, content-free
+        // message and then reloads the authoritative frozen/prompt state.
+        dispatch({
+          type: "error",
+          error: localError(
+            runID,
+            "line_delivery_rejected",
+            "La ligne n'a pas pu être confirmée. Vérifiez le superviseur et l'état de la session.",
+            sessionID,
+          ),
+        });
+        await refresh();
+        throw new Error("line_delivery_rejected");
+      }
+      line = "";
+      await refresh();
+    },
+    [bridge, refresh],
+  );
+
   const stopSession = useCallback(
     async (runID: string, sessionID: string) => {
       try {
@@ -161,6 +190,7 @@ export function useRelayer(bridge: RelayerBridge) {
     state,
     refresh,
     submitDecision,
+    submitLine,
     resizeSession,
     stopSession,
     saveAgentProfiles,

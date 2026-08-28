@@ -10,6 +10,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
+	"github.com/Hocsman/Relayer/internal/terminal"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -21,10 +22,21 @@ type inputDeliveredMsg struct {
 	Err       error
 }
 
+// lineInputDeliveredMsg intentionally carries no submitted value or length.
+// Pending contains only the core's canonical semantic occurrence used to
+// reconcile a CAS refusal.
+type lineInputDeliveredMsg struct {
+	SessionID    string
+	Err          error
+	Pending      *adapters.Event
+	PendingKnown bool
+}
+
 var (
 	errAutomaticDecisionBackendUnavailable = errors.New("backend de décision automatique indisponible")
 	errDecisionBackendUnavailable          = errors.New("backend de décision manuelle indisponible")
 	errEventSnapshotBackendUnavailable     = errors.New("backend de snapshot d'événement indisponible")
+	errLineDeliveryUncertain               = errors.New("livraison de consigne directe incertaine")
 )
 
 type automaticDecisionFinishedMsg struct {
@@ -117,6 +129,62 @@ func deliverInput(
 			return message
 		}
 		message.Err = decisions.SendDecision(sessionID, event, value)
+		return message
+	}
+}
+
+func deliverLineInput(
+	backend Backend,
+	sessionID string,
+	value string,
+	gates ...*deliveryGate,
+) tea.Cmd {
+	return func() tea.Msg {
+		message := lineInputDeliveredMsg{SessionID: sessionID}
+		if len(gates) > 0 {
+			if !gates[0].beginOperation() {
+				message.Err = errAuditUnavailable
+				return message
+			}
+			defer gates[0].endOperation()
+		}
+		lines, ok := backend.(LineInputBackend)
+		if !ok {
+			message.Err = terminal.ErrLineUnsupported
+			return message
+		}
+		deliveryErr := lines.SendLine(sessionID, value)
+		// Drop the command closure's last reference as soon as the synchronous
+		// backend call returns. The result message never carries the value.
+		value = ""
+		// Keep backend error strings out of Bubble Tea messages: a faulty
+		// transport must not be able to echo operator input into retained UI
+		// state. Only the public semantic sentinels cross this boundary.
+		switch {
+		case deliveryErr == nil:
+			message.Err = nil
+		case errors.Is(deliveryErr, terminal.ErrEventPending):
+			message.Err = terminal.ErrEventPending
+		case errors.Is(deliveryErr, terminal.ErrInvalidLine):
+			message.Err = terminal.ErrInvalidLine
+		case errors.Is(deliveryErr, terminal.ErrLineUnsupported):
+			message.Err = terminal.ErrLineUnsupported
+		default:
+			message.Err = errLineDeliveryUncertain
+		}
+		if !errors.Is(deliveryErr, terminal.ErrEventPending) {
+			return message
+		}
+		if snapshots, ok := backend.(EventSnapshotBackend); ok {
+			pending, err := snapshots.PendingEvent(backend.Context(), sessionID)
+			if err == nil {
+				message.PendingKnown = true
+				if pending != nil {
+					copy := pending.Clone()
+					message.Pending = &copy
+				}
+			}
+		}
 		return message
 	}
 }

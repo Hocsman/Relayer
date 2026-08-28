@@ -34,8 +34,11 @@ type fakeBackend struct {
 	outputErrors  map[string]error
 	resizeCalls   []resizeCall
 	inputCalls    []inputCall
+	lineCalls     []inputCall
 	resizeError   error
 	inputError    error
+	lineError     error
+	lineHook      func(string, string) error
 	shutdownCalls int
 }
 
@@ -66,6 +69,18 @@ func (b *fakeBackend) SendInput(id string, value string) error {
 
 func (b *fakeBackend) SendDecision(id string, _ adapters.Event, value string) error {
 	return b.SendInput(id, value)
+}
+
+func (b *fakeBackend) SendLine(id, value string) error {
+	b.mu.Lock()
+	b.lineCalls = append(b.lineCalls, inputCall{id: id, value: value})
+	err := b.lineError
+	hook := b.lineHook
+	b.mu.Unlock()
+	if hook != nil {
+		return hook(id, value)
+	}
+	return err
 }
 
 func (b *fakeBackend) Resize(id string, columns, rows int) error {
@@ -104,6 +119,12 @@ func (b *fakeBackend) inputSnapshot() []inputCall {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return append([]inputCall(nil), b.inputCalls...)
+}
+
+func (b *fakeBackend) lineSnapshot() []inputCall {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]inputCall(nil), b.lineCalls...)
 }
 
 func newModelHarness(t *testing.T) (*Model, *fakeBackend, chan session.Event) {

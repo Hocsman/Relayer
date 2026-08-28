@@ -6,6 +6,7 @@ const labels: Record<SessionStatus, string> = {
   detached: "Détaché",
   attached: "Attaché",
   waiting: "Action requise",
+  stopping: "Arrêt en cours",
   exited: "Terminé",
   failed: "Erreur",
 };

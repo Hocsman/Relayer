@@ -59,6 +59,45 @@ func TestManagerImplementsTerminalBackendAndSendsExactData(t *testing.T) {
 	}
 }
 
+func TestManagerSendLineDeliversOneCarriageReturnThroughPTY(t *testing.T) {
+	events := make(chan session.Event, 32)
+	manager, err := New(context.Background(), events, nil, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = manager.Close(ctx)
+	})
+	info, err := manager.Start(context.Background(), agent.Spec{
+		ID:      "pty-line",
+		Name:    "PTY line",
+		Command: []string{"/bin/sh", "-c", "IFS= read -r value; printf 'line:%s' \"$value\""},
+		Backend: agent.BackendPTY,
+	}, terminal.Size{Columns: 40, Rows: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SendLine(context.Background(), info.ID, "exact value"); err != nil {
+		t.Fatalf("SendLine: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		snapshot, snapshotErr := manager.Snapshot(context.Background(), info.ID)
+		if snapshotErr != nil {
+			t.Fatal(snapshotErr)
+		}
+		if strings.Contains(snapshot.Output, "line:exact value") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("line output never arrived: %q", snapshot.Output)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestManagerWithRegistrySendsExactPendingEventAndSnapshotsRevision(t *testing.T) {
 	registry, err := adapters.NewRegistry([]adapters.Pattern{{
 		Name:        "overwrite",
@@ -115,6 +154,13 @@ func TestManagerWithRegistrySendsExactPendingEventAndSnapshotsRevision(t *testin
 	again, _ := manager.Snapshot(context.Background(), info.ID)
 	if again.Pending == nil || again.Pending.Metadata["pattern"] != "overwrite" {
 		t.Fatalf("Snapshot leaked pending metadata mutation: %#v", again.Pending)
+	}
+	if err := manager.SendLine(context.Background(), info.ID, "must-not-bypass"); !errors.Is(err, terminal.ErrEventPending) {
+		t.Fatalf("SendLine pending error = %v, want ErrEventPending", err)
+	}
+	stillPending, err := manager.PendingEvent(context.Background(), info.ID)
+	if err != nil || stillPending == nil || stillPending.ID != pending.ID {
+		t.Fatalf("SendLine changed pending event: event %#v error %v", stillPending, err)
 	}
 
 	if err := manager.SendEvent(context.Background(), info.ID, "evt-stale", []byte("wrong\r")); !errors.Is(err, adapters.ErrEventMismatch) {

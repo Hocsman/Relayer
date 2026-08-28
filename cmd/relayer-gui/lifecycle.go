@@ -295,6 +295,8 @@ func (a *App) stopGenerationLocked(run *runGeneration, strict bool, status strin
 		a.resolved = make(map[eventKey]struct{})
 		a.resolvedOrder = nil
 		a.inFlight = make(map[string]eventKey)
+		a.lineInFlight = make(map[string]bool)
+		a.stoppingSessions = make(map[string]bool)
 		a.outputRunning = make(map[string]bool)
 		a.outputDirty = make(map[string]bool)
 		a.frozen = make(map[string]bool)

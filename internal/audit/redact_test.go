@@ -215,6 +215,58 @@ func TestSanitizeEntryModesSensitiveManualAndPolicyFailure(t *testing.T) {
 	}
 }
 
+func TestSanitizeEntryOperatorInputNeverRetainsContent(t *testing.T) {
+	const secret = "operator-input-fixture-secret"
+	entry := Entry{
+		Kind:       KindOperatorInput,
+		SessionID:  "agent-a",
+		DecisionBy: DecisionByHuman,
+		Outcome:    OutcomeInFlight,
+		Reason:     "operator_input_started",
+		Summary:    secret,
+		Metadata: map[string]string{
+			"input":  secret,
+			"length": "29",
+		},
+	}
+
+	for _, mode := range []Mode{ModeMetadata, ModeDetailed} {
+		got := SanitizeEntry(entry, mode)
+		if got.Kind != KindOperatorInput || got.SessionID != "agent-a" ||
+			got.DecisionBy != DecisionByHuman || got.Outcome != OutcomeInFlight ||
+			got.Reason != "operator_input_started" {
+			t.Fatalf("SanitizeEntry(%q) metadata = %#v", mode, got)
+		}
+		if got.Summary != "" || got.Metadata != nil {
+			t.Fatalf("SanitizeEntry(%q) retained operator content: %#v", mode, got)
+		}
+	}
+}
+
+func TestSanitizeEntryOperatorInputShapeIsClosedForEveryActor(t *testing.T) {
+	const secret = "operator-input-shape-secret"
+	for _, actor := range []DecisionBy{DecisionByHuman, DecisionBySystem, DecisionByPolicy} {
+		got := SanitizeEntry(Entry{
+			Kind:       KindOperatorInput,
+			EventID:    secret,
+			EventType:  adapters.EventCredential,
+			Risk:       adapters.RiskHigh,
+			Rule:       secret,
+			Decision:   DecisionAllow,
+			DecisionBy: actor,
+			Outcome:    OutcomeInFlight,
+			Reason:     secret,
+			Summary:    secret,
+			Sensitive:  true,
+			Metadata:   map[string]string{"input": secret},
+		}, ModeDetailed)
+		if got.EventID != "" || got.EventType != "" || got.Risk != "" || got.Rule != "" ||
+			got.Decision != "" || got.Reason != "unknown" || got.Summary != "" || got.Metadata != nil || got.Sensitive {
+			t.Fatalf("actor %q retained operator content: %#v", actor, got)
+		}
+	}
+}
+
 func TestSanitizeEntryBoundsMetadataDeterministicallyAndWhitelistsEnums(t *testing.T) {
 	metadata := map[string]string{
 		"automatic":        strings.Repeat("é", maxMetadataValueRunes+50),

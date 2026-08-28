@@ -44,11 +44,15 @@ const (
 	KindPolicyEvaluated     Kind = "policy_evaluated"
 	KindDecision            Kind = "decision"
 	KindDelivery            Kind = "delivery"
-	KindAttachStarted       Kind = "attach_started"
-	KindAttachFinished      Kind = "attach_finished"
-	KindBackendError        Kind = "backend_error"
-	KindSessionCleanup      Kind = "session_cleanup"
-	KindUnknown             Kind = "unknown"
+	// KindOperatorInput records only the lifecycle of a direct, human line
+	// submission. Entry intentionally has no field for the submitted text,
+	// its length, or the encoded terminal bytes.
+	KindOperatorInput  Kind = "operator_input"
+	KindAttachStarted  Kind = "attach_started"
+	KindAttachFinished Kind = "attach_finished"
+	KindBackendError   Kind = "backend_error"
+	KindSessionCleanup Kind = "session_cleanup"
+	KindUnknown        Kind = "unknown"
 )
 
 // DecisionBy identifies the actor without storing any submitted value.

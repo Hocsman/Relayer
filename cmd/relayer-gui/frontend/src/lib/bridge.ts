@@ -14,6 +14,7 @@ type NativeMethod<TArgs extends unknown[], TResult> = (...args: TArgs) => Promis
 interface NativeBindings {
   GetState: NativeMethod<[], AppState>;
   SubmitDecision: NativeMethod<[string, string, string, string], void>;
+  SubmitLine: NativeMethod<[string, string, string], void>;
   ResizeSession: NativeMethod<[string, string, number, number], void>;
   StopSession: NativeMethod<[string, string], void>;
   GetAgentProfiles: NativeMethod<[], AgentProfilesView>;
@@ -48,6 +49,7 @@ function resolveBindings(): NativeBindings {
     !candidate ||
     typeof candidate.GetState !== "function" ||
     typeof candidate.SubmitDecision !== "function" ||
+    typeof candidate.SubmitLine !== "function" ||
     typeof candidate.ResizeSession !== "function" ||
     typeof candidate.StopSession !== "function" ||
     typeof candidate.GetAgentProfiles !== "function" ||
@@ -77,6 +79,8 @@ export function createWailsBridge(): RelayerBridge {
     getState: () => bindings.GetState(),
     submitDecision: (runID, sessionID, eventID, value) =>
       bindings.SubmitDecision(runID, sessionID, eventID, value),
+    submitLine: (runID, sessionID, line) =>
+      bindings.SubmitLine(runID, sessionID, line),
     resizeSession: (runID, sessionID, columns, rows) =>
       bindings.ResizeSession(runID, sessionID, columns, rows),
     stopSession: (runID, sessionID) => bindings.StopSession(runID, sessionID),

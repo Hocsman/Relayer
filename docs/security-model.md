@@ -68,6 +68,12 @@ Sensitive TUI input is masked on screen. It exists in process memory and is
 delivered to the selected terminal. The target can echo, retain, transmit, or
 act on it. Never assume masking is end-to-end secrecy.
 
+Ordinary operator lines are distinct from prompt decisions. Relayer accepts
+only bounded printable UTF-8, never records the value or its length, and checks
+atomically that no detected event is pending before writing. This does not
+cover a prompt the target emitted but Relayer has not read yet, and it does not
+turn ordinary input into a policy-controlled action.
+
 ### tmux server
 
 tmux is a separate local process and trust domain under the same user. An old
@@ -135,6 +141,11 @@ finished session, unsupported adapter encoding, audit failure, attach
 uncertainty, or transport error does not become a successful allow. Relayer does
 not retry an uncertain automatic delivery.
 
+Direct `operator_input` uses a separate CAS: it can proceed only when the same
+processor state has no actionable event. It never invokes the legacy empty-ID
+decision path, never acknowledges a prompt, and is frozen after an ambiguous
+transport failure rather than retried.
+
 ### Conservative policy invariants
 
 Configuration can propose allow, ask, or deny. Independent invariants apply:
@@ -175,9 +186,10 @@ server, or a target that reads its input.
 
 The audit model has no fields for raw terminal output, prompt matches, event
 signatures, commands, shell scripts, working directories, environment values,
-manual input, encoded decision bytes, or raw errors. Metadata is a closed
-allowlist. Detailed summaries are bounded and centrally redacted. Sensitive
-events use a constant summary and omit derivative IDs.
+manual decision input, ordinary operator lines, encoded decision bytes, or raw
+errors. Metadata is a closed allowlist. Detailed summaries are bounded and
+centrally redacted. Sensitive events use a constant summary and omit derivative
+IDs.
 
 Audit initialization or the initial record failing aborts before backend
 startup. A runtime audit failure prevents further policy or manual delivery in

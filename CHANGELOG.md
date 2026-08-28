@@ -25,6 +25,8 @@ No release tag has been published at the time of writing.
   compatibility fallback.
 - A bounded output-only PTY/tmux fixture capture command with strict JSON,
   centralized secret refusal, private tmux isolation, and offline validation.
+- A bounded, single-line operator input path for the TUI and desktop GUI that
+  never acknowledges a pending event and never records the submitted text.
 - A combined Ollama / DeepSeek launch profile that requires the exact `run`
   subcommand and a user-selected model instead of inventing either.
 - Strict version 1 YAML for agents, backends, session lifecycle, prompt
@@ -55,8 +57,9 @@ No release tag has been published at the time of writing.
 - Partial startup and failed session-start audit writes trigger rollback.
 - tmux cleanup requires immutable Relayer ownership evidence and never kills
   the tmux server.
-- Terminal input, raw output, commands, environment values, prompt matches, and
-  raw errors are excluded from the audit model.
+- Terminal input values, raw output, commands, environment values, prompt
+  matches, and raw errors are excluded from the audit model; direct input
+  records retain only static lifecycle metadata.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 

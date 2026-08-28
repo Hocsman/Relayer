@@ -308,17 +308,17 @@ func (p *Processor) Revision() uint64 {
 	return p.state.sequence
 }
 
-// NewProcessExitEvent atomically terminates any pending interaction and
-// reserves the next occurrence sequence under the same lock used by Detect.
-// A completed process cannot accept a decision; clearing here also keeps PTY
-// and tmux snapshots consistent. The shared lock keeps a final prompt and
-// process_exit distinct even when output is consumed concurrently with Wait.
-func (p *Processor) NewProcessExitEvent(exitCode *int, failed bool) Event {
+// MarkProcessExitEvent atomically terminates any pending interaction and
+// reserves the next occurrence sequence under the same lock used by Detect
+// and SendLine. It deliberately does not wait for earlier semantic hooks: a
+// process owner can mark the transport closed immediately after Wait, perform
+// bounded descendant cleanup, then call WaitSemanticEvents before publishing
+// the returned process_exit event.
+func (p *Processor) MarkProcessExitEvent(exitCode *int, failed bool) Event {
 	p.mu.Lock()
 	if p.terminalEvent != nil {
 		event := p.terminalEvent.Clone()
 		p.mu.Unlock()
-		p.semanticHooks.Wait()
 		return event
 	}
 	_ = p.state.acknowledge("")
@@ -333,9 +333,27 @@ func (p *Processor) NewProcessExitEvent(exitCode *int, failed bool) Event {
 	stored := event.Clone()
 	p.terminalEvent = &stored
 	p.mu.Unlock()
+	return event
+}
+
+// WaitSemanticEvents waits until every actionable event reserved before
+// process termination has reached its hook. It must stay outside p.mu because
+// hooks are allowed to inspect Processor state.
+func (p *Processor) WaitSemanticEvents() {
+	if p == nil {
+		return
+	}
+	p.semanticHooks.Wait()
+}
+
+// NewProcessExitEvent marks the processor terminated, then preserves the
+// historical ordering guarantee that every earlier semantic hook completes
+// before the process_exit event is returned to its caller.
+func (p *Processor) NewProcessExitEvent(exitCode *int, failed bool) Event {
+	event := p.MarkProcessExitEvent(exitCode, failed)
 	// Every actionable detected before termination is delivered first. Hooks
 	// remain outside p.mu, so they may inspect Processor state safely.
-	p.semanticHooks.Wait()
+	p.WaitSemanticEvents()
 	return event
 }
 

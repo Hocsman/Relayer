@@ -28,6 +28,15 @@ type DecisionBackend interface {
 	SendDecision(id string, event adapters.Event, manualInput string) error
 }
 
+// LineInputBackend sends one deliberate operator line only while the core can
+// prove that the target session has no pending semantic event. It is separate
+// from DecisionBackend: a line must never acknowledge or answer a prompt, and
+// callers must not fall back to Backend.SendInput when this capability is
+// absent.
+type LineInputBackend interface {
+	SendLine(id, value string) error
+}
+
 // AutomaticDecisionBackend encodes a semantic allow/deny decision with the
 // adapter that produced event and delivers it through the backend's exact
 // occurrence-ID CAS path. Implementations must never invent terminal bytes.

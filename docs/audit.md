@@ -50,7 +50,7 @@ is local crash recovery, not tamper detection.
 Entries may contain:
 
 - `schema_version`, `sequence`, `timestamp`, `entry_id`, and `run_id`;
-- `kind` such as `run_started`, `session_started`, `supervision_finished`, `session_finished`, `event_detected`, `policy_evaluated`, `decision`, `delivery`, `attach_started`, `attach_finished`, `backend_error`, or `session_cleanup`;
+- `kind` such as `run_started`, `session_started`, `supervision_finished`, `session_finished`, `event_detected`, `policy_evaluated`, `decision`, `delivery`, `operator_input`, `attach_started`, `attach_finished`, `backend_error`, or `session_cleanup`;
 - session, agent, backend, and adapter identifiers;
 - event ID, implemented event type, and risk level;
 - selected rule, decision, actor (`human`, `policy`, or `system`), outcome, and a fixed reason code;
@@ -61,17 +61,23 @@ Sequences define the order in which the synchronous recorder accepted entries. T
 
 `supervision_finished` means the TUI stopped supervising that session. It does not claim that a detached tmux process exited. `session_finished` is emitted only from the canonical `process_exit` event. Cleanup records distinguish a completed backend cleanup, a requested tmux persistence, and an incomplete/unknown aggregate cleanup; they do not claim per-session removal when the backend cannot prove it.
 
+`operator_input` records an attempt and its terminal outcome with session,
+agent, backend, adapter, actor, outcome, and a fixed reason code only. It has no
+field for the submitted line or its length.
+
 ## Fields never recorded
 
 The audit API intentionally has no field for:
 
-- manual input, passwords, passphrases, tokens, OTPs, PINs, API keys, private keys, or credentials;
+- manual decision input, ordinary operator lines, passwords, passphrases,
+  tokens, OTPs, PINs, API keys, private keys, or credentials;
 - encoded decision bytes or terminal stdin;
 - raw terminal output, raw prompt matches, or event signatures;
 - commands, shell scripts, working directories, or environment-variable values;
 - raw backend errors.
 
-Relayer does not pass the textinput value to the recorder. Errors are represented by fixed operation/outcome codes rather than `error.Error()`.
+Relayer does not pass either text-input value to the recorder. Errors are
+represented by fixed operation/outcome codes rather than `error.Error()`.
 
 ## Redaction
 

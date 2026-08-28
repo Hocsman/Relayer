@@ -36,6 +36,27 @@ type routerEventSendCall struct {
 	data    []byte
 }
 
+type routerLineCall struct {
+	id   string
+	line string
+}
+
+type routerLineBackend struct {
+	*routerFakeBackend
+	lineCalls []routerLineCall
+	lineErr   error
+}
+
+func (b *routerLineBackend) SendLine(ctx context.Context, id, line string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.lineCalls = append(b.lineCalls, routerLineCall{id: id, line: line})
+	return b.lineErr
+}
+
 type routerEventBackend struct {
 	*routerFakeBackend
 	eventSends []routerEventSendCall
@@ -150,6 +171,10 @@ func (b *routerBlockingCloseBackend) Close(ctx context.Context) error {
 
 func newRouterFakeBackend(name string) *routerFakeBackend {
 	return &routerFakeBackend{name: name, returnedBackend: name}
+}
+
+func newRouterLineBackend(name string) *routerLineBackend {
+	return &routerLineBackend{routerFakeBackend: newRouterFakeBackend(name)}
 }
 
 func (b *routerFakeBackend) Name() string { return b.name }
@@ -735,5 +760,81 @@ func TestTUIBackendAdapterAppendsExactlyOneCarriageReturn(t *testing.T) {
 	want := []string{"Y\r", "\r", "line\ninside\r"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("adapter inputs = %#v, want %#v", got, want)
+	}
+}
+
+func TestBackendRouterAndDesktopRuntimeRouteSafeLineWithoutRawFallback(t *testing.T) {
+	backend := newRouterLineBackend(agent.BackendPTY)
+	router, err := newBackendRouter(context.Background(), backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	if _, err := router.Start(context.Background(), agent.Spec{
+		ID: "line", Name: "Line", Command: []string{"runner"}, Backend: agent.BackendPTY,
+	}, terminal.Size{}); err != nil {
+		t.Fatal(err)
+	}
+
+	adapter := &tuiBackendAdapter{router: router}
+	if err := adapter.SendLine("line", "ordinary text"); err != nil {
+		t.Fatalf("tui SendLine: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	runtime := &DesktopRuntime{ctx: ctx, cancel: cancel, router: router}
+	if err := runtime.SendLine(context.Background(), "LINE", "desktop text"); err != nil {
+		t.Fatalf("desktop SendLine: %v", err)
+	}
+
+	backend.mu.Lock()
+	lineCalls := append([]routerLineCall(nil), backend.lineCalls...)
+	rawCalls := len(backend.sends)
+	backend.mu.Unlock()
+	want := []routerLineCall{{id: "line", line: "ordinary text"}, {id: "LINE", line: "desktop text"}}
+	if !reflect.DeepEqual(lineCalls, want) {
+		t.Fatalf("line calls = %#v, want %#v", lineCalls, want)
+	}
+	if rawCalls != 0 {
+		t.Fatalf("safe line path made %d raw Send call(s)", rawCalls)
+	}
+
+	cancelled, cancelRequest := context.WithCancel(context.Background())
+	cancelRequest()
+	if err := router.SendLine(cancelled, "line", "cancelled text"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled SendLine error = %v", err)
+	}
+	backend.mu.Lock()
+	afterCancelled := len(backend.lineCalls)
+	backend.mu.Unlock()
+	if afterCancelled != len(want) {
+		t.Fatalf("cancelled SendLine reached backend: calls=%d", afterCancelled)
+	}
+}
+
+func TestBackendRouterSendLineRejectsBackendWithoutAtomicCapability(t *testing.T) {
+	backend := newRouterFakeBackend(agent.BackendPTY)
+	router, err := newBackendRouter(context.Background(), backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	if _, err := router.Start(context.Background(), agent.Spec{
+		ID: "legacy", Name: "Legacy", Command: []string{"runner"}, Backend: agent.BackendPTY,
+	}, terminal.Size{}); err != nil {
+		t.Fatal(err)
+	}
+	const secret = "sk-fixturevalue123456"
+	err = router.SendLine(context.Background(), "legacy", secret)
+	if !errors.Is(err, terminal.ErrLineUnsupported) {
+		t.Fatalf("unsupported SendLine error = %v", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("unsupported error exposed input: %q", err)
+	}
+	backend.mu.Lock()
+	rawCalls := len(backend.sends)
+	backend.mu.Unlock()
+	if rawCalls != 0 {
+		t.Fatalf("unsupported line fell back to %d raw Send call(s)", rawCalls)
 	}
 }

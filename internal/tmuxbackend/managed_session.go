@@ -41,6 +41,7 @@ type managedSession struct {
 	attachCancel     context.CancelFunc
 	attachStop       func() bool
 	exitEmitted      bool
+	terminalEvent    *adapters.Event
 	captureDisabled  bool
 	appliedSize      terminal.Size
 	sizeKnown        bool
@@ -99,6 +100,10 @@ func (s *managedSession) pendingEvent() *adapters.Event {
 func (s *managedSession) updateState(state Snapshot) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.updateStateLocked(state)
+}
+
+func (s *managedSession) updateStateLocked(state Snapshot) bool {
 	state.Output = ""
 	state.Pending = nil
 	state.Revision = 0
@@ -107,6 +112,18 @@ func (s *managedSession) updateState(state Snapshot) bool {
 	}
 	s.state = state
 	return true
+}
+
+// updateProcessExitState publishes the dead snapshot and marks Processor
+// termination under the same session lock held across SendLine admission.
+// Thus a line either completes before this observation or performs zero tmux
+// I/O after it; there is no state-check/processor-call window.
+func (s *managedSession) updateProcessExitState(state Snapshot) bool {
+	s.mu.Lock()
+	changed := s.updateStateLocked(state)
+	_ = s.markProcessExitLocked(state)
+	s.mu.Unlock()
+	return changed
 }
 
 func sameLifecycleState(left, right Snapshot) bool {
@@ -148,6 +165,21 @@ func (s *managedSession) isPresent() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.exists
+}
+
+func (s *managedSession) sendLine(ctx context.Context, line string, deliver func([]byte) error) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.exists {
+		return ErrSessionNotFound
+	}
+	if !s.state.Running {
+		return ErrClosed
+	}
+	if s.attachActive || s.state.Attached {
+		return terminal.ErrLineUnsupported
+	}
+	return s.processor.SendLine(ctx, line, deliver)
 }
 
 func (s *managedSession) captureNeedsDisable() bool {
@@ -217,18 +249,29 @@ func (s *managedSession) finish() bool {
 }
 
 func (s *managedSession) processExitEvent(snapshot Snapshot) adapters.Event {
-	event := s.processor.NewProcessExitEvent(
+	s.mu.Lock()
+	event := s.markProcessExitLocked(snapshot)
+	s.mu.Unlock()
+	s.processor.WaitSemanticEvents()
+	return event
+}
+
+func (s *managedSession) markProcessExitLocked(snapshot Snapshot) adapters.Event {
+	if s.terminalEvent != nil {
+		return s.terminalEvent.Clone()
+	}
+	event := s.processor.MarkProcessExitEvent(
 		snapshot.ExitCode,
 		snapshot.Status == terminal.StatusFailed,
 	)
-	s.mu.Lock()
 	if event.Sequence > s.eventSequence {
 		s.eventSequence = event.Sequence
 	}
 	if event.Sequence > s.revision {
 		s.revision = event.Sequence
 	}
-	s.mu.Unlock()
+	stored := event.Clone()
+	s.terminalEvent = &stored
 	return event
 }
 

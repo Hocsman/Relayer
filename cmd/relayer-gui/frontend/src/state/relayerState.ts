@@ -104,6 +104,7 @@ export function relayerReducer(state: RelayerUIState, action: RelayerAction): Re
               ? {
                   ...agent,
                   ...action.snapshot,
+                  inputFrozen: action.snapshot.inputFrozen ?? agent.inputFrozen,
                   output: boundedOutput(action.snapshot.output || ""),
                 }
               : agent,
@@ -152,6 +153,9 @@ export function relayerReducer(state: RelayerUIState, action: RelayerAction): Re
           app: {
             ...state.app,
             audit: { ...state.app.audit, status: action.status.status as AppState["audit"]["status"] },
+            agents: action.status.status === "failed"
+              ? state.app.agents.map((agent) => ({ ...agent, inputFrozen: true }))
+              : state.app.agents,
           },
         };
       }
@@ -172,6 +176,18 @@ export function relayerReducer(state: RelayerUIState, action: RelayerAction): Re
       if (state.app && action.error.runID !== state.app.runID) return state;
       return {
         ...state,
+        app: state.app &&
+          action.error.code === "delivery_uncertain" &&
+          action.error.sessionID
+          ? {
+              ...state.app,
+              agents: state.app.agents.map((agent) =>
+                agent.sessionID.toLocaleLowerCase() === action.error.sessionID?.toLocaleLowerCase()
+                  ? { ...agent, inputFrozen: true }
+                  : agent,
+              ),
+            }
+          : state.app,
         errors: [sanitizeErrorEvent(action.error), ...state.errors].slice(0, MAX_ERRORS),
       };
     case "delivery": {

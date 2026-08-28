@@ -219,6 +219,11 @@ func (m *Manager) readSession(session *processSession, master *os.File) {
 func (m *Manager) waitSession(session *processSession) {
 	defer m.wg.Done()
 	err := session.cmd.Wait() // The sole Wait call for a successfully started command.
+	// Wait is the first authoritative proof that the process can no longer
+	// consume input. Mark the Processor terminated immediately, under the same
+	// lock as SendLine, before publishing Result or spending time cleaning up
+	// descendants. This closes the check-then-write window at process exit.
+	exitEvent := markProcessExitEvent(session, err)
 	session.setResult(err)
 
 	// The shell may exit while descendants still own the slave PTY.
@@ -239,8 +244,11 @@ func (m *Manager) waitSession(session *processSession) {
 	}
 
 	close(session.done)
+	// An actionable event detected before Wait must still reach its hook before
+	// process_exit. Waiting here cannot delay descendant termination or Done.
+	session.processor.WaitSemanticEvents()
 	if m.ctx.Err() == nil {
-		m.emit(AdapterEvent{Event: newProcessExitEvent(session, err)}, true)
+		m.emit(AdapterEvent{Event: exitEvent}, true)
 	}
 }
 
@@ -267,6 +275,38 @@ func (m *Manager) session(sessionID string) (*processSession, error) {
 
 func (m *Manager) SendInput(sessionID string, value string) error {
 	return m.SendData(sessionID, []byte(value+"\r"))
+}
+
+// SendLine is the ordinary-input path. Processor.SendLine atomically confirms
+// that the process is live and no actionable event is pending, then appends
+// exactly one carriage return without acknowledging semantic state.
+func (m *Manager) SendLine(ctx context.Context, sessionID, line string) error {
+	session, err := m.session(sessionID)
+	if err != nil {
+		return err
+	}
+	knownClosed := false
+	err = session.processor.SendLine(ctx, line, func(data []byte) error {
+		// Wait publishes the result before descendant cleanup. Once that fact is
+		// known, ordinary input must perform zero PTY I/O even if the master file
+		// has not been closed yet.
+		if exited, _, _ := session.result(); exited {
+			knownClosed = true
+			return ErrClosed
+		}
+		writeErr := session.write(data)
+		if errors.Is(writeErr, ErrClosed) {
+			knownClosed = true
+		}
+		return writeErr
+	})
+	if knownClosed {
+		return ErrClosed
+	}
+	if errors.Is(err, adapters.ErrProcessorTerminated) {
+		return ErrClosed
+	}
+	return err
 }
 
 // SendData is the compatibility path for callers that do not yet retain the
@@ -439,10 +479,16 @@ func displayCommand(spec agent.Spec) string {
 }
 
 func newProcessExitEvent(session *processSession, waitErr error) adapters.Event {
+	event := markProcessExitEvent(session, waitErr)
+	session.processor.WaitSemanticEvents()
+	return event
+}
+
+func markProcessExitEvent(session *processSession, waitErr error) adapters.Event {
 	var exitCode *int
 	if session.cmd != nil && session.cmd.ProcessState != nil {
 		code := session.cmd.ProcessState.ExitCode()
 		exitCode = &code
 	}
-	return session.processor.NewProcessExitEvent(exitCode, waitErr != nil)
+	return session.processor.MarkProcessExitEvent(exitCode, waitErr != nil)
 }

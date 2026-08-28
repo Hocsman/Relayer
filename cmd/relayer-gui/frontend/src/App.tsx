@@ -12,6 +12,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
   const {
     state,
     submitDecision,
+    submitLine,
     resizeSession,
     stopSession,
     saveAgentProfiles,
@@ -109,6 +110,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
             onResize={resizeSession}
             onStop={stopSession}
             onOpenEvent={openEvent}
+            onSubmitLine={submitLine}
           />
           <SupervisorPanel
             state={state.app}

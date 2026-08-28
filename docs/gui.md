@@ -68,6 +68,13 @@ cd cmd/relayer-gui
 wails build
 ```
 
+On Linux distributions providing WebKitGTK 4.1, including the Ubuntu 24.04 CI
+image, use the same build tag exercised by CI:
+
+```bash
+wails build -tags webkit2_41
+```
+
 Wails writes local build artifacts below `cmd/relayer-gui/build/bin/`. On
 macOS, Wails may apply a local ad-hoc/self-signature; this is not Developer ID
 signing or notarization. No installer or release artifact is produced or
@@ -299,6 +306,32 @@ be presented as one.
 
 Use the TUI and its native tmux attach path when a full interactive terminal is
 required.
+
+## Ordinary operator input
+
+Each running, detached agent card provides a one-line composer for an initial
+instruction or other ordinary application text. This is not raw keystroke or
+VT passthrough. The Go core accepts at most 4096 UTF-8 bytes, rejects every
+control character, and appends exactly one carriage return.
+
+The WebView field is uncontrolled and cleared synchronously before awaiting
+the native call. The compose path never copies the line or its length into
+React state, bridge status/error events, or the JSONL audit; the audit records
+only static `operator_input` attempt and outcome metadata. The target program
+can still echo the line into its terminal output, which is intentionally
+rendered in the bounded output snapshot.
+
+Input is disabled when the session is attached, exited, waiting for a detected
+event, already delivering another mutation, or frozen after uncertainty. The
+backend repeats the authoritative check under the same processor lock as event
+detection. If a prompt is already pending, zero line bytes are written and the
+supervisor event takes priority. A prompt emitted by the CLI but not yet read
+by Relayer cannot be protected by that check, so ordinary input remains a
+direct human action rather than a policy approval.
+
+If the transport reports an ambiguous failure, the card is frozen and Relayer
+does not retry the line. Stop or restart the session instead of sending the
+same text again.
 
 ## Human decisions and sensitive input
 

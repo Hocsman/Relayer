@@ -36,6 +36,11 @@ var (
 	errDecisionStale     = errors.New("Cette demande n'est plus l'événement actuellement attendu.")
 	errDecisionInFlight  = errors.New("Une décision est déjà en cours pour cet agent.")
 	errDeliveryUncertain = errors.New("L'état de livraison est indéterminé; arrêtez la session avant toute nouvelle saisie.")
+	errLineInFlight      = errors.New("Une ligne est déjà en cours de livraison pour cet agent.")
+	errLinePromptPending = errors.New("Une demande de supervision doit être traitée avant toute saisie libre.")
+	errLineUnavailable   = errors.New("La session n'accepte pas de saisie libre dans son état actuel.")
+	errLineInvalid       = errors.New("La ligne saisie est invalide.")
+	errLineUnsupported   = errors.New("Ce backend ne prend pas en charge la saisie libre.")
 	errRuntimeStopped    = errors.New("Le moteur Relayer est arrêté.")
 	errRunStale          = errors.New("Ce run Relayer n'est plus actif.")
 )
@@ -58,6 +63,7 @@ type desktopEngine interface {
 	PendingEvent(context.Context, string) (*adapters.Event, error)
 	Evaluate(adapters.Event) policy.Evaluation
 	ApplyDecision(context.Context, string, adapters.Event, adapters.Decision, string) error
+	SendLine(context.Context, string, string) error
 	Resize(context.Context, string, terminal.Size) error
 	Stop(context.Context, string) error
 	RecordAudit(audit.Entry) error
@@ -91,21 +97,23 @@ type App struct {
 	startEngine      func(context.Context, *appcore.DesktopPlan, string) (desktopEngine, error)
 	runIDGenerator   func() (string, error)
 
-	mu            sync.RWMutex
-	state         AppState
-	agentIndex    map[string]int
-	pending       map[eventKey]pendingEvent
-	ingesting     map[eventKey]struct{}
-	resolved      map[eventKey]struct{}
-	resolvedOrder []eventKey
-	inFlight      map[string]eventKey
-	outputRunning map[string]bool
-	outputDirty   map[string]bool
-	frozen        map[string]bool
-	auditFailed   bool
-	shuttingDown  bool
-	startupErr    error
-	configPath    string
+	mu               sync.RWMutex
+	state            AppState
+	agentIndex       map[string]int
+	pending          map[eventKey]pendingEvent
+	ingesting        map[eventKey]struct{}
+	resolved         map[eventKey]struct{}
+	resolvedOrder    []eventKey
+	inFlight         map[string]eventKey
+	lineInFlight     map[string]bool
+	stoppingSessions map[string]bool
+	outputRunning    map[string]bool
+	outputDirty      map[string]bool
+	frozen           map[string]bool
+	auditFailed      bool
+	shuttingDown     bool
+	startupErr       error
+	configPath       string
 
 	deliveryMu        sync.Mutex
 	deliveryAvailable bool
@@ -139,6 +147,8 @@ func NewApp() *App {
 		ingesting:             make(map[eventKey]struct{}),
 		resolved:              make(map[eventKey]struct{}),
 		inFlight:              make(map[string]eventKey),
+		lineInFlight:          make(map[string]bool),
+		stoppingSessions:      make(map[string]bool),
 		outputRunning:         make(map[string]bool),
 		outputDirty:           make(map[string]bool),
 		frozen:                make(map[string]bool),
@@ -241,6 +251,8 @@ func (a *App) activateRun(run *runGeneration) {
 	a.resolved = make(map[eventKey]struct{})
 	a.resolvedOrder = nil
 	a.inFlight = make(map[string]eventKey)
+	a.lineInFlight = make(map[string]bool)
+	a.stoppingSessions = make(map[string]bool)
 	a.outputRunning = make(map[string]bool)
 	a.outputDirty = make(map[string]bool)
 	a.frozen = make(map[string]bool)
@@ -562,11 +574,11 @@ func (a *App) scheduleAutomatic(run *runGeneration, sessionID string) {
 		return
 	}
 	a.mu.Lock()
-	if a.shuttingDown || a.active != run || a.auditFailed || a.frozen[sessionKey] {
+	if a.shuttingDown || a.active != run || a.auditFailed || a.frozen[sessionKey] || a.stoppingSessions[sessionKey] {
 		a.mu.Unlock()
 		return
 	}
-	if _, busy := a.inFlight[sessionKey]; busy {
+	if _, busy := a.inFlight[sessionKey]; busy || a.lineInFlight[sessionKey] {
 		a.mu.Unlock()
 		return
 	}
@@ -739,6 +751,9 @@ func (a *App) addFrozenEvent(run *runGeneration, event adapters.Event, evaluatio
 	a.mu.Lock()
 	a.pending[key] = pendingEvent{event: event.Clone(), view: view}
 	a.frozen[key.sessionID] = true
+	if index, found := a.agentIndex[key.sessionID]; found {
+		a.state.Agents[index].InputFrozen = true
+	}
 	a.setAgentWaitingLocked(event.SessionID)
 	a.rebuildPendingLocked()
 	a.mu.Unlock()
@@ -757,6 +772,9 @@ func (a *App) markDelivery(key eventKey, status, reason string) {
 	a.pending[key] = item
 	if status == "uncertain" || status == "failed" {
 		a.frozen[key.sessionID] = true
+		if index, found := a.agentIndex[key.sessionID]; found {
+			a.state.Agents[index].InputFrozen = true
+		}
 	}
 	a.rebuildPendingLocked()
 	view := item.view
@@ -845,11 +863,15 @@ func (a *App) SubmitDecision(runID, sessionID, eventID, manualInput string) erro
 		a.mu.Unlock()
 		return errRuntimeStopped
 	}
+	if a.stoppingSessions[key.sessionID] {
+		a.mu.Unlock()
+		return errRuntimeStopped
+	}
 	if frozen || item.view.DeliveryStatus == "uncertain" || item.view.DeliveryStatus == "failed" {
 		a.mu.Unlock()
 		return errDeliveryUncertain
 	}
-	if _, busy := a.inFlight[key.sessionID]; busy || item.view.DeliveryStatus != "pending" {
+	if _, busy := a.inFlight[key.sessionID]; busy || a.lineInFlight[key.sessionID] || item.view.DeliveryStatus != "pending" {
 		a.mu.Unlock()
 		return errDecisionInFlight
 	}
@@ -894,6 +916,173 @@ func (a *App) SubmitDecision(runID, sessionID, eventID, manualInput string) erro
 	return nil
 }
 
+// SubmitLine sends one ordinary application line to a detached, running
+// session. The line crosses this method only as a call argument: it is never
+// copied into bridge state, events, errors or audit entries.
+func (a *App) SubmitLine(runID, sessionID, line string) error {
+	run, err := a.activeRun(runID)
+	if err != nil {
+		return err
+	}
+	// Delivery admission must precede the per-session claim so lifecycle
+	// shutdown cannot start waiting between those two operations.
+	if !a.beginDelivery() {
+		a.mu.RLock()
+		frozen := a.auditFailed || a.frozen[strings.ToLower(strings.TrimSpace(sessionID))]
+		a.mu.RUnlock()
+		if frozen {
+			return errDeliveryUncertain
+		}
+		return errRuntimeStopped
+	}
+	defer a.endDelivery()
+
+	sessionKey := strings.ToLower(strings.TrimSpace(sessionID))
+	a.mu.Lock()
+	if a.active != run || a.shuttingDown {
+		a.mu.Unlock()
+		return errRuntimeStopped
+	}
+	if a.auditFailed {
+		a.mu.Unlock()
+		return errAuditUnavailable
+	}
+	if a.frozen[sessionKey] {
+		a.mu.Unlock()
+		return errDeliveryUncertain
+	}
+	index, found := a.agentIndex[sessionKey]
+	if !found {
+		a.mu.Unlock()
+		return errLineUnavailable
+	}
+	agent := a.state.Agents[index]
+	if a.stoppingSessions[sessionKey] {
+		a.mu.Unlock()
+		return errLineUnavailable
+	}
+	if _, busy := a.inFlight[sessionKey]; busy || a.hasPendingForSessionLocked(sessionKey) {
+		a.mu.Unlock()
+		a.reconcilePending(run, sessionID)
+		a.emitSafeError(run, "line_prompt_pending", "Traitez la demande de supervision avant d'envoyer une ligne.", sessionID)
+		return errLinePromptPending
+	}
+	if !agent.Running || agent.Attached || (agent.Status != "running" && agent.Status != "detached") {
+		a.mu.Unlock()
+		return errLineUnavailable
+	}
+	if a.lineInFlight[sessionKey] {
+		a.mu.Unlock()
+		return errLineInFlight
+	}
+	a.lineInFlight[sessionKey] = true
+	a.mu.Unlock()
+	defer a.finishLine(run, sessionKey)
+
+	if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeInFlight, "operator_input_started")) {
+		return errAuditUnavailable
+	}
+	ctx, cancel := context.WithTimeout(run.ctx, 8*time.Second)
+	err = run.engine.SendLine(ctx, sessionID, line)
+	line = ""
+	cancel()
+	if err == nil {
+		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeApplied, "operator_input_applied")) {
+			return errAuditUnavailable
+		}
+		return nil
+	}
+
+	switch {
+	case errors.Is(err, terminal.ErrEventPending):
+		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeFallbackStale, "operator_input_prompt_pending")) {
+			return errAuditUnavailable
+		}
+		a.reconcilePending(run, sessionID)
+		a.emitSafeError(run, "line_prompt_pending", "Une demande de supervision a précédé la ligne; aucun texte libre n'a été envoyé.", sessionID)
+		return errLinePromptPending
+	case errors.Is(err, terminal.ErrInvalidLine):
+		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeSkipped, "operator_input_invalid")) {
+			return errAuditUnavailable
+		}
+		a.emitSafeError(run, "line_invalid", "La saisie doit être une seule ligne UTF-8 sans caractère de contrôle et ne pas dépasser 4096 octets.", sessionID)
+		return errLineInvalid
+	case errors.Is(err, terminal.ErrLineUnsupported):
+		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeSkipped, "operator_input_unsupported")) {
+			return errAuditUnavailable
+		}
+		a.emitSafeError(run, "line_unsupported", "Ce backend ne permet pas d'envoyer une ligne de façon fiable.", sessionID)
+		return errLineUnsupported
+	case errors.Is(err, terminal.ErrClosed):
+		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeSkipped, "operator_input_session_unavailable")) {
+			return errAuditUnavailable
+		}
+		a.markLineSessionUnavailable(run, sessionKey, "exited")
+		a.emitSafeError(run, "line_session_unavailable", "La session s'est terminée avant la livraison; aucune ligne n'a été envoyée.", sessionID)
+		return errLineUnavailable
+	case errors.Is(err, terminal.ErrSessionNotFound):
+		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeSkipped, "operator_input_session_unavailable")) {
+			return errAuditUnavailable
+		}
+		a.markLineSessionUnavailable(run, sessionKey, "failed")
+		a.emitSafeError(run, "line_session_unavailable", "La session n'est plus disponible; aucune ligne n'a été envoyée.", sessionID)
+		return errLineUnavailable
+	default:
+		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeFallbackDeliveryUncertain, "operator_input_delivery_uncertain")) {
+			return errAuditUnavailable
+		}
+		a.freezeLineSession(run, sessionKey)
+		return errDeliveryUncertain
+	}
+}
+
+func (a *App) finishLine(run *runGeneration, sessionKey string) {
+	a.mu.Lock()
+	delete(a.lineInFlight, sessionKey)
+	advance := !a.shuttingDown
+	if index, found := a.agentIndex[sessionKey]; !found || !a.state.Agents[index].Running {
+		advance = false
+	}
+	a.mu.Unlock()
+	if advance && a.isActiveRun(run) {
+		a.scheduleAutomatic(run, sessionKey)
+	}
+}
+
+func (a *App) freezeLineSession(run *runGeneration, sessionKey string) {
+	a.mu.Lock()
+	if a.active != run {
+		a.mu.Unlock()
+		return
+	}
+	a.frozen[sessionKey] = true
+	displaySessionID := sessionKey
+	if index, found := a.agentIndex[sessionKey]; found {
+		a.state.Agents[index].InputFrozen = true
+		displaySessionID = a.state.Agents[index].SessionID
+	}
+	a.mu.Unlock()
+	a.emitSafeError(run, "delivery_uncertain", "Livraison indéterminée: la session est gelée pour éviter un nouvel envoi.", displaySessionID)
+}
+
+func (a *App) markLineSessionUnavailable(run *runGeneration, sessionKey, status string) {
+	a.mu.Lock()
+	if a.active != run {
+		a.mu.Unlock()
+		return
+	}
+	displaySessionID := sessionKey
+	if index, found := a.agentIndex[sessionKey]; found {
+		agent := &a.state.Agents[index]
+		agent.Running = false
+		agent.Attached = false
+		agent.Status = status
+		displaySessionID = agent.SessionID
+	}
+	a.mu.Unlock()
+	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: status})
+}
+
 func (a *App) ResizeSession(runID, sessionID string, columns, rows int) error {
 	if columns < 1 || rows < 1 || columns > 65535 || rows > 65535 {
 		return errors.New("Dimensions de terminal invalides.")
@@ -925,13 +1114,49 @@ func (a *App) StopSession(runID, sessionID string) error {
 		return errRuntimeStopped
 	}
 	defer a.endDelivery()
+	sessionKey := strings.ToLower(strings.TrimSpace(sessionID))
+	a.mu.Lock()
+	if a.active != run || a.shuttingDown {
+		a.mu.Unlock()
+		return errRuntimeStopped
+	}
+	if a.lineInFlight[sessionKey] {
+		a.mu.Unlock()
+		return errLineInFlight
+	}
+	if _, busy := a.inFlight[sessionKey]; busy {
+		a.mu.Unlock()
+		return errDecisionInFlight
+	}
+	if a.stoppingSessions[sessionKey] {
+		a.mu.Unlock()
+		return errLineUnavailable
+	}
+	index, found := a.agentIndex[sessionKey]
+	if !found || !a.state.Agents[index].Running {
+		a.mu.Unlock()
+		return errLineUnavailable
+	}
+	a.stoppingSessions[sessionKey] = true
+	a.state.Agents[index].Status = "stopping"
+	displaySessionID := a.state.Agents[index].SessionID
+	a.mu.Unlock()
+	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "stopping"})
 	ctx, cancel := context.WithTimeout(run.ctx, 6*time.Second)
 	err = run.engine.Stop(ctx, sessionID)
 	cancel()
 	if err != nil {
+		a.mu.Lock()
+		delete(a.stoppingSessions, sessionKey)
+		a.mu.Unlock()
+		a.freezeLineSession(run, sessionKey)
 		a.emitSafeError(run, "stop_failed", "Impossible d'arrêter cette session proprement.", sessionID)
 		return errors.New("Impossible d'arrêter cette session proprement.")
 	}
+	a.mu.Lock()
+	delete(a.stoppingSessions, sessionKey)
+	a.mu.Unlock()
+	a.markLineSessionUnavailable(run, sessionKey, "exited")
 	return nil
 }
 
@@ -990,6 +1215,11 @@ func (a *App) freezeAudit(run *runGeneration) {
 	for _, agent := range a.state.Agents {
 		if agent.Running {
 			a.frozen[strings.ToLower(agent.SessionID)] = true
+		}
+	}
+	for index := range a.state.Agents {
+		if a.state.Agents[index].Running {
+			a.state.Agents[index].InputFrozen = true
 		}
 	}
 	for key, item := range a.pending {
@@ -1189,14 +1419,15 @@ func supervisionView(runID string, event adapters.Event, evaluation policy.Evalu
 
 func snapshotFromAgent(runID string, agent AgentState) SnapshotEvent {
 	return SnapshotEvent{
-		RunID:     runID,
-		SessionID: agent.SessionID,
-		Revision:  agent.Revision,
-		Output:    agent.Output,
-		Status:    agent.Status,
-		Running:   agent.Running,
-		Attached:  agent.Attached,
-		ExitCode:  cloneInt(agent.ExitCode),
+		RunID:       runID,
+		SessionID:   agent.SessionID,
+		Revision:    agent.Revision,
+		Output:      agent.Output,
+		Status:      agent.Status,
+		Running:     agent.Running,
+		Attached:    agent.Attached,
+		InputFrozen: agent.InputFrozen,
+		ExitCode:    cloneInt(agent.ExitCode),
 	}
 }
 

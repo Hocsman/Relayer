@@ -26,6 +26,7 @@ type Manager struct {
 
 var _ terminal.Backend = (*Manager)(nil)
 var _ terminal.EventSender = (*Manager)(nil)
+var _ terminal.LineSender = (*Manager)(nil)
 var _ terminal.PendingEventProvider = (*Manager)(nil)
 
 func New(
@@ -82,6 +83,21 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 
 func (m *Manager) Send(ctx context.Context, id terminal.SessionID, data []byte) error {
 	return m.SendEvent(ctx, id, "", data)
+}
+
+// SendLine uses the Processor's ordinary-input CAS. It never falls back to
+// SendDataForEvent and therefore cannot resolve or acknowledge a prompt.
+func (m *Manager) SendLine(ctx context.Context, id terminal.SessionID, line string) error {
+	if err := m.check(ctx, id); err != nil {
+		return err
+	}
+	if err := m.inner.SendLine(ctx, id, line); err != nil {
+		if errors.Is(err, session.ErrClosed) {
+			err = terminal.ErrClosed
+		}
+		return &terminal.OperationError{Backend: m.Name(), Operation: "send_line", SessionID: id, Err: err}
+	}
+	return nil
 }
 
 // SendEvent resolves one pending adapter event and transmits data exactly as

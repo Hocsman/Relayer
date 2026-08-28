@@ -80,15 +80,24 @@ type Model struct {
 	input      textinput.Model
 	logs       []string
 
-	width         int
-	height        int
-	layout        Geometry
-	page          int
-	focus         FocusTarget
-	pending       []string
-	inputTarget   string
-	writePending  bool
-	attachPending string
+	width        int
+	height       int
+	layout       Geometry
+	page         int
+	focus        FocusTarget
+	pending      []string
+	inputTarget  string
+	writePending bool
+	// lineInputTarget owns the shared text field while an operator composes a
+	// direct line for one focused agent. lineWritePending keeps at most one
+	// asynchronous line delivery in flight across the TUI.
+	lineInputTarget  string
+	lineWritePending string
+	// lineDeferredEvents holds the latest canonical prompt observed while a
+	// direct line still awaits its terminal audit result. Policy must not run
+	// before that result is reduced by Update.
+	lineDeferredEvents map[string]adapters.Event
+	attachPending      string
 	// attachFinishedAudited prevents a failed terminal client followed by a
 	// Resync callback from producing two terminal records for one attachment.
 	attachFinishedAudited bool
@@ -220,6 +229,7 @@ func NewModelWithPolicyAndAudit(
 		automaticInFlight:  make(map[eventKey]automaticAttempt),
 		automaticBySession: make(map[string]eventKey),
 		deferredEvents:     make(map[string]adapters.Event),
+		lineDeferredEvents: make(map[string]adapters.Event),
 	}
 	for index, pane := range panes {
 		name := pane.Name
@@ -318,6 +328,7 @@ func (m *Model) activateNextPrompt() tea.Cmd {
 	if m.auditUnavailable {
 		m.pending = nil
 		m.inputTarget = ""
+		m.lineInputTarget = ""
 		m.input.Reset()
 		m.input.Blur()
 		setInputInterceptionStyle(&m.input, false)
@@ -328,6 +339,9 @@ func (m *Model) activateNextPrompt() tea.Cmd {
 	}
 	if len(m.pending) == 0 {
 		m.inputTarget = ""
+		if m.lineInputTarget != "" {
+			return m.input.Focus()
+		}
 		m.input.Blur()
 		m.input.EchoMode = textinput.EchoNormal
 		m.input.Placeholder = "En attente d'une validation interactive…"
@@ -340,6 +354,9 @@ func (m *Model) activateNextPrompt() tea.Cmd {
 	}
 
 	m.inputTarget = m.pending[0]
+	if m.lineInputTarget != "" {
+		m.cancelLineInput(false)
+	}
 	targetIndex := m.paneIndex(m.inputTarget)
 	m.setPage(targetIndex / maxAgentsPerPage)
 	m.focus = FocusTarget{Kind: FocusSupervisor}
@@ -356,7 +373,7 @@ func (m *Model) activateNextPrompt() tea.Cmd {
 }
 
 func (m *Model) syncFocus() tea.Cmd {
-	if m.focus.Kind == FocusSupervisor && m.inputTarget != "" {
+	if (m.focus.Kind == FocusSupervisor && m.inputTarget != "") || m.lineInputTarget != "" {
 		return m.input.Focus()
 	}
 	m.input.Blur()

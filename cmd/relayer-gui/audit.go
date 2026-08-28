@@ -105,6 +105,22 @@ func deliveryAuditEntry(
 	return entry
 }
 
+// operatorInputAuditEntry deliberately has no free-form input, summary,
+// decision, event or metadata field. It records only the lifecycle of an
+// operator-initiated line at the already-known session boundary.
+func operatorInputAuditEntry(agent AgentState, outcome audit.Outcome, reason string) audit.Entry {
+	return audit.Entry{
+		Kind:       audit.KindOperatorInput,
+		SessionID:  strings.TrimSpace(agent.SessionID),
+		AgentID:    strings.TrimSpace(agent.AgentID),
+		Backend:    strings.ToLower(strings.TrimSpace(agent.Backend)),
+		Adapter:    strings.ToLower(strings.TrimSpace(agent.Adapter)),
+		DecisionBy: audit.DecisionByHuman,
+		Outcome:    outcome,
+		Reason:     reason,
+	}
+}
+
 func auditDecisionForPolicy(action policy.Action) audit.Decision {
 	switch action {
 	case policy.ActionAllow:

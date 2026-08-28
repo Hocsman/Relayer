@@ -76,8 +76,9 @@ a passive, injectable `PATH` lookup and does not run `--version`.
 GUI profile saves replace only the YAML `agents` node under an opaque revision
 token and a bounded per-file/inter-process lock. Validation is repeated in Go,
 the publication is an atomic same-directory rename, and stale or uncertain
-results force a reload. The running desktop engine is deliberately not
-restarted: the saved revision becomes active on the next application launch.
+results force a reload. A save alone does not change a running generation;
+the explicit restart action drains and strictly stops it before activating a
+new immutable plan under a fresh run ID.
 
 ## Terminal abstraction and routing
 
@@ -200,6 +201,13 @@ transport failure, and post-attach uncertainty do not silently become an
 allow. Generic and Claude currently support manual input only. Codex encodes
 only the command allow/deny and directory deny bytes verified in its versioned
 fixtures; directory allow remains a human-only selection.
+
+Ordinary operator input follows a separate `SendLine` capability and never
+passes through adapter decision encoding. The processor validates one bounded
+printable UTF-8 line, takes the same lock as event detection, rejects any
+pending actionable occurrence, and appends exactly one carriage return. A
+transport failure after admission is treated as delivery uncertainty; neither
+presentation retries it automatically.
 
 ## Bubble Tea model
 

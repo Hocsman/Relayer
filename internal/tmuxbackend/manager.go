@@ -62,6 +62,7 @@ type Manager struct {
 
 var _ terminal.Backend = (*Manager)(nil)
 var _ terminal.EventSender = (*Manager)(nil)
+var _ terminal.LineSender = (*Manager)(nil)
 var _ terminal.PendingEventProvider = (*Manager)(nil)
 
 // NewManager verifies tmux before creating any session and allocates a private
@@ -540,11 +541,12 @@ func (m *Manager) monitor(target *managedSession) {
 			continue
 		}
 		pollFailures = 0
-		target.updateState(snapshot)
 		if snapshot.Running {
+			target.updateState(snapshot)
 			deadSeen = false
 			continue
 		}
+		target.updateProcessExitState(snapshot)
 		sequence := target.outputSequenceValue()
 		if !deadSeen || sequence != deadSequence {
 			deadSeen = true
@@ -564,7 +566,7 @@ func (m *Manager) handleMissingTarget(target *managedSession, cause error) {
 	}
 	target.markRemoved()
 	snapshot := Snapshot{ID: target.info.ID, Status: StatusFailed}
-	target.updateState(snapshot)
+	target.updateProcessExitState(snapshot)
 	if target.finish() {
 		m.emit(session.Error{SessionID: target.info.ID, Err: failure}, true)
 		m.emit(session.AdapterEvent{Event: target.processExitEvent(snapshot)}, true)
@@ -591,7 +593,7 @@ func (m *Manager) handleOwnershipLoss(target *managedSession, cause error) {
 }
 
 func (m *Manager) finishSession(target *managedSession, snapshot Snapshot) {
-	target.updateState(snapshot)
+	target.updateProcessExitState(snapshot)
 	if !target.finish() {
 		return
 	}
@@ -647,6 +649,40 @@ func (m *Manager) SendInput(id, value string) error {
 
 func (m *Manager) Send(ctx context.Context, id string, data []byte) error {
 	return m.SendEvent(ctx, id, "", data)
+}
+
+// SendLine serializes ordinary text with tmux delivery, event detection and
+// process termination. Processor.SendLine appends the sole carriage return
+// and does not acknowledge an actionable event.
+func (m *Manager) SendLine(ctx context.Context, id, line string) error {
+	operationCtx, finishOperation, err := m.beginOperation(ctx)
+	if err != nil {
+		return err
+	}
+	defer finishOperation()
+	ctx = operationCtx
+
+	target, err := m.session(id)
+	if err != nil {
+		return err
+	}
+	if !target.isPresent() {
+		return fmt.Errorf("%w: %q", ErrSessionNotFound, id)
+	}
+	target.inputMu.Lock()
+	defer target.inputMu.Unlock()
+	target.interactionMu.Lock()
+	defer target.interactionMu.Unlock()
+	err = target.sendLine(ctx, line, func(data []byte) error {
+		return m.sendBytes(ctx, target, data)
+	})
+	if errors.Is(err, ErrSessionNotFound) {
+		return fmt.Errorf("%w: %q", ErrSessionNotFound, id)
+	}
+	if errors.Is(err, adapters.ErrProcessorTerminated) {
+		return ErrClosed
+	}
+	return err
 }
 
 // SendEvent serializes an exact event decision with terminal delivery. The
@@ -798,7 +834,11 @@ func (m *Manager) Snapshot(ctx context.Context, id string) (terminal.Snapshot, e
 	if err != nil {
 		return terminal.Snapshot{}, err
 	}
-	target.updateState(snapshot)
+	if snapshot.Running {
+		target.updateState(snapshot)
+	} else {
+		target.updateProcessExitState(snapshot)
+	}
 	return target.snapshot(), nil
 }
 
@@ -983,6 +1023,8 @@ func (m *Manager) AttachCommand(ctx context.Context, id string) (*exec.Cmd, erro
 	if !target.isPresent() {
 		return nil, fmt.Errorf("%w: %q", ErrSessionNotFound, id)
 	}
+	target.interactionMu.Lock()
+	defer target.interactionMu.Unlock()
 	attachCtx, cancelAttach := context.WithCancel(attachParent)
 	stopManagerCancellation := context.AfterFunc(m.ctx, cancelAttach)
 	if !target.beginAttach(cancelAttach, stopManagerCancellation) {
@@ -1033,12 +1075,14 @@ func (m *Manager) Resync(ctx context.Context, id string, columns, rows int) erro
 		if inspectErr != nil {
 			return inspectErr
 		}
-		target.updateState(snapshot)
 		if snapshot.Running {
+			target.updateState(snapshot)
 			raw, err = m.capturePaneTail(ctx, target)
 			if err != nil {
 				return err
 			}
+		} else {
+			target.updateProcessExitState(snapshot)
 		}
 		currentSnapshot = snapshot
 	}
@@ -1094,7 +1138,7 @@ func (m *Manager) Stop(ctx context.Context, id string) error {
 		Status:  terminal.StatusExited,
 		Running: false,
 	}
-	target.updateState(stopped)
+	target.updateProcessExitState(stopped)
 	if target.finish() {
 		m.emitWithContext(ctx, session.AdapterEvent{Event: target.processExitEvent(stopped)}, true)
 	}

@@ -250,7 +250,7 @@ input:focus-visible {
 .agent-card {
   position: relative;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   min-width: 0;
   min-height: 360px;
   overflow: hidden;
@@ -258,6 +258,47 @@ input:focus-visible {
   border-radius: 15px;
   background: linear-gradient(145deg, rgba(18, 24, 37, 0.96), rgba(12, 16, 26, 0.96));
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.025), var(--shadow);
+}
+
+.agent-card__line-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+  padding: 8px 11px 0;
+}
+
+.agent-card__line-input input {
+  min-width: 0;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  color: var(--text);
+  background: rgba(7, 11, 17, 0.92);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace;
+  font-size: 9px;
+}
+
+.agent-card__line-input input:focus {
+  border-color: rgba(66, 217, 232, 0.58);
+  box-shadow: 0 0 0 2px rgba(66, 217, 232, 0.08);
+}
+
+.agent-card__line-input input:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .agent-card::before {

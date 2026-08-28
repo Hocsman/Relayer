@@ -32,6 +32,7 @@ type backendRouter struct {
 }
 
 var _ terminal.Backend = (*backendRouter)(nil)
+var _ terminal.LineSender = (*backendRouter)(nil)
 
 func newBackendRouter(parent context.Context, backends ...terminal.Backend) (*backendRouter, error) {
 	if parent == nil {
@@ -128,6 +129,21 @@ func (r *backendRouter) Send(ctx context.Context, id string, data []byte) error 
 		return err
 	}
 	return backend.Send(effectiveContext(ctx, r.ctx), id, append([]byte(nil), data...))
+}
+
+// SendLine requires the concrete backend's atomic ordinary-input capability.
+// There is deliberately no fallback to raw Send, which cannot prove that a
+// prompt did not become pending concurrently.
+func (r *backendRouter) SendLine(ctx context.Context, id, line string) error {
+	backend, err := r.backendFor(id)
+	if err != nil {
+		return err
+	}
+	sender, ok := backend.(terminal.LineSender)
+	if !ok {
+		return fmt.Errorf("%w: backend %s", terminal.ErrLineUnsupported, backend.Name())
+	}
+	return sender.SendLine(effectiveContext(ctx, r.ctx), id, line)
 }
 
 func (r *backendRouter) Resize(ctx context.Context, id string, size terminal.Size) error {
@@ -389,6 +405,10 @@ func (a *tuiBackendAdapter) Output(id string) (string, error) {
 
 func (a *tuiBackendAdapter) SendInput(id, value string) error {
 	return a.router.Send(a.router.Context(), id, []byte(value+"\r"))
+}
+
+func (a *tuiBackendAdapter) SendLine(id, value string) error {
+	return a.router.SendLine(a.router.Context(), id, value)
 }
 
 func (a *tuiBackendAdapter) SendDecision(id string, event adapters.Event, value string) error {

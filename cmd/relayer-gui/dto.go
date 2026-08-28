@@ -28,6 +28,7 @@ type AgentState struct {
 	Revision       uint64 `json:"revision"`
 	Running        bool   `json:"running"`
 	Attached       bool   `json:"attached"`
+	InputFrozen    bool   `json:"inputFrozen"`
 	ExitCode       *int   `json:"exitCode,omitempty"`
 }
 
@@ -66,14 +67,15 @@ type AppState struct {
 }
 
 type SnapshotEvent struct {
-	RunID     string `json:"runID"`
-	SessionID string `json:"sessionID"`
-	Revision  uint64 `json:"revision"`
-	Output    string `json:"output"`
-	Status    string `json:"status"`
-	Running   bool   `json:"running"`
-	Attached  bool   `json:"attached"`
-	ExitCode  *int   `json:"exitCode,omitempty"`
+	RunID       string `json:"runID"`
+	SessionID   string `json:"sessionID"`
+	Revision    uint64 `json:"revision"`
+	Output      string `json:"output"`
+	Status      string `json:"status"`
+	Running     bool   `json:"running"`
+	Attached    bool   `json:"attached"`
+	InputFrozen bool   `json:"inputFrozen"`
+	ExitCode    *int   `json:"exitCode,omitempty"`
 }
 
 type StatusEvent struct {
