@@ -22,7 +22,7 @@ func TestAuditConfigurationDefaultsAndCompatibility(t *testing.T) {
 		if err := os.WriteFile(path, []byte("- pattern: continue\n  description: Continue\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		result, err := Load(path)
+		result, err := LoadOrCreate(path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -36,7 +36,7 @@ func TestAuditConfigurationDefaultsAndCompatibility(t *testing.T) {
 		if err := os.WriteFile(path, []byte("intercept_patterns:\n  - pattern: continue\n    description: Continue\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		result, err := Load(path)
+		result, err := LoadOrCreate(path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -47,7 +47,7 @@ func TestAuditConfigurationDefaultsAndCompatibility(t *testing.T) {
 
 	t.Run("generated config enables metadata audit", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "generated.yaml")
-		result, err := Load(path)
+		result, err := LoadOrCreate(path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -80,7 +80,7 @@ func TestAuditConfigurationLoadsStrictSchemaAndResolvesRelativePath(t *testing.T
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Load(path)
+	result, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestAuditConfigurationRejectsInvalidValuesBeforeStartup(t *testing.T) {
 			if err := os.WriteFile(path, []byte(auditVersionOne(block)), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := Load(path); err == nil {
+			if _, err := LoadOrCreate(path); err == nil {
 				t.Fatal("invalid audit configuration was accepted")
 			}
 		})
@@ -139,7 +139,7 @@ func loadAuditConfiguration(t *testing.T, block string) Result {
 	if err := os.WriteFile(path, []byte(auditVersionOne(block)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Load(path)
+	result, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -27,7 +27,7 @@ func TestFileSnapshotRestoresExactConfigurationAndMode(t *testing.T) {
 	}
 	defer snapshot.Discard()
 
-	current, err := Load(path)
+	current, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

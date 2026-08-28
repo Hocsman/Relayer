@@ -14,7 +14,7 @@ import (
 var defaultPromptPatterns = DefaultPatterns()
 
 func loadPromptPatterns(path string) ([]intercept.Pattern, bool, error) {
-	result, err := Load(path)
+	result, err := LoadOrCreate(path)
 	return result.Patterns, result.Created, err
 }
 
@@ -132,7 +132,7 @@ func TestLoadExistingMatchesLoadWithoutMutatingExistingConfiguration(t *testing.
 	if err != nil {
 		t.Fatalf("LoadExisting: %v", err)
 	}
-	regular, err := Load(path)
+	regular, err := LoadOrCreate(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

@@ -118,7 +118,7 @@ func PrepareDesktopRuntime(options DesktopOptions) (*DesktopPlan, error) {
 		diagnostics = io.Discard
 	}
 
-	configuration, err := config.Load(configPath)
+	configuration, err := config.LoadOrCreate(configPath)
 	if err != nil {
 		return nil, err
 	}
