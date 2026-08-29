@@ -60,7 +60,7 @@ type snapshotOccurrenceClassifier interface {
 
 func NewProcessor(adapter Adapter, state *DetectionState, capacity int, hooks Hooks) (*Processor, error) {
 	if adapter == nil {
-		return nil, errors.New("adaptateur nil")
+		return nil, errors.New("nil adapter")
 	}
 	if state == nil {
 		return nil, errors.New("nil detection state")

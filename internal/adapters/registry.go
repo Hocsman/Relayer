@@ -165,7 +165,7 @@ func (r *Registry) Resolve(requestedID, executable string) (Adapter, Descriptor,
 		if requestedID != "" {
 			return nil, Descriptor{}, fmt.Errorf("%w: %q", ErrUnknownAdapter, requestedID)
 		}
-		return nil, Descriptor{}, errors.New("fallback generic indisponible")
+		return nil, Descriptor{}, errors.New("generic fallback unavailable")
 	}
 	if !entry.descriptor.Implemented || entry.factory == nil {
 		return nil, cloneDescriptor(entry.descriptor), fmt.Errorf(
