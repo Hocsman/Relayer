@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { promptContextLines, redactForDisplay, safeEventSummary } from "./safety";
+import { promptContextLines, redactForDisplay, safeError, safeEventSummary } from "./safety";
 import type { SupervisionEvent } from "../types/relayer";
 
 function event(overrides: Partial<SupervisionEvent> = {}): SupervisionEvent {
@@ -72,5 +72,36 @@ describe("promptContextLines", () => {
   it("returns nothing for a pane that produced no output", () => {
     expect(promptContextLines("")).toEqual([]);
     expect(promptContextLines("\n\n  \n")).toEqual([]);
+  });
+});
+
+// Go error strings are fragments by convention — lowercase, unpunctuated — and
+// the engine's are written that way so ST1005 applies to the whole module. The
+// interface is what turns one into a sentence, so that the operator never reads
+// "the Relayer engine is stopped" as a paragraph.
+describe("safeError sentence casing", () => {
+  it("casts an engine fragment into a sentence", () => {
+    expect(safeError(new Error("the Relayer engine is stopped")))
+      .toBe("The Relayer engine is stopped.");
+    expect(safeError(new Error("invalid terminal dimensions")))
+      .toBe("Invalid terminal dimensions.");
+  });
+
+  it("leaves a message that is already a sentence alone", () => {
+    expect(safeError(new Error("Configuration has changed. Reload first.")))
+      .toBe("Configuration has changed. Reload first.");
+    expect(safeError(new Error("Did the run stop?"))).toBe("Did the run stop?");
+  });
+
+  it("still redacts before casing, so a secret cannot be capitalised into view", () => {
+    const cast = safeError(new Error("api_key=sk-live-4b91ce rejected"));
+    expect(cast).not.toContain("sk-live-4b91ce");
+    expect(cast).toContain("[REDACTED]");
+    expect(cast.endsWith(".")).toBe(true);
+  });
+
+  it("uses the fallback when there is no message, without touching it", () => {
+    expect(safeError(undefined, "The run change failed.")).toBe("The run change failed.");
+    expect(safeError(new Error("   "), "The run change failed.")).toBe("The run change failed.");
   });
 });

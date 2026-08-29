@@ -9,7 +9,8 @@
     "build": "tsc --noEmit && vite build && node scripts/keep-dist.mjs",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "capture": "node scripts/capture-demo.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

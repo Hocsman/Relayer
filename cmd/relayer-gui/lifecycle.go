@@ -14,8 +14,8 @@ import (
 )
 
 var (
-	errLifecycleFailed      = errors.New("The agent lifecycle could not be completed safely.")
-	errExecutionUnsupported = errors.New("Agent execution is not available on this platform.")
+	errLifecycleFailed      = errors.New("agent lifecycle could not be completed safely")
+	errExecutionUnsupported = errors.New("agent execution is not available on this platform")
 )
 
 func (a *App) desktopOptions(path string) appcore.DesktopOptions {

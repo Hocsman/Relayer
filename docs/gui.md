@@ -47,6 +47,25 @@ On Linux, `wails doctor` reports the WebKitGTK and compiler packages needed by
 the current distribution. On macOS, install the Xcode command-line tools when
 the doctor reports that they are missing.
 
+## Refreshing the screenshots
+
+The README's desktop images are captured from the demo bridge, so they show the
+real interface without a real agent, a key or a network call:
+
+```bash
+npm --prefix cmd/relayer-gui/frontend run dev:demo
+npm --prefix cmd/relayer-gui/frontend run capture
+```
+
+The script drives headless Chrome over the DevTools protocol using Node's own
+WebSocket, so it adds no dependency. It borrows a browser it finds on the
+machine and never installs one; set `CHROME_PATH` if yours is somewhere
+unusual. It waits for the interface to reach each state rather than sleeping a
+fixed time, so a slower machine produces the same images.
+
+The terminal animation is separate and recorded with VHS from
+`docs/readme-demo.tape`; see the comment at the top of that file.
+
 ## Development and build
 
 The GUI is a separate Go module so desktop-only dependencies do not become

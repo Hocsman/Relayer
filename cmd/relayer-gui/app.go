@@ -34,19 +34,19 @@ const (
 )
 
 var (
-	errAuditUnavailable    = errors.New("The audit journal is unavailable. No decision was sent.")
-	errDecisionStale       = errors.New("This request is no longer the event currently awaited.")
-	errDecisionInFlight    = errors.New("A decision is already in progress for this agent.")
-	errEmptyDecision       = errors.New("An empty answer is not a decision.")
-	errUnsupportedDecision = errors.New("This answer cannot be encoded for this request.")
-	errDeliveryUncertain   = errors.New("The delivery state is indeterminate. Stop the session before any further input.")
-	errLineInFlight        = errors.New("A line is already being delivered to this agent.")
-	errLinePromptPending   = errors.New("A supervision request must be answered before any free-text input.")
-	errLineUnavailable     = errors.New("The session does not accept free-text input in its current state.")
-	errLineInvalid         = errors.New("The line entered is invalid.")
-	errLineUnsupported     = errors.New("This backend does not support free-text input.")
-	errRuntimeStopped      = errors.New("The Relayer engine is stopped.")
-	errRunStale            = errors.New("This Relayer run is no longer active.")
+	errAuditUnavailable    = errors.New("audit journal unavailable, no decision was sent")
+	errDecisionStale       = errors.New("request is no longer the awaited event")
+	errDecisionInFlight    = errors.New("a decision is already in progress for this agent")
+	errEmptyDecision       = errors.New("an empty answer is not a decision")
+	errUnsupportedDecision = errors.New("answer cannot be encoded for this request")
+	errDeliveryUncertain   = errors.New("delivery state is indeterminate, stop the session before further input")
+	errLineInFlight        = errors.New("a line is already being delivered to this agent")
+	errLinePromptPending   = errors.New("a supervision request must be answered before free-text input")
+	errLineUnavailable     = errors.New("session does not accept free-text input in its current state")
+	errLineInvalid         = errors.New("invalid line")
+	errLineUnsupported     = errors.New("backend does not support free-text input")
+	errRuntimeStopped      = errors.New("the Relayer engine is stopped")
+	errRunStale            = errors.New("this Relayer run is no longer active")
 )
 
 type eventKey struct {
@@ -1143,7 +1143,7 @@ func (a *App) markLineSessionUnavailable(run *runGeneration, sessionKey, status 
 
 func (a *App) ResizeSession(runID, sessionID string, columns, rows int) error {
 	if columns < 1 || rows < 1 || columns > 65535 || rows > 65535 {
-		return errors.New("Invalid terminal dimensions.")
+		return errors.New("invalid terminal dimensions")
 	}
 	run, err := a.activeRun(runID)
 	if err != nil {
@@ -1157,8 +1157,8 @@ func (a *App) ResizeSession(runID, sessionID string, columns, rows int) error {
 	err = run.engine.Resize(ctx, sessionID, terminal.Size{Columns: columns, Rows: rows})
 	cancel()
 	if err != nil {
-		a.emitSafeError(run, "resize_failed", "Resizing the session failed.", sessionID)
-		return errors.New("Resizing the session failed.")
+		a.emitSafeError(run, "resize_failed", "resizing the session failed", sessionID)
+		return errors.New("resizing the session failed")
 	}
 	return nil
 }
@@ -1208,8 +1208,8 @@ func (a *App) StopSession(runID, sessionID string) error {
 		delete(a.stoppingSessions, sessionKey)
 		a.mu.Unlock()
 		a.freezeLineSession(run, sessionKey)
-		a.emitSafeError(run, "stop_failed", "This session could not be stopped cleanly.", sessionID)
-		return errors.New("This session could not be stopped cleanly.")
+		a.emitSafeError(run, "stop_failed", "session could not be stopped cleanly", sessionID)
+		return errors.New("session could not be stopped cleanly")
 	}
 	a.mu.Lock()
 	delete(a.stoppingSessions, sessionKey)
@@ -1238,7 +1238,7 @@ func (a *App) Shutdown() error {
 	})
 	<-a.shutdownDone
 	if a.shutdownErr != nil {
-		return errors.New("Relayer did not shut down completely. Check the local sessions.")
+		return errors.New("shutdown did not complete, check the local sessions")
 	}
 	return nil
 }
