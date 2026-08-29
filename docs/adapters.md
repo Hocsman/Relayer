@@ -108,24 +108,44 @@ A generic match must overlap the active terminal line affected by the newest
 normalized chunk. This prevents old retained output from becoming actionable
 simply because a new unrelated line arrived.
 
-### Known limit: the read boundary is observable
+### The actionable region
 
-That rule ties detection to where a read happened to end, and a prompt is
-rarely the last thing an agent writes. When a question and the frame, option
-list or footer beneath it arrive in a single write, the active line is that
-trailing furniture and the question is missed; the identical bytes split across
-reads are detected. The processor does not reassemble a screen, so it cannot
-currently tell the two apart.
+Detection once kept a match only when it touched that active line, which tied
+supervision to where a read happened to end: a question written together with
+the frame, option list or footer beneath it was missed, while the identical
+bytes split across reads were detected. It failed silently and in the unsafe
+direction, and it was not an edge case — the captured Codex directory-trust
+screen, whose question wraps over three lines above its choices, was detected in
+no chunking at all.
 
-This fails silently and in the unsafe direction: nothing is reported, so the
-agent proceeds unsupervised. Prefer a pattern that matches the last line an
-agent actually leaves on screen — its footer or its option list — over one that
-matches only the question, and use the native tmux attach when supervising an
-agent that repaints a full frame.
+The region is now everything the current write produced, and two rules keep that
+from becoming a flood:
 
-Escaping this limit needs a screen model, which would also change every
-occurrence fingerprint and the snapshot replay contract. It is deliberately not
-attempted yet.
+- The fence parity is unwound backwards from the end of the window, so a match
+  is judged by the fence state at **its own line**. An earlier attempt at
+  widening used the window-end flag and turned a documented example inside a
+  fenced block into a real supervision event.
+- Everything below the match must be the agent's own furniture: decoration, a
+  choice list, a key hint, or a bounded run of blank lines. A question with real
+  content beneath it has been overtaken and is history. The wrapped remainder of
+  a long question is allowed to cross this rule, but only when a choice or a key
+  hint appears below it — without that anchor a paragraph is just output.
+
+The empty tail is furniture by definition, so a match that still reaches the
+active line cannot be rejected. The change is monotone: nothing detected before
+stops being detected.
+
+### What is still not modelled
+
+Relayer normalizes a byte stream; it does not reassemble a screen. Cursor
+addressing that repaints rows out of order, scroll regions and the alternate
+screen are not interpreted, so a prompt an agent paints by jumping the cursor
+around a frame can still be missed. Escaping that needs a real VT grid, which
+would change every occurrence fingerprint and the snapshot replay contract, and
+is deliberately not attempted here.
+
+For an agent that repaints a full frame, the native tmux attach remains the way
+to supervise it directly.
 
 The adapter ignores several common non-prompt contexts on the active line:
 
