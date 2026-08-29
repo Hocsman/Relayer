@@ -9,9 +9,22 @@ const FOCUSABLE = [
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
 
+// Exclude only what is PROVABLY hidden. The obvious test, offsetParent !== null,
+// is a layout proxy that reports null for a fixed-positioned element even when
+// it is plainly on screen — and these dialogs sit inside .modal-layer, which is
+// fixed. Asking the element whether it is hidden answers the actual question,
+// and degrades to "visible" where checkVisibility is unavailable rather than
+// hiding every control.
+function isHidden(element: HTMLElement): boolean {
+  if (element.hasAttribute("hidden")) return true;
+  if (element.getAttribute("aria-hidden") === "true") return true;
+  if (typeof element.checkVisibility === "function") return !element.checkVisibility();
+  return false;
+}
+
 function focusableWithin(container: HTMLElement): HTMLElement[] {
   return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-    (element) => element.offsetParent !== null || element === document.activeElement,
+    (element) => element === document.activeElement || !isHidden(element),
   );
 }
 
