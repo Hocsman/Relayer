@@ -139,6 +139,20 @@ the same report through **Health** and **Check the installation**. See the
 
 ### Desktop GUI (alpha)
 
+![Two agents side by side, one stopped and marked as needing action, with the supervision queue and the audit and policy state on the right](docs/gui-dashboard.png)
+
+The same supervision, in a window. Each agent keeps its own pane; the queue on
+the right is what is waiting for a human, and both agents here are marked
+`SIMULATED` because the demo runs scripted mocks rather than real CLIs.
+
+![A supervision prompt with the end of the agent output, an Allow and a Deny button of equal weight, and a field to answer manually](docs/gui-decision.png)
+
+A prompt carries the end of the agent's own output, so the decision is not made
+on a one-line summary. **Allow** and **Deny** appear only when the adapter has
+verified bytes for them — here the Codex adapter — and they carry the same
+weight, because a supervision tool must not make the permissive answer the one
+the eye picks. Everything else is answered by typing what the CLI expects.
+
 The optional GUI uses Wails v2.14.0 and is currently a source build for macOS
 and Linux. It does not provide functional Windows agent execution, an
 installer, or a published desktop release.
