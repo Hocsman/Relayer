@@ -87,3 +87,17 @@ func TestRunWithOutputPropagatesVersionWriterFailure(t *testing.T) {
 		t.Fatalf("runWithOutput error = %v, want writer error", err)
 	}
 }
+
+// `doctor` is a bare subcommand, so an operator reasonably types `version` the
+// same way. Before this it fell through to the terminal interface and failed by
+// demanding a TTY, which a pipeline or a CI step does not have — a failure the
+// released binary showed and a `go run` in a terminal never would.
+func TestBareVersionSubcommandPrintsTheVersion(t *testing.T) {
+	var output strings.Builder
+	if err := RunWithOutput([]string{"version"}, &output, io.Discard); err != nil {
+		t.Fatalf("relayer version: %v", err)
+	}
+	if !strings.Contains(output.String(), "relayer") {
+		t.Fatalf("version output = %q", output.String())
+	}
+}

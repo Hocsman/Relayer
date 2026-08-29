@@ -8,6 +8,81 @@ without implying semantic-versioning stability before the first release.
 
 Nothing yet.
 
+## [0.1.1-alpha] - 2026-08-29
+
+Alpha still: configuration, adapter, backend and audit APIs may change without
+compatibility guarantees.
+
+### Fixed
+
+- A prompt is found wherever the read boundary fell. Detection kept a match only
+  when it touched the last non-empty line of the accumulated window, so whether
+  an agent was supervised depended on where the operating system happened to end
+  a read: a question written together with the frame, option list or footer
+  beneath it was missed, and the identical bytes split across two reads were
+  caught. Measured against this repository's own captured Codex screen — a
+  question wrapping over three lines above a choice list and a key hint — the
+  generic adapter found nothing in any chunking. Any CLI that paints a prompt
+  that way, which is most of them, was supervised by the default adapter in name
+  only.
+- Codex keeps recording while a prompt is pending. The adapter returned before
+  writing the chunk into its detection window, so a second prompt arriving while
+  a human was deciding was never in the text at all: nothing could recover it,
+  and the request vanished with the agent still waiting on it.
+- The desktop interface no longer weights the permissive answer. **Allow** was
+  the loudest control in the application — a filled gradient with a glow — while
+  **Deny** was a low-opacity tint. In a tool whose purpose is to make a person
+  stop and choose, the eye picked the permissive one. Both carry the same weight
+  now, and the filled treatment is reserved for the single action a screen is
+  asking for.
+- The decision modal can scroll. It had `overflow: hidden`, no maximum height,
+  and its only scroll rule sat behind a media query the shipped window can never
+  reach, so a tall prompt was clipped and took its own controls with it.
+- Text contrast meets WCAG. The faint tier measured 2.99:1 against the surfaces
+  it actually composites onto and failed at every one of its text call sites;
+  all three text tiers were re-spaced to 13.7 / 7.7 / 5.1, measured on the
+  rendered page rather than computed on paper.
+- Focus indicators are visible again. `outline: none` sat in a base rule rather
+  than inside `:focus`, removing the ring in every state, and the settings fields
+  replaced it with a shadow at 0.07 alpha. The three dialogs that had no Escape
+  handler and no focus trap now share one, which also recovers focus when a
+  control is disabled underneath it mid-decision.
+- The top bar no longer reports a queue before a run exists, the agent
+  catalogue no longer cuts its descriptions mid-word, and a session that has
+  exited no longer claims to be under supervision.
+
+### Added
+
+- `internal/screen` renders a terminal byte stream into the grid a person
+  actually sees, with a deliberately total escape parser: every CSI, OSC, DCS,
+  SOS, PM and APC sequence is recognised and consumed. Detection is not wired to
+  it yet — that needs a terminal size the adapters package cannot currently
+  reach — so the two repaint cases it fixes are kept in the suite, running and
+  skipped, naming what has to land.
+- The desktop interface answers with the adapter's own encoding. **Allow** and
+  **Deny** appear for the exact occurrences an adapter has verified bytes for,
+  probed per event rather than assumed per adapter, and the prompt carries the
+  end of the agent's own output so the decision is not made on a one-line
+  summary.
+- Substituted demo agents are marked as such on screen, and the startup facts
+  that used to go only to standard error — which a windowed application does not
+  have — reach the supervisor panel.
+- The README shows the desktop interface. It animated the terminal one and
+  described the other without ever showing it.
+
+### Changed
+
+- The whole interface is English, terminal and desktop, including the
+  configuration file Relayer writes for a new install. French remains only where
+  it is data rather than prose: the sensitivity patterns matched against what an
+  agent prints, which exist to catch French-speaking CLIs.
+- staticcheck's ST1005 applies to the desktop module. Its errors were carrying
+  the sentence shown to the operator; they are ordinary Go errors now, and the
+  interface phrases them where they are displayed.
+- `golang.org/x/sys` moves to v0.44.0, clearing the last advisory govulncheck
+  reported — unreachable from Relayer's code and on a platform the release does
+  not build, but not worth shipping.
+
 ## [0.1.0-alpha] - 2026-08-28
 
 First tagged release. Alpha: configuration, adapter, backend and audit APIs may
