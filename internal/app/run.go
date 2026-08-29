@@ -70,7 +70,11 @@ func runWithOutputAndPreflight(
 	dependencies backendDependencies,
 	preflightRun preflightRunner,
 ) error {
-	versionRequested := false
+	// `doctor` is a bare subcommand, so `version` reads like one too. Without
+	// it the word fell through to the terminal interface and failed by asking
+	// for a TTY — which is what running the released binary showed, since a
+	// pipeline or a CI step has no controlling terminal to give it.
+	versionRequested := len(arguments) == 1 && arguments[0] == "version"
 	for _, argument := range arguments {
 		if argument == "--version" || argument == "-version" {
 			versionRequested = true

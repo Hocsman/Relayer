@@ -494,7 +494,12 @@ func TestTmuxCaptureUsesPrivateServerAndLeavesForeignServerAlone(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(foreignDirectory) })
 	foreignSocket := filepath.Join(foreignDirectory, "foreign.sock")
-	foreign := exec.Command(tmuxPath, "-f", "/dev/null", "-S", foreignSocket, "new-session", "-d", "-s", "foreign", "exec /bin/sleep 30")
+	// The sleep must outlive the whole test, not merely a fast run of it. At 30
+	// seconds this assertion measured elapsed time rather than isolation: under
+	// the race detector the test takes over a minute, the session ended on its
+	// own, tmux destroyed the empty server, and the probe reported interference
+	// that had not happened. The test's own cleanup kills this server.
+	foreign := exec.Command(tmuxPath, "-f", "/dev/null", "-S", foreignSocket, "new-session", "-d", "-s", "foreign", "exec /bin/sleep 86400")
 	if err := createPrivateEnvironment(foreignDirectory); err != nil {
 		t.Fatal(err)
 	}

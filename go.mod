@@ -10,7 +10,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.8.0
 	github.com/creack/pty v1.1.24
 	github.com/mattn/go-runewidth v0.0.16
-	golang.org/x/sys v0.30.0
+	golang.org/x/sys v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
