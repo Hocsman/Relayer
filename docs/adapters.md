@@ -151,17 +151,36 @@ as not repainting and keeps the appended bytes exactly, so nothing changes for
 the common case. The screen follows the terminal size through both backends, at
 start and on every resize.
 
+Detection reads that screen too. For a repainting agent the actionable region is
+the set of rows the write touched — reported by the screen, since on a grid a
+write is rows rather than a range of byte offsets, and a frame drawn top to
+bottom then filled in the middle touches them out of order. The region runs from
+the earliest touched row: it can include a row the write did not touch, never
+exclude one it did, because excluding is the direction that hides a question.
+
+Two consequences worth stating. A question painted into a frame by addressing
+the cursor is detected, which a byte stream could not do. And a question the
+agent has ERASED stops being reported — on a byte window it stayed matchable
+forever, so an operator could be asked to answer something no longer on screen.
+
+An answered question stays painted until the agent redraws without it, so what
+was answered has to be REMEMBERED rather than the text forgotten. A byte window
+solved this by dropping the answered text outright; a screen has no history to
+drop. The memory is a bounded set — two questions can sit on screen at once, and
+answering the second must not resurrect the first — and each entry is tied to
+the row it was answered on, because the same text lower down is a different
+question.
+
 ### What is still not modelled
 
-Detection itself still runs on the normalized byte stream rather than the
-rendered screen. The two differ only for a repainting agent, and for that agent
-what reaches the operator is now correct while what reaches the pattern matcher
-is not yet. Wiring it needs the actionable region expressed over rows rather
-than byte offsets; `internal/adapters/screen_repaint_test.go` carries the case
-that names this.
+The tmux snapshot path reconciles from `capture-pane -p -J`, which joins wrapped
+lines and carries no escape sequences: it is text tmux has already rendered, so
+it does not pass through this screen and cannot report a burst. Reconciliation
+after a native attach therefore still compares whole normalized text.
 
-For an agent that repaints a full frame, the native tmux attach remains the most
-direct way to supervise it.
+Resizing cannot be aligned with a byte offset in the stream, so the grid does
+not reflow: it keeps what fits and waits for the agent to repaint. Until that
+repaint, a wrapped line is wrapped at the old width.
 
 The adapter ignores several common non-prompt contexts on the active line:
 

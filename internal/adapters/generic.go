@@ -53,6 +53,11 @@ func (a *GenericRegexAdapter) Detect(state *DetectionState, chunk []byte) ([]Eve
 		return nil, nil
 	}
 	burstStart := len(state.detectionText)
+	if state.hasRendered {
+		// On a grid the burst is a set of rows, reported by the screen, rather
+		// than everything appended since the last call.
+		burstStart = state.renderedBurst
+	}
 	start, end, ok := state.appendDetectionText(chunk)
 	if !ok || state.pending != nil {
 		return nil, nil
@@ -96,7 +101,7 @@ func (a *GenericRegexAdapter) Detect(state *DetectionState, chunk []byte) ([]Eve
 			// Anything below the match must be the agent's own furniture. Real
 			// content beneath a question means the question was overtaken.
 			if matchLineEnd < len(state.detectionText) &&
-				!furnitureTail(state.detectionText[matchLineEnd+1:]) {
+				!tailIsFurniture(state, state.detectionText[matchLineEnd+1:]) {
 				continue
 			}
 			if quotedMatch(matchLine, matchRange[0]-matchLineStart, matchRange[1]-matchLineStart) {
@@ -125,6 +130,13 @@ func (a *GenericRegexAdapter) Detect(state *DetectionState, chunk []byte) ([]Eve
 				Sensitive: sensitive,
 				Risk:      risk,
 				Metadata:  map[string]string{"pattern": pattern.Name},
+			}
+			// On a rendered screen the answered question stays painted until
+			// the agent redraws without it, so the answer has to be remembered
+			// rather than the text forgotten.
+			if state.hasRendered && state.answersTheSameQuestion(
+				stableSignature(state.SessionID, GenericID, eventType, pattern.Name, match), match) {
+				continue
 			}
 			candidate.Signature = stableSignature(
 				state.SessionID,
@@ -193,4 +205,14 @@ func markdownTableRow(trimmed string) bool {
 		return false
 	}
 	return strings.Count(trimmed, "|") > 2
+}
+
+// tailIsFurniture picks the rule that matches the substrate. A screen's blank
+// rows are an artefact of its height; a byte stream's are output the agent
+// actually wrote.
+func tailIsFurniture(state *DetectionState, tail string) bool {
+	if state != nil && state.hasRendered {
+		return furnitureTailOnScreen(tail)
+	}
+	return furnitureTail(tail)
 }

@@ -148,6 +148,40 @@ func (p *Processor) Consume(chunk []byte) error {
 	// The screen wants the escape sequences the rest of this path throws away.
 	if p.screen != nil {
 		_, _ = p.screen.Write([]byte(complete))
+		if p.screen.Repainted() {
+			// Only once the agent has done something an appended stream cannot
+			// express. Until then the byte window is exact, and swapping the
+			// substrate would change behaviour for every agent to fix one.
+			rendered, burst := p.screen.TextAndBurst()
+			// Once the question has left the SCREEN, forget that it was
+			// answered: the same question asked again is a new question, and
+			// remembering forever would turn this guard into silence.
+			//
+			// Deliberately the visible grid rather than `rendered`, which
+			// carries up to 512 rows of scrollback: a question that scrolled
+			// out of sight is still findable there, so testing against it left
+			// the memory in place for hundreds of lines and swallowed every
+			// re-ask in between.
+			// Bound to the row, not the text. A row that scrolled away or that
+			// the agent rewrote no longer carries the question that was
+			// answered, whatever else the screen happens to show.
+			visible := p.screen.VisibleText()
+			live := make([]answeredQuestion, 0, len(p.state.answered))
+			for _, entry := range p.state.pendingAnswers() {
+				if entry.rowKnown {
+					if p.screen.RowStillShows(entry.row, entry.match) {
+						live = append(live, entry)
+					}
+					continue
+				}
+				if entry.match != "" && strings.Contains(visible, entry.match) {
+					live = append(live, entry)
+				}
+			}
+			p.state.keepAnswered(live)
+			p.state.UseRenderedScreen(rendered, burst, fenceParity(rendered))
+		}
+		p.screen.ClearDirty()
 	}
 	ansiFree := stripansi.Strip(expandCursorForward(complete))
 	detection := normalizeDetectionText(ansiFree)
@@ -266,6 +300,14 @@ func (p *Processor) Acknowledge(eventID string) error {
 		return err
 	}
 	p.pendingSnapshotFingerprint = ""
+	if p.screen != nil {
+		if remembered := p.state.pendingAnswers(); len(remembered) > 0 {
+			newest := remembered[len(remembered)-1]
+			if row, found := p.screen.LocateRow(newest.match); found {
+				p.state.bindAnsweredRow(row)
+			}
+		}
+	}
 	recovered := p.rescanRetainedWindow(signature)
 	p.mu.Unlock()
 	p.emitSemantic(recovered)
@@ -299,6 +341,12 @@ func (p *Processor) rescanRetainedWindow(resolved string) []Event {
 	}()
 
 	probe := NewDetectionState(p.state.SessionID, p.state.AgentID, p.adapter.ID())
+	// The probe must know what has already been answered, or it re-reports every
+	// still-painted question the operator has dealt with — which is exactly what
+	// resolving a second question did to the first.
+	probe.answered = p.state.pendingAnswers()
+	probe.hasRendered = p.state.hasRendered
+	probe.rendered = p.state.rendered
 	candidates, err := p.adapter.Detect(probe, []byte(p.state.detectionText))
 	if err != nil || len(candidates) == 0 {
 		return nil
@@ -377,6 +425,14 @@ func (p *Processor) Resolve(eventID string, deliver func() error) error {
 		return err
 	}
 	p.pendingSnapshotFingerprint = ""
+	if p.screen != nil {
+		if remembered := p.state.pendingAnswers(); len(remembered) > 0 {
+			newest := remembered[len(remembered)-1]
+			if row, found := p.screen.LocateRow(newest.match); found {
+				p.state.bindAnsweredRow(row)
+			}
+		}
+	}
 	recovered := p.rescanRetainedWindow(signature)
 	p.mu.Unlock()
 	p.emitSemantic(recovered)
@@ -622,4 +678,18 @@ func expandCursorForward(value string) string {
 		}
 		return strings.Repeat(" ", count)
 	})
+}
+
+// fenceParity reports whether the end of the text sits inside a markdown code
+// fence. The byte-window path maintains this incrementally as it appends; a
+// rendered screen has no history to accumulate, so it is recomputed from what
+// is currently on screen.
+func fenceParity(text string) bool {
+	inFence := false
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), string(codeFenceMarker)) {
+			inFence = !inFence
+		}
+	}
+	return inFence
 }
