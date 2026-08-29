@@ -31,8 +31,10 @@ func (s *Screen) csi(cmd ansi.Cmd, params ansi.Params) {
 	}
 	switch cmd.Final() {
 	case 'A': // CUU
+		s.repainted = true
 		s.moveCursor(-s.param(params, 0, 1), 0)
 	case 'B': // CUD
+		s.repainted = true
 		s.moveCursor(s.param(params, 0, 1), 0)
 	case 'C': // CUF
 		s.moveCursor(0, s.param(params, 0, 1))
@@ -47,16 +49,22 @@ func (s *Screen) csi(cmd ansi.Cmd, params ansi.Params) {
 	case 'G', '`': // CHA, HPA
 		s.setCursor(s.cursor.row, s.param(params, 0, 1)-1)
 	case 'd': // VPA
+		s.repainted = true
 		s.setCursor(s.param(params, 0, 1)-1, s.cursor.column)
 	case 'H', 'f': // CUP, HVP
+		s.repainted = true
 		s.setCursor(s.param(params, 0, 1)-1, s.param(params, 1, 1)-1)
 	case 'J': // ED
+		s.repainted = true
 		s.eraseDisplay(s.param(params, 0, 0))
 	case 'K': // EL
+		s.repainted = true
 		s.eraseLine(s.param(params, 0, 0))
 	case 'L': // IL
+		s.repainted = true
 		s.insertLines(s.param(params, 0, 1))
 	case 'M': // DL
+		s.repainted = true
 		s.deleteLines(s.param(params, 0, 1))
 	case 'P': // DCH
 		s.deleteCharacters(s.param(params, 0, 1))
@@ -65,10 +73,13 @@ func (s *Screen) csi(cmd ansi.Cmd, params ansi.Params) {
 	case 'X': // ECH
 		s.eraseCharacters(s.param(params, 0, 1))
 	case 'S': // SU
+		s.repainted = true
 		s.scrollUp(s.param(params, 0, 1))
 	case 'T': // SD
+		s.repainted = true
 		s.scrollDown(s.param(params, 0, 1))
 	case 'r': // DECSTBM
+		s.repainted = true
 		s.setScrollRegion(s.param(params, 0, 1)-1, s.param(params, 1, s.height)-1)
 	case 's':
 		s.saved = s.cursor
@@ -111,6 +122,7 @@ func (s *Screen) privateMode(command byte, params ansi.Params) {
 	case 7: // DECAWM
 		s.autowrap = set
 	case 1047, 1049: // alternate screen
+		s.repainted = true
 		s.switchScreen(set)
 	}
 }

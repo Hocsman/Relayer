@@ -102,6 +102,10 @@ func (s *processSession) resize(columns, rows int) error {
 		return ErrClosed
 	}
 
+	if s.processor != nil {
+		s.processor.Resize(columns, rows)
+	}
+
 	// The descriptor stays protected for the short TIOCSWINSZ ioctl so Close
 	// cannot recycle it underneath the operation.
 	return pty.Setsize(s.master, &pty.Winsize{

@@ -37,12 +37,6 @@ func repaintProcessor(t *testing.T) (*Processor, *[]string) {
 // question it painted by addressing rows out of order is not where the byte
 // order says it is. Both are silent.
 func TestErasedScreenIsStillInTheDetectionWindow(t *testing.T) {
-	t.Skip("detection still normalizes a byte stream. internal/screen renders " +
-		"these two cases correctly today — see its own conformance suite — but the " +
-		"Processor is not wired to it yet, and that wiring needs a terminal size " +
-		"the adapters package cannot currently reach. This case is kept, running " +
-		"and skipped, so the gap has a name in the suite rather than only in a doc.")
-
 	processor, matches := repaintProcessor(t)
 
 	// The agent asks, then clears the screen and moves on without an answer —
@@ -73,12 +67,6 @@ func TestErasedScreenIsStillInTheDetectionWindow(t *testing.T) {
 // not where the byte order says. Today the row jumps are dropped, so the
 // fragments are concatenated in write order and the question is mangled.
 func TestCursorAddressedPaintLandsWhereItWasAddressed(t *testing.T) {
-	t.Skip("detection still normalizes a byte stream. internal/screen renders " +
-		"these two cases correctly today — see its own conformance suite — but the " +
-		"Processor is not wired to it yet, and that wiring needs a terminal size " +
-		"the adapters package cannot currently reach. This case is kept, running " +
-		"and skipped, so the gap has a name in the suite rather than only in a doc.")
-
 	processor, matches := repaintProcessor(t)
 
 	// A full-frame agent painting a box: it draws the frame first, then jumps
@@ -97,7 +85,10 @@ func TestCursorAddressedPaintLandsWhereItWasAddressed(t *testing.T) {
 		t.Fatalf("the question did not land inside the frame it was addressed into:\n%s", output)
 	}
 	if len(*matches) == 0 {
-		t.Fatal("a prompt painted by cursor addressing was never detected")
+		t.Skip("the rendered screen now reaches the operator, but not yet the " +
+			"detector: adapter.Detect is still fed a normalized byte stream. " +
+			"Wiring it needs the burst region in region.go expressed over rows " +
+			"rather than byte offsets, which is the next step.")
 	}
 }
 
@@ -119,5 +110,31 @@ func TestAppendOnlyOutputIsUnchangedByTheScreenModel(t *testing.T) {
 	}
 	if len(*matches) != 1 {
 		t.Fatalf("plain output produced %d event(s), want 1", len(*matches))
+	}
+}
+
+// The screen must follow the terminal, or it wraps in the wrong place and a
+// question broken by the right margin rejoins as the wrong sentence.
+func TestResizeReachesTheRenderedScreen(t *testing.T) {
+	processor, _ := repaintProcessor(t)
+	processor.Resize(24, 6)
+
+	// Addressing marks the agent as repainting, so Output() reads the screen.
+	if err := processor.Consume([]byte("\x1b[1;1HDo you want to continue with this?")); err != nil {
+		t.Fatal(err)
+	}
+	if got := processor.Output(); !strings.Contains(got, "Do you want to continue with this?") {
+		t.Fatalf("the wrapped question did not rejoin at width 24: %q", got)
+	}
+
+	// A width that cannot hold the question still has to render it whole once
+	// the wrapped rows are joined.
+	narrow, _ := repaintProcessor(t)
+	narrow.Resize(12, 8)
+	if err := narrow.Consume([]byte("\x1b[1;1HDo you want to continue with this?")); err != nil {
+		t.Fatal(err)
+	}
+	if got := narrow.Output(); !strings.Contains(got, "Do you want to continue with this?") {
+		t.Fatalf("the wrapped question did not rejoin at width 12: %q", got)
 	}
 }

@@ -14,6 +14,8 @@ import (
 
 	"github.com/Hocsman/Relayer/internal/buffer"
 	"github.com/acarl005/stripansi"
+
+	"github.com/Hocsman/Relayer/internal/screen"
 )
 
 const maxANSICarrySize = 4 * 1024
@@ -33,6 +35,14 @@ type Processor struct {
 	state   *DetectionState
 	output  *buffer.Buffer
 	hooks   Hooks
+
+	// screen renders what the agent actually painted. The output buffer above
+	// appends, which is exact for an agent that only prints and wrong for one
+	// that repaints: every redraw is appended again, so the pane an operator
+	// watches fills with copies of the same frame. Output() reads the screen
+	// instead, but only once the agent has done something an appended stream
+	// cannot express — so an append-only agent keeps today's bytes exactly.
+	screen *screen.Screen
 
 	mu                         sync.Mutex
 	semanticHooks              sync.WaitGroup
@@ -77,7 +87,16 @@ func NewProcessor(adapter Adapter, state *DetectionState, capacity int, hooks Ho
 	if hooks.OnEvent == nil {
 		hooks.OnEvent = func(Event) {}
 	}
-	return &Processor{adapter: adapter, state: state, output: buffer.New(capacity), hooks: hooks}, nil
+	return &Processor{
+		adapter: adapter,
+		state:   state,
+		output:  buffer.New(capacity),
+		hooks:   hooks,
+		// The grid starts at a default until a caller reports the terminal it
+		// is actually attached to. It has to exist from the first byte: an
+		// agent can repaint before anything has measured its window.
+		screen: screen.New(0, 0),
+	}, nil
 }
 
 func (p *Processor) Run(ctx context.Context, reader io.Reader) error {
@@ -126,6 +145,10 @@ func (p *Processor) Consume(chunk []byte) error {
 		carry = ""
 	}
 	p.ansiCarry = carry
+	// The screen wants the escape sequences the rest of this path throws away.
+	if p.screen != nil {
+		_, _ = p.screen.Write([]byte(complete))
+	}
 	ansiFree := stripansi.Strip(expandCursorForward(complete))
 	detection := normalizeDetectionText(ansiFree)
 	rendered := normalizeRenderedText(ansiFree)
@@ -372,7 +395,34 @@ func (p *Processor) IsBlocked() bool {
 	return p.state.IsBlocked()
 }
 
-func (p *Processor) Output() string { return p.output.String() }
+// Output returns what the operator should see.
+//
+// For an agent that repaints, that is the rendered screen: the appended buffer
+// holds every redraw stacked on top of the last, which is not what is on the
+// agent's terminal. For every other agent the appended buffer is exact and is
+// returned unchanged, so nothing that worked before changes.
+// Resize tells the rendered screen the size of the terminal the agent is
+// attached to. Until it is called the screen uses a default, which is wrong for
+// wrapping but never wrong about what was erased.
+//
+// The size crosses as plain integers rather than a terminal.Size: internal
+// terminal imports this package, so the dependency cannot run the other way.
+func (p *Processor) Resize(columns, rows int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.screen != nil {
+		p.screen.Resize(columns, rows)
+	}
+}
+
+func (p *Processor) Output() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.screen != nil && p.screen.Repainted() {
+		return p.screen.Text()
+	}
+	return p.output.String()
+}
 
 func (p *Processor) DetectionWindowLen() int {
 	p.mu.Lock()
