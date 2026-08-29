@@ -25,12 +25,24 @@ export function safeEventSummary(event: SupervisionEvent): string {
   return summary || "Interactive confirmation required";
 }
 
+// asSentence casts an engine message into something an operator reads.
+//
+// Go error strings are fragments by convention — lowercase, unpunctuated, meant
+// to be wrapped and concatenated — and the engine's are written that way. The
+// interface is where they become a sentence, which is why this lives here and
+// not in the error value: presentation belongs to the layer that presents.
+function asSentence(message: string): string {
+  const first = message.charAt(0);
+  const cased = first.toLocaleUpperCase() === first ? message : first.toLocaleUpperCase() + message.slice(1);
+  return /[.!?…]$/.test(cased) ? cased : `${cased}.`;
+}
+
 export function safeError(error: unknown, fallback = "An operation failed."): string {
   if (error instanceof Error && error.message.trim()) {
-    return redactForDisplay(error.message.trim());
+    return asSentence(redactForDisplay(error.message.trim()));
   }
   if (typeof error === "string" && error.trim()) {
-    return redactForDisplay(error.trim());
+    return asSentence(redactForDisplay(error.trim()));
   }
   return fallback;
 }

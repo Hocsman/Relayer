@@ -33,9 +33,9 @@ var (
 )
 
 var (
-	errProfilesStale   = errors.New("The configuration has changed. Reload the profiles before trying again.")
-	errProfilesInvalid = errors.New("One or more agent profiles are invalid.")
-	errProfilesSave    = errors.New("The agent profiles could not be saved.")
+	errProfilesStale   = errors.New("configuration has changed, reload the profiles before retrying")
+	errProfilesInvalid = errors.New("one or more agent profiles are invalid")
+	errProfilesSave    = errors.New("agent profiles could not be saved")
 )
 
 type AgentCatalogEntry struct {

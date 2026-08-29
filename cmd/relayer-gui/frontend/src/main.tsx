@@ -19,5 +19,5 @@ try {
     </React.StrictMode>,
   );
 } catch (error) {
-  root.render(<StartupFailure message={safeError(error, "Bridge natif indisponible.")} />);
+  root.render(<StartupFailure message={safeError(error, "The native bridge is unavailable.")} />);
 }
