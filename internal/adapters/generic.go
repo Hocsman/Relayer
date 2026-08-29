@@ -52,12 +52,23 @@ func (a *GenericRegexAdapter) Detect(state *DetectionState, chunk []byte) ([]Eve
 	if len(chunk) == 0 {
 		return nil, nil
 	}
+	burstStart := len(state.detectionText)
 	start, end, ok := state.appendDetectionText(chunk)
 	if !ok || state.pending != nil {
 		return nil, nil
 	}
+	// The region is everything this write produced, not just the line it
+	// happened to end on. burstStart is clamped because the window is trimmed
+	// to its last 16 KiB, which can move the whole text left under a large
+	// write.
+	if burstStart > start {
+		burstStart = start
+	}
 	activeLine := state.detectionText[start:end]
-	if ignoredContext(activeLine, state.inCodeFence) {
+	// Coarse net first: when the whole active line is quoted documentation the
+	// burst is documentation too. Kept behind the per-line gates below so that
+	// a per-line mistake fails toward reporting rather than toward silence.
+	if ignoredContext(activeLine, state.inCodeFence) && burstStart >= start {
 		return nil, nil
 	}
 
@@ -65,12 +76,30 @@ func (a *GenericRegexAdapter) Detect(state *DetectionState, chunk []byte) ([]Eve
 		matches := pattern.regex.FindAllStringIndex(state.detectionText, -1)
 		for index := len(matches) - 1; index >= 0; index-- {
 			matchRange := matches[index]
-			if matchRange[1] <= start || matchRange[0] >= end {
+			if matchRange[1] <= burstStart {
 				continue
 			}
-			lineStart := maxInt(matchRange[0], start) - start
-			lineEnd := minInt(matchRange[1], end) - start
-			if quotedMatch(activeLine, lineStart, lineEnd) {
+			matchLineStart := strings.LastIndexByte(state.detectionText[:matchRange[0]], '\n') + 1
+			matchLineEnd := matchRange[1]
+			if newline := strings.IndexByte(state.detectionText[matchRange[1]:], '\n'); newline >= 0 {
+				matchLineEnd += newline
+			} else {
+				matchLineEnd = len(state.detectionText)
+			}
+			matchLine := state.detectionText[matchLineStart:matchLineEnd]
+			// The fence parity at the MATCH's line, not at the window end. Using
+			// the window-end flag here is what turned a fenced example into a
+			// real supervision event the last time this region was widened.
+			if ignoredContext(matchLine, fenceDepthBefore(state.detectionText, matchLineStart, state.inCodeFence)) {
+				continue
+			}
+			// Anything below the match must be the agent's own furniture. Real
+			// content beneath a question means the question was overtaken.
+			if matchLineEnd < len(state.detectionText) &&
+				!furnitureTail(state.detectionText[matchLineEnd+1:]) {
+				continue
+			}
+			if quotedMatch(matchLine, matchRange[0]-matchLineStart, matchRange[1]-matchLineStart) {
 				continue
 			}
 			match := state.detectionText[matchRange[0]:matchRange[1]]
@@ -150,20 +179,6 @@ func quotedMatch(line string, start, end int) bool {
 		}
 	}
 	return false
-}
-
-func maxInt(left, right int) int {
-	if left > right {
-		return left
-	}
-	return right
-}
-
-func minInt(left, right int) int {
-	if left < right {
-		return left
-	}
-	return right
 }
 
 // markdownTableRow reports a table row, which is quoted documentation rather

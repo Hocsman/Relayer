@@ -101,7 +101,14 @@ func (a *CodexAdapter) Detect(state *DetectionState, chunk []byte) ([]Event, err
 	if len(chunk) == 0 {
 		return nil, nil
 	}
+	// Retain the output before returning on a pending occurrence, the way the
+	// generic adapter does. Returning first meant a Codex session recorded
+	// nothing while a human was deciding, so a second prompt arriving in that
+	// window was never in the detection text and rescanRetainedWindow had
+	// nothing to recover: the request vanished and the agent waited on a
+	// question no operator was shown.
 	if state.pending != nil {
+		state.appendDetectionText(chunk)
 		return nil, nil
 	}
 
