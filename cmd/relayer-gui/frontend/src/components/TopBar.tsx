@@ -24,6 +24,7 @@ export function TopBar({ state, onOpenAgents, onOpenPreflight, onRequestStop }: 
   const transitioning = ["starting", "restarting", "rollback", "stopping"].includes(
     state.runStatus,
   );
+  const hasRun = state.runStatus !== "idle";
   return (
     <header className="topbar">
       <div className="brand">
@@ -37,15 +38,19 @@ export function TopBar({ state, onOpenAgents, onOpenPreflight, onRequestStop }: 
         </div>
       </div>
 
-      <div className="topbar__metrics" aria-label="Run state">
+      <div className="topbar__metrics" role="group" aria-label="Run state">
         <span className={`run-state run-state--${state.runStatus}`}>
           <i aria-hidden="true" />
           {runLabels[state.runStatus]}
         </span>
-        <span className="topbar__metric"><strong>{running}</strong> active</span>
-        <span className={`topbar__metric${waiting ? " topbar__metric--attention" : ""}`}>
-          <strong>{waiting}</strong> pending
-        </span>
+        {hasRun && (
+          <>
+            <span className="topbar__metric"><strong>{running}</strong> active</span>
+            <span className={`topbar__metric${waiting ? " topbar__metric--attention" : ""}`}>
+              <strong>{waiting}</strong> pending
+            </span>
+          </>
+        )}
       </div>
 
       <div className="topbar__actions">
