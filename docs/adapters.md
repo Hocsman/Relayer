@@ -135,17 +135,33 @@ The empty tail is furniture by definition, so a match that still reaches the
 active line cannot be rejected. The change is monotone: nothing detected before
 stops being detected.
 
+### The rendered screen
+
+`internal/screen` renders the byte stream into the grid a person would see:
+cursor addressing, erases, scroll regions, insert and delete, the alternate
+screen, and wrapping at the terminal width. Its escape parser is total — every
+CSI, OSC, DCS, SOS, PM and APC sequence is recognised and consumed, including
+the ones the screen does nothing with, because failing to recognise one would
+print its bytes as text, and an unrecognised erase would leave stale cells live.
+
+What an operator sees comes from that screen as soon as the agent does something
+an appended byte stream cannot express: addresses a row, erases, scrolls a
+region, or switches screens. An agent that only prints and advances is reported
+as not repainting and keeps the appended bytes exactly, so nothing changes for
+the common case. The screen follows the terminal size through both backends, at
+start and on every resize.
+
 ### What is still not modelled
 
-Relayer normalizes a byte stream; it does not reassemble a screen. Cursor
-addressing that repaints rows out of order, scroll regions and the alternate
-screen are not interpreted, so a prompt an agent paints by jumping the cursor
-around a frame can still be missed. Escaping that needs a real VT grid, which
-would change every occurrence fingerprint and the snapshot replay contract, and
-is deliberately not attempted here.
+Detection itself still runs on the normalized byte stream rather than the
+rendered screen. The two differ only for a repainting agent, and for that agent
+what reaches the operator is now correct while what reaches the pattern matcher
+is not yet. Wiring it needs the actionable region expressed over rows rather
+than byte offsets; `internal/adapters/screen_repaint_test.go` carries the case
+that names this.
 
-For an agent that repaints a full frame, the native tmux attach remains the way
-to supervise it directly.
+For an agent that repaints a full frame, the native tmux attach remains the most
+direct way to supervise it.
 
 The adapter ignores several common non-prompt contexts on the active line:
 

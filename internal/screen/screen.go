@@ -69,6 +69,9 @@ func (r *row) clear(from, to int) {
 	}
 }
 
+// text renders one row. A row that wraps keeps its trailing spaces, because the
+// text continues on the next row and the space at the margin is part of the
+// sentence: trimming it joined "continue" to "with".
 func (r row) text() string {
 	var builder strings.Builder
 	for _, current := range r.cells {
@@ -76,6 +79,9 @@ func (r row) text() string {
 			continue
 		}
 		builder.WriteRune(current.value)
+	}
+	if r.wrapped {
+		return builder.String()
 	}
 	return strings.TrimRight(builder.String(), " ")
 }
@@ -104,6 +110,14 @@ type Screen struct {
 	// one. A full-screen TUI switches to it and switches back, and the primary
 	// contents must survive that untouched.
 	alternate *Screen
+
+	// repainted records that the agent has done something a byte stream cannot
+	// express: addressed the cursor to a row, erased, scrolled a region, or
+	// switched screens. Everything else — printable text, carriage returns,
+	// line feeds, cursor movement within a line — an appended byte stream
+	// already renders correctly, so a caller can keep its existing behaviour
+	// for those agents and change only for the ones that need it.
+	repainted bool
 
 	parser  *ansi.Parser
 	handler ansi.Handler
@@ -146,14 +160,17 @@ func clamp(value, low, high int) int {
 }
 
 func (s *Screen) resizeTo(width, height int, keep bool) {
-	width = clamp(width, MinWidth, MaxWidth)
-	height = clamp(height, MinHeight, MaxHeight)
+	// The default has to be chosen before the clamp, not after: clamping zero
+	// yields the minimum, so a caller that has not measured its terminal would
+	// get a 2x1 grid rather than something a frame can be painted into.
 	if width <= 0 {
 		width = defaultWidth
 	}
 	if height <= 0 {
 		height = defaultHeight
 	}
+	width = clamp(width, MinWidth, MaxWidth)
+	height = clamp(height, MinHeight, MaxHeight)
 	previous := s.rows
 	s.width, s.height = width, height
 	s.rows = make([]row, height)
@@ -186,6 +203,11 @@ func (s *Screen) Resize(width, height int) {
 
 // Size reports the current grid dimensions.
 func (s *Screen) Size() (width, height int) { return s.width, s.height }
+
+// Repainted reports whether the agent has ever done something an appended byte
+// stream cannot represent. It is false for an agent that only prints and
+// advances, which is what makes the rendered screen safe to adopt selectively.
+func (s *Screen) Repainted() bool { return s.repainted }
 
 // Write feeds raw terminal bytes, escape sequences included.
 func (s *Screen) Write(data []byte) (int, error) {

@@ -199,3 +199,54 @@ func TestAddressingBeyondTheGridIsClamped(t *testing.T) {
 		t.Fatalf("the in-range write was lost: %q", got)
 	}
 }
+
+// The switch that lets a caller adopt the rendered screen only where a byte
+// stream is actually wrong. An agent that merely prints must be reported as not
+// repainting, or every existing behaviour would change for no reason.
+func TestRepaintedIsFalseForAnAppendOnlyAgent(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{name: "plain text", input: "Building\nCompiling\nOverwrite file? [Y/n]", want: false},
+		{name: "carriage return progress", input: "10%\r50%\r100%", want: false},
+		{name: "backspace and tab", input: "abc\b\bx\ty", want: false},
+		{name: "colour only", input: "\x1b[31mred\x1b[0m plain", want: false},
+		{name: "cursor forward spacing", input: "a\x1b[5Cb", want: false},
+		{name: "window title", input: "\x1b]0;title\x07text", want: false},
+		{name: "erase display", input: "text\x1b[2J", want: true},
+		{name: "absolute addressing", input: "\x1b[3;1Htext", want: true},
+		{name: "erase line", input: "text\x1b[K", want: true},
+		{name: "alternate screen", input: "\x1b[?1049h", want: true},
+		{name: "scroll region", input: "\x1b[2;5r", want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := New(40, 10)
+			if _, err := s.Write([]byte(test.input)); err != nil {
+				t.Fatal(err)
+			}
+			if got := s.Repainted(); got != test.want {
+				t.Fatalf("Repainted() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+// An unmeasured size must fall back to something a frame fits in. Clamping zero
+// yields the minimum, so ordering this wrong produced a 2x1 grid — which is
+// within bounds, and therefore invisible to a test that only checks bounds.
+func TestUnmeasuredSizeUsesTheDefaultNotTheMinimum(t *testing.T) {
+	for _, test := range []struct{ width, height int }{{0, 0}, {-1, -1}} {
+		s := New(test.width, test.height)
+		width, height := s.Size()
+		if width != defaultWidth || height != defaultHeight {
+			t.Fatalf("New(%d,%d) = %dx%d, want the %dx%d default",
+				test.width, test.height, width, height, defaultWidth, defaultHeight)
+		}
+	}
+	// An explicit tiny size is still honoured; only the unset one defaults.
+	if width, _ := New(10, 3).Size(); width != 10 {
+		t.Fatalf("an explicit width was overridden: %d", width)
+	}
+}

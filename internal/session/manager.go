@@ -184,6 +184,9 @@ func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 		return Info{}, err
 	}
 	session.processor = processor
+	// The rendered screen wraps at the terminal width, so it needs the size the
+	// PTY was started with rather than a default.
+	processor.Resize(columns, rows)
 
 	master, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Rows: uint16(clamp(rows, 1, 65535)),

@@ -424,6 +424,8 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 		appliedSize: size,
 		sizeKnown:   true,
 	}
+	// Declared before the processor exists so the size can be applied as soon
+	// as it does: an agent can repaint before anything resizes the pane.
 	managed.processor, err = adapters.NewProcessor(
 		resolvedAdapter,
 		adapters.NewDetectionState(normalized.ID, normalized.ID, adapterDescriptor.ID),
@@ -443,6 +445,9 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 		sessionCancel()
 		return terminal.Info{}, err
 	}
+	// The pane was created at this size, so the rendered screen starts there
+	// rather than at a default it would have to be corrected away from.
+	managed.processor.Resize(size.Columns, size.Rows)
 	initialSnapshot, pipeActive, err := m.inspectRaw(ctx, managed)
 	if err != nil {
 		sessionCancel()
@@ -835,6 +840,10 @@ func (m *Manager) resize(ctx context.Context, id string, size terminal.Size) err
 	defer target.resizeMu.Unlock()
 	if target.sizeApplied(size) {
 		return nil
+	}
+	// The rendered screen wraps at the terminal width, so it follows the pane.
+	if target.processor != nil {
+		target.processor.Resize(size.Columns, size.Rows)
 	}
 	windowID, err := m.verifyPane(ctx, target)
 	if err != nil {
