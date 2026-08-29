@@ -28,6 +28,11 @@ export function SupervisorPanel({
         <span className={`queue-count${state.pendingEvents.length ? " queue-count--active" : ""}`}>
           {state.pendingEvents.length}
         </span>
+        <span className="sr-only" aria-live="polite">
+          {state.pendingEvents.length === 0
+            ? "No supervision request is pending"
+            : `${state.pendingEvents.length} supervision request${state.pendingEvents.length !== 1 ? "s" : ""} pending`}
+        </span>
       </header>
 
       <div className="supervisor__body">

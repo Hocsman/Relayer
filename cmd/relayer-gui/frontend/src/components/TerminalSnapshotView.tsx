@@ -104,6 +104,7 @@ export function TerminalSnapshotView({
         ref={viewportRef}
         className="terminal-snapshot"
         role="log"
+        tabIndex={0}
         aria-label={label}
         aria-live="off"
         onScroll={handleScroll}

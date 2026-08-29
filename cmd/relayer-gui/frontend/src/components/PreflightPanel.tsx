@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useDialogKeyboard } from "../hooks/useDialogKeyboard";
 import type { PreflightCheckStatus, PreflightReport, RelayerBridge } from "../types/relayer";
 
 interface PreflightPanelProps {
@@ -31,6 +32,8 @@ export function PreflightPanel({ bridge, onClose }: PreflightPanelProps) {
   const [report, setReport] = useState<PreflightReport>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const dialogRef = useRef<HTMLElement>(null);
+  useDialogKeyboard(dialogRef, { onClose });
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -72,6 +75,7 @@ export function PreflightPanel({ bridge, onClose }: PreflightPanelProps) {
   return (
     <div className="preflight-layer">
       <section
+        ref={dialogRef}
         className="preflight-panel"
         role="dialog"
         aria-modal="true"
@@ -94,7 +98,7 @@ export function PreflightPanel({ bridge, onClose }: PreflightPanelProps) {
           </button>
         </header>
 
-        <div className="preflight-panel__body" aria-live="polite">
+        <div className="preflight-panel__body">
           {loading && !report ? (
             <div className="preflight-panel__loading">
               <span className="settings-spinner" aria-hidden="true" />
@@ -148,7 +152,13 @@ export function PreflightReportView({
   );
   return (
     <>
-      <section className={`preflight-overview preflight-overview--${report.status}`}>
+      {/* The verdict, not the whole report: the checks finish without the
+          operator doing anything, and announcing the entire subtree reads out
+          every row. */}
+      <section
+        className={`preflight-overview preflight-overview--${report.status}`}
+        role="status"
+      >
         <span className="preflight-overview__mark" aria-hidden="true">
           {report.status === "ready" ? "✓" : report.status === "warning" ? "!" : "×"}
         </span>
@@ -171,11 +181,11 @@ export function PreflightReportView({
         </div>
         <div>
           <dt>Configuration</dt>
-          <dd>v{report.configuration.version} · {report.configuration.agentCount} agent{report.configuration.agentCount > 1 ? "s" : ""}</dd>
+          <dd>v{report.configuration.version} · {report.configuration.agentCount} agent{report.configuration.agentCount !== 1 ? "s" : ""}</dd>
         </div>
         <div>
           <dt>Policies</dt>
-          <dd>{report.configuration.policyRuleCount} rule{report.configuration.policyRuleCount > 1 ? "s" : ""}</dd>
+          <dd>{report.configuration.policyRuleCount} rule{report.configuration.policyRuleCount !== 1 ? "s" : ""}</dd>
         </div>
         <div>
           <dt>Audit</dt>
