@@ -134,7 +134,7 @@ export function AgentSettingsPanel({
     setNotice(undefined);
   };
 
-  const dialogRef = useRef<HTMLElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   const requestClose = () => {
     if (busy) return;
@@ -244,9 +244,8 @@ export function AgentSettingsPanel({
       : dirty ? "Save and start" : "Start the agents";
 
   return (
-    <div className="agent-settings-layer">
+    <div className="agent-settings-layer" ref={dialogRef}>
       <section
-        ref={dialogRef}
         className="agent-settings"
         role="dialog"
         aria-modal="true"

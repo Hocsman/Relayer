@@ -499,7 +499,7 @@ input:focus-visible {
 
 /* The session id is the long value in this row and the only one worth the
    leftover space; the shared 32% cap kept flex:1 from ever granting it. */
-.agent-card__session {
+.agent-card__meta span.agent-card__session {
   flex: 1;
   max-width: none;
 }
@@ -793,7 +793,8 @@ input:focus-visible {
   background: rgba(255, 94, 115, 0.06);
 }
 
-.event-item--selected {
+.event-item.event-item--selected,
+.event-item.event-item--selected:hover {
   border-color: rgba(255, 94, 115, 0.58);
   background: rgba(255, 94, 115, 0.11);
   box-shadow: inset 2px 0 0 var(--red);
@@ -1822,7 +1823,7 @@ input:focus-visible {
   border-color: rgba(146, 163, 194, 0.22);
 }
 
-.catalog-card:has(.catalog-add:hover) {
+.catalog-card:has(.catalog-add:hover:not(:disabled)) {
   border-color: rgba(66, 217, 232, 0.32);
   background: rgba(66, 217, 232, 0.045);
 }
@@ -2039,8 +2040,10 @@ input:focus-visible {
 }
 
 .profile-card__controls button:hover:not(:disabled),
-.argv-editor__title button:hover:not(:disabled),
-
+.argv-editor__title button:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
 
 .profile-card__controls button:disabled,
 .argv-editor__title button:disabled,
