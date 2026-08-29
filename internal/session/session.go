@@ -96,14 +96,22 @@ func (s *processSession) resize(columns, rows int) error {
 	columns = clamp(columns, 1, 65535)
 	rows = clamp(rows, 1, 65535)
 
+	// The rendered screen is told first, and outside fileMu.
+	//
+	// Holding fileMu here while taking the processor lock inverts the order the
+	// rest of this file uses: Resolve and SendLine hold the processor lock and
+	// then call write, which takes fileMu. With closePTY's writer waiting
+	// between them, every later RLock queues behind it and the two paths wait
+	// on each other. The comment below already states the rule for writing;
+	// this is the same rule.
+	if s.processor != nil {
+		s.processor.Resize(columns, rows)
+	}
+
 	s.fileMu.RLock()
 	defer s.fileMu.RUnlock()
 	if s.master == nil {
 		return ErrClosed
-	}
-
-	if s.processor != nil {
-		s.processor.Resize(columns, rows)
 	}
 
 	// The descriptor stays protected for the short TIOCSWINSZ ioctl so Close

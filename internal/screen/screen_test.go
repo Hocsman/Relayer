@@ -250,3 +250,81 @@ func TestUnmeasuredSizeUsesTheDefaultNotTheMinimum(t *testing.T) {
 		t.Fatalf("an explicit width was overridden: %d", width)
 	}
 }
+
+// The burst offset is what lets detection judge the current screen instead of
+// the whole history. Getting it wrong in the narrowing direction hides a
+// question; getting it wrong in the widening direction only costs a dismissal.
+func TestTextAndBurstMarksWhatTheWriteTouched(t *testing.T) {
+	s := New(40, 10)
+	if _, err := s.Write([]byte("first line\nsecond line\n")); err != nil {
+		t.Fatal(err)
+	}
+	s.ClearDirty()
+
+	if _, err := s.Write([]byte("third line")); err != nil {
+		t.Fatal(err)
+	}
+	text, burst := s.TextAndBurst()
+	if got := text[burst:]; got != "third line" {
+		t.Fatalf("burst covers %q, want just the new line", got)
+	}
+
+	// A frame painted out of order: the burst must start at the EARLIEST row
+	// touched, not the last one written.
+	s.ClearDirty()
+	if _, err := s.Write([]byte("\x1b[8;1Hfooter\x1b[6;1Hquestion?")); err != nil {
+		t.Fatal(err)
+	}
+	text, burst = s.TextAndBurst()
+	region := text[burst:]
+	if !strings.Contains(region, "question?") || !strings.Contains(region, "footer") {
+		t.Fatalf("the burst lost part of an out-of-order paint: %q", region)
+	}
+	if strings.Contains(region, "first line") {
+		t.Fatalf("the burst reached back into untouched history: %q", region)
+	}
+}
+
+// A write that changes nothing on screen must not present the whole screen as
+// new work.
+func TestBurstIsEmptyWhenNothingChanged(t *testing.T) {
+	s := New(40, 10)
+	if _, err := s.Write([]byte("settled\n")); err != nil {
+		t.Fatal(err)
+	}
+	s.ClearDirty()
+	if _, err := s.Write([]byte("\x1b[31m\x1b[0m")); err != nil {
+		t.Fatal(err)
+	}
+	text, burst := s.TextAndBurst()
+	if burst != len(text) {
+		t.Fatalf("a colour-only write claimed a burst of %q", text[burst:])
+	}
+}
+
+// Resizing to the size already in use must not look like the agent repainted.
+// A terminal interface resizes on every render, and rebuilding the rows marks
+// them all touched — so without this the actionable region would be the whole
+// screen forever.
+func TestRedundantResizeDoesNotInflateTheBurst(t *testing.T) {
+	s := New(80, 24)
+	if _, err := s.Write([]byte("settled output\n")); err != nil {
+		t.Fatal(err)
+	}
+	s.ClearDirty()
+
+	s.Resize(80, 24)
+	if _, err := s.Write([]byte("new line")); err != nil {
+		t.Fatal(err)
+	}
+	text, burst := s.TextAndBurst()
+	if got := text[burst:]; got != "new line" {
+		t.Fatalf("a redundant resize widened the burst to %q", got)
+	}
+
+	// A real resize is still applied.
+	s.Resize(40, 12)
+	if width, height := s.Size(); width != 40 || height != 12 {
+		t.Fatalf("a real resize was ignored: %dx%d", width, height)
+	}
+}

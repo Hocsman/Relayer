@@ -53,17 +53,27 @@ type row struct {
 	// past the right margin rather than because the agent ended a line. Joining
 	// on it is what makes a question broken by the margin one logical line.
 	wrapped bool
+	// dirty marks a row this write touched. On a byte stream "what the agent
+	// just wrote" is a range of offsets; on a grid it is a set of rows, and a
+	// repaint touches them out of order. Detection needs to know which ones so
+	// it can judge the current screen rather than the whole history.
+	dirty bool
 }
 
+// newRow is a blank row, and a blank row is a change: it replaces whatever was
+// there, which is exactly what an erase or a scroll does.
 func newRow(width int) row {
 	cells := make([]cell, width)
 	for index := range cells {
 		cells[index] = cell{value: ' ', width: 1}
 	}
-	return row{cells: cells}
+	return row{cells: cells, dirty: true}
 }
 
 func (r *row) clear(from, to int) {
+	if to > from {
+		r.dirty = true
+	}
 	for index := from; index < to && index < len(r.cells); index++ {
 		r.cells[index] = cell{value: ' ', width: 1}
 	}
@@ -110,6 +120,14 @@ type Screen struct {
 	// one. A full-screen TUI switches to it and switches back, and the primary
 	// contents must survive that untouched.
 	alternate *Screen
+
+	// scrolledOff counts the rows that have left the top of the grid. Added to
+	// a row's index it gives an absolute coordinate that stays valid while the
+	// screen moves underneath it, which is what lets a caller ask "is that same
+	// row still showing that same thing" rather than "does this text appear
+	// somewhere" — two identical questions in two different rows are two
+	// questions.
+	scrolledOff uint64
 
 	// repainted records that the agent has done something a byte stream cannot
 	// express: addressed the cursor to a row, erased, scrolled a region, or
@@ -194,7 +212,22 @@ func (s *Screen) resizeTo(width, height int, keep bool) {
 }
 
 // Resize adapts the grid to a new terminal size, keeping what fits.
+//
+// A resize to the size already in use does nothing. It has to: rebuilding the
+// rows marks every one of them as touched, so a caller that resizes on each
+// render — which is what a terminal interface does — would report the whole
+// screen as new work on every write, and the actionable region would never
+// narrow.
 func (s *Screen) Resize(width, height int) {
+	if width <= 0 {
+		width = defaultWidth
+	}
+	if height <= 0 {
+		height = defaultHeight
+	}
+	if clamp(width, MinWidth, MaxWidth) == s.width && clamp(height, MinHeight, MaxHeight) == s.height {
+		return
+	}
 	if s.alternate != nil {
 		s.alternate.resizeTo(width, height, true)
 	}
@@ -238,6 +271,7 @@ func (s *Screen) print(r rune) {
 		s.lineFeed()
 	}
 	line := &s.rows[s.cursor.row]
+	line.dirty = true
 	line.cells[s.cursor.column] = cell{value: r, width: int8(width)}
 	for offset := 1; offset < width && s.cursor.column+offset < s.width; offset++ {
 		line.cells[s.cursor.column+offset] = cell{value: ' ', width: 0}
@@ -296,6 +330,7 @@ func (s *Screen) scrollUp(count int) {
 		// Only the main screen keeps history. What scrolls off an alternate
 		// screen is chrome the agent is repainting, not work that happened.
 		if s.alternate == nil && s.scrollTop == 0 {
+			s.scrolledOff++
 			s.scrollback = append(s.scrollback, evicted)
 			if len(s.scrollback) > MaxScrollback {
 				s.scrollback = s.scrollback[len(s.scrollback)-MaxScrollback:]

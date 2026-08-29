@@ -304,6 +304,146 @@ func (s *Screen) Text() string {
 	return strings.Join(lines, "\n")
 }
 
+// TextAndBurst renders the screen and reports where in that text the rows this
+// write touched begin.
+//
+// On a byte stream "what the agent just wrote" is a range of offsets. On a grid
+// it is a set of rows, and a repaint touches them out of order — a frame drawn
+// top to bottom then filled in the middle changes row 1, 3 and 2 in that order.
+// The offset returned is that of the EARLIEST touched row, so the region is
+// contiguous and conservative: it can include a row the write did not touch,
+// never exclude one it did. Excluding is the unsafe direction, because a
+// question in an excluded row is a question nobody is shown.
+//
+// A burst offset of len(text) means this write changed nothing that survives on
+// screen.
+func (s *Screen) TextAndBurst() (text string, burstStart int) {
+	rows := make([]row, 0, len(s.scrollback)+len(s.rows))
+	rows = append(rows, s.scrollback...)
+	rows = append(rows, s.rows...)
+
+	lines := make([]string, 0, len(rows))
+	dirtyLine := -1
+	var current strings.Builder
+	for _, line := range rows {
+		if line.dirty && dirtyLine < 0 {
+			dirtyLine = len(lines)
+		}
+		current.WriteString(line.text())
+		if line.wrapped {
+			continue
+		}
+		lines = append(lines, current.String())
+		current.Reset()
+	}
+	if current.Len() > 0 {
+		lines = append(lines, current.String())
+	}
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	text = strings.Join(lines, "\n")
+
+	if dirtyLine < 0 || dirtyLine >= len(lines) {
+		return text, len(text)
+	}
+	for index := range dirtyLine {
+		burstStart += len(lines[index]) + 1
+	}
+	if burstStart > len(text) {
+		burstStart = len(text)
+	}
+	return text, burstStart
+}
+
+// VisibleText renders only the live grid, without scrollback.
+//
+// Detection reads the scrollback too, because a question can legitimately have
+// scrolled just above the fold. But "is this question still on screen?" must be
+// answered by the screen alone: history keeps a question findable long after the
+// agent stopped showing it, and a memory released by text-matching would then
+// never be released at all.
+func (s *Screen) VisibleText() string {
+	lines := make([]string, 0, len(s.rows))
+	var current strings.Builder
+	for _, line := range s.rows {
+		current.WriteString(line.text())
+		if line.wrapped {
+			continue
+		}
+		lines = append(lines, current.String())
+		current.Reset()
+	}
+	if current.Len() > 0 {
+		lines = append(lines, current.String())
+	}
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// LocateRow finds the last visible row whose logical line contains text, and
+// returns its absolute coordinate.
+//
+// The last, not the first: when a screen shows the same question twice the live
+// one is the lower.
+func (s *Screen) LocateRow(text string) (absolute uint64, found bool) {
+	if text == "" {
+		return 0, false
+	}
+	for index := len(s.rows) - 1; index >= 0; index-- {
+		start := index
+		for start > 0 && s.rows[start-1].wrapped {
+			start--
+		}
+		var joined strings.Builder
+		for row := start; row < len(s.rows); row++ {
+			joined.WriteString(s.rows[row].text())
+			if !s.rows[row].wrapped {
+				break
+			}
+		}
+		if strings.Contains(joined.String(), text) {
+			return s.scrolledOff + uint64(start), true
+		}
+	}
+	return 0, false
+}
+
+// RowStillShows reports whether the absolute row is still on the visible grid
+// and still carries text. A row that scrolled away, or that the agent has
+// rewritten, answers false — which is how a caller learns that what it
+// remembered about that row no longer holds.
+func (s *Screen) RowStillShows(absolute uint64, text string) bool {
+	if absolute < s.scrolledOff {
+		return false
+	}
+	index := int(absolute - s.scrolledOff)
+	if index >= len(s.rows) {
+		return false
+	}
+	var joined strings.Builder
+	for row := index; row < len(s.rows); row++ {
+		joined.WriteString(s.rows[row].text())
+		if !s.rows[row].wrapped {
+			break
+		}
+	}
+	return strings.Contains(joined.String(), text)
+}
+
+// ClearDirty forgets which rows the last write touched, so the next one starts
+// its own burst.
+func (s *Screen) ClearDirty() {
+	for index := range s.rows {
+		s.rows[index].dirty = false
+	}
+	for index := range s.scrollback {
+		s.scrollback[index].dirty = false
+	}
+}
+
 // CursorLine reports the logical line the cursor sits on, which is where an
 // agent that has stopped to ask leaves its question.
 func (s *Screen) CursorLine() string {

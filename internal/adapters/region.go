@@ -81,6 +81,38 @@ func isFenceMarker(line string) bool {
 // The empty tail is furniture by definition, so a match that still reaches the
 // active line can never be rejected by this gate. That makes the change
 // monotone: nothing detected before this rule existed stops being detected.
+// furnitureTailOnScreen is furnitureTail for a rendered screen.
+//
+// The blank-run bound was calibrated for a byte stream, where the gap between a
+// question and a footer was never written: nothing separated them but the lines
+// the agent actually emitted. A grid MATERIALISES that gap — every unused row is
+// a real empty line — so a question pinned near the top with its key hint pinned
+// near the bottom sat behind twenty blank rows and was rejected as overtaken.
+// That is the standard full-screen layout, and the exact agent this screen
+// exists for.
+//
+// Blank rows on a screen carry no information about whether the question was
+// overtaken; only written content does. They are collapsed before the bound
+// applies, so the bound keeps meaning what it meant: how much blank the AGENT
+// wrote, not how tall its terminal happens to be.
+func furnitureTailOnScreen(tail string) bool {
+	lines := strings.Split(tail, "\n")
+	collapsed := make([]string, 0, len(lines))
+	blank := false
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			if blank {
+				continue
+			}
+			blank = true
+		} else {
+			blank = false
+		}
+		collapsed = append(collapsed, line)
+	}
+	return furnitureTail(strings.Join(collapsed, "\n"))
+}
+
 func furnitureTail(tail string) bool {
 	lines := strings.Split(tail, "\n")
 
