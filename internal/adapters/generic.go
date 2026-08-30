@@ -121,6 +121,8 @@ func (a *GenericRegexAdapter) Detect(state *DetectionState, chunk []byte) ([]Eve
 				summary = strings.TrimSpace(pattern.Name)
 			}
 			candidate := Event{
+				questionLine: matchLine,
+
 				SessionID: state.SessionID,
 				AgentID:   state.AgentID,
 				Adapter:   GenericID,
@@ -134,8 +136,7 @@ func (a *GenericRegexAdapter) Detect(state *DetectionState, chunk []byte) ([]Eve
 			// On a rendered screen the answered question stays painted until
 			// the agent redraws without it, so the answer has to be remembered
 			// rather than the text forgotten.
-			if state.hasRendered && state.answersTheSameQuestion(
-				stableSignature(state.SessionID, GenericID, eventType, pattern.Name, match), match) {
+			if state.hasRendered && state.answersTheSameQuestion(matchLine) {
 				continue
 			}
 			candidate.Signature = stableSignature(

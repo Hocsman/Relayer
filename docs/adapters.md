@@ -163,6 +163,15 @@ the cursor is detected, which a byte stream could not do. And a question the
 agent has ERASED stops being reported — on a byte window it stayed matchable
 forever, so an operator could be asked to answer something no longer on screen.
 
+A question is identified by the LINE it was asked on, not by the fragment the
+pattern captured. The shipped `confirmation` pattern captures the literal
+`[y/n]`, so identifying by the fragment made every yes/no question in a session
+the same question and swallowed each one after the first. Comparing fragments by
+substring was worse: the more specific variant is contained in the general one,
+so it was the more dangerous question that got silenced. Whole lines still do
+what that comparison was there for — one line can match several patterns, and
+the same line is the same question whichever pattern found it.
+
 An answered question stays painted until the agent redraws without it, so what
 was answered has to be REMEMBERED rather than the text forgotten. A byte window
 solved this by dropping the answered text outright; a screen has no history to
