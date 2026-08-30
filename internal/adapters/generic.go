@@ -145,6 +145,13 @@ func (a *GenericRegexAdapter) Detect(state *DetectionState, chunk []byte) ([]Eve
 				pattern.Name,
 				match,
 			)
+			// WHERE the question is, taken from the offset this loop already
+			// holds. The screen converted that offset while the text it
+			// rendered was still the text being searched; asking it again after
+			// the operator has answered would be asking about a screen that has
+			// moved on, and asking it by TEXT would find the last row carrying
+			// "[y/n]" rather than this one.
+			candidate.anchor = state.anchorAt(matchLineStart)
 			return []Event{state.replacePending(candidate)}, nil
 		}
 	}

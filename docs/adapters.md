@@ -168,8 +168,64 @@ was answered has to be REMEMBERED rather than the text forgotten. A byte window
 solved this by dropping the answered text outright; a screen has no history to
 drop. The memory is a bounded set — two questions can sit on screen at once, and
 answering the second must not resurrect the first — and each entry is tied to
-the row it was answered on, because the same text lower down is a different
-question.
+the row the question was DETECTED on, because the same text lower down is a
+different question.
+
+That row comes from the render, not from a search. The screen serialises itself
+once and reports, along with the text and the burst, which row painted each
+logical line; the detector converts the offset it already holds into that row at
+the moment it raises the occurrence, and the row travels with the occurrence
+into the memory. Locating the row afterwards by searching the grid for the
+matched text is what the memory used to do, and it returns the LAST row carrying
+that text: with a fragment like `[y/n]`, that is routinely another question, or
+a line detection had explicitly excluded as a candidate — a `log:` prefix, a
+quoted example. The entry then watched a line that never changes and could never
+expire, and the re-asked question was swallowed for good.
+
+A row is named by an identity stamped on the row itself rather than by an index
+plus a count of what scrolled away. The count has to be maintained by every path
+that moves a line, and it was not: it stood still under a scroll region and on
+the alternate screen, so a row that had never moved stopped recognising itself.
+The identity is carried by the row structure that scrolling, insertion and
+deletion already move, so it follows the content it names. An ERASE deliberately
+keeps it: a full-screen agent erases the frame it is about to repaint on every
+tick, and a name that changed every tick would name nothing.
+
+The row of the occurrence awaiting a decision is kept current while the agent
+repaints underneath it. The anchor is taken when the question is detected and
+the operator answers many frames later; an agent that erases and repaints its
+frame at a different height moves the question onto another row without ever
+taking it down, because an erase keeps a row's identity and the content slides
+by one. Only an unambiguous sighting moves the anchor: when two rows show the
+same words there is no way to tell which one the occurrence is.
+
+Once the question is answered the entry no longer follows it. If the frame moves
+AFTER the answer while the answered question is still painted, the entry is
+dropped and the question is put to the operator once more. That is the behaviour
+on the byte window too, so nothing is lost here — and the alternative is worse:
+an entry that goes looking for its words elsewhere would, on a screen where the
+answered question has scrolled away and the same words have been asked again
+lower down, suppress the new question. Two tests pin that case.
+
+The row decides when an entry EXPIRES, not what it suppresses. While an entry is
+alive it silences any candidate of the same signature, wherever that candidate
+sits, because the comparison is still on signature and text. Two questions that
+share a captured fragment are one question to this memory — which is the
+identity of a question rather than its anchor, and is tracked separately.
+
+A match is not always one line. The vendor rules are regexes that run across a
+whole prompt block, so the row check joins as many logical lines as the match
+spans; comparing such a match against a single line could only ever answer
+false, and would release the memory of a prompt plainly still on screen.
+
+No row is adopted from a line detection would have excluded. Uniqueness is not
+candidacy: during a repaint the only row carrying a fragment can be a `log:`
+echo of the answer, and an anchor parked there never changes again.
+
+Abandoning a question is not answering it. A snapshot that comes back empty, a
+snapshot with nothing detectable on it, a process that exited: nobody decided
+anything, so none of them writes into this memory any more. Each used to, which
+left an entry describing a screen the caller had just declared stale.
 
 ### What is still not modelled
 
