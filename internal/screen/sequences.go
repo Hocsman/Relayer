@@ -1,6 +1,7 @@
 package screen
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -139,13 +140,20 @@ func (s *Screen) switchScreen(toAlternate bool) {
 		return
 	}
 	if toAlternate {
+		// nextRowID travels into the saved screen and back out again. Resize
+		// resizes the ALTERNATE screen too, and resizeTo mints identities from
+		// whatever counter that struct holds: leaving it at zero there would
+		// hand the saved primary rows names that are already in use on the live
+		// grid, and a memory anchored on one of them would follow the wrong
+		// line home.
 		saved := &Screen{width: s.width, height: s.height, rows: s.rows,
 			scrollback: s.scrollback, cursor: s.cursor, saved: s.saved,
-			scrollTop: s.scrollTop, scrollBottom: s.scrollBottom, autowrap: s.autowrap}
+			scrollTop: s.scrollTop, scrollBottom: s.scrollBottom, autowrap: s.autowrap,
+			nextRowID: s.nextRowID}
 		s.alternate = saved
 		s.rows = make([]row, s.height)
 		for index := range s.rows {
-			s.rows[index] = newRow(s.width)
+			s.rows[index] = s.newRow(s.width)
 		}
 		s.scrollback = nil
 		s.cursor = cursor{}
@@ -154,6 +162,9 @@ func (s *Screen) switchScreen(toAlternate bool) {
 	}
 	restored := s.alternate
 	s.alternate = nil
+	if restored.nextRowID > s.nextRowID {
+		s.nextRowID = restored.nextRowID
+	}
 	s.rows = restored.rows
 	s.scrollback = restored.scrollback
 	s.cursor = restored.cursor
@@ -164,7 +175,7 @@ func (s *Screen) switchScreen(toAlternate bool) {
 
 func (s *Screen) reset() {
 	for index := range s.rows {
-		s.rows[index] = newRow(s.width)
+		s.rows[index].blank()
 	}
 	s.cursor = cursor{}
 	s.saved = cursor{}
@@ -203,16 +214,16 @@ func (s *Screen) eraseDisplay(mode int) {
 	case 0: // cursor to end
 		s.rows[s.cursor.row].clear(s.cursor.column, s.width)
 		for index := s.cursor.row + 1; index < s.height; index++ {
-			s.rows[index] = newRow(s.width)
+			s.rows[index].blank()
 		}
 	case 1: // start to cursor
 		for index := 0; index < s.cursor.row; index++ {
-			s.rows[index] = newRow(s.width)
+			s.rows[index].blank()
 		}
 		s.rows[s.cursor.row].clear(0, s.cursor.column+1)
 	case 2, 3: // whole display; 3 also drops scrollback
 		for index := range s.rows {
-			s.rows[index] = newRow(s.width)
+			s.rows[index].blank()
 		}
 		if mode == 3 {
 			s.scrollback = nil
@@ -243,7 +254,7 @@ func (s *Screen) insertLines(count int) {
 	}
 	for range count {
 		copy(s.rows[s.cursor.row+1:s.scrollBottom+1], s.rows[s.cursor.row:s.scrollBottom])
-		s.rows[s.cursor.row] = newRow(s.width)
+		s.rows[s.cursor.row] = s.newRow(s.width)
 	}
 }
 
@@ -253,7 +264,7 @@ func (s *Screen) deleteLines(count int) {
 	}
 	for range count {
 		copy(s.rows[s.cursor.row:s.scrollBottom], s.rows[s.cursor.row+1:s.scrollBottom+1])
-		s.rows[s.scrollBottom] = newRow(s.width)
+		s.rows[s.scrollBottom] = s.newRow(s.width)
 	}
 }
 
@@ -273,34 +284,114 @@ func (s *Screen) insertCharacters(count int) {
 	line.clear(from, clamp(from+count, from, s.width))
 }
 
-// Text renders the screen as the operator sees it: scrollback first, then the
-// live grid, with rows joined where they wrapped so a sentence broken by the
-// right margin is one line again. Trailing blank rows are dropped, because a
-// mostly empty screen is not the same as a screen full of blank lines.
-func (s *Screen) Text() string {
-	rows := make([]row, 0, len(s.scrollback)+len(s.rows))
-	rows = append(rows, s.scrollback...)
-	rows = append(rows, s.rows...)
+// serialize renders a set of rows exactly once, and reports for every logical
+// line where it starts in the text and which row painted its first cell.
+//
+// Text, TextAndBurst, Render and VisibleText all go through here on purpose.
+// The offset a caller holds is an offset into THIS text: joined at the wraps,
+// trimmed at the right margin, with trailing blank lines dropped. Any second
+// implementation of that layout would be a second opinion about where a byte
+// is, and the row a match is attributed to would drift from the row the
+// operator is looking at the day the two disagree.
+func serialize(rows []row) (lines []string, lineRows []RowID, firstDirty int) {
+	lines = make([]string, 0, len(rows))
+	lineRows = make([]RowID, 0, len(rows))
+	firstDirty = -1
 
-	lines := make([]string, 0, len(rows))
 	var current strings.Builder
+	owner := RowID(0)
 	joining := false
 	for _, line := range rows {
+		if line.dirty && firstDirty < 0 {
+			firstDirty = len(lines)
+		}
+		if !joining {
+			owner = line.id
+		}
 		current.WriteString(line.text())
 		if line.wrapped {
 			joining = true
 			continue
 		}
 		lines = append(lines, current.String())
+		lineRows = append(lineRows, owner)
 		current.Reset()
 		joining = false
 	}
 	if joining || current.Len() > 0 {
 		lines = append(lines, current.String())
+		lineRows = append(lineRows, owner)
 	}
 	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
 		lines = lines[:len(lines)-1]
+		lineRows = lineRows[:len(lines)]
 	}
+	if firstDirty > len(lines) {
+		firstDirty = -1
+	}
+	return lines, lineRows, firstDirty
+}
+
+func (s *Screen) allRows() []row {
+	rows := make([]row, 0, len(s.scrollback)+len(s.rows))
+	rows = append(rows, s.scrollback...)
+	rows = append(rows, s.rows...)
+	return rows
+}
+
+// Anchors translates a byte offset in the text one render produced into the row
+// that painted it.
+//
+// It is a value, rebuilt whole by each render and never mutated afterwards, so
+// a caller that copies it — the Codex adapter probes by copying its whole
+// detection state — shares a reading of the past, never a handle on the live
+// screen.
+type Anchors struct {
+	lineStart []int
+	lineRow   []RowID
+	textLen   int
+}
+
+// RowAt names the row that painted the byte at offset. It reports false for an
+// offset outside the text the anchors were built from, which is the only honest
+// answer: a coordinate invented for an unknown offset would be a coordinate
+// pointing at the wrong question.
+func (a Anchors) RowAt(offset int) (RowID, bool) {
+	if offset < 0 || offset >= a.textLen || len(a.lineStart) == 0 {
+		return 0, false
+	}
+	index := sort.Search(len(a.lineStart), func(i int) bool { return a.lineStart[i] > offset }) - 1
+	if index < 0 || index >= len(a.lineRow) {
+		return 0, false
+	}
+	return a.lineRow[index], true
+}
+
+func newAnchors(lines []string, lineRows []RowID) Anchors {
+	starts := make([]int, len(lines))
+	offset := 0
+	for index, line := range lines {
+		starts[index] = offset
+		offset += len(line) + 1
+	}
+	// offset has counted one separator too many: strings.Join puts one between
+	// lines, not after the last. An offset at or past the end of the text is
+	// refused rather than attributed to the last line, because a coordinate
+	// invented for an unknown offset is a coordinate pointing at the wrong
+	// question.
+	length := offset - 1
+	if length < 0 {
+		length = 0
+	}
+	return Anchors{lineStart: starts, lineRow: lineRows, textLen: length}
+}
+
+// Text renders the screen as the operator sees it: scrollback first, then the
+// live grid, with rows joined where they wrapped so a sentence broken by the
+// right margin is one line again. Trailing blank rows are dropped, because a
+// mostly empty screen is not the same as a screen full of blank lines.
+func (s *Screen) Text() string {
+	lines, _, _ := serialize(s.allRows())
 	return strings.Join(lines, "\n")
 }
 
@@ -318,42 +409,31 @@ func (s *Screen) Text() string {
 // A burst offset of len(text) means this write changed nothing that survives on
 // screen.
 func (s *Screen) TextAndBurst() (text string, burstStart int) {
-	rows := make([]row, 0, len(s.scrollback)+len(s.rows))
-	rows = append(rows, s.scrollback...)
-	rows = append(rows, s.rows...)
+	text, burstStart, _ = s.Render()
+	return text, burstStart
+}
 
-	lines := make([]string, 0, len(rows))
-	dirtyLine := -1
-	var current strings.Builder
-	for _, line := range rows {
-		if line.dirty && dirtyLine < 0 {
-			dirtyLine = len(lines)
-		}
-		current.WriteString(line.text())
-		if line.wrapped {
-			continue
-		}
-		lines = append(lines, current.String())
-		current.Reset()
-	}
-	if current.Len() > 0 {
-		lines = append(lines, current.String())
-	}
-	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
-		lines = lines[:len(lines)-1]
-	}
+// Render is TextAndBurst plus the map from that text back to the rows.
+//
+// Detection finds a question at a byte offset. Where that question IS on the
+// screen is knowledge this render already has and used to throw away, leaving
+// the caller to search the grid for the matched text later — which finds the
+// wrong row as soon as two rows carry the same fragment, and "[y/n]" is
+// everywhere.
+func (s *Screen) Render() (text string, burstStart int, anchors Anchors) {
+	lines, lineRows, firstDirty := serialize(s.allRows())
 	text = strings.Join(lines, "\n")
-
-	if dirtyLine < 0 || dirtyLine >= len(lines) {
-		return text, len(text)
+	anchors = newAnchors(lines, lineRows)
+	if firstDirty < 0 || firstDirty >= len(lines) {
+		return text, len(text), anchors
 	}
-	for index := range dirtyLine {
+	for index := range firstDirty {
 		burstStart += len(lines[index]) + 1
 	}
 	if burstStart > len(text) {
 		burstStart = len(text)
 	}
-	return text, burstStart
+	return text, burstStart, anchors
 }
 
 // VisibleText renders only the live grid, without scrollback.
@@ -364,73 +444,101 @@ func (s *Screen) TextAndBurst() (text string, burstStart int) {
 // agent stopped showing it, and a memory released by text-matching would then
 // never be released at all.
 func (s *Screen) VisibleText() string {
-	lines := make([]string, 0, len(s.rows))
-	var current strings.Builder
-	for _, line := range s.rows {
-		current.WriteString(line.text())
-		if line.wrapped {
+	lines, _, _ := serialize(s.rows)
+	return strings.Join(lines, "\n")
+}
+
+// RowShows reports whether the named row is still on the visible grid and still
+// carries text.
+//
+// The pair is the point. The row alone would answer yes to a line the agent
+// rewrote with something else; the text alone would answer yes to the same
+// words on another line. A row that scrolled away, that was erased, or that now
+// says something different answers false — which is how a caller learns that
+// what it remembered about that question no longer holds.
+func (s *Screen) RowShows(id RowID, text string) bool {
+	if id == 0 || text == "" {
+		return false
+	}
+	for index := range s.rows {
+		if s.rows[index].id != id {
 			continue
 		}
-		lines = append(lines, current.String())
-		current.Reset()
+		return strings.Contains(s.linesFrom(index, strings.Count(text, "\n")+1), text)
 	}
-	if current.Len() > 0 {
-		lines = append(lines, current.String())
+	return false
+}
+
+// linesFrom joins logical lines starting at a visible row, the way a render
+// joins them.
+//
+// A match is not always one line. The vendor rules are (?is) regexes that run
+// across a whole prompt block — Claude's folder-trust prompt spans five — and
+// such a match is compared against the text a render produced, where those
+// lines are separated by newlines. Comparing it against a single logical line
+// could only ever answer false, which would release the memory of a question
+// plainly still on screen and put it to the operator a second time, the second
+// keystroke reaching an agent that has already moved on.
+func (s *Screen) linesFrom(index, count int) string {
+	if index < 0 || index >= len(s.rows) || count < 1 {
+		return ""
 	}
-	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
-		lines = lines[:len(lines)-1]
+	lines := make([]string, 0, count)
+	for row := index; row < len(s.rows) && len(lines) < count; row++ {
+		lines = append(lines, logicalLineAt(s.rows, row))
+		for row < len(s.rows) && s.rows[row].wrapped {
+			row++
+		}
 	}
 	return strings.Join(lines, "\n")
 }
 
-// LocateRow finds the last visible row whose logical line contains text, and
-// returns its absolute coordinate.
+// UniqueRowShowing names the only visible row whose logical line contains text,
+// and reports false when none does or when more than one does.
 //
-// The last, not the first: when a screen shows the same question twice the live
-// one is the lower.
-func (s *Screen) LocateRow(text string) (absolute uint64, found bool) {
+// It is the last resort for a caller holding no coordinate at all — an
+// occurrence rebuilt from a snapshot, which crossed a process boundary where a
+// screen coordinate has no meaning. Ambiguity is refused rather than guessed:
+// picking one of two identical lines is how a memory latches onto the wrong
+// question in the first place.
+func (s *Screen) UniqueRowShowing(text string) (RowID, string, bool) {
 	if text == "" {
-		return 0, false
+		return 0, "", false
 	}
-	for index := len(s.rows) - 1; index >= 0; index-- {
-		start := index
-		for start > 0 && s.rows[start-1].wrapped {
-			start--
+	span := strings.Count(text, "\n") + 1
+	found := RowID(0)
+	line := ""
+	for index := range s.rows {
+		if index > 0 && s.rows[index-1].wrapped {
+			continue
 		}
-		var joined strings.Builder
-		for row := start; row < len(s.rows); row++ {
-			joined.WriteString(s.rows[row].text())
-			if !s.rows[row].wrapped {
-				break
-			}
+		if !strings.Contains(s.linesFrom(index, span), text) {
+			continue
 		}
-		if strings.Contains(joined.String(), text) {
-			return s.scrolledOff + uint64(start), true
+		if found != 0 {
+			return 0, "", false
 		}
+		found = s.rows[index].id
+		line = logicalLineAt(s.rows, index)
 	}
-	return 0, false
+	return found, line, found != 0
 }
 
-// RowStillShows reports whether the absolute row is still on the visible grid
-// and still carries text. A row that scrolled away, or that the agent has
-// rewritten, answers false — which is how a caller learns that what it
-// remembered about that row no longer holds.
-func (s *Screen) RowStillShows(absolute uint64, text string) bool {
-	if absolute < s.scrolledOff {
-		return false
-	}
-	index := int(absolute - s.scrolledOff)
-	if index >= len(s.rows) {
-		return false
+// logicalLineAt joins the row at index with the wrapped continuation below it,
+// so a question broken by the right margin is read as one line.
+func logicalLineAt(rows []row, index int) string {
+	start := index
+	for start > 0 && rows[start-1].wrapped {
+		start--
 	}
 	var joined strings.Builder
-	for row := index; row < len(s.rows); row++ {
-		joined.WriteString(s.rows[row].text())
-		if !s.rows[row].wrapped {
+	for row := start; row < len(rows); row++ {
+		joined.WriteString(rows[row].text())
+		if !rows[row].wrapped {
 			break
 		}
 	}
-	return strings.Contains(joined.String(), text)
+	return joined.String()
 }
 
 // ClearDirty forgets which rows the last write touched, so the next one starts

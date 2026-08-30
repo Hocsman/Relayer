@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/Hocsman/Relayer/internal/screen"
 )
 
 const detectionWindowSize = 16 * 1024
@@ -49,6 +51,12 @@ type DetectionState struct {
 	renderedBurst int
 	hasRendered   bool
 
+	// renderedAnchors turns an offset in `rendered` back into the row that
+	// painted it. It is the screen's own reading of the text it just produced,
+	// and it is a value for the same reason the two fields above are: the probe
+	// copies the whole state.
+	renderedAnchors screen.Anchors
+
 	// answered is the signature of the occurrence the operator last dealt with,
 	// kept only while that question is still painted.
 	//
@@ -65,33 +73,30 @@ type DetectionState struct {
 }
 
 // answeredQuestion is one question the operator dealt with, tied to the row it
-// was answered on so that the same text lower down is a different question.
+// was detected on.
+//
+// The row decides when the entry EXPIRES: once that row stops carrying the
+// question, the entry goes. It does not decide what the entry SUPPRESSES —
+// answersTheSameQuestion still compares signature and text, so while an entry
+// is alive it silences any candidate of the same signature, wherever that
+// candidate sits. Two questions that share a captured fragment are therefore
+// still one question to this memory, which is #30 and not the anchor: nothing
+// here can tell them apart while "[y/n]" is what a question is called.
+//
+// anchor is the row the MATCH was found on at detection time, carried here from
+// the detector rather than searched for afterwards. A zero anchor means the
+// occurrence reached the state without ever crossing a screen — restored from a
+// snapshot — and is the only case that still has to fall back to text.
 type answeredQuestion struct {
 	signature string
 	match     string
-	row       uint64
-	rowKnown  bool
+	anchor    screen.RowID
 }
 
 // maxAnsweredMemory bounds the set. A screen cannot show an unbounded number of
 // live questions, and a stale entry only costs a suppression that the row check
 // would have released anyway.
 const maxAnsweredMemory = 16
-
-// bindAnsweredRow ties the memory to the row that carried the question.
-//
-// Matching on text alone cannot tell "the question I answered is still sitting
-// there" from "the agent asked the same thing again lower down", so a re-ask
-// arriving in the same write that scrolled the old one away was swallowed. A
-// row coordinate distinguishes them.
-func (s *DetectionState) bindAnsweredRow(row uint64) {
-	if s == nil || len(s.answered) == 0 {
-		return
-	}
-	last := &s.answered[len(s.answered)-1]
-	last.row = row
-	last.rowKnown = true
-}
 
 // pendingAnswers reports the entries whose row still has to be checked, so the
 // Processor can ask the screen about each one.
@@ -112,16 +117,22 @@ func (s *DetectionState) keepAnswered(live []answeredQuestion) {
 
 // rememberAnswered records what the operator just dealt with, so a screen that
 // still shows it does not ask again.
-func (s *DetectionState) rememberAnswered(signature, match string) {
+func (s *DetectionState) rememberAnswered(signature, match string, anchor screen.RowID) {
 	if s == nil || signature == "" {
 		return
 	}
-	for _, entry := range s.answered {
+	for index, entry := range s.answered {
 		if entry.signature == signature && entry.match == match {
+			// The same question answered again on another row is that row's
+			// question now: keep the newer anchor, or the memory would go on
+			// watching a line the operator has finished with.
+			if anchor != 0 {
+				s.answered[index].anchor = anchor
+			}
 			return
 		}
 	}
-	s.answered = append(s.answered, answeredQuestion{signature: signature, match: match})
+	s.answered = append(s.answered, answeredQuestion{signature: signature, match: match, anchor: anchor})
 	if len(s.answered) > maxAnsweredMemory {
 		s.answered = s.answered[len(s.answered)-maxAnsweredMemory:]
 	}
@@ -156,7 +167,7 @@ func (s *DetectionState) answersTheSameQuestion(signature, match string) bool {
 // UseRenderedScreen hands the state the screen text for this chunk, replacing
 // the accumulated byte window. Only the Processor calls this, and only for an
 // agent that has repainted.
-func (s *DetectionState) UseRenderedScreen(text string, burstStart int, inCodeFence bool) {
+func (s *DetectionState) UseRenderedScreen(text string, burstStart int, inCodeFence bool, anchors screen.Anchors) {
 	if s == nil {
 		return
 	}
@@ -164,6 +175,24 @@ func (s *DetectionState) UseRenderedScreen(text string, burstStart int, inCodeFe
 	s.renderedBurst = burstStart
 	s.hasRendered = true
 	s.inCodeFence = inCodeFence
+	s.renderedAnchors = anchors
+}
+
+// anchorAt names the row that painted the byte at offset in the detection text.
+//
+// It answers only on the grid path, where the detection text IS the text the
+// screen rendered and the anchors came out of that same render. On the byte
+// window there is no screen to point at, and inventing a row there would be a
+// coordinate about nothing.
+func (s *DetectionState) anchorAt(offset int) screen.RowID {
+	if s == nil || !s.hasRendered {
+		return 0
+	}
+	id, ok := s.renderedAnchors.RowAt(offset)
+	if !ok {
+		return 0
+	}
+	return id
 }
 
 // NewDetectionState creates independent state for one agent session.
@@ -211,9 +240,23 @@ func (s *DetectionState) acknowledge(eventID string) (string, error) {
 	signature := s.pending.Signature
 	// The match text goes with the signature: it is how the state later notices
 	// that the question has left the screen.
-	s.rememberAnswered(signature, s.pending.Match)
+	s.rememberAnswered(signature, s.pending.Match, s.pending.anchor)
 	s.pending = nil
 	return signature, nil
+}
+
+// discard clears the pending occurrence WITHOUT remembering it as answered.
+//
+// It is for the paths that abandon a question rather than answer it: an empty
+// or undetectable snapshot, a process that exited. Nothing was delivered to the
+// agent there, so there is nothing to suppress later — and remembering it would
+// leave an entry describing a screen the caller has just declared stale, which
+// is how the memory latched on with no way to be released.
+func (s *DetectionState) discard() {
+	if s == nil {
+		return
+	}
+	s.pending = nil
 }
 
 // resetWindow drops the retained text. It is for the paths where the window is

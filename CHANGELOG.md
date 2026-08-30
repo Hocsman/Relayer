@@ -6,7 +6,39 @@ without implying semantic-versioning stability before the first release.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- A question the operator answered stops suppressing a different one. The memory
+  that keeps an answered question from being asked again while it is still
+  painted was tied to a row located after the fact, by searching the grid for the
+  matched text — which returns the last row carrying it. With a fragment like
+  `[y/n]` that is routinely another question, or a line detection had explicitly
+  excluded as a candidate, such as one prefixed `log:`. The entry then watched a
+  line that never changes, so it never expired and the re-asked question was
+  swallowed for good: the operator was never asked and the agent waited forever.
+  The row now comes from the render itself, at the moment the question is
+  detected, and travels with the occurrence.
+
+- An answered question is no longer re-asked after a scroll region moves. Rows
+  were named by an index plus a count of what had scrolled away, and that count
+  stood still under a scroll region whose top is the first row, and on the
+  alternate screen. Rows that had never moved stopped recognising themselves, the
+  memory was released, and the question came back — so the operator answered a
+  second time and the keystroke reached an agent that had already acted on the
+  first. A row is now named by an identity carried on the row itself, which
+  follows the content when scrolling, insertion or deletion move it.
+
+- A frame the agent moves while the operator is deciding no longer re-asks the
+  question. The row is taken when the question is detected and the answer comes
+  many frames later; an agent that erases and repaints its frame at a different
+  height moves the question onto another row without ever taking it down. The
+  row of the occurrence awaiting a decision is now kept current, so the memory
+  written when the operator answers describes where the question actually is.
+
+- Abandoning a question no longer records it as answered. A snapshot that comes
+  back empty, a snapshot with nothing detectable on it, and a process that exited
+  all wrote into that memory, leaving an entry describing a screen the caller had
+  just declared stale. Nobody decided anything on those paths.
 
 ## [0.1.1-alpha] - 2026-08-29
 
