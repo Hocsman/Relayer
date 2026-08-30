@@ -116,6 +116,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		commands = append(commands, m.handleActionableEvent(observed))
+	case session.AdapterEventWithdrawn:
+		commands = append(commands, m.applyWithdrawnEvent(msg.Event.Clone()))
 	case session.Exited:
 		if paneIndex := m.paneIndex(msg.SessionID); paneIndex >= 0 {
 			// Legacy producers may still emit Exited beside the canonical
@@ -475,6 +477,33 @@ func (m *Model) queueHumanEvent(event adapters.Event, evaluation policy.Evaluati
 	return nil
 }
 
+// applyWithdrawnEvent stops asking about a question the agent has taken back.
+//
+// The core withdraws an occurrence once the question has left the agent's
+// screen, so the card an operator is looking at no longer corresponds to
+// anything. Leaving it up invites a decision that the core would now refuse
+// and that, before it did, was written into a terminal doing something else.
+//
+// This is the same state change a tmux snapshot already produces when it no
+// longer shows the prompt, so it takes the same path: the pane unblocks, the
+// queue drops it, and the audit records that the gate opened without a
+// decision being delivered. What was missing was any way for the native PTY
+// backend, which never reconciles from a snapshot, to report it.
+//
+// Only the occurrence actually on offer is taken back. A withdrawal that
+// arrives for one the operator has already answered, or after a later question
+// replaced it, has nothing left to stop asking.
+func (m *Model) applyWithdrawnEvent(event adapters.Event) tea.Cmd {
+	paneIndex := m.paneIndex(event.SessionID)
+	if paneIndex < 0 {
+		return nil
+	}
+	if !m.panes[paneIndex].blocked || m.panes[paneIndex].prompt.ID != event.ID {
+		return nil
+	}
+	return m.reconcileEventWithReason(event.SessionID, nil, "agent_withdrew_occurrence")
+}
+
 func humanPolicyTag(evaluation policy.Evaluation, status string) string {
 	if evaluation.DryRun || status == "dry_run" {
 		return "DRY RUN • ASK"
@@ -777,7 +806,13 @@ func safePolicyField(value string) string {
 	return string(characters)
 }
 
+// reconcileEvent keeps the reason a resync reports, which is what every caller
+// of this name has always meant.
 func (m *Model) reconcileEvent(sessionID string, pending *adapters.Event) tea.Cmd {
+	return m.reconcileEventWithReason(sessionID, pending, "resync_withdrew_occurrence")
+}
+
+func (m *Model) reconcileEventWithReason(sessionID string, pending *adapters.Event, reason string) tea.Cmd {
 	paneIndex := m.paneIndex(sessionID)
 	if paneIndex < 0 {
 		return nil
@@ -804,7 +839,7 @@ func (m *Model) reconcileEvent(sessionID string, pending *adapters.Event) tea.Cm
 	// state change - the gate opened without a decision being delivered - and
 	// it used to leave no trace at all: the pane simply stopped being blocked.
 	if previousID != "" && (pending == nil || pending.ID != previousID) {
-		m.recordEventWithdrawn(paneIndex, withdrawn)
+		m.recordEventWithdrawn(paneIndex, withdrawn, reason)
 	}
 	if pending != nil && !m.panes[paneIndex].exited && !m.eventResolved(sessionID, pending.ID) {
 		current := pending.Clone()

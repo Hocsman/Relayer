@@ -328,3 +328,35 @@ func TestRedundantResizeDoesNotInflateTheBurst(t *testing.T) {
 		t.Fatalf("a real resize was ignored: %dx%d", width, height)
 	}
 }
+
+// Evicted counts what left the view, and only that.
+//
+// An erase removes content without moving a line, and it is precisely the
+// signal that a question stopped being asked; counting it there would make the
+// counter useless for telling an erase from a scroll.
+func TestEvictedCountsMovementAndNotErasure(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		input   string
+		evicted bool
+	}{
+		{"a line feed at the bottom scrolls", "\x1b[6;1H\n", true},
+		{"inserting a line moves the ones below", "\x1b[2;1H\x1b[L", true},
+		{"deleting a line moves the ones below", "\x1b[2;1H\x1b[M", true},
+		{"switching to the alternate screen takes the grid away", "\x1b[?1049h", true},
+		{"erasing the display moves nothing", "\x1b[2J", false},
+		{"erasing a line moves nothing", "\x1b[2;1H\x1b[2K", false},
+		{"printing in place moves nothing", "\x1b[1;1Hhello", false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			grid := New(20, 6)
+			grid.Write([]byte("\x1b[1;1Hone\x1b[2;1Htwo\x1b[3;1Hthree"))
+			before := grid.Evicted()
+			grid.Write([]byte(testCase.input))
+			moved := grid.Evicted() > before
+			if moved != testCase.evicted {
+				t.Fatalf("Evicted moved by %d, want moved=%t", grid.Evicted()-before, testCase.evicted)
+			}
+		})
+	}
+}

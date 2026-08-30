@@ -129,6 +129,10 @@ type Screen struct {
 	// questions.
 	scrolledOff uint64
 
+	// evicted counts every time a line moved out of the visible grid or was
+	// dropped from it. See Evicted for why this is not scrolledOff.
+	evicted uint64
+
 	// repainted records that the agent has done something a byte stream cannot
 	// express: addressed the cursor to a row, erased, scrolled a region, or
 	// switched screens. Everything else — printable text, carriage returns,
@@ -205,6 +209,11 @@ func (s *Screen) resizeTo(width, height int, keep bool) {
 			s.rows[index].wrapped = previous[index].wrapped
 		}
 	}
+	// Rows that did not fit the new height are gone, and every row may have
+	// been truncated in width.
+	if len(previous) > 0 {
+		s.evicted++
+	}
 	s.scrollTop, s.scrollBottom = 0, height-1
 	s.cursor.row = clamp(s.cursor.row, 0, height-1)
 	s.cursor.column = clamp(s.cursor.column, 0, width-1)
@@ -241,6 +250,27 @@ func (s *Screen) Size() (width, height int) { return s.width, s.height }
 // stream cannot represent. It is false for an agent that only prints and
 // advances, which is what makes the rendered screen safe to adopt selectively.
 func (s *Screen) Repainted() bool { return s.repainted }
+
+// Evicted counts, monotonically, every time a line MOVED out of the visible
+// grid or was dropped from it: scrolling either way, inserting or deleting
+// lines, switching screens, resizing.
+//
+// It exists to tell two textually identical situations apart. A question that
+// is no longer on the grid because the agent ERASED it is a question that is no
+// longer asked. A question that is no longer on the grid because it SCROLLED
+// out of view may still be waiting for an answer, and treating it as withdrawn
+// would stop the operator being asked at all. Two equal readings across a pair
+// of writes prove that nothing left the view in between, so a disappearance in
+// that interval can only be an erase or a rewrite in place.
+//
+// It is deliberately not scrolledOff. That one gives a line an absolute
+// coordinate, so it is only maintained where such a coordinate means something
+// — the main screen, no scroll region — and it stands still while a DECSTBM
+// region or an alternate screen moves content out of view. This counter answers
+// the cruder question "did anything leave?" and is incremented unconditionally
+// where lines actually move, so there is no state to keep in agreement with
+// anything else.
+func (s *Screen) Evicted() uint64 { return s.evicted }
 
 // Write feeds raw terminal bytes, escape sequences included.
 func (s *Screen) Write(data []byte) (int, error) {
@@ -326,6 +356,7 @@ func (s *Screen) lineFeed() {
 
 func (s *Screen) scrollUp(count int) {
 	for range count {
+		s.evicted++
 		evicted := s.rows[s.scrollTop]
 		// Only the main screen keeps history. What scrolls off an alternate
 		// screen is chrome the agent is repainting, not work that happened.
@@ -343,6 +374,7 @@ func (s *Screen) scrollUp(count int) {
 
 func (s *Screen) scrollDown(count int) {
 	for range count {
+		s.evicted++
 		copy(s.rows[s.scrollTop+1:s.scrollBottom+1], s.rows[s.scrollTop:s.scrollBottom])
 		s.rows[s.scrollTop] = newRow(s.width)
 	}

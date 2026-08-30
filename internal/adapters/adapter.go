@@ -216,6 +216,22 @@ func (s *DetectionState) acknowledge(eventID string) (string, error) {
 	return signature, nil
 }
 
+// withdrawPending drops the occurrence the agent has taken back off its screen
+// and returns it, so the caller can tell the operator it is gone.
+//
+// Deliberately not acknowledge(): nobody answered this question. acknowledge
+// remembers the occurrence as answered so that a screen still showing it does
+// not ask again — exactly the wrong thing here. A withdrawn question that the
+// agent paints again IS a new question, and the operator has to be asked.
+func (s *DetectionState) withdrawPending() *Event {
+	if s == nil || s.pending == nil {
+		return nil
+	}
+	withdrawn := s.pending
+	s.pending = nil
+	return withdrawn
+}
+
 // resetWindow drops the retained text. It is for the paths where the window is
 // known to be stale rather than merely answered.
 func (s *DetectionState) resetWindow() {

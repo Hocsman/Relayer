@@ -171,6 +171,39 @@ answering the second must not resurrect the first — and each entry is tied to
 the row it was answered on, because the same text lower down is a different
 question.
 
+A question the agent takes back is withdrawn. Detection stopping is not enough
+once an occurrence is already pending: nothing was comparing that occurrence to
+the screen, so a request the agent cancelled by itself stayed on offer, and the
+decision was delivered into a terminal that had gone back to its prompt. Every
+write now reconciles the pending occurrence with the visible grid, and one that
+has left it is withdrawn and reported as withdrawn — the pane unblocks, the
+action queue drops it, and the audit records that the gate opened without a
+decision. A decision that arrives after the withdrawal is refused rather than
+delivered.
+
+The question's TEXT being absent proves nothing, so absence is never the
+evidence. It is absent while the agent is halfway through repainting the frame
+that will show it again — a full-screen frame is larger than one 4 KiB read, so
+the grid is routinely observed between the erase and the redraw. It is absent
+when the question merely scrolled out of view while the agent is still waiting.
+It is absent when the same characters are still on screen but the grid stopped
+joining two wrapped rows into one logical line, which happens whenever an agent
+repaints those rows by addressing them. Withdrawing on any of those would stop
+asking the operator about a live question and leave the agent waiting forever.
+
+REPLACEMENT is the evidence. An occurrence is withdrawn only when it was seen on
+the visible grid under its own identity, when nothing has left the grid since —
+the screen counts evictions: scrolling either way, inserting or deleting lines,
+switching screens, resizing, so equal counts mean the remembered row still
+designates the same place — when that row now carries content that is not blank,
+and when that content is neither the question nor a re-serialisation of the line
+that carried it. A blank row is a frame in progress, not an answer that stopped
+being wanted.
+
+The eviction count is deliberately not `scrolledOff`, which stands still under a
+scroll region or an alternate screen because it exists to give a row an absolute
+coordinate rather than to report that something left.
+
 ### What is still not modelled
 
 The tmux snapshot path reconciles from `capture-pane -p -J`, which joins wrapped
@@ -181,6 +214,22 @@ after a native attach therefore still compares whole normalized text.
 Resizing cannot be aligned with a byte offset in the stream, so the grid does
 not reflow: it keeps what fits and waits for the agent to repaint. Until that
 repaint, a wrapped line is wrapped at the old width.
+
+Withdrawal is narrow on purpose, and everything it cannot prove keeps the
+occurrence pending, which is the behaviour that existed before it. An agent that
+erases its question and then paints nothing at all keeps it, because a blank row
+is indistinguishable from a frame in progress. So does one that takes the
+question back with a gesture that moves lines — deleting the line in place,
+leaving an alternate screen — because those count as evictions and the
+remembered row stops designating anything. And so does an occurrence whose
+question scrolled out of view and never came back, since the row can only be
+re-anchored by seeing the question again.
+
+A match that spans several rows is only anchored while the grid serialises it as
+one logical line. The Claude rules produce such matches.
+
+The legacy `intercept` shim does not observe withdrawals. It keeps its own last
+detection, and that value now outlives an occurrence the agent took back.
 
 The adapter ignores several common non-prompt contexts on the active line:
 

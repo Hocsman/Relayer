@@ -20,12 +20,30 @@ import (
 
 const maxANSICarrySize = 4 * 1024
 
+// screenAnchor ties an occurrence to the row its question was last seen painted
+// on, and to the state of the grid at that moment. An anchor whose eventID no
+// longer matches the pending occurrence is stale by construction, so nothing
+// has to invalidate it.
+type screenAnchor struct {
+	eventID string
+	evicted uint64
+	row     int
+	line    string
+}
+
 // Hooks are invoked synchronously after Processor releases its state lock.
 // OnEvent may inspect Processor state; process termination remains the
 // responsibility of the owning backend rather than an event callback.
 type Hooks struct {
 	OnOutput func()
 	OnEvent  func(Event)
+	// OnEventWithdrawn reports an occurrence the agent has taken back off its
+	// screen before anyone decided on it. It is not a decision and it is not a
+	// failure: the question simply stopped being asked, and whatever is showing
+	// it to the operator has to stop showing it. A caller that ignores this
+	// leaves a card an operator can still click, and the click is refused with
+	// ErrEventMismatch rather than delivered.
+	OnEventWithdrawn func(Event)
 }
 
 // Processor separates raw transport bytes, normalized detection text and the
@@ -43,6 +61,14 @@ type Processor struct {
 	// instead, but only once the agent has done something an appended stream
 	// cannot express — so an append-only agent keeps today's bytes exactly.
 	screen *screen.Screen
+
+	// pendingAnchor is the screen the pending occurrence was last SEEN on.
+	//
+	// It lives on the Processor rather than on DetectionState because it
+	// describes the rendering substrate, not the detection: the Codex adapter
+	// probes by copying the state (`vendorProbe := *state`), and a speculative
+	// probe has no business carrying what the real screen showed.
+	pendingAnchor screenAnchor
 
 	mu                         sync.Mutex
 	semanticHooks              sync.WaitGroup
@@ -86,6 +112,9 @@ func NewProcessor(adapter Adapter, state *DetectionState, capacity int, hooks Ho
 	}
 	if hooks.OnEvent == nil {
 		hooks.OnEvent = func(Event) {}
+	}
+	if hooks.OnEventWithdrawn == nil {
+		hooks.OnEventWithdrawn = func(Event) {}
 	}
 	return &Processor{
 		adapter: adapter,
@@ -139,6 +168,11 @@ func (p *Processor) Consume(chunk []byte) error {
 		return nil
 	}
 	p.mu.Lock()
+	var (
+		withdrawn *Event
+		visible   string
+		onGrid    bool
+	)
 	complete, carry := splitIncompleteANSI(p.ansiCarry + string(chunk))
 	if len(carry) > maxANSICarrySize {
 		complete += carry
@@ -165,7 +199,8 @@ func (p *Processor) Consume(chunk []byte) error {
 			// Bound to the row, not the text. A row that scrolled away or that
 			// the agent rewrote no longer carries the question that was
 			// answered, whatever else the screen happens to show.
-			visible := p.screen.VisibleText()
+			visible = p.screen.VisibleText()
+			onGrid = true
 			live := make([]answeredQuestion, 0, len(p.state.answered))
 			for _, entry := range p.state.pendingAnswers() {
 				if entry.rowKnown {
@@ -180,6 +215,7 @@ func (p *Processor) Consume(chunk []byte) error {
 			}
 			p.state.keepAnswered(live)
 			p.state.UseRenderedScreen(rendered, burst, fenceParity(rendered))
+			withdrawn = p.reconcilePendingWithScreen()
 		}
 		p.screen.ClearDirty()
 	}
@@ -196,6 +232,12 @@ func (p *Processor) Consume(chunk []byte) error {
 	if !p.terminated {
 		events, err = p.adapter.Detect(p.state, []byte(detection))
 	}
+	if onGrid {
+		// The occurrence this write raised did not exist yet when the
+		// reconciliation ran above, so it is anchored here or it would only
+		// become withdrawable after a redraw that happened to keep it.
+		p.sightPendingOnScreen()
+	}
 	if err == nil && len(events) > 0 {
 		fingerprint := p.snapshotFingerprint(p.state.detectionText)
 		p.lastSnapshotFingerprint = fingerprint
@@ -211,6 +253,9 @@ func (p *Processor) Consume(chunk []byte) error {
 	}
 	if rendered != "" {
 		p.hooks.OnOutput()
+	}
+	if withdrawn != nil {
+		p.hooks.OnEventWithdrawn(withdrawn.Clone())
 	}
 	for _, event := range events {
 		func() {
@@ -678,6 +723,111 @@ func expandCursorForward(value string) string {
 		}
 		return strings.Repeat(" ", count)
 	})
+}
+
+// reconcilePendingWithScreen withdraws the occurrence the agent has taken back.
+//
+// Consume keeps the grid current on every write, but until now the only thing
+// it reconciled against that grid was the answered memory. A pending occurrence
+// was never compared to the screen at all, so a question the agent withdrew by
+// itself — a timeout, a cancel, an ESC typed in the attached view — stayed on
+// offer indefinitely. Resolve checks the event ID and the process, not the
+// screen, so the decision was then delivered into a terminal that had gone back
+// to its prompt: a `y` typed into a shell.
+//
+// The whole difficulty is that the question's TEXT being absent proves nothing.
+// It is absent while the agent is halfway through repainting the frame that
+// will show it again — a full-screen frame is larger than one 4 KiB PTY read,
+// so the grid is routinely observed between the erase and the redraw. It is
+// absent when the question merely scrolled out of view while the agent is still
+// waiting. It is even absent when the same characters are still on screen but
+// the grid stopped joining two wrapped rows into one logical line. Withdrawing
+// on any of those stops the operator being asked about a live question and
+// leaves the agent waiting forever — the worse of the two failures, and the one
+// the screen substrate exists to prevent.
+//
+// So absence is never the evidence. REPLACEMENT is. The occurrence is withdrawn
+// only when all of the following hold:
+//
+//  1. the question was SEEN on the visible grid under this occurrence's ID, so
+//     there is a row to talk about. An occurrence raised on the byte window
+//     carries text this grid never rendered; never seen means never withdrawn.
+//  2. nothing has LEFT the grid since that sighting, which Screen.Evicted
+//     reports. Equal counts mean no line scrolled, moved or was dropped, so the
+//     remembered row still designates the same place.
+//  3. that row now carries content that is not blank — a blank row is a frame
+//     in progress, not an answer that stopped being wanted.
+//  4. and that content is neither the question nor a re-serialisation of the
+//     line that carried it. The same characters split differently across rows
+//     are the same question, still being asked.
+//
+// What that leaves uncovered is written down in docs/adapters.md rather than
+// guessed at: an agent that erases its question and then paints nothing at all
+// keeps its occurrence, and so does one that takes the question back with a
+// gesture that moves lines.
+//
+// The caller holds p.mu; the returned occurrence must be published after
+// releasing it, exactly as Consume does with events.
+func (p *Processor) reconcilePendingWithScreen() *Event {
+	if p.state == nil || p.state.pending == nil || p.screen == nil {
+		return nil
+	}
+	if p.state.pending.Match == "" {
+		return nil
+	}
+	p.sightPendingOnScreen()
+	if p.pendingAnchor.eventID != p.state.pending.ID {
+		return nil
+	}
+	if p.pendingAnchor.evicted != p.screen.Evicted() {
+		return nil
+	}
+	line := p.screen.VisibleRowLine(p.pendingAnchor.row)
+	if strings.TrimSpace(line) == "" {
+		return nil
+	}
+	if strings.Contains(line, p.state.pending.Match) {
+		return nil
+	}
+	if strings.HasPrefix(p.pendingAnchor.line, line) || strings.HasPrefix(line, p.pendingAnchor.line) {
+		// The row holds the same content, serialised differently. A wrapped
+		// line the agent repainted row by row stops being joined without a
+		// single character changing on screen.
+		return nil
+	}
+	// The snapshot fingerprint described the screen that carried the question.
+	p.pendingSnapshotFingerprint = ""
+	p.pendingAnchor = screenAnchor{}
+	return p.state.withdrawPending()
+}
+
+// sightPendingOnScreen anchors the occurrence now awaiting a decision to the
+// row it is painted on, if it is painted at this moment.
+//
+// The anchor is refreshed on every sighting rather than kept from the first: a
+// question the agent keeps repainting is still being asked, and each repaint is
+// a fresh proof of that — including after a scroll, which is how an occurrence
+// becomes withdrawable again once it is back in view.
+//
+// The caller holds p.mu.
+func (p *Processor) sightPendingOnScreen() {
+	if p.state == nil || p.state.pending == nil || p.screen == nil {
+		return
+	}
+	match := p.state.pending.Match
+	if match == "" {
+		return
+	}
+	row, line, found := p.screen.VisibleRowOf(match)
+	if !found {
+		return
+	}
+	p.pendingAnchor = screenAnchor{
+		eventID: p.state.pending.ID,
+		evicted: p.screen.Evicted(),
+		row:     row,
+		line:    line,
+	}
 }
 
 // fenceParity reports whether the end of the text sits inside a markdown code

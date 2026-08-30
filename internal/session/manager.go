@@ -177,6 +177,9 @@ func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 			OnEvent: func(event adapters.Event) {
 				m.emit(AdapterEvent{Event: event.Clone()}, true)
 			},
+			OnEventWithdrawn: func(event adapters.Event) {
+				m.emit(AdapterEventWithdrawn{Event: event.Clone()}, true)
+			},
 		},
 	)
 	if err != nil {

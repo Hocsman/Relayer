@@ -6,7 +6,30 @@ without implying semantic-versioning stability before the first release.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- A question the agent takes back stops being asked. Detection was reconciled
+  with the rendered screen, but an occurrence already awaiting a decision never
+  was: nothing compared it to what the agent still had on screen. So a request
+  the agent withdrew by itself — a timeout, a cancellation, an ESC typed in the
+  attached view — stayed on offer indefinitely, and the operator's answer was
+  delivered into a terminal that had gone back to its prompt: a `y` typed into a
+  shell. Every write now reconciles the pending occurrence with the visible
+  grid. One that has left it is withdrawn, the pane unblocks, the action queue
+  drops it, and the audit records that the supervision gate opened without a
+  decision — distinguished from the resync that could already withdraw one. A
+  decision arriving after the withdrawal is refused rather than delivered.
+
+  Absence of the question's text is never the evidence, because it is absent for
+  reasons that have nothing to do with the agent giving up on it: halfway
+  through a repaint larger than one read, after scrolling out of view, or when
+  the grid stops joining two wrapped rows. Replacement is the evidence. The
+  question must have been seen on the visible grid under this occurrence's
+  identity, nothing may have left the grid since, and the row that carried it
+  must now hold content that is neither blank, nor the question, nor the same
+  line serialised differently. Everything that cannot be proved keeps the
+  occurrence pending, which is what happened before; an agent that only appends
+  is untouched.
 
 ## [0.1.1-alpha] - 2026-08-29
 

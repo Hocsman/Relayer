@@ -378,12 +378,16 @@ func automaticDeliveryAudit(err error) (audit.Outcome, string) {
 // supervision gate opens with nobody recording it, so the audit needs to be
 // able to distinguish "answered" from "stopped being asked". The record carries
 // the occurrence identity only; the matched text is never part of the model.
-func (m *Model) recordEventWithdrawn(paneIndex int, event adapters.Event) {
+// The reason travels with the record because the same withdrawal has two very
+// different causes: a resync that came back without the prompt, and an agent
+// that took its own question off the screen. An audit that calls both a resync
+// describes one of them wrongly.
+func (m *Model) recordEventWithdrawn(paneIndex int, event adapters.Event, reason string) {
 	if m.auditUnavailable || !event.Actionable() {
 		return
 	}
 	entry := m.eventAuditEntry(paneIndex, audit.KindEventWithdrawn, event)
 	entry.Outcome = audit.OutcomeCancelled
-	entry.Reason = "resync_withdrew_occurrence"
+	entry.Reason = reason
 	m.recordAudit(paneIndex, entry)
 }
