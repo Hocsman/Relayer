@@ -30,6 +30,19 @@ type AdapterEvent struct {
 
 func (AdapterEvent) sessionEvent() {}
 
+// AdapterEventWithdrawn reports that the agent took its question back off the
+// screen before anyone decided on it.
+//
+// It is neither a decision nor a failure: nobody answered, and there is nothing
+// left to answer. Whatever is showing the occurrence to the operator has to
+// stop showing it, or an operator keeps looking at a card whose question is
+// gone from the agent's terminal.
+type AdapterEventWithdrawn struct {
+	Event adapters.Event
+}
+
+func (AdapterEventWithdrawn) sessionEvent() {}
+
 // Exited is retained for source compatibility. Managers now publish a real
 // AdapterEvent with type process_exit instead of emitting this legacy value.
 type Exited struct {

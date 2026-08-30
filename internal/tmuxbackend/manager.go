@@ -440,6 +440,9 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 					m.emit(session.AdapterEvent{Event: event.Clone()}, true)
 				}
 			},
+			OnEventWithdrawn: func(event adapters.Event) {
+				m.emit(session.AdapterEventWithdrawn{Event: event.Clone()}, true)
+			},
 		})
 	if err != nil {
 		sessionCancel()

@@ -110,3 +110,80 @@ func TestUnblockedPaneRecordsNoWithdrawal(t *testing.T) {
 		}
 	}
 }
+
+// The native PTY backend has no snapshot to reconcile from, so the core tells
+// the interface directly when the agent takes its question back. The pane must
+// unblock and the withdrawal must be audited as what it is.
+func TestAgentWithdrawnOccurrenceUnblocksAndIsAudited(t *testing.T) {
+	backend := newPolicyTestBackend()
+	t.Cleanup(backend.cancel)
+	sink := &tuiAuditSink{}
+	application := newAuditedModel(t, backend, policy.DefaultConfig(), auditedPanes(), sink)
+
+	blocked := automaticEvent("agent-a", "occurrence-1")
+	blocked.Risk = adapters.RiskUnknown
+	blocked.Match = "Do you want to continue? [y/n]"
+	backend.setPending(blocked)
+	application, command := updateModel(t, application, session.AdapterEvent{Event: blocked})
+	application, _ = updateModel(t, application, executeCommand(t, command))
+	if !application.panes[0].blocked {
+		t.Fatal("the pane did not block on the prompt")
+	}
+
+	application, _ = updateModel(t, application, session.AdapterEventWithdrawn{Event: blocked})
+	if application.panes[0].blocked {
+		t.Fatal("the pane stayed blocked after the agent withdrew its question")
+	}
+	if len(application.pending) != 0 {
+		t.Fatalf("the action queue still holds the withdrawn occurrence: %v", application.pending)
+	}
+
+	var withdrawn *audit.Entry
+	entries := sink.entries(t)
+	for index := range entries {
+		if entries[index].Kind == audit.KindEventWithdrawn {
+			withdrawn = &entries[index]
+		}
+	}
+	if withdrawn == nil {
+		t.Fatalf("the withdrawal left no audit record: %#v", entries)
+	}
+	// A resync is not what happened, and an audit that says so is wrong.
+	if withdrawn.Reason != "agent_withdrew_occurrence" {
+		t.Fatalf("withdrawal reason = %q, want agent_withdrew_occurrence", withdrawn.Reason)
+	}
+	if withdrawn.Decision != "" {
+		t.Fatalf("withdrawal recorded a decision: %#v", *withdrawn)
+	}
+	if strings.Contains(sink.raw(), "Do you want to continue?") {
+		t.Fatalf("the matched text leaked into the audit journal: %s", sink.raw())
+	}
+}
+
+// A withdrawal for an occurrence that is no longer the one on offer changes
+// nothing: there is no question to stop asking, and inventing a record would
+// describe a gate that never opened.
+func TestAWithdrawalForAnotherOccurrenceIsIgnored(t *testing.T) {
+	backend := newPolicyTestBackend()
+	t.Cleanup(backend.cancel)
+	sink := &tuiAuditSink{}
+	application := newAuditedModel(t, backend, policy.DefaultConfig(), auditedPanes(), sink)
+
+	blocked := automaticEvent("agent-a", "occurrence-1")
+	blocked.Risk = adapters.RiskUnknown
+	backend.setPending(blocked)
+	application, command := updateModel(t, application, session.AdapterEvent{Event: blocked})
+	application, _ = updateModel(t, application, executeCommand(t, command))
+
+	stale := blocked
+	stale.ID = "occurrence-0"
+	application, _ = updateModel(t, application, session.AdapterEventWithdrawn{Event: stale})
+	if !application.panes[0].blocked {
+		t.Fatal("a stale withdrawal unblocked the pane")
+	}
+	for _, entry := range sink.entries(t) {
+		if entry.Kind == audit.KindEventWithdrawn {
+			t.Fatalf("a stale withdrawal was recorded: %#v", entry)
+		}
+	}
+}
