@@ -6,7 +6,18 @@ without implying semantic-versioning stability before the first release.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- Every yes/no question after the first is asked. A question was identified by
+  the fragment its pattern captured, and the shipped `confirmation` pattern
+  captures the literal `[y/n]` — so two unrelated questions produced the same
+  signature and the second was swallowed: answer `Run 'npm test'? [y/n]` and
+  `Run 'rm -rf /' as root? [y/n]` was never reported. The fallback comparison
+  made it worse, matching captured fragments by substring with no length bound,
+  so the more specific variant was contained in the general one and it was the
+  more dangerous question that got silenced. A question is now identified by the
+  whole line it was asked on, which still keeps the same line from coming back
+  under another pattern's name — the thing the substring comparison existed for.
 
 ## [0.1.1-alpha] - 2026-08-29
 

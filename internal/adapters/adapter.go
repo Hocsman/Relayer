@@ -69,8 +69,11 @@ type DetectionState struct {
 type answeredQuestion struct {
 	signature string
 	match     string
-	row       uint64
-	rowKnown  bool
+	// line is the question as it was asked: the whole logical line the match
+	// sat on. It is what identifies the question; see answersTheSameQuestion.
+	line     string
+	row      uint64
+	rowKnown bool
 }
 
 // maxAnsweredMemory bounds the set. A screen cannot show an unbounded number of
@@ -112,16 +115,16 @@ func (s *DetectionState) keepAnswered(live []answeredQuestion) {
 
 // rememberAnswered records what the operator just dealt with, so a screen that
 // still shows it does not ask again.
-func (s *DetectionState) rememberAnswered(signature, match string) {
+func (s *DetectionState) rememberAnswered(signature, match, line string) {
 	if s == nil || signature == "" {
 		return
 	}
 	for _, entry := range s.answered {
-		if entry.signature == signature && entry.match == match {
+		if entry.signature == signature && entry.match == match && entry.line == line {
 			return
 		}
 	}
-	s.answered = append(s.answered, answeredQuestion{signature: signature, match: match})
+	s.answered = append(s.answered, answeredQuestion{signature: signature, match: match, line: line})
 	if len(s.answered) > maxAnsweredMemory {
 		s.answered = s.answered[len(s.answered)-maxAnsweredMemory:]
 	}
@@ -130,23 +133,34 @@ func (s *DetectionState) rememberAnswered(signature, match string) {
 // answersTheSameQuestion reports whether a candidate is the question the
 // operator already dealt with, still painted on the screen.
 //
-// Signature alone is not enough. One line can match several patterns — the
-// default set matches "Overwrite file? [Y/n]" as an overwrite AND as a yes/no
-// confirmation — so suppressing the answered signature let the same line come
-// straight back under the other pattern's signature. Text that is part of the
-// answered text is part of the answered question.
-func (s *DetectionState) answersTheSameQuestion(signature, match string) bool {
+// The question is the LINE, not the fragment a pattern captured. Identifying it
+// by the fragment made two unrelated questions the same question: the shipped
+// `confirmation` pattern captures the literal "[y/n]", so every yes/no question
+// in a session produced the same signature and the second one was swallowed —
+// "Run 'npm test'? [y/n]" answered, then "Run 'rm -rf /' as root? [y/n]" never
+// reported. Comparing captured fragments by substring made it worse: with no
+// length bound and no comparison of pattern or row, the more SPECIFIC variant
+// was contained in the general one and was the one silenced.
+//
+// Comparing whole lines still does what the fragment comparison was there for.
+// One line can match several patterns — the default set matches "Overwrite
+// file? [Y/n]" as an overwrite AND as a yes/no confirmation — and suppressing
+// only the answered signature let it come straight back under the other
+// pattern's name. Same line, same question, whichever pattern found it.
+//
+// An entry with no line answers false. That is an occurrence this adapter did
+// not raise — a restored session, a vendor probe — and there is nothing to
+// compare; the cost is a question asked twice, never one swallowed.
+func (s *DetectionState) answersTheSameQuestion(line string) bool {
 	if s == nil {
 		return false
 	}
+	asked := strings.TrimSpace(line)
+	if asked == "" {
+		return false
+	}
 	for _, entry := range s.answered {
-		if signature == entry.signature {
-			return true
-		}
-		if match == "" || entry.match == "" {
-			continue
-		}
-		if strings.Contains(entry.match, match) || strings.Contains(match, entry.match) {
+		if entry.line != "" && strings.TrimSpace(entry.line) == asked {
 			return true
 		}
 	}
@@ -210,8 +224,9 @@ func (s *DetectionState) acknowledge(eventID string) (string, error) {
 	}
 	signature := s.pending.Signature
 	// The match text goes with the signature: it is how the state later notices
-	// that the question has left the screen.
-	s.rememberAnswered(signature, s.pending.Match)
+	// that the question has left the screen. The line goes with both: it is how
+	// the state tells this question from the next one.
+	s.rememberAnswered(signature, s.pending.Match, s.pending.questionLine)
 	s.pending = nil
 	return signature, nil
 }
