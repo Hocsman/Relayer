@@ -138,6 +138,8 @@ func (s *Screen) switchScreen(toAlternate bool) {
 	if toAlternate == (s.alternate != nil) {
 		return
 	}
+	// The whole grid leaves the view in either direction.
+	s.evicted++
 	if toAlternate {
 		saved := &Screen{width: s.width, height: s.height, rows: s.rows,
 			scrollback: s.scrollback, cursor: s.cursor, saved: s.saved,
@@ -242,6 +244,7 @@ func (s *Screen) insertLines(count int) {
 		return
 	}
 	for range count {
+		s.evicted++
 		copy(s.rows[s.cursor.row+1:s.scrollBottom+1], s.rows[s.cursor.row:s.scrollBottom])
 		s.rows[s.cursor.row] = newRow(s.width)
 	}
@@ -252,6 +255,7 @@ func (s *Screen) deleteLines(count int) {
 		return
 	}
 	for range count {
+		s.evicted++
 		copy(s.rows[s.cursor.row:s.scrollBottom], s.rows[s.cursor.row+1:s.scrollBottom+1])
 		s.rows[s.scrollBottom] = newRow(s.width)
 	}
@@ -381,6 +385,51 @@ func (s *Screen) VisibleText() string {
 		lines = lines[:len(lines)-1]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// VisibleRowOf reports the visible row at which the logical line containing
+// text begins, and that line as it is currently serialised.
+//
+// The last such line, not the first: when a screen shows the same question
+// twice the live one is the lower. The index is a position on the visible grid,
+// not an absolute coordinate, and it is only meaningful for as long as nothing
+// leaves the grid — which is what Evicted is for.
+func (s *Screen) VisibleRowOf(text string) (index int, line string, found bool) {
+	if text == "" {
+		return 0, "", false
+	}
+	for row := len(s.rows) - 1; row >= 0; row-- {
+		start := row
+		for start > 0 && s.rows[start-1].wrapped {
+			start--
+		}
+		joined := s.visibleLineAt(start)
+		if strings.Contains(joined, text) {
+			return start, joined, true
+		}
+		row = start
+	}
+	return 0, "", false
+}
+
+// VisibleRowLine returns the logical line that begins at a visible row, joined
+// across wrapped rows, or the empty string if the row is off the grid.
+func (s *Screen) VisibleRowLine(index int) string {
+	if index < 0 || index >= len(s.rows) {
+		return ""
+	}
+	return s.visibleLineAt(index)
+}
+
+func (s *Screen) visibleLineAt(index int) string {
+	var joined strings.Builder
+	for row := index; row < len(s.rows); row++ {
+		joined.WriteString(s.rows[row].text())
+		if !s.rows[row].wrapped {
+			break
+		}
+	}
+	return joined.String()
 }
 
 // LocateRow finds the last visible row whose logical line contains text, and
