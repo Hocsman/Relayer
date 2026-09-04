@@ -218,6 +218,9 @@ func TestRepaintedIsFalseForAnAppendOnlyAgent(t *testing.T) {
 		{name: "erase display", input: "text\x1b[2J", want: true},
 		{name: "absolute addressing", input: "\x1b[3;1Htext", want: true},
 		{name: "erase line", input: "text\x1b[K", want: true},
+		{name: "erase characters", input: "text\x1b[2X", want: true},
+		{name: "delete characters", input: "text\x1b[2P", want: true},
+		{name: "cursor back then erase characters", input: "pending [y/N]\x1b[25D\x1b[25X", want: true},
 		{name: "alternate screen", input: "\x1b[?1049h", want: true},
 		{name: "scroll region", input: "\x1b[2;5r", want: true},
 	} {

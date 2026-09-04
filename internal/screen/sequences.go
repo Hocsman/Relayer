@@ -67,10 +67,12 @@ func (s *Screen) csi(cmd ansi.Cmd, params ansi.Params) {
 		s.repainted = true
 		s.deleteLines(s.param(params, 0, 1))
 	case 'P': // DCH
+		s.repainted = true
 		s.deleteCharacters(s.param(params, 0, 1))
 	case '@': // ICH
 		s.insertCharacters(s.param(params, 0, 1))
 	case 'X': // ECH
+		s.repainted = true
 		s.eraseCharacters(s.param(params, 0, 1))
 	case 'S': // SU
 		s.repainted = true
