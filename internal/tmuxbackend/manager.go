@@ -675,6 +675,17 @@ func (m *Manager) Output(id string) (string, error) {
 	return target.processor.Output(), nil
 }
 
+func (m *Manager) AnsiOutput(id string) (string, error) {
+	target, err := m.session(id)
+	if err != nil {
+		return "", err
+	}
+	if target.processor == nil {
+		return "", nil
+	}
+	return target.processor.AnsiOutput(), nil
+}
+
 func (m *Manager) Done(id string) (<-chan struct{}, error) {
 	target, err := m.session(id)
 	if err != nil {
