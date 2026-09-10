@@ -256,8 +256,6 @@ func (r *fakeRunner) sessionID(name string) string {
 	return ""
 }
 
-
-
 func cloneCommandSpec(spec CommandSpec) CommandSpec {
 	return CommandSpec{
 		Path:  spec.Path,

@@ -136,4 +136,3 @@ func argumentIndex(arguments []string, target string) int {
 	}
 	return -1
 }
-

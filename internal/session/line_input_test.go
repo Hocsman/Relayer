@@ -109,4 +109,3 @@ func assertNoPipeOutput(t *testing.T, reader *os.File) {
 	}
 	checkPipeEmpty(t, reader)
 }
-
