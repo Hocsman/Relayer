@@ -65,12 +65,13 @@ type automaticAttempt struct {
 // viewport and pane slices must retain one identity as the number of agents and
 // the visible page change.
 type Model struct {
-	backend      Backend
-	events       <-chan session.Event
-	policy       PolicyEvaluator
-	policyConfig policy.Config
-	auditor      *audit.Recorder
-	auditGate    *deliveryGate
+	backend       Backend
+	events        <-chan session.Event
+	policy        PolicyEvaluator
+	policyConfig  policy.Config
+	policyTracker *policy.Tracker
+	auditor       *audit.Recorder
+	auditGate     *deliveryGate
 	// auditUnavailable is terminal for this Model. Once a synchronous audit
 	// write fails, no further decision or attachment may reach a backend.
 	auditUnavailable bool
@@ -217,6 +218,7 @@ func NewModelWithPolicyAndAudit(
 		events:             events,
 		policy:             evaluator,
 		policyConfig:       evaluator.Config(),
+		policyTracker:      policy.NewTracker(),
 		auditor:            auditor,
 		auditGate:          newDeliveryGate(),
 		panes:              make([]agentPane, len(panes)),

@@ -96,6 +96,7 @@ type DesktopRuntime struct {
 	router        *backendRouter
 	events        chan session.Event
 	policyEngine  *policy.Engine
+	policyTracker *policy.Tracker
 	auditor       *audit.Recorder
 	configuration config.Result
 	configPath    string
@@ -200,6 +201,7 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 		configuration: plan.configuration,
 		configPath:    plan.configPath,
 		policyEngine:  plan.policyEngine,
+		policyTracker: policy.NewTracker(),
 		runID:         runID,
 	}
 	for _, warning := range plan.resolution.Warnings {
@@ -447,7 +449,15 @@ func (r *DesktopRuntime) Evaluate(event adapters.Event) policy.Evaluation {
 	if r == nil || r.policyEngine == nil {
 		return policy.Evaluation{Action: policy.ActionAsk, ProposedAction: policy.ActionAsk, Reason: policy.ReasonNoEngine}
 	}
-	return r.policyEngine.Evaluate(event)
+	evaluation := r.policyEngine.Evaluate(event)
+	if evaluation.Automatic && r.policyTracker != nil {
+		if limitAction, limitReason, allowed := r.policyTracker.CheckLimits(event.SessionID, r.configuration.Policies); !allowed {
+			evaluation.Action = limitAction
+			evaluation.Automatic = false
+			evaluation.Reason = limitReason
+		}
+	}
+	return evaluation
 }
 
 // SupportedDecisions reports the semantic answers the interface may offer for
@@ -493,7 +503,15 @@ func (r *DesktopRuntime) RecordAudit(entry audit.Entry) error {
 	if r == nil || r.auditor == nil {
 		return errors.New("the audit journal is unavailable")
 	}
-	return r.auditor.Record(entry)
+	err := r.auditor.Record(entry)
+	if err == nil && r.policyTracker != nil && entry.Kind == audit.KindDecision {
+		if entry.DecisionBy == audit.DecisionByPolicy {
+			r.policyTracker.RecordAutoDecision(entry.SessionID)
+		} else if entry.DecisionBy == audit.DecisionByHuman {
+			r.policyTracker.RecordHumanDecision(entry.SessionID)
+		}
+	}
+	return err
 }
 
 // BeginShutdown stops backend I/O while deliberately keeping the audit

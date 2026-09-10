@@ -265,6 +265,9 @@ func (m *Model) recordDecision(
 	if actor == audit.DecisionByHuman {
 		entry.Summary = ""
 		entry.Metadata = nil
+		if m.policyTracker != nil {
+			m.policyTracker.RecordHumanDecision(event.SessionID)
+		}
 	}
 	return m.recordAudit(paneIndex, entry)
 }
