@@ -256,15 +256,6 @@ func (r *fakeRunner) sessionID(name string) string {
 	return ""
 }
 
-func argumentIndex(arguments []string, target string) int {
-	for index, argument := range arguments {
-		if argument == target {
-			return index
-		}
-	}
-	return -1
-}
-
 func cloneCommandSpec(spec CommandSpec) CommandSpec {
 	return CommandSpec{
 		Path:  spec.Path,

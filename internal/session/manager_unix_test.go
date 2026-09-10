@@ -443,10 +443,14 @@ func assertPTYSize(t *testing.T, session *processSession, wantColumns, wantRows 
 	t.Helper()
 	session.fileMu.RLock()
 	defer session.fileMu.RUnlock()
-	if session.master == nil {
+	if session.device == nil {
 		t.Fatal("session PTY is closed")
 	}
-	size, err := pty.GetsizeFull(session.master)
+	dev, ok := session.device.(*unixPTYDevice)
+	if !ok {
+		t.Fatal("session device is not a unix PTY")
+	}
+	size, err := pty.GetsizeFull(dev.file)
 	if err != nil {
 		t.Fatalf("reading PTY size: %v", err)
 	}

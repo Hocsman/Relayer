@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -266,15 +267,17 @@ func TestWriteFileUsesPrivatePermissionsAndReadFileIsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fileInfo.Mode().Perm() != 0o600 {
-		t.Fatalf("fixture mode = %o, want 600", fileInfo.Mode().Perm())
-	}
-	directoryInfo, err := os.Stat(filepath.Join(root, "private"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if directoryInfo.Mode().Perm()&0o077 != 0 {
-		t.Fatalf("fixture directory mode = %o, want private", directoryInfo.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		if fileInfo.Mode().Perm() != 0o600 {
+			t.Fatalf("fixture mode = %o, want 600", fileInfo.Mode().Perm())
+		}
+		directoryInfo, err := os.Stat(filepath.Join(root, "private"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if directoryInfo.Mode().Perm()&0o077 != 0 {
+			t.Fatalf("fixture directory mode = %o, want private", directoryInfo.Mode().Perm())
+		}
 	}
 	if _, err := ReadFile(path, anonymizer); err != nil {
 		t.Fatalf("ReadFile: %v", err)

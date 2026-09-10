@@ -76,7 +76,7 @@ and environment overrides, adapter selection, and backend selection.
 
 - Direct mode retains `command` as an exact argument vector. It does not invoke
   a shell or re-tokenize its arguments.
-- Shell mode is explicit and uses `/bin/sh -c` on supported Unix platforms.
+- Shell mode is explicit and uses `/bin/sh -c` on Unix and `cmd.exe /c` on Windows.
 - Relative working directories are made absolute from the configuration
   directory and must already be directories.
 - Environment maps and argument slices are copied during validation.
@@ -116,15 +116,19 @@ successfully are not closed again.
 
 ## PTY backend
 
-The PTY backend uses `github.com/creack/pty` to give a program a controlling
-pseudo-terminal. It owns:
+The PTY backend gives a program a controlling pseudo-terminal. It owns:
 
-- the command and Unix process group;
-- the PTY descriptor;
+- the command and process group (Unix process group or Windows process tree);
+- the PTY descriptor or ConPTY device;
 - a read goroutine that feeds the session processor;
 - a wait goroutine that emits canonical process-exit state;
 - resize and input synchronization;
 - cancellation and descriptor closure during shutdown.
+
+On Unix, the implementation uses `github.com/creack/pty`. On Windows, the
+implementation uses the native Windows Pseudo Console (ConPTY) API via
+`github.com/charmbracelet/x/conpty` to spawn processes and handle pseudoconsole
+I/O and resizing. Process tree cleanup on Windows is handled via `taskkill`.
 
 The application sets `TERM=xterm-256color`. Viewport geometry is converted to
 PTY columns and rows. Context-aware resizing is batched asynchronously by the

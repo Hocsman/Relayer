@@ -3,14 +3,12 @@ package session
 import (
 	"context"
 	"errors"
-	"os"
 	"os/exec"
 	"sync"
 	"time"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/platform"
-	"github.com/creack/pty"
 )
 
 // ErrClosed is returned when an operation targets a PTY that has already been
@@ -46,7 +44,7 @@ type processSession struct {
 	waitErr   error
 
 	fileMu       sync.RWMutex
-	master       *os.File
+	device       ptyDevice
 	closePTYOnce sync.Once
 	stopOnce     sync.Once
 
@@ -80,15 +78,15 @@ func (s *processSession) result() (bool, *int, error) {
 
 func (s *processSession) write(input []byte) error {
 	s.fileMu.RLock()
-	master := s.master
+	device := s.device
 	s.fileMu.RUnlock()
-	if master == nil {
+	if device == nil {
 		return ErrClosed
 	}
 
-	// os.File permits Close concurrently with Write. Do not retain fileMu while
+	// The device permits Close concurrently with Write. Do not retain fileMu while
 	// writing: a saturated PTY must be unblocked by Close during shutdown.
-	_, err := master.Write(input)
+	_, err := device.Write(input)
 	return err
 }
 
@@ -110,26 +108,21 @@ func (s *processSession) resize(columns, rows int) error {
 
 	s.fileMu.RLock()
 	defer s.fileMu.RUnlock()
-	if s.master == nil {
+	if s.device == nil {
 		return ErrClosed
 	}
 
-	// The descriptor stays protected for the short TIOCSWINSZ ioctl so Close
-	// cannot recycle it underneath the operation.
-	return pty.Setsize(s.master, &pty.Winsize{
-		Rows: uint16(rows),
-		Cols: uint16(columns),
-	})
+	return s.device.Resize(columns, rows)
 }
 
 func (s *processSession) closePTY() {
 	s.closePTYOnce.Do(func() {
 		s.fileMu.Lock()
-		master := s.master
-		s.master = nil
+		device := s.device
+		s.device = nil
 		s.fileMu.Unlock()
-		if master != nil {
-			_ = master.Close()
+		if device != nil {
+			_ = device.Close()
 		}
 	})
 }

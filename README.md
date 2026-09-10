@@ -40,8 +40,8 @@ go run github.com/Hocsman/Relayer/cmd/relayer@latest
 ## What works today
 
 - One to eight agents, with up to four visible per page.
-- Exact argument-vector commands, or explicitly requested `/bin/sh -c` shell
-  commands on supported Unix systems.
+- Exact argument-vector commands, or explicitly requested shell commands
+  (`/bin/sh -c` on Unix, `cmd.exe /c` on Windows).
 - PTY, tmux, automatic tmux-to-PTY selection, and mixed concrete backends.
 - A bounded terminal-output view and bounded streaming prompt detection.
 - Deliberate single-line operator input in the TUI and GUI, separate from
@@ -59,7 +59,7 @@ go run github.com/Hocsman/Relayer/cmd/relayer@latest
 - Optional local JSONL audit records with rotation, restrictive Unix
   permissions, bounded fields, and mandatory redaction.
 - Two deterministic Bash mock agents when `agents: []` is configured.
-- An optional source-built Wails desktop GUI for macOS and Linux; the TUI
+- An optional source-built Wails desktop GUI for macOS, Linux, and Windows; the TUI
   remains fully available. Its local agent picker can prepare one to eight
   Claude Code, Codex CLI, MiMo Code, Ollama / DeepSeek, or custom CLI
   launch profiles, then start, stop, or generation-safely restart them without
@@ -75,7 +75,7 @@ or a substitute for reviewing an agent's work. See the
 | --- | --- | --- |
 | Linux | Supported (CI); GUI alpha | PTY backend; tmux backend when tmux is installed. |
 | macOS | Supported (CI); GUI alpha | PTY backend; tmux backend when tmux is installed. |
-| Windows, native | Configuration only | The GUI can edit profiles but refuses agent execution until a tested ConPTY backend exists. |
+| Windows, native | Supported; GUI alpha | Native ConPTY backend for PTY execution. tmux backend unavailable. |
 | WSL | Not validated | No support guarantee during alpha. |
 
 ## Prerequisites

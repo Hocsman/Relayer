@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Hocsman/Relayer/internal/screen"
 )
 
 // EventType describes an observation with a concrete meaning in Relayer.
@@ -47,6 +49,14 @@ type Event struct {
 	Risk      RiskLevel
 	Timestamp time.Time
 	Metadata  map[string]string
+
+	// anchor is the screen row this occurrence was found on, unexported because
+	// it is meaningless outside the process that rendered that screen: it is
+	// never serialized, audited or shown. It travels WITH the occurrence — into
+	// the pending slot, back through Restore when delivery failed, and into the
+	// answered memory — so nothing downstream has to search the grid for text
+	// it already located once.
+	anchor screen.RowID
 }
 
 // NewProcessExitEvent creates the sole lifecycle event currently represented

@@ -152,34 +152,57 @@ func (p *Processor) Consume(chunk []byte) error {
 			// Only once the agent has done something an appended stream cannot
 			// express. Until then the byte window is exact, and swapping the
 			// substrate would change behaviour for every agent to fix one.
-			rendered, burst := p.screen.TextAndBurst()
+			rendered, burst, anchors := p.screen.Render()
 			// Once the question has left the SCREEN, forget that it was
 			// answered: the same question asked again is a new question, and
 			// remembering forever would turn this guard into silence.
 			//
-			// Deliberately the visible grid rather than `rendered`, which
-			// carries up to 512 rows of scrollback: a question that scrolled
-			// out of sight is still findable there, so testing against it left
-			// the memory in place for hundreds of lines and swallowed every
-			// re-ask in between.
-			// Bound to the row, not the text. A row that scrolled away or that
-			// the agent rewrote no longer carries the question that was
-			// answered, whatever else the screen happens to show.
-			visible := p.screen.VisibleText()
+			// Bound to the row the question was DETECTED on, and to the text
+			// that was matched there. The row alone would keep the memory alive
+			// through a line the agent rewrote; the text alone cannot tell the
+			// answered question from the same words lower down.
 			live := make([]answeredQuestion, 0, len(p.state.answered))
 			for _, entry := range p.state.pendingAnswers() {
-				if entry.rowKnown {
-					if p.screen.RowStillShows(entry.row, entry.match) {
+				if entry.anchor != 0 {
+					if p.screen.RowShows(entry.anchor, entry.match) {
 						live = append(live, entry)
 					}
+					// The anchored row no longer carries the question, so the
+					// entry goes. It deliberately does not go looking for the
+					// words elsewhere: on a screen where the answered question
+					// has scrolled away and the SAME words have been asked
+					// again lower down, adopting that row would suppress the
+					// new question — the failure this whole memory exists to
+					// avoid. Two tests pin that, and re-adoption here breaks
+					// both.
+					//
+					// What that costs is written in docs/adapters.md: an agent
+					// that moves its frame AFTER the answer, while still
+					// showing the answered question, has it put to the operator
+					// once more. Moving it BEFORE the answer is handled, by
+					// keeping the pending occurrence's anchor current.
 					continue
 				}
-				if entry.match != "" && strings.Contains(visible, entry.match) {
+				// No coordinate: the occurrence was raised before this agent
+				// ever repainted, so it crossed no screen. Adopt a row the
+				// first time exactly one shows the answered text — one line is
+				// not a guess — and otherwise let the entry go.
+				//
+				// Letting it go can cost a question being put to the operator
+				// twice, on a screen that already shows those words twice. The
+				// alternative costs an entry that no row can ever release,
+				// which is unbounded in time and is the defect this change is
+				// about. Searching the whole visible grid for the text, which
+				// is what stood here, is that unbounded case.
+				if row, line, unique := p.screen.UniqueRowShowing(entry.match); unique &&
+					!ignoredContext(line, false) {
+					entry.anchor = row
 					live = append(live, entry)
 				}
 			}
 			p.state.keepAnswered(live)
-			p.state.UseRenderedScreen(rendered, burst, fenceParity(rendered))
+			p.refreshPendingAnchor()
+			p.state.UseRenderedScreen(rendered, burst, fenceParity(rendered), anchors)
 		}
 		p.screen.ClearDirty()
 	}
@@ -247,7 +270,7 @@ func (p *Processor) ReconcileSnapshot(raw []byte) (*Event, bool, error) {
 
 	if active == "" {
 		changed := p.state.pending != nil
-		_, _ = p.state.acknowledge("")
+		p.state.discard()
 		// The screen is empty, so the retained text no longer describes it.
 		p.state.resetWindow()
 		p.pendingSnapshotFingerprint = ""
@@ -260,7 +283,7 @@ func (p *Processor) ReconcileSnapshot(raw []byte) (*Event, bool, error) {
 	}
 	if len(candidates) == 0 {
 		changed := p.state.pending != nil
-		_, _ = p.state.acknowledge("")
+		p.state.discard()
 		// The snapshot is authoritative about the screen: nothing detectable is
 		// on it, so the retained text is stale.
 		p.state.resetWindow()
@@ -300,14 +323,6 @@ func (p *Processor) Acknowledge(eventID string) error {
 		return err
 	}
 	p.pendingSnapshotFingerprint = ""
-	if p.screen != nil {
-		if remembered := p.state.pendingAnswers(); len(remembered) > 0 {
-			newest := remembered[len(remembered)-1]
-			if row, found := p.screen.LocateRow(newest.match); found {
-				p.state.bindAnsweredRow(row)
-			}
-		}
-	}
 	recovered := p.rescanRetainedWindow(signature)
 	p.mu.Unlock()
 	p.emitSemantic(recovered)
@@ -347,6 +362,12 @@ func (p *Processor) rescanRetainedWindow(resolved string) []Event {
 	probe.answered = p.state.pendingAnswers()
 	probe.hasRendered = p.state.hasRendered
 	probe.rendered = p.state.rendered
+	// The anchors go with the text they describe. Without them the probe reads
+	// the same rendered screen but can name no row, so every occurrence the
+	// rescan recovers would reach the memory with no coordinate — the one case
+	// this change exists to remove, reintroduced on a path that has its own
+	// tests.
+	probe.renderedAnchors = p.state.renderedAnchors
 	candidates, err := p.adapter.Detect(probe, []byte(p.state.detectionText))
 	if err != nil || len(candidates) == 0 {
 		return nil
@@ -425,14 +446,6 @@ func (p *Processor) Resolve(eventID string, deliver func() error) error {
 		return err
 	}
 	p.pendingSnapshotFingerprint = ""
-	if p.screen != nil {
-		if remembered := p.state.pendingAnswers(); len(remembered) > 0 {
-			newest := remembered[len(remembered)-1]
-			if row, found := p.screen.LocateRow(newest.match); found {
-				p.state.bindAnsweredRow(row)
-			}
-		}
-	}
 	recovered := p.rescanRetainedWindow(signature)
 	p.mu.Unlock()
 	p.emitSemantic(recovered)
@@ -506,7 +519,7 @@ func (p *Processor) MarkProcessExitEvent(exitCode *int, failed bool) Event {
 		p.mu.Unlock()
 		return event
 	}
-	_, _ = p.state.acknowledge("")
+	p.state.discard()
 	p.state.resetWindow()
 	p.pendingSnapshotFingerprint = ""
 	p.state.sequence++
@@ -678,6 +691,48 @@ func expandCursorForward(value string) string {
 		}
 		return strings.Repeat(" ", count)
 	})
+}
+
+// refreshPendingAnchor keeps the row of the occurrence awaiting a decision
+// current while the agent repaints underneath it.
+//
+// The anchor is taken when the question is detected; the operator answers
+// seconds and many frames later. A full-screen agent that erases and repaints
+// its frame at a different height moves the question onto a different row
+// without ever taking it down — an erase deliberately keeps a row's identity,
+// so the content slides by one and the stored anchor names the line above. The
+// memory written at Resolve would then be born stale: dropped on the very next
+// write, the still-painted question detected again, and the operator asked a
+// second time for something already delivered.
+//
+// This is what calling LocateRow inside Resolve used to provide, without its
+// defect: that call was fresh but took the LAST row carrying the text, which is
+// routinely another question. A sighting is adopted here only when it is
+// unambiguous.
+//
+// The caller holds p.mu.
+func (p *Processor) refreshPendingAnchor() {
+	if p.state == nil || p.state.pending == nil || p.screen == nil {
+		return
+	}
+	if p.state.pending.Match == "" {
+		return
+	}
+	row, line, unique := p.screen.UniqueRowShowing(p.state.pending.Match)
+	if !unique {
+		return
+	}
+	// A row detection would never have reported cannot become the row this
+	// occurrence lives on. Uniqueness is not candidacy: the only line carrying
+	// "[y/n]" at some point during a repaint may well be a `log:` echo of the
+	// answer, and an anchor parked there never changes again — so the entry
+	// never expires and every later question of the same signature is silenced.
+	// This is the reasoning removed from LocateRow, and it has to be applied
+	// here too or it comes back through this door.
+	if ignoredContext(line, false) {
+		return
+	}
+	p.state.pending.anchor = row
 }
 
 // fenceParity reports whether the end of the text sits inside a markdown code

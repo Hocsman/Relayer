@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -328,7 +329,7 @@ func ensurePrivateDirectory(directory string) error {
 	if err := requireCurrentUserOwner(info, directory); err != nil {
 		return err
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		return fmt.Errorf("audit directory %s is not private (permissions %04o)", directory, info.Mode().Perm())
 	}
 	return nil
@@ -342,9 +343,19 @@ func openPrivateRegularFile(path string) (*os.File, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("inspect the audit file %s: %w", path, err)
 	}
-	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o600)
+	flags := os.O_RDWR | os.O_CREATE
+	if runtime.GOOS != "windows" {
+		flags |= os.O_APPEND
+	}
+	file, err := os.OpenFile(path, flags, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open the audit file %s: %w", path, err)
+	}
+	if runtime.GOOS == "windows" {
+		if _, err := file.Seek(0, io.SeekEnd); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
 	}
 	if err := file.Chmod(0o600); err != nil {
 		_ = file.Close()
@@ -371,6 +382,12 @@ func openPrivateRegularFile(path string) (*os.File, error) {
 	if err := recoverPartialJSONL(file); err != nil {
 		_ = file.Close()
 		return nil, fmt.Errorf("recover last audit line in %s: %w", path, err)
+	}
+	if runtime.GOOS == "windows" {
+		if _, err := file.Seek(0, io.SeekEnd); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
 	}
 	return file, nil
 }

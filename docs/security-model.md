@@ -229,7 +229,7 @@ tamper-evident.
 | Audit disclosure or tampering | Redaction is heuristic and the local file is unsigned and unencrypted. |
 | Shared audit rotation races | Separate Relayer processes do not coordinate one audit path. |
 | Native attach bypass | Direct tmux input is outside policy and decision auditing. |
-| Platform surprises | Native Windows is unsupported; WSL is unvalidated during alpha. |
+| Platform surprises | Windows uses ConPTY for PTY execution (tmux unavailable); WSL is unvalidated during alpha. |
 
 ## Safer operating practices
 
@@ -255,6 +255,6 @@ tamper-evident.
 
 ## Platform boundary
 
-The implemented process, PTY, shell, and tmux paths are Unix-oriented. Linux
-and macOS are the supported alpha targets. Native Windows is unsupported. WSL
-has not been validated and carries no alpha support guarantee.
+Linux and macOS are the primary Unix targets supporting PTY and tmux backends.
+Native Windows is supported via ConPTY for PTY execution (tmux is unavailable
+on Windows). WSL has not been validated and carries no alpha support guarantee.

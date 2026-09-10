@@ -40,12 +40,7 @@ func TestManagerSendLineUsesProcessorBoundaryAndExactEncoding(t *testing.T) {
 	if current := process.processor.Pending(); current == nil || current.ID != pending.ID {
 		t.Fatalf("SendLine changed pending event: %#v", current)
 	}
-	if err := reader.SetReadDeadline(time.Now().Add(10 * time.Millisecond)); err != nil {
-		t.Fatal(err)
-	}
-	if count, err := reader.Read(make([]byte, 1)); count != 0 || err == nil {
-		t.Fatalf("pending SendLine wrote count=%d error=%v", count, err)
-	}
+	assertNoPipeOutput(t, reader)
 }
 
 func TestManagerSendLineMapsTerminationAndWriteFailureWithoutAcknowledgement(t *testing.T) {
@@ -71,12 +66,7 @@ func TestManagerSendLineMapsTerminationAndWriteFailureWithoutAcknowledgement(t *
 	if err := manager.SendLine(context.Background(), "line-session", "after-wait"); !errors.Is(err, ErrClosed) {
 		t.Fatalf("known exited process error = %v", err)
 	}
-	if err := reader.SetReadDeadline(time.Now().Add(10 * time.Millisecond)); err != nil {
-		t.Fatal(err)
-	}
-	if count, err := reader.Read(make([]byte, 1)); count != 0 || err == nil {
-		t.Fatalf("known exited process wrote count=%d error=%v", count, err)
-	}
+	assertNoPipeOutput(t, reader)
 }
 
 func newLineInputManager(t *testing.T) (*Manager, *processSession, *os.File) {
@@ -98,7 +88,24 @@ func newLineInputManager(t *testing.T) (*Manager, *processSession, *os.File) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	process := &processSession{processor: processor, master: writer}
+	process := &processSession{processor: processor, device: &testPipeDevice{File: writer}}
 	manager := &Manager{sessions: map[string]*processSession{"line-session": process}}
 	return manager, process, reader
+}
+
+type testPipeDevice struct {
+	*os.File
+}
+
+func (d *testPipeDevice) Resize(cols, rows int) error { return nil }
+
+func assertNoPipeOutput(t *testing.T, reader *os.File) {
+	t.Helper()
+	if err := reader.SetReadDeadline(time.Now().Add(10 * time.Millisecond)); err == nil {
+		if count, err := reader.Read(make([]byte, 1)); count != 0 || err == nil {
+			t.Fatalf("pipe wrote count=%d error=%v", count, err)
+		}
+		return
+	}
+	checkPipeEmpty(t, reader)
 }

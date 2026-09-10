@@ -8,6 +8,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.4
 	github.com/charmbracelet/lipgloss v1.0.0
 	github.com/charmbracelet/x/ansi v0.8.0
+	github.com/charmbracelet/x/conpty v0.2.0
 	github.com/creack/pty v1.1.24
 	github.com/mattn/go-runewidth v0.0.16
 	golang.org/x/sys v0.44.0

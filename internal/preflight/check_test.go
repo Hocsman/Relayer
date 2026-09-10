@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -403,7 +404,7 @@ func TestCheckBlocksUnsupportedPlatformInvalidPolicyAndAdapter(t *testing.T) {
 		Match: policy.Match{AgentIDs: []string{"absent"}},
 	}}
 	options := testOptions(detectorWithInstalled("runner"))
-	options.GOOS = "windows"
+	options.GOOS = "plan9"
 	options.GOARCH = "amd64"
 	report, err := Check(context.Background(), input, options)
 	if err != nil {
@@ -416,6 +417,23 @@ func TestCheckBlocksUnsupportedPlatformInvalidPolicyAndAdapter(t *testing.T) {
 		if check := findCheck(t, report, id); check.Status != CheckBlock {
 			t.Fatalf("%s = %#v", id, check)
 		}
+	}
+}
+
+func TestCheckSupportsWindowsPlatform(t *testing.T) {
+	input := validInput()
+	options := testOptions(detectorWithInstalled("runner"))
+	options.GOOS = "windows"
+	options.GOARCH = "amd64"
+	report, err := Check(context.Background(), input, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Platform.Supported {
+		t.Fatalf("Windows platform should be supported: %#v", report.Platform)
+	}
+	if check := findCheck(t, report, "platform.execution"); check.Status != CheckPass {
+		t.Fatalf("Windows platform check = %#v", check)
 	}
 }
 
@@ -903,6 +921,9 @@ func writeTestExecutable(t *testing.T, path string) {
 	}
 	if err := os.Chmod(path, 0o700); err != nil {
 		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" && filepath.Ext(path) == "" {
+		_ = os.WriteFile(path+".bat", []byte("@echo off\r\n"), 0o700)
 	}
 }
 

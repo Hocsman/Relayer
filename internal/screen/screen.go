@@ -49,6 +49,13 @@ type cell struct {
 
 type row struct {
 	cells []cell
+	// id names this grid line. A coordinate computed as "index + rows that
+	// scrolled off" is arithmetic on a counter that some paths forget to bump
+	// (a scroll region, the alternate screen), and it then silently designates
+	// a different line. An identity stamped on the row itself cannot: the row
+	// struct is what scrollUp, insertLines and deleteLines move, so the name
+	// travels with the content it names.
+	id RowID
 	// wrapped marks a row whose text continues on the next one because it ran
 	// past the right margin rather than because the agent ended a line. Joining
 	// on it is what makes a question broken by the margin one logical line.
@@ -60,14 +67,35 @@ type row struct {
 	dirty bool
 }
 
-// newRow is a blank row, and a blank row is a change: it replaces whatever was
-// there, which is exactly what an erase or a scroll does.
-func newRow(width int) row {
+// RowID names one grid line for as long as it exists. The zero value names no
+// row, which is what a caller holding no coordinate has.
+type RowID uint64
+
+// newRow is a blank row entering the grid, and a blank row is a change: it
+// replaces whatever was there, which is exactly what a scroll does.
+//
+// It is a method because the identity comes from the screen: minting one here,
+// and only here, is what makes "the row I remembered is gone" mean the line
+// left the grid rather than merely being repainted. An ERASE deliberately does
+// not come through here — it clears cells in place and keeps the identity —
+// because a full-screen agent erases and repaints the same frame every tick,
+// and a name that changed on every tick would name nothing.
+func (s *Screen) newRow(width int) row {
 	cells := make([]cell, width)
 	for index := range cells {
 		cells[index] = cell{value: ' ', width: 1}
 	}
-	return row{cells: cells, dirty: true}
+	s.nextRowID++
+	return row{cells: cells, dirty: true, id: RowID(s.nextRowID)}
+}
+
+// blank empties a row without renaming it. An erase says the line is empty; it
+// does not say the line is gone, and a full-screen agent erases the frame it is
+// about to repaint on every tick.
+func (r *row) blank() {
+	r.clear(0, len(r.cells))
+	r.wrapped = false
+	r.dirty = true
 }
 
 func (r *row) clear(from, to int) {
@@ -121,13 +149,10 @@ type Screen struct {
 	// contents must survive that untouched.
 	alternate *Screen
 
-	// scrolledOff counts the rows that have left the top of the grid. Added to
-	// a row's index it gives an absolute coordinate that stays valid while the
-	// screen moves underneath it, which is what lets a caller ask "is that same
-	// row still showing that same thing" rather than "does this text appear
-	// somewhere" — two identical questions in two different rows are two
-	// questions.
-	scrolledOff uint64
+	// nextRowID mints row identities. It only ever increases, including across
+	// a switch to the alternate screen and back, so a name can never be reused
+	// for a different line.
+	nextRowID uint64
 
 	// repainted records that the agent has done something a byte stream cannot
 	// express: addressed the cursor to a row, erased, scrolled a region, or
@@ -193,7 +218,7 @@ func (s *Screen) resizeTo(width, height int, keep bool) {
 	s.width, s.height = width, height
 	s.rows = make([]row, height)
 	for index := range s.rows {
-		s.rows[index] = newRow(width)
+		s.rows[index] = s.newRow(width)
 	}
 	if keep {
 		// A resize cannot be aligned with a byte offset in the stream, so there
@@ -203,6 +228,11 @@ func (s *Screen) resizeTo(width, height int, keep bool) {
 		for index := 0; index < len(previous) && index < height; index++ {
 			copy(s.rows[index].cells, previous[index].cells)
 			s.rows[index].wrapped = previous[index].wrapped
+			// The identity survives the resize with the content. A resize that
+			// renamed every line would release every answered-question memory
+			// at once, and a question still painted would be put to the
+			// operator a second time for no reason but a window drag.
+			s.rows[index].id = previous[index].id
 		}
 	}
 	s.scrollTop, s.scrollBottom = 0, height-1
@@ -330,20 +360,19 @@ func (s *Screen) scrollUp(count int) {
 		// Only the main screen keeps history. What scrolls off an alternate
 		// screen is chrome the agent is repainting, not work that happened.
 		if s.alternate == nil && s.scrollTop == 0 {
-			s.scrolledOff++
 			s.scrollback = append(s.scrollback, evicted)
 			if len(s.scrollback) > MaxScrollback {
 				s.scrollback = s.scrollback[len(s.scrollback)-MaxScrollback:]
 			}
 		}
 		copy(s.rows[s.scrollTop:s.scrollBottom], s.rows[s.scrollTop+1:s.scrollBottom+1])
-		s.rows[s.scrollBottom] = newRow(s.width)
+		s.rows[s.scrollBottom] = s.newRow(s.width)
 	}
 }
 
 func (s *Screen) scrollDown(count int) {
 	for range count {
 		copy(s.rows[s.scrollTop+1:s.scrollBottom+1], s.rows[s.scrollTop:s.scrollBottom])
-		s.rows[s.scrollTop] = newRow(s.width)
+		s.rows[s.scrollTop] = s.newRow(s.width)
 	}
 }
