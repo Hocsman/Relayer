@@ -353,10 +353,11 @@ issue.
 
 ## Native Windows or WSL
 
-Native Windows is unsupported: the implemented PTY, process-group, shell, FIFO,
-and tmux paths are Unix-specific. WSL has not been validated and has no support
-guarantee during alpha. A successful build or one local run in WSL is not proof
-of supported lifecycle and cleanup behavior.
+Native Windows is supported for PTY execution via the Windows Pseudo Console
+(ConPTY) API. The tmux backend remains Unix-specific and is not available on
+Windows. WSL has not been validated and has no support guarantee during alpha.
+A successful build or one local run in WSL is not proof of supported lifecycle
+and cleanup behavior.
 
 ## Asking for help
 

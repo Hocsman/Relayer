@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -374,6 +375,16 @@ func ReadFile(path string, anonymizer *Anonymizer) (Fixture, error) {
 }
 
 func syncDirectory(path string) error {
+	if runtime.GOOS == "windows" {
+		info, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return errors.New("the path is not a directory")
+		}
+		return nil
+	}
 	directory, err := os.Open(path)
 	if err != nil {
 		return err

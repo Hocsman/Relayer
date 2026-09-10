@@ -27,7 +27,7 @@ func agentExecutableStatus(
 		executable = spec.Command[0]
 	}
 
-	if strings.ContainsRune(executable, os.PathSeparator) {
+	if strings.ContainsAny(executable, `/\`) {
 		candidate, ok := absoluteExecutableCandidate(spec.Cwd, executable)
 		if !ok {
 			return toolcatalog.InstallUnknown

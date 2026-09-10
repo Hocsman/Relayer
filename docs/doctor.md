@@ -30,8 +30,7 @@ The versioned report covers:
 
 - strict configuration shape and effective one-to-eight-agent plan;
 - policy compilation and references to effective agents;
-- macOS/Linux execution support and the explicit Windows configuration-only
-  boundary;
+- platform execution support (macOS, Linux, and Windows ConPTY);
 - audit configuration plus passive type, ownership, and permission checks for
   the active journal and every recognized existing rotation;
 - passive `PATH` discovery for fixed catalogue tools and configured agent

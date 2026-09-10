@@ -6,20 +6,17 @@ the TUI, and the project does not currently publish a desktop release,
 installer, Developer ID-signed application, or notarized package.
 
 ## Platform status
-
+ 
 | Platform | GUI status | Terminal backend |
 | --- | --- | --- |
 | macOS | Alpha, build and run from source | Unix PTY; tmux when installed and visible on `PATH` |
 | Linux | Alpha, build and run from source | Unix PTY; tmux when installed and visible on `PATH` |
-| Windows | Configuration only; agent execution is refused | No native backend until ConPTY is implemented and tested |
+| Windows | Alpha, build and run from source | Native ConPTY backend for PTY execution |
 
-Windows support must not be inferred from Wails' ability to create a Windows
-window. Relayer's current process and PTY implementations are Unix-specific.
-The Windows build can inspect and save agent profiles, but deliberately refuses
-to start or restart them. Native execution requires a real ConPTY backend and
-platform tests.
+On Windows, Relayer uses the Windows Pseudo Console (ConPTY) API to spawn
+and supervise child processes. The tmux backend remains Unix-specific.
 
-The terminal TUI remains available on supported Unix systems:
+The terminal TUI remains available on supported systems:
 
 ```bash
 go build -o relayer ./cmd/relayer
@@ -303,8 +300,8 @@ cleanup, YAML restoration, or rollback startup puts the GUI in `failed` and
 starts no replacement process. Close Relayer and inspect local sessions before
 retrying from an uncertain cleanup state.
 
-Windows follows the same configuration-save rules, but the start/restart
-transaction is refused before any agent execution until ConPTY support exists.
+Windows follows the same configuration-save and start/restart rules
+using the native ConPTY backend.
 
 ## Executable discovery and `PATH`
 
@@ -407,7 +404,6 @@ sandbox, secret manager, or operating-system enforcement boundary. Read the
 
 The alpha GUI currently provides no:
 
-- Windows agent execution;
 - installer, auto-updater, Developer ID signing, or notarization;
 - published desktop release;
 - remote audit or synchronization service;

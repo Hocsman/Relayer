@@ -127,3 +127,13 @@ func TestCommandOperationSkipsGlobalFlags(t *testing.T) {
 		}
 	}
 }
+
+func argumentIndex(arguments []string, target string) int {
+	for index, argument := range arguments {
+		if argument == target {
+			return index
+		}
+	}
+	return -1
+}
+

@@ -17,7 +17,6 @@ import (
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/intercept"
 	"github.com/Hocsman/Relayer/internal/platform"
-	"github.com/creack/pty"
 )
 
 // Manager is the sole owner of process lifecycles and PTY descriptors.
@@ -188,29 +187,26 @@ func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 	// PTY was started with rather than a default.
 	processor.Resize(columns, rows)
 
-	master, err := pty.StartWithSize(cmd, &pty.Winsize{
-		Rows: uint16(clamp(rows, 1, 65535)),
-		Cols: uint16(clamp(columns, 1, 65535)),
-	})
+	device, err := startPTY(session, cmd, columns, rows)
 	if err != nil {
 		sessionCancel()
 		return Info{}, fmt.Errorf("starting %s: %w", normalized.Name, err)
 	}
-	session.master = master
+	session.device = device
 	m.sessions[sessionID] = session
 
 	m.wg.Add(2)
 	// Capture the descriptor before publishing the reader. Close may set the
-	// field to nil while closing this same os.File to unblock the read.
-	go m.readSession(session, master)
+	// field to nil while closing this same device to unblock the read.
+	go m.readSession(session, device)
 	go m.waitSession(session)
 	return info, nil
 }
 
-func (m *Manager) readSession(session *processSession, master *os.File) {
+func (m *Manager) readSession(session *processSession, device io.Reader) {
 	defer m.wg.Done()
 
-	err := session.processor.Run(session.ctx, master)
+	err := session.processor.Run(session.ctx, device)
 	// Publish the drain barrier before sending the final invalidation. The
 	// output bytes are already retained in Processor; a full UI event channel
 	// must not prevent waitSession from closing Done and publishing lifecycle.
@@ -226,7 +222,7 @@ func (m *Manager) readSession(session *processSession, master *os.File) {
 
 func (m *Manager) waitSession(session *processSession) {
 	defer m.wg.Done()
-	err := session.cmd.Wait() // The sole Wait call for a successfully started command.
+	err := waitCommand(session) // The sole Wait call for a successfully started command.
 	// Wait is the first authoritative proof that the process can no longer
 	// consume input. Mark the Processor terminated immediately, under the same
 	// lock as SendLine, before publishing Result or spending time cleaning up

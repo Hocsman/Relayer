@@ -273,7 +273,7 @@ func normalizeGOARCH(value string) string {
 
 func supportedPlatform(goos string) bool {
 	switch goos {
-	case "darwin", "linux":
+	case "darwin", "linux", "windows":
 		return true
 	default:
 		return false
