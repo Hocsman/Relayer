@@ -523,3 +523,62 @@ func assertConfigFileBytes(t *testing.T, path string, want []byte) {
 		t.Fatalf("config file was modified:\ngot:  %q\nwant: %q", got, want)
 	}
 }
+
+func TestLoadVersionOneNotificationsDefaultsAndOverrides(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "config.yaml")
+
+	// 1. Without notifications section (defaults to true/true/true)
+	writeConfigTestFile(t, path, []byte(
+		"version: 1\n"+
+			"backend: pty\n"+
+			"agents: []\n"+
+			"intercept_patterns:\n"+
+			"  - pattern: 'foo'\n"+
+			"    description: 'foo gate'\n",
+	))
+	result, err := LoadExisting(path)
+	if err != nil {
+		t.Fatalf("LoadExisting error: %v", err)
+	}
+	if !result.Notifications.Enabled || !result.Notifications.Bell || !result.Notifications.Desktop {
+		t.Fatalf("expected notifications to default to true: %#v", result.Notifications)
+	}
+
+	// 2. With custom notifications section
+	writeConfigTestFile(t, path, []byte(
+		"version: 1\n"+
+			"backend: pty\n"+
+			"notifications:\n"+
+			"  enabled: false\n"+
+			"  bell: true\n"+
+			"  desktop: false\n"+
+			"agents: []\n"+
+			"intercept_patterns:\n"+
+			"  - pattern: 'foo'\n"+
+			"    description: 'foo gate'\n",
+	))
+	result, err = LoadExisting(path)
+	if err != nil {
+		t.Fatalf("LoadExisting error: %v", err)
+	}
+	if result.Notifications.Enabled != false || result.Notifications.Bell != true || result.Notifications.Desktop != false {
+		t.Fatalf("unexpected notifications values: %#v", result.Notifications)
+	}
+
+	// 3. With invalid notifications field type (e.g. string instead of bool)
+	writeConfigTestFile(t, path, []byte(
+		"version: 1\n"+
+			"backend: pty\n"+
+			"notifications:\n"+
+			"  enabled: 'not-a-bool'\n"+
+			"agents: []\n"+
+			"intercept_patterns:\n"+
+			"  - pattern: 'foo'\n"+
+			"    description: 'foo gate'\n",
+	))
+	_, err = LoadExisting(path)
+	if err == nil {
+		t.Fatal("expected error for non-boolean notifications.enabled, got nil")
+	}
+}

@@ -317,10 +317,10 @@ and redirections are not interpreted.
 When a prompt is pending, Relayer highlights the pane and focuses the
 supervisor. The supervisor title shows how many agents are waiting once more
 than one is, so a queue building up behind the agent you are answering — on
-another page, possibly — is visible rather than implicit. Relayer raises no
-signal outside the terminal: nothing rings, and no window title or notification
-is produced, so an operator who switches away learns nothing until they come
-back. Credential and sensitive inputs are masked in the TUI. Masking does
+another page, possibly — is visible rather than implicit. By default, Relayer
+emits an operator alert when a human decision is needed: an ASCII terminal bell
+(`\a`) and a native OS desktop notification (configurable under `notifications`
+in `config.yaml`). Credential and sensitive inputs are masked in the TUI. Masking does
 not prevent the target program from echoing the value into its own terminal or
 tmux scrollback.
 

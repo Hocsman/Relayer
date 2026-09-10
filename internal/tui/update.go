@@ -8,6 +8,7 @@ import (
 
 	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/audit"
+	"github.com/Hocsman/Relayer/internal/notify"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
 	tea "github.com/charmbracelet/bubbletea"
@@ -469,6 +470,15 @@ func (m *Model) queueHumanEvent(event adapters.Event, evaluation policy.Evaluati
 		reason = "sensitive input required"
 	}
 	m.appendLog(fmt.Sprintf("%s is waiting for a human decision (%s)", target.name, reason))
+	if m.notifier != nil {
+		m.notifier.Notify(notify.Notification{
+			Title:     "Relayer",
+			AgentName: target.name,
+			SessionID: event.SessionID,
+			Reason:    reason,
+			EventID:   event.ID,
+		})
+	}
 	if m.inputTarget == "" && !m.writePending {
 		return m.activateNextPrompt()
 	}
