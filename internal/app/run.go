@@ -96,6 +96,9 @@ func runWithOutputAndPreflight(
 	if len(arguments) > 0 && arguments[0] == "doctor" {
 		return runDoctor(arguments[1:], output, diagnostics, preflightRun)
 	}
+	if len(arguments) > 0 && arguments[0] == "audit" {
+		return runAudit(arguments[1:], output, diagnostics)
+	}
 	return run(arguments, diagnostics, dependencies)
 }
 
