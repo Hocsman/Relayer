@@ -16,6 +16,7 @@ import (
 	appcore "github.com/Hocsman/Relayer/internal/app"
 	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/config"
+	"github.com/Hocsman/Relayer/internal/notify"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/preflight"
 	"github.com/Hocsman/Relayer/internal/session"
@@ -134,6 +135,7 @@ type App struct {
 	profileRevisionToken  string
 	profileDetector       toolcatalog.Detector
 	profileTokenGenerator func() (string, error)
+	notifier              notify.Notifier
 
 	shutdownOnce sync.Once
 	shutdownDone chan struct{}
@@ -163,6 +165,7 @@ func NewApp() *App {
 		shutdownDone:          make(chan struct{}),
 		profileDetector:       toolcatalog.DefaultDetector(),
 		profileTokenGenerator: newOpaqueProfileToken,
+		notifier:              notify.New(notify.DefaultConfig(), nil),
 		prepareEngine:         appcore.PrepareDesktopRuntime,
 		startEngine: func(ctx context.Context, plan *appcore.DesktopPlan, runID string) (desktopEngine, error) {
 			return appcore.StartDesktopRuntime(ctx, plan, runID)
@@ -491,6 +494,23 @@ func (a *App) handleAdapterEventForRun(run *runGeneration, event adapters.Event)
 	a.rebuildPendingLocked()
 	a.mu.Unlock()
 	a.emit(eventSemantic, view)
+	if !evaluation.Automatic && a.notifier != nil {
+		agentName := event.AgentID
+		if index, found := a.agentIndex[strings.ToLower(event.SessionID)]; found {
+			agentName = a.state.Agents[index].Name
+		}
+		reason := "confirmation required"
+		if requiresSecretHandling(event) || evaluation.Reason == "sensitive" {
+			reason = "sensitive input required"
+		}
+		a.notifier.Notify(notify.Notification{
+			Title:     "Relayer",
+			AgentName: agentName,
+			SessionID: event.SessionID,
+			Reason:    reason,
+			EventID:   event.ID,
+		})
+	}
 	a.scheduleAutomatic(run, event.SessionID)
 }
 

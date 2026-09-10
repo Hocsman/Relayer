@@ -17,6 +17,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/intercept"
+	"github.com/Hocsman/Relayer/internal/notify"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"gopkg.in/yaml.v3"
 )
@@ -73,14 +74,15 @@ type Result struct {
 	// Revision is a content hash used internally for optimistic file updates.
 	// It must not be exposed to an untrusted UI when the file may contain
 	// environment values; desktop bridges exchange an opaque random token.
-	Revision string
-	Backend  string
-	Sessions SessionPolicy
-	Agents   []agent.Spec
-	Patterns []intercept.Pattern
-	Policies policy.Config
-	Audit    audit.Config
-	Created  bool
+	Revision      string
+	Backend       string
+	Sessions      SessionPolicy
+	Agents        []agent.Spec
+	Patterns      []intercept.Pattern
+	Policies      policy.Config
+	Audit         audit.Config
+	Notifications notify.Config
+	Created       bool
 }
 
 // SessionPolicy controls ownership of detached backend sessions. PTY sessions
@@ -131,6 +133,13 @@ type versionOneFile struct {
 	Audit             *configuredAudit         `yaml:"audit,omitempty"`
 	Agents            *[]configuredAgent       `yaml:"agents"`
 	InterceptPatterns *[]ConfigPattern         `yaml:"intercept_patterns"`
+	Notifications     *configuredNotifications `yaml:"notifications,omitempty"`
+}
+
+type configuredNotifications struct {
+	Enabled *bool `yaml:"enabled,omitempty"`
+	Bell    *bool `yaml:"bell,omitempty"`
+	Desktop *bool `yaml:"desktop,omitempty"`
 }
 
 type configuredPolicies struct {
@@ -173,14 +182,15 @@ type configuredAgent struct {
 }
 
 type decodedFile struct {
-	Version  int
-	Legacy   bool
-	Backend  string
-	Sessions SessionPolicy
-	Agents   []configuredAgent
-	Patterns []ConfigPattern
-	Policies policy.Config
-	Audit    audit.Config
+	Version       int
+	Legacy        bool
+	Backend       string
+	Sessions      SessionPolicy
+	Agents        []configuredAgent
+	Patterns      []ConfigPattern
+	Policies      policy.Config
+	Audit         audit.Config
+	Notifications notify.Config
 }
 
 // LoadOrCreate reads path before any PTY is started. It accepts both a direct
@@ -255,16 +265,17 @@ func decodeResult(path string, data []byte, created bool) (Result, error) {
 	}
 
 	return Result{
-		Version:  configured.Version,
-		Legacy:   configured.Legacy,
-		Revision: contentRevision(data),
-		Backend:  configured.Backend,
-		Sessions: configured.Sessions,
-		Agents:   agents,
-		Patterns: patterns,
-		Policies: configured.Policies,
-		Audit:    configured.Audit,
-		Created:  created,
+		Version:       configured.Version,
+		Legacy:        configured.Legacy,
+		Revision:      contentRevision(data),
+		Backend:       configured.Backend,
+		Sessions:      configured.Sessions,
+		Agents:        agents,
+		Patterns:      patterns,
+		Policies:      configured.Policies,
+		Audit:         configured.Audit,
+		Notifications: configured.Notifications,
+		Created:       created,
 	}, nil
 }
 
@@ -295,6 +306,7 @@ func createDefault(path string) (bool, error) {
 		Audit:             &defaultAudit,
 		Agents:            &agents,
 		InterceptPatterns: &configured,
+		Notifications:     configuredNotificationsPointer(notify.DefaultConfig()),
 	})
 	if err != nil {
 		return false, fmt.Errorf("serialize default configuration: %w", err)
@@ -366,6 +378,31 @@ func configuredSessionPolicyPointer(policy SessionPolicy) *configuredSessionPoli
 
 func boolPointer(value bool) *bool {
 	return &value
+}
+
+func configuredNotificationsPointer(notifications notify.Config) *configuredNotifications {
+	return &configuredNotifications{
+		Enabled: boolPointer(notifications.Enabled),
+		Bell:    boolPointer(notifications.Bell),
+		Desktop: boolPointer(notifications.Desktop),
+	}
+}
+
+func decodeNotifications(configured *configuredNotifications) (notify.Config, error) {
+	result := notify.DefaultConfig()
+	if configured == nil {
+		return result, nil
+	}
+	if configured.Enabled != nil {
+		result.Enabled = *configured.Enabled
+	}
+	if configured.Bell != nil {
+		result.Bell = *configured.Bell
+	}
+	if configured.Desktop != nil {
+		result.Desktop = *configured.Desktop
+	}
+	return result, nil
 }
 
 func stringPointer(value string) *string {
@@ -551,12 +588,13 @@ func decode(data []byte) (decodedFile, error) {
 			return decodedFile{}, err
 		}
 		return decodedFile{
-			Legacy:   true,
-			Backend:  agent.BackendPTY,
-			Sessions: defaultSessionPolicy(),
-			Patterns: direct,
-			Policies: policy.DefaultConfig(),
-			Audit:    disabledAuditConfig(),
+			Legacy:        true,
+			Backend:       agent.BackendPTY,
+			Sessions:      defaultSessionPolicy(),
+			Patterns:      direct,
+			Policies:      policy.DefaultConfig(),
+			Audit:         disabledAuditConfig(),
+			Notifications: notify.DefaultConfig(),
 		}, nil
 	case yaml.MappingNode:
 		if mappingHasKey(root, "version") {
@@ -572,12 +610,13 @@ func decode(data []byte) (decodedFile, error) {
 			return decodedFile{}, err
 		}
 		return decodedFile{
-			Legacy:   true,
-			Backend:  agent.BackendPTY,
-			Sessions: defaultSessionPolicy(),
-			Patterns: wrapped.InterceptPatterns,
-			Policies: policy.DefaultConfig(),
-			Audit:    disabledAuditConfig(),
+			Legacy:        true,
+			Backend:       agent.BackendPTY,
+			Sessions:      defaultSessionPolicy(),
+			Patterns:      wrapped.InterceptPatterns,
+			Policies:      policy.DefaultConfig(),
+			Audit:         disabledAuditConfig(),
+			Notifications: notify.DefaultConfig(),
 		}, nil
 	default:
 		return decodedFile{}, errors.New("YAML root must be a list or a configuration object")
@@ -644,15 +683,20 @@ func decodeVersionOne(data []byte, root *yaml.Node) (decodedFile, error) {
 	if err != nil {
 		return decodedFile{}, err
 	}
+	configuredNotifications, err := decodeNotifications(configured.Notifications)
+	if err != nil {
+		return decodedFile{}, err
+	}
 
 	return decodedFile{
-		Version:  *configured.Version,
-		Backend:  backend,
-		Sessions: sessionPolicy,
-		Agents:   append([]configuredAgent(nil), (*configured.Agents)...),
-		Patterns: append([]ConfigPattern(nil), (*configured.InterceptPatterns)...),
-		Policies: configuredPolicy,
-		Audit:    configuredAudit,
+		Version:       *configured.Version,
+		Backend:       backend,
+		Sessions:      sessionPolicy,
+		Agents:        append([]configuredAgent(nil), (*configured.Agents)...),
+		Patterns:      append([]ConfigPattern(nil), (*configured.InterceptPatterns)...),
+		Policies:      configuredPolicy,
+		Audit:         configuredAudit,
+		Notifications: configuredNotifications,
 	}, nil
 }
 
@@ -729,6 +773,27 @@ func validateVersionOneNode(root *yaml.Node) error {
 			}
 		case "intercept_patterns":
 			if err := validatePatternNode(value); err != nil {
+				return err
+			}
+		case "notifications":
+			if err := validateNotificationsNode(value); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateNotificationsNode(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return errors.New("notifications must be a YAML object")
+	}
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		name := node.Content[index].Value
+		value := dereferenceAlias(node.Content[index+1])
+		switch name {
+		case "enabled", "bell", "desktop":
+			if err := requireScalar(value, "!!bool", "notifications."+name+" must be a YAML boolean"); err != nil {
 				return err
 			}
 		}
