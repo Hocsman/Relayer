@@ -198,7 +198,7 @@ func doctorAgentLine(inspected preflight.AgentInfo) (string, bool) {
 	adapter := "unavailable"
 	if inspected.Adapter != "" {
 		switch inspected.Adapter {
-		case adapters.GenericID, adapters.ClaudeID, adapters.CodexID:
+		case adapters.GenericID, adapters.AiderID, adapters.ClaudeID, adapters.CodexID:
 			adapter = inspected.Adapter
 		default:
 			return "", false

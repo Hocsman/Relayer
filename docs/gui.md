@@ -196,6 +196,7 @@ profiles. The built-in catalogue currently provides:
 | --- | --- | --- |
 | Claude Code | `claude` | Experimental Claude 2.1.59 rules plus generic fallback; manual decisions only. |
 | Codex CLI | `codex` | Experimental Codex 0.148.0-alpha.21 rules plus generic fallback; command allow/deny and directory deny bytes verified. |
+| Aider | `aider` | Experimental Aider rules plus generic fallback; file modification and shell command approval allow (`y`), deny (`n`), and manual input verified. |
 | MiMo Code | `mimo` | Generic regex adapter only. |
 | Ollama / DeepSeek | `ollama run` plus an explicit model argument | Generic regex adapter only; no model is inferred and no DeepSeek protocol is claimed. |
 | Custom CLI | Explicit argv required | Generic regex adapter only. |

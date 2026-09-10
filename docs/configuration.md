@@ -242,11 +242,11 @@ short-lived inherited environment over plaintext YAML.
 
 ## Adapters and interception patterns
 
-`generic` is stable. `claude` and `codex` are implemented experimental
-adapters whose vendor rules are limited to the fixtures documented in
+`generic` is stable. `aider`, `claude` and `codex` are implemented experimental
+adapters whose vendor rules are documented in
 [adapters](adapters.md). Leaving `adapter` blank selects an implemented
-executable hint for basenames `claude` or `codex`, then otherwise falls back to
-`generic`. All three preserve configured `intercept_patterns`; an unknown
+executable hint for basenames `aider`, `claude` or `codex`, then otherwise falls back to
+`generic`. All four preserve configured `intercept_patterns`; an unknown
 explicit adapter fails before backend creation.
 
 `intercept_patterns` is an ordered, non-empty list:

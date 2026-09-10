@@ -48,16 +48,16 @@ func TestGetAgentProfilesReturnsSafeCatalogAndLocksAdvancedSpecs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAgentProfiles: %v", err)
 	}
-	if len(view.Catalog) != 5 || view.Catalog[0].ID != string(toolcatalog.ClaudeCode) || !view.Catalog[0].Installed {
+	if len(view.Catalog) != 6 || view.Catalog[0].ID != string(toolcatalog.ClaudeCode) || !view.Catalog[0].Installed {
 		t.Fatalf("catalog = %#v", view.Catalog)
 	}
-	if view.Catalog[1].Installed || view.Catalog[4].InstallStatus != string(toolcatalog.InstallUnknown) {
+	if view.Catalog[1].Installed || view.Catalog[5].InstallStatus != string(toolcatalog.InstallUnknown) {
 		t.Fatalf("catalog installation states = %#v", view.Catalog)
 	}
-	if got := view.Catalog[3].DefaultArgv; len(got) != 3 || got[0] != "ollama" || got[1] != "run" || got[2] != "" {
+	if got := view.Catalog[4].DefaultArgv; len(got) != 3 || got[0] != "ollama" || got[1] != "run" || got[2] != "" {
 		t.Fatalf("Ollama default argv = %#v", got)
 	}
-	if got := view.Catalog[3].ArgumentPrefix; len(got) != 1 || got[0] != "run" {
+	if got := view.Catalog[4].ArgumentPrefix; len(got) != 1 || got[0] != "run" {
 		t.Fatalf("Ollama argument prefix = %#v", got)
 	}
 	if len(view.Profiles) != 2 || view.Profiles[0].PresetID != string(toolcatalog.ClaudeCode) {
@@ -83,13 +83,13 @@ func TestGetAgentProfilesReturnsSafeCatalogAndLocksAdvancedSpecs(t *testing.T) {
 
 	view.Profiles[0].Name = "mutated"
 	view.Catalog[0].DefaultArgv[0] = "mutated"
-	view.Catalog[3].ArgumentPrefix[0] = "mutated"
+	view.Catalog[4].ArgumentPrefix[0] = "mutated"
 	fresh, err := application.GetAgentProfiles()
 	if err != nil {
 		t.Fatalf("fresh GetAgentProfiles: %v", err)
 	}
 	if fresh.Profiles[0].Name != "Claude Code" || fresh.Catalog[0].DefaultArgv[0] != "claude" ||
-		fresh.Catalog[3].ArgumentPrefix[0] != "run" {
+		fresh.Catalog[4].ArgumentPrefix[0] != "run" {
 		t.Fatalf("profile view aliases caller data: %#v", fresh)
 	}
 }

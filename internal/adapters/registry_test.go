@@ -23,6 +23,7 @@ func TestRegistryDescriptorsAreDeterministicDefensiveAndHonest(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Descriptor{
+		{ID: AiderID, Status: StatusExperimental, Implemented: true, Executables: []string{"aider"}},
 		{ID: ClaudeID, Status: StatusExperimental, Implemented: true, Executables: []string{"claude"}},
 		{ID: CodexID, Status: StatusExperimental, Implemented: true, Executables: []string{"codex"}},
 		{ID: GenericID, Status: StatusStable, Implemented: true},
@@ -55,7 +56,7 @@ func TestRegistryResolveExplicitBuiltinsUnknownAndExecutableHints(t *testing.T) 
 		t.Fatalf("generic factories did not return independent instances: first %#v second %#v error %v", first, second, err)
 	}
 
-	for _, id := range []string{ClaudeID, CodexID} {
+	for _, id := range []string{AiderID, ClaudeID, CodexID} {
 		adapter, descriptor, err := registry.Resolve(id, "")
 		if err != nil || adapter == nil || adapter.ID() != id || descriptor.ID != id ||
 			!descriptor.Implemented || descriptor.Status != StatusExperimental {
@@ -71,6 +72,7 @@ func TestRegistryResolveExplicitBuiltinsUnknownAndExecutableHints(t *testing.T) 
 		executable string
 		adapterID  string
 	}{
+		{executable: "/usr/local/bin/aider", adapterID: AiderID},
 		{executable: "/opt/tools/claude", adapterID: ClaudeID},
 		{executable: `C:\tools\codex.exe`, adapterID: CodexID},
 	} {
@@ -199,7 +201,7 @@ func TestRegistryConcurrentResolveAndInventory(t *testing.T) {
 				errorsFound <- err
 				return
 			}
-			if adapter.ID() != GenericID || descriptor.ID != GenericID || len(registry.Descriptors()) != 3 {
+			if adapter.ID() != GenericID || descriptor.ID != GenericID || len(registry.Descriptors()) != 4 {
 				errorsFound <- errors.New("incoherent concurrent registry result")
 			}
 		}()
