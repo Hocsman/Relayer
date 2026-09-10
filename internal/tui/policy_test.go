@@ -374,10 +374,6 @@ func TestPolicySummaryNormalizesControlsAndTruncatesByRune(t *testing.T) {
 	}
 }
 
-type backendWithoutDecision struct {
-	Backend
-}
-
 func TestPolicyConsecutiveLimitEnforcementAndHumanReset(t *testing.T) {
 	backend := newPolicyTestBackend()
 	t.Cleanup(backend.cancel)
