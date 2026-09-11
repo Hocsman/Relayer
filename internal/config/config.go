@@ -143,9 +143,18 @@ type configuredNotifications struct {
 }
 
 type configuredPolicies struct {
-	DefaultAction *string                 `yaml:"default_action,omitempty"`
-	DryRun        *bool                   `yaml:"dry_run,omitempty"`
-	Rules         *[]configuredPolicyRule `yaml:"rules,omitempty"`
+	DefaultAction               *string                 `yaml:"default_action,omitempty"`
+	DryRun                      *bool                   `yaml:"dry_run,omitempty"`
+	MaxConsecutiveAutoDecisions *int                    `yaml:"max_consecutive_auto_decisions,omitempty"`
+	RateLimitPerMinute          *int                    `yaml:"rate_limit_per_minute,omitempty"`
+	Guardrails                  *configuredGuardrails   `yaml:"guardrails,omitempty"`
+	Rules                       *[]configuredPolicyRule `yaml:"rules,omitempty"`
+}
+
+type configuredGuardrails struct {
+	BlockDestructive  *bool     `yaml:"block_destructive,omitempty"`
+	BlockExfiltration *bool     `yaml:"block_exfiltration,omitempty"`
+	BlockedPatterns   *[]string `yaml:"blocked_patterns,omitempty"`
 }
 
 type configuredAudit struct {
@@ -444,10 +453,40 @@ func configuredPoliciesFrom(configuration policy.Config) configuredPolicies {
 			Action: &action,
 		})
 	}
+	var maxConsecutive *int
+	if configuration.MaxConsecutiveAutoDecisions > 0 {
+		val := configuration.MaxConsecutiveAutoDecisions
+		maxConsecutive = &val
+	}
+	var rateLimit *int
+	if configuration.RateLimitPerMinute > 0 {
+		val := configuration.RateLimitPerMinute
+		rateLimit = &val
+	}
+	var guardrails *configuredGuardrails
+	if configuration.Guardrails.BlockDestructive || configuration.Guardrails.BlockExfiltration || len(configuration.Guardrails.BlockedPatterns) > 0 {
+		g := configuredGuardrails{}
+		if configuration.Guardrails.BlockDestructive {
+			bd := true
+			g.BlockDestructive = &bd
+		}
+		if configuration.Guardrails.BlockExfiltration {
+			be := true
+			g.BlockExfiltration = &be
+		}
+		if len(configuration.Guardrails.BlockedPatterns) > 0 {
+			bp := append([]string(nil), configuration.Guardrails.BlockedPatterns...)
+			g.BlockedPatterns = &bp
+		}
+		guardrails = &g
+	}
 	return configuredPolicies{
-		DefaultAction: &defaultAction,
-		DryRun:        &dryRun,
-		Rules:         &rules,
+		DefaultAction:               &defaultAction,
+		DryRun:                      &dryRun,
+		MaxConsecutiveAutoDecisions: maxConsecutive,
+		RateLimitPerMinute:          rateLimit,
+		Guardrails:                  guardrails,
+		Rules:                       &rules,
 	}
 }
 
@@ -461,6 +500,29 @@ func decodePolicies(configured *configuredPolicies) (policy.Config, error) {
 	}
 	if configured.DryRun != nil {
 		result.DryRun = *configured.DryRun
+	}
+	if configured.MaxConsecutiveAutoDecisions != nil {
+		if *configured.MaxConsecutiveAutoDecisions < 0 {
+			return policy.Config{}, fmt.Errorf("policies.max_consecutive_auto_decisions cannot be negative: %d", *configured.MaxConsecutiveAutoDecisions)
+		}
+		result.MaxConsecutiveAutoDecisions = *configured.MaxConsecutiveAutoDecisions
+	}
+	if configured.RateLimitPerMinute != nil {
+		if *configured.RateLimitPerMinute < 0 {
+			return policy.Config{}, fmt.Errorf("policies.rate_limit_per_minute cannot be negative: %d", *configured.RateLimitPerMinute)
+		}
+		result.RateLimitPerMinute = *configured.RateLimitPerMinute
+	}
+	if configured.Guardrails != nil {
+		if configured.Guardrails.BlockDestructive != nil {
+			result.Guardrails.BlockDestructive = *configured.Guardrails.BlockDestructive
+		}
+		if configured.Guardrails.BlockExfiltration != nil {
+			result.Guardrails.BlockExfiltration = *configured.Guardrails.BlockExfiltration
+		}
+		if configured.Guardrails.BlockedPatterns != nil {
+			result.Guardrails.BlockedPatterns = append([]string(nil), (*configured.Guardrails.BlockedPatterns)...)
+		}
 	}
 	if configured.Rules == nil {
 		return result, nil
@@ -842,12 +904,58 @@ func validatePoliciesNode(node *yaml.Node) error {
 			if err := requireScalar(value, "!!bool", "policies.dry_run must be a YAML boolean"); err != nil {
 				return err
 			}
+		case "max_consecutive_auto_decisions":
+			if err := requireScalar(value, "!!int", "policies.max_consecutive_auto_decisions must be a YAML integer"); err != nil {
+				return err
+			}
+		case "rate_limit_per_minute":
+			if err := requireScalar(value, "!!int", "policies.rate_limit_per_minute must be a YAML integer"); err != nil {
+				return err
+			}
+		case "guardrails":
+			if err := validateGuardrailsNode(value); err != nil {
+				return err
+			}
 		case "rules":
 			if value.Kind != yaml.SequenceNode {
 				return errors.New("policies.rules must be a YAML list")
 			}
 			for ruleIndex, rawRule := range value.Content {
 				if err := validatePolicyRuleNode(dereferenceAlias(rawRule), ruleIndex); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateGuardrailsNode(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return errors.New("policies.guardrails must be a YAML object")
+	}
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		name := node.Content[index].Value
+		value := dereferenceAlias(node.Content[index+1])
+		switch name {
+		case "block_destructive":
+			if err := requireScalar(value, "!!bool", "policies.guardrails.block_destructive must be a YAML boolean"); err != nil {
+				return err
+			}
+		case "block_exfiltration":
+			if err := requireScalar(value, "!!bool", "policies.guardrails.block_exfiltration must be a YAML boolean"); err != nil {
+				return err
+			}
+		case "blocked_patterns":
+			if value.Kind != yaml.SequenceNode {
+				return errors.New("policies.guardrails.blocked_patterns must be a YAML list")
+			}
+			for pIndex, element := range value.Content {
+				if err := requireScalar(
+					dereferenceAlias(element),
+					"!!str",
+					fmt.Sprintf("policies.guardrails.blocked_patterns[%d] must be a YAML string", pIndex),
+				); err != nil {
 					return err
 				}
 			}

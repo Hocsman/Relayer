@@ -170,6 +170,9 @@ Configuration can propose allow, ask, or deny. Independent invariants apply:
 - automatic allow requires explicit low risk;
 - high and unknown risk prevent auto-allow, but a configured deny may remain
   automatic for a valid non-sensitive confirmation;
+- guardrails intercept destructive file deletions, disk wipes, and network exfiltrations, overriding any allow proposal to ask;
+- consecutive auto decisions are bounded by `max_consecutive_auto_decisions` to stop runaway agent loops;
+- sliding window rate limiting restricts automated actions per minute via `rate_limit_per_minute`;
 - invalid, incomplete, and non-actionable events ask;
 - dry-run never delivers the proposed automatic action;
 - inability to encode the action falls back to ask.
