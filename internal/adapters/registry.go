@@ -64,6 +64,10 @@ func NewRegistry(patterns []Pattern) (*Registry, error) {
 		factory    Factory
 	}{
 		{
+			descriptor: Descriptor{ID: AiderID, Status: StatusExperimental, Implemented: true, Executables: []string{"aider"}},
+			factory:    func() (Adapter, error) { return NewAiderAdapter(patternsCopy) },
+		},
+		{
 			descriptor: Descriptor{ID: ClaudeID, Status: StatusExperimental, Implemented: true, Executables: []string{"claude"}},
 			factory:    func() (Adapter, error) { return NewClaudeAdapter(patternsCopy) },
 		},

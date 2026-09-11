@@ -19,7 +19,7 @@ func main() {
 		if errors.Is(err, flag.ErrHelp) {
 			return
 		}
-		if errors.Is(err, app.ErrPreflightBlocked) {
+		if errors.Is(err, app.ErrPreflightBlocked) || errors.Is(err, app.ErrAuditVerificationFailed) {
 			os.Exit(1)
 		}
 		fmt.Fprintf(os.Stderr, "relayer: %v\n", err)

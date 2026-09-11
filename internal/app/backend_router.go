@@ -176,6 +176,19 @@ func (r *backendRouter) Output(id string) (string, error) {
 	return snapshot.Output, err
 }
 
+func (r *backendRouter) AnsiOutput(id string) (string, error) {
+	backend, err := r.backendFor(id)
+	if err != nil {
+		return "", err
+	}
+	if provider, ok := backend.(interface {
+		AnsiOutput(string) (string, error)
+	}); ok {
+		return provider.AnsiOutput(id)
+	}
+	return r.Output(id)
+}
+
 func (r *backendRouter) PendingEvent(ctx context.Context, id string) (*adapters.Event, error) {
 	backend, err := r.backendFor(id)
 	if err != nil {

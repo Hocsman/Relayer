@@ -182,6 +182,14 @@ func (m *Manager) Output(id string) (string, error) {
 	return m.inner.Output(id)
 }
 
+// AnsiOutput returns the processor's in-memory ring retaining ANSI escape codes.
+func (m *Manager) AnsiOutput(id string) (string, error) {
+	if err := m.check(context.Background(), id); err != nil {
+		return "", err
+	}
+	return m.inner.AnsiOutput(id)
+}
+
 func (m *Manager) AttachCommand(context.Context, terminal.SessionID) (*exec.Cmd, error) {
 	return nil, fmt.Errorf("%w: backend %s", terminal.ErrNotAttachable, m.Name())
 }

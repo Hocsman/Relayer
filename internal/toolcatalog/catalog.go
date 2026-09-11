@@ -15,6 +15,7 @@ import (
 type ProfileID string
 
 const (
+	Aider      ProfileID = "aider"
 	ClaudeCode ProfileID = "claude-code"
 	CodexCLI   ProfileID = "codex-cli"
 	MimoCode   ProfileID = "mimo-code"
@@ -60,6 +61,12 @@ var descriptors = []Descriptor{
 		Name:           "Codex CLI",
 		Executables:    []string{"codex"},
 		DefaultAdapter: adapters.CodexID,
+	},
+	{
+		ID:             Aider,
+		Name:           "Aider",
+		Executables:    []string{"aider"},
+		DefaultAdapter: adapters.AiderID,
 	},
 	{
 		ID:             MimoCode,

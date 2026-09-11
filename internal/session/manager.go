@@ -360,6 +360,14 @@ func (m *Manager) Output(sessionID string) (string, error) {
 	return session.processor.Output(), nil
 }
 
+func (m *Manager) AnsiOutput(sessionID string) (string, error) {
+	session, err := m.session(sessionID)
+	if err != nil {
+		return "", err
+	}
+	return session.processor.AnsiOutput(), nil
+}
+
 // PendingEvent returns an independent copy of the actionable occurrence still
 // awaiting a decision, if any.
 func (m *Manager) PendingEvent(sessionID string) (*adapters.Event, error) {
