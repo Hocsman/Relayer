@@ -167,6 +167,14 @@ func validateCompleteReport(report Report) error {
 			return ErrInvalidReport
 		}
 	}
+	if cursor < len(report.Checks) && report.Checks[cursor].ID == "telemetry.valid" {
+		if !next("telemetry.valid",
+			checkVocabulary{ScopeTelemetry, CheckPass, summaryTelemetryValid, ""},
+			checkVocabulary{ScopeTelemetry, CheckBlock, summaryTelemetryInvalid, remediationTelemetry},
+		) {
+			return ErrInvalidReport
+		}
+	}
 	if cursor != len(report.Checks) {
 		return ErrInvalidReport
 	}

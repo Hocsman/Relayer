@@ -582,3 +582,73 @@ func TestLoadVersionOneNotificationsDefaultsAndOverrides(t *testing.T) {
 		t.Fatal("expected error for non-boolean notifications.enabled, got nil")
 	}
 }
+
+func TestLoadVersionOneWithTelemetry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "telemetry.yaml")
+
+	// 1. Valid telemetry configuration
+	writeConfigTestFile(t, path, []byte(
+		"version: 1\n"+
+			"backend: pty\n"+
+			"telemetry:\n"+
+			"  enabled: true\n"+
+			"  service_name: 'relayer-prod'\n"+
+			"  environment: 'production'\n"+
+			"  prometheus:\n"+
+			"    enabled: true\n"+
+			"    address: ':9191'\n"+
+			"    path: '/custom-metrics'\n"+
+			"  otlp:\n"+
+			"    enabled: true\n"+
+			"    endpoint: 'http://localhost:4318/v1/metrics'\n"+
+			"    headers:\n"+
+			"      Authorization: 'Bearer secret'\n"+
+			"    export_interval: '20s'\n"+
+			"    timeout: '3s'\n"+
+			"agents: []\n"+
+			"intercept_patterns:\n"+
+			"  - pattern: 'foo'\n"+
+			"    description: 'foo gate'\n",
+	))
+
+	result, err := LoadExisting(path)
+	if err != nil {
+		t.Fatalf("LoadExisting error: %v", err)
+	}
+
+	if !result.Telemetry.Enabled {
+		t.Fatal("expected telemetry to be enabled")
+	}
+	if result.Telemetry.ServiceName != "relayer-prod" || result.Telemetry.Environment != "production" {
+		t.Fatalf("unexpected telemetry names: %s / %s", result.Telemetry.ServiceName, result.Telemetry.Environment)
+	}
+	if !result.Telemetry.Prometheus.Enabled || result.Telemetry.Prometheus.Address != ":9191" || result.Telemetry.Prometheus.Path != "/custom-metrics" {
+		t.Fatalf("unexpected prometheus settings: %#v", result.Telemetry.Prometheus)
+	}
+	if !result.Telemetry.OTLP.Enabled || result.Telemetry.OTLP.Endpoint != "http://localhost:4318/v1/metrics" {
+		t.Fatalf("unexpected otlp settings: %#v", result.Telemetry.OTLP)
+	}
+	if result.Telemetry.OTLP.Headers["Authorization"] != "Bearer secret" {
+		t.Fatalf("unexpected otlp headers: %#v", result.Telemetry.OTLP.Headers)
+	}
+
+	// 2. Invalid telemetry: bad OTLP URL
+	writeConfigTestFile(t, path, []byte(
+		"version: 1\n"+
+			"backend: pty\n"+
+			"telemetry:\n"+
+			"  enabled: true\n"+
+			"  otlp:\n"+
+			"    enabled: true\n"+
+			"    endpoint: 'invalid-url'\n"+
+			"agents: []\n"+
+			"intercept_patterns:\n"+
+			"  - pattern: 'foo'\n"+
+			"    description: 'foo gate'\n",
+	))
+	_, err = LoadExisting(path)
+	if err == nil {
+		t.Fatal("expected error for invalid otlp endpoint, got nil")
+	}
+}
+

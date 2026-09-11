@@ -482,4 +482,35 @@ func decodeEntries(t *testing.T, lines [][]byte) []Entry {
 	return entries
 }
 
+func TestRecorderAddObserver(t *testing.T) {
+	sink := &memoryLineSink{}
+	recorder, err := NewRecorder(
+		Config{Enabled: true, Mode: ModeMetadata, MaxFileSizeMB: 1, MaxFiles: 1},
+		sink, nil, sequentialIDGenerator(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var observed []Entry
+	recorder.AddObserver(ObserverFunc(func(e Entry) {
+		observed = append(observed, e)
+	}))
+
+	e1 := Entry{Kind: KindRunStarted, Outcome: OutcomeStarted}
+	e2 := Entry{Kind: KindEventDetected, AgentID: "agent-1", Outcome: OutcomeDetected}
+	if err := recorder.Record(e1); err != nil {
+		t.Fatal(err)
+	}
+	if err := recorder.Record(e2); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(observed) != 2 {
+		t.Fatalf("expected 2 observed entries, got %d", len(observed))
+	}
+	if observed[0].Kind != KindRunStarted || observed[1].Kind != KindEventDetected {
+		t.Fatalf("unexpected observed entries: %#v", observed)
+	}
+}
+
 var _ LineSink = (*memoryLineSink)(nil)

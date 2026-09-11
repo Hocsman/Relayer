@@ -19,6 +19,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/policy"
+	"github.com/Hocsman/Relayer/internal/telemetry"
 	"github.com/Hocsman/Relayer/internal/toolcatalog"
 )
 
@@ -1073,3 +1074,41 @@ func lastBackendCheck(t *testing.T, report Report) CheckResult {
 	t.Fatal("report contains no backend check")
 	return CheckResult{}
 }
+
+func TestCheckTelemetryValidAndBlocked(t *testing.T) {
+	// 1. Valid telemetry
+	input := validInput()
+	input.Configuration.Telemetry = telemetry.DefaultConfig()
+	input.Configuration.Telemetry.Enabled = true
+	options := testOptions(detectorWithInstalled("runner"))
+
+	report, err := Check(context.Background(), input, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := findCheck(t, report, "telemetry.valid")
+	if check.Status != CheckPass {
+		t.Fatalf("expected CheckPass, got %s", check.Status)
+	}
+	if err := ValidateReport(report); err != nil {
+		t.Fatalf("ValidateReport error: %v", err)
+	}
+
+	// 2. Blocked telemetry (invalid address)
+	input.Configuration.Telemetry.Prometheus.Address = "invalid-no-port"
+	report, err = Check(context.Background(), input, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check = findCheck(t, report, "telemetry.valid")
+	if check.Status != CheckBlock {
+		t.Fatalf("expected CheckBlock, got %s", check.Status)
+	}
+	if report.Status != StatusBlocked {
+		t.Fatalf("expected StatusBlocked, got %s", report.Status)
+	}
+	if err := ValidateReport(report); err != nil {
+		t.Fatalf("ValidateReport error on blocked: %v", err)
+	}
+}
+

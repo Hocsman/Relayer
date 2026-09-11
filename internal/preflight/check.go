@@ -16,6 +16,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/intercept"
 	"github.com/Hocsman/Relayer/internal/policy"
+	"github.com/Hocsman/Relayer/internal/telemetry"
 	"github.com/Hocsman/Relayer/internal/tmuxbackend"
 	"github.com/Hocsman/Relayer/internal/toolcatalog"
 )
@@ -77,6 +78,9 @@ const (
 	summaryBackendUnusable         = "The requested tmux backend is installed but cannot run a session."
 	remediationBackendUnusable     = "Update tmux, check that it starts a session, or choose the PTY backend."
 	summaryBackendAutoUnusable     = "The auto backend will fall back to PTY because tmux cannot run a session."
+	summaryTelemetryValid          = "The telemetry configuration is valid."
+	summaryTelemetryInvalid        = "The telemetry configuration is invalid."
+	remediationTelemetry           = "Fix the prometheus address or otlp endpoint before starting an agent."
 )
 
 // Check passively validates one effective plan. It never opens an audit sink,
@@ -135,6 +139,9 @@ func Check(ctx context.Context, input Input, options Options) (Report, error) {
 	checkAgents(ctx, &report, input, options.Detector, options.TmuxProbe)
 	if err := checkContext(ctx); err != nil {
 		return Report{}, err
+	}
+	if input.Configuration.Telemetry.Enabled {
+		checkTelemetry(&report, input.Configuration.Telemetry)
 	}
 
 	finalizeStatus(&report)
@@ -708,3 +715,12 @@ func clonePolicyConfig(configuration policy.Config) policy.Config {
 	}
 	return result
 }
+
+func checkTelemetry(report *Report, cfg telemetry.Config) {
+	if err := telemetry.Validate(cfg); err != nil {
+		addCheck(report, "telemetry.valid", ScopeTelemetry, CheckBlock, summaryTelemetryInvalid, remediationTelemetry)
+		return
+	}
+	addCheck(report, "telemetry.valid", ScopeTelemetry, CheckPass, summaryTelemetryValid, "")
+}
+

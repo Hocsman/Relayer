@@ -198,7 +198,7 @@ func doctorAgentLine(inspected preflight.AgentInfo) (string, bool) {
 	adapter := "unavailable"
 	if inspected.Adapter != "" {
 		switch inspected.Adapter {
-		case adapters.GenericID, adapters.AiderID, adapters.ClaudeID, adapters.CodexID:
+		case adapters.GenericID, adapters.AiderID, adapters.ClaudeID, adapters.CodexID, adapters.GooseID, adapters.OpenInterpreterID:
 			adapter = inspected.Adapter
 		default:
 			return "", false
@@ -253,6 +253,8 @@ func doctorScopeLabel(scope preflight.Scope) (string, bool) {
 		return "Adapter", true
 	case preflight.ScopeBackend:
 		return "Backend", true
+	case preflight.ScopeTelemetry:
+		return "Telemetry", true
 	default:
 		return "", false
 	}

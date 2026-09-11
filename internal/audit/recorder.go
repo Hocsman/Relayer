@@ -13,6 +13,18 @@ import (
 
 var generatedIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
+// EntryObserver receives sanitized audit records as they are accepted.
+type EntryObserver interface {
+	Observe(Entry)
+}
+
+// ObserverFunc turns a bare function into an EntryObserver.
+type ObserverFunc func(Entry)
+
+func (f ObserverFunc) Observe(entry Entry) {
+	f(entry)
+}
+
 // Recorder assigns identities and a total order before writing sanitized JSONL.
 type Recorder struct {
 	mu          sync.Mutex
@@ -25,6 +37,7 @@ type Recorder struct {
 	closed      bool
 	closeErr    error
 	writeErr    error
+	observers   []EntryObserver
 }
 
 // NewRecorder constructs a recorder around an injectable line sink, clock,
@@ -123,7 +136,20 @@ func (r *Recorder) Record(entry Entry) error {
 		return r.writeErr
 	}
 	r.sequence = nextSequence
+	for _, observer := range r.observers {
+		observer.Observe(entry)
+	}
 	return nil
+}
+
+// AddObserver registers an observer that is notified of each accepted sanitized entry.
+func (r *Recorder) AddObserver(observer EntryObserver) {
+	if r == nil || observer == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.observers = append(r.observers, observer)
 }
 
 // Close is safe to call concurrently and closes the underlying sink once.

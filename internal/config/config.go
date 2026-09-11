@@ -19,6 +19,8 @@ import (
 	"github.com/Hocsman/Relayer/internal/intercept"
 	"github.com/Hocsman/Relayer/internal/notify"
 	"github.com/Hocsman/Relayer/internal/policy"
+	"github.com/Hocsman/Relayer/internal/telemetry"
+	"time"
 	"gopkg.in/yaml.v3"
 )
 
@@ -82,6 +84,7 @@ type Result struct {
 	Policies      policy.Config
 	Audit         audit.Config
 	Notifications notify.Config
+	Telemetry     telemetry.Config
 	Created       bool
 }
 
@@ -134,6 +137,29 @@ type versionOneFile struct {
 	Agents            *[]configuredAgent       `yaml:"agents"`
 	InterceptPatterns *[]ConfigPattern         `yaml:"intercept_patterns"`
 	Notifications     *configuredNotifications `yaml:"notifications,omitempty"`
+	Telemetry         *configuredTelemetry     `yaml:"telemetry,omitempty"`
+}
+
+type configuredTelemetry struct {
+	Enabled     *bool                 `yaml:"enabled,omitempty"`
+	ServiceName *string               `yaml:"service_name,omitempty"`
+	Environment *string               `yaml:"environment,omitempty"`
+	Prometheus  *configuredPrometheus `yaml:"prometheus,omitempty"`
+	OTLP        *configuredOTLP       `yaml:"otlp,omitempty"`
+}
+
+type configuredPrometheus struct {
+	Enabled *bool   `yaml:"enabled,omitempty"`
+	Address *string `yaml:"address,omitempty"`
+	Path    *string `yaml:"path,omitempty"`
+}
+
+type configuredOTLP struct {
+	Enabled        *bool             `yaml:"enabled,omitempty"`
+	Endpoint       *string           `yaml:"endpoint,omitempty"`
+	Headers        map[string]string `yaml:"headers,omitempty"`
+	ExportInterval *string           `yaml:"export_interval,omitempty"`
+	Timeout        *string           `yaml:"timeout,omitempty"`
 }
 
 type configuredNotifications struct {
@@ -207,6 +233,7 @@ type decodedFile struct {
 	Policies      policy.Config
 	Audit         audit.Config
 	Notifications notify.Config
+	Telemetry     telemetry.Config
 }
 
 // LoadOrCreate reads path before any PTY is started. It accepts both a direct
@@ -291,6 +318,7 @@ func decodeResult(path string, data []byte, created bool) (Result, error) {
 		Policies:      configured.Policies,
 		Audit:         configured.Audit,
 		Notifications: configured.Notifications,
+		Telemetry:     configured.Telemetry,
 		Created:       created,
 	}, nil
 }
@@ -677,6 +705,62 @@ func disabledAuditConfig() audit.Config {
 	return result
 }
 
+func decodeTelemetry(configured *configuredTelemetry) (telemetry.Config, error) {
+	result := telemetry.DefaultConfig()
+	if configured == nil {
+		return result, nil
+	}
+	if configured.Enabled != nil {
+		result.Enabled = *configured.Enabled
+	}
+	if configured.ServiceName != nil {
+		result.ServiceName = strings.TrimSpace(*configured.ServiceName)
+	}
+	if configured.Environment != nil {
+		result.Environment = strings.TrimSpace(*configured.Environment)
+	}
+	if configured.Prometheus != nil {
+		if configured.Prometheus.Enabled != nil {
+			result.Prometheus.Enabled = *configured.Prometheus.Enabled
+		}
+		if configured.Prometheus.Address != nil {
+			result.Prometheus.Address = strings.TrimSpace(*configured.Prometheus.Address)
+		}
+		if configured.Prometheus.Path != nil {
+			result.Prometheus.Path = strings.TrimSpace(*configured.Prometheus.Path)
+		}
+	}
+	if configured.OTLP != nil {
+		if configured.OTLP.Enabled != nil {
+			result.OTLP.Enabled = *configured.OTLP.Enabled
+		}
+		if configured.OTLP.Endpoint != nil {
+			result.OTLP.Endpoint = strings.TrimSpace(*configured.OTLP.Endpoint)
+		}
+		if configured.OTLP.Headers != nil {
+			result.OTLP.Headers = configured.OTLP.Headers
+		}
+		if configured.OTLP.ExportInterval != nil {
+			dur, err := time.ParseDuration(strings.TrimSpace(*configured.OTLP.ExportInterval))
+			if err != nil {
+				return telemetry.Config{}, fmt.Errorf("invalid telemetry.otlp.export_interval: %w", err)
+			}
+			result.OTLP.ExportInterval = dur
+		}
+		if configured.OTLP.Timeout != nil {
+			dur, err := time.ParseDuration(strings.TrimSpace(*configured.OTLP.Timeout))
+			if err != nil {
+				return telemetry.Config{}, fmt.Errorf("invalid telemetry.otlp.timeout: %w", err)
+			}
+			result.OTLP.Timeout = dur
+		}
+	}
+	if err := telemetry.Validate(result); err != nil {
+		return telemetry.Config{}, fmt.Errorf("invalid telemetry: %w", err)
+	}
+	return result, nil
+}
+
 func createExclusively(path string, payload []byte, linkErr error) (bool, error) {
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if errors.Is(err, os.ErrExist) {
@@ -731,6 +815,7 @@ func decode(data []byte, configDir string) (decodedFile, error) {
 			Policies:      policy.DefaultConfig(),
 			Audit:         disabledAuditConfig(),
 			Notifications: notify.DefaultConfig(),
+			Telemetry:     telemetry.DefaultConfig(),
 		}, nil
 	case yaml.MappingNode:
 		if mappingHasKey(root, "version") {
@@ -753,6 +838,7 @@ func decode(data []byte, configDir string) (decodedFile, error) {
 			Policies:      policy.DefaultConfig(),
 			Audit:         disabledAuditConfig(),
 			Notifications: notify.DefaultConfig(),
+			Telemetry:     telemetry.DefaultConfig(),
 		}, nil
 	default:
 		return decodedFile{}, errors.New("YAML root must be a list or a configuration object")
@@ -823,6 +909,10 @@ func decodeVersionOne(data []byte, root *yaml.Node, configDir string) (decodedFi
 	if err != nil {
 		return decodedFile{}, err
 	}
+	configuredTelemetry, err := decodeTelemetry(configured.Telemetry)
+	if err != nil {
+		return decodedFile{}, err
+	}
 
 	return decodedFile{
 		Version:       *configured.Version,
@@ -833,6 +923,7 @@ func decodeVersionOne(data []byte, root *yaml.Node, configDir string) (decodedFi
 		Policies:      configuredPolicy,
 		Audit:         configuredAudit,
 		Notifications: configuredNotifications,
+		Telemetry:     configuredTelemetry,
 	}, nil
 }
 
@@ -914,6 +1005,85 @@ func validateVersionOneNode(root *yaml.Node) error {
 		case "notifications":
 			if err := validateNotificationsNode(value); err != nil {
 				return err
+			}
+		case "telemetry":
+			if err := validateTelemetryNode(value); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateTelemetryNode(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return errors.New("telemetry must be a YAML object")
+	}
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		name := node.Content[index].Value
+		value := dereferenceAlias(node.Content[index+1])
+		switch name {
+		case "enabled":
+			if err := requireScalar(value, "!!bool", "telemetry.enabled must be a YAML boolean"); err != nil {
+				return err
+			}
+		case "service_name", "environment":
+			if err := requireScalar(value, "!!str", "telemetry."+name+" must be a YAML string"); err != nil {
+				return err
+			}
+		case "prometheus":
+			if err := validatePrometheusNode(value); err != nil {
+				return err
+			}
+		case "otlp":
+			if err := validateOTLPNode(value); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validatePrometheusNode(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return errors.New("telemetry.prometheus must be a YAML object")
+	}
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		name := node.Content[index].Value
+		value := dereferenceAlias(node.Content[index+1])
+		switch name {
+		case "enabled":
+			if err := requireScalar(value, "!!bool", "telemetry.prometheus.enabled must be a YAML boolean"); err != nil {
+				return err
+			}
+		case "address", "path":
+			if err := requireScalar(value, "!!str", "telemetry.prometheus."+name+" must be a YAML string"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateOTLPNode(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return errors.New("telemetry.otlp must be a YAML object")
+	}
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		name := node.Content[index].Value
+		value := dereferenceAlias(node.Content[index+1])
+		switch name {
+		case "enabled":
+			if err := requireScalar(value, "!!bool", "telemetry.otlp.enabled must be a YAML boolean"); err != nil {
+				return err
+			}
+		case "endpoint", "export_interval", "timeout":
+			if err := requireScalar(value, "!!str", "telemetry.otlp."+name+" must be a YAML string"); err != nil {
+				return err
+			}
+		case "headers":
+			if value.Kind != yaml.MappingNode {
+				return errors.New("telemetry.otlp.headers must be a YAML object")
 			}
 		}
 	}

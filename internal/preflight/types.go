@@ -53,6 +53,7 @@ const (
 	ScopeAgent         Scope = "agent"
 	ScopeAdapter       Scope = "adapter"
 	ScopeBackend       Scope = "backend"
+	ScopeTelemetry     Scope = "telemetry"
 )
 
 // CheckResult contains only finite, static display text selected by the package.

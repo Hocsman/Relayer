@@ -20,6 +20,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/notify"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
+	"github.com/Hocsman/Relayer/internal/telemetry"
 	"github.com/Hocsman/Relayer/internal/terminal"
 	"github.com/Hocsman/Relayer/internal/tui"
 	buildversion "github.com/Hocsman/Relayer/internal/version"
@@ -152,6 +153,21 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 	auditor, err := initializeAudit(configuration.Audit, dependencies)
 	if err != nil {
 		return fmt.Errorf("initialize the audit journal: %w", err)
+	}
+	if configuration.Telemetry.Enabled {
+		telemetryEngine, telErr := telemetry.NewEngine(configuration.Telemetry)
+		if telErr != nil {
+			return fmt.Errorf("initialize telemetry: %w", telErr)
+		}
+		auditor.AddObserver(telemetryEngine.Registry())
+		if startErr := telemetryEngine.Start(context.Background()); startErr != nil {
+			return fmt.Errorf("start telemetry: %w", startErr)
+		}
+		defer func() {
+			if closeErr := telemetryEngine.Close(); closeErr != nil {
+				joinRunError(&returnErr, "closing telemetry", closeErr)
+			}
+		}()
 	}
 	defer func() {
 		outcome := audit.OutcomeSucceeded

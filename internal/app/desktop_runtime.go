@@ -18,6 +18,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
+	"github.com/Hocsman/Relayer/internal/telemetry"
 	"github.com/Hocsman/Relayer/internal/terminal"
 )
 
@@ -80,10 +81,12 @@ type DesktopMetadata struct {
 	Backend        string `json:"backend"`
 	PolicyAction   string `json:"policyAction"`
 	PolicyDryRun   bool   `json:"policyDryRun"`
-	AuditEnabled   bool   `json:"auditEnabled"`
-	AuditMode      string `json:"auditMode"`
-	AuditPath      string `json:"auditPath,omitempty"`
-	Configuration  bool   `json:"configurationCreated"`
+	AuditEnabled     bool   `json:"auditEnabled"`
+	AuditMode        string `json:"auditMode"`
+	AuditPath        string `json:"auditPath,omitempty"`
+	TelemetryEnabled bool   `json:"telemetryEnabled"`
+	TelemetryProm    string `json:"telemetryPrometheus,omitempty"`
+	Configuration    bool   `json:"configurationCreated"`
 }
 
 // DesktopRuntime owns one complete Relayer run without assuming a terminal
@@ -98,6 +101,7 @@ type DesktopRuntime struct {
 	policyEngine  *policy.Engine
 	policyTracker *policy.Tracker
 	auditor       *audit.Recorder
+	telemetry     *telemetry.Engine
 	configuration config.Result
 	configPath    string
 	sessions      []DesktopSession
@@ -214,6 +218,19 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 		return nil, fmt.Errorf("initialize the audit journal: %w", err)
 	}
 	runtime.auditor = auditor
+	if plan.configuration.Telemetry.Enabled {
+		telemetryEngine, telErr := telemetry.NewEngine(plan.configuration.Telemetry)
+		if telErr != nil {
+			cancel()
+			return nil, fmt.Errorf("initialize telemetry: %w", telErr)
+		}
+		auditor.AddObserver(telemetryEngine.Registry())
+		if startErr := telemetryEngine.Start(ctx); startErr != nil {
+			cancel()
+			return nil, fmt.Errorf("start telemetry: %w", startErr)
+		}
+		runtime.telemetry = telemetryEngine
+	}
 	cleanup := true
 	defer func() {
 		if !cleanup {
@@ -405,9 +422,11 @@ func (r *DesktopRuntime) Metadata() DesktopMetadata {
 		Backend:        effectiveBackendLabel(r.infos),
 		PolicyAction:   string(r.configuration.Policies.DefaultAction),
 		PolicyDryRun:   r.configuration.Policies.DryRun,
-		AuditEnabled:   r.auditor != nil && r.auditor.Enabled(),
-		AuditMode:      string(r.configuration.Audit.Mode),
-		Configuration:  r.configuration.Created,
+		AuditEnabled:     r.auditor != nil && r.auditor.Enabled(),
+		AuditMode:        string(r.configuration.Audit.Mode),
+		TelemetryEnabled: r.telemetry != nil && r.telemetry.Enabled(),
+		TelemetryProm:    r.telemetry.PrometheusAddress(),
+		Configuration:    r.configuration.Created,
 	}
 	if metadata.AuditEnabled {
 		metadata.AuditPath = r.auditor.Path()
@@ -691,6 +710,11 @@ func (r *DesktopRuntime) Close(ctx context.Context) error {
 	}); err != nil {
 		result = errors.Join(result, fmt.Errorf("audit the end of the run: %w", err))
 	}
+	if r.telemetry != nil {
+		if err := r.telemetry.Close(); err != nil {
+			result = errors.Join(result, fmt.Errorf("close telemetry: %w", err))
+		}
+	}
 	if err := r.auditor.Close(); err != nil {
 		result = errors.Join(result, fmt.Errorf("close the audit journal: %w", err))
 	}
@@ -703,6 +727,9 @@ func (r *DesktopRuntime) abortInitialization() error {
 		return nil
 	}
 	var result error
+	if r.telemetry != nil {
+		_ = r.telemetry.Close()
+	}
 	if r.auditor != nil {
 		for _, info := range r.infos {
 			if err := r.auditor.Record(audit.Entry{
