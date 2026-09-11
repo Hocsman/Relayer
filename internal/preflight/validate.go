@@ -230,7 +230,7 @@ func validAgents(agents []AgentInfo) bool {
 			if inspected.AdapterMaturity != adapters.StatusStable {
 				return false
 			}
-		case adapters.AiderID, adapters.ClaudeID, adapters.CodexID:
+		case adapters.AiderID, adapters.ClaudeID, adapters.CodexID, adapters.GooseID, adapters.OpenInterpreterID:
 			if inspected.AdapterMaturity != adapters.StatusExperimental {
 				return false
 			}

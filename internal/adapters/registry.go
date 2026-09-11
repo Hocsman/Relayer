@@ -75,6 +75,14 @@ func NewRegistry(patterns []Pattern) (*Registry, error) {
 			descriptor: Descriptor{ID: CodexID, Status: StatusExperimental, Implemented: true, Executables: []string{"codex"}},
 			factory:    func() (Adapter, error) { return NewCodexAdapter(patternsCopy) },
 		},
+		{
+			descriptor: Descriptor{ID: GooseID, Status: StatusExperimental, Implemented: true, Executables: []string{"goose"}},
+			factory:    func() (Adapter, error) { return NewGooseAdapter(patternsCopy) },
+		},
+		{
+			descriptor: Descriptor{ID: OpenInterpreterID, Status: StatusExperimental, Implemented: true, Executables: []string{"interpreter", "open-interpreter"}},
+			factory:    func() (Adapter, error) { return NewOpenInterpreterAdapter(patternsCopy) },
+		},
 	} {
 		if err := registry.register(implementation.descriptor, implementation.factory); err != nil {
 			return nil, err
@@ -140,6 +148,9 @@ func (r *Registry) Resolve(requestedID, executable string) (Adapter, Descriptor,
 		return nil, Descriptor{}, errors.New("nil adapter registry")
 	}
 	requestedID = strings.ToLower(strings.TrimSpace(requestedID))
+	if requestedID == "open-interpreter" {
+		requestedID = OpenInterpreterID
+	}
 	r.mu.RLock()
 	var (
 		entry  registryEntry

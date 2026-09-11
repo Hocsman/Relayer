@@ -23,11 +23,15 @@ export type EventType = "confirmation" | "permission" | "credential" | "process_
 export type PolicyAction = "allow" | "ask" | "deny";
 export type DeliveryStatus = "pending" | "delivering" | "delivered" | "failed" | "uncertain";
 export type AgentPresetID =
+  | "aider"
   | "claude-code"
   | "codex-cli"
+  | "goose"
+  | "open-interpreter"
   | "mimo-code"
   | "ollama"
-  | "custom";
+  | "custom"
+  | string;
 export type AgentBackend = "auto" | "pty" | "tmux";
 export type AdapterStatus = "stable" | "experimental";
 export type InstallStatus = "unknown" | "installed" | "not_installed";

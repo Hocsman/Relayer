@@ -14,6 +14,8 @@ func TestDescriptorsExposeMinimalDeclarativeInventory(t *testing.T) {
 		{ID: ClaudeCode, Name: "Claude Code", Executables: []string{"claude"}, DefaultAdapter: adapters.ClaudeID},
 		{ID: CodexCLI, Name: "Codex CLI", Executables: []string{"codex"}, DefaultAdapter: adapters.CodexID},
 		{ID: Aider, Name: "Aider", Executables: []string{"aider"}, DefaultAdapter: adapters.AiderID},
+		{ID: GooseCLI, Name: "Goose CLI", Executables: []string{"goose"}, DefaultAdapter: adapters.GooseID},
+		{ID: OpenInterpreter, Name: "Open Interpreter", Executables: []string{"interpreter", "open-interpreter"}, DefaultAdapter: adapters.OpenInterpreterID},
 		{ID: MimoCode, Name: "MiMo Code", Executables: []string{"mimo"}, DefaultAdapter: agent.AdapterGeneric},
 		{ID: Ollama, Name: "Ollama / DeepSeek", Executables: []string{"ollama"}, DefaultAdapter: agent.AdapterGeneric, MinimumArguments: 2, ArgumentPrefix: []string{"run"}},
 		{ID: Custom, Name: "Custom CLI", DefaultAdapter: agent.AdapterGeneric, RequiresExecutable: true},
@@ -26,7 +28,7 @@ func TestDescriptorsExposeMinimalDeclarativeInventory(t *testing.T) {
 
 	got[0].Name = "mutated"
 	got[0].Executables[0] = "mutated"
-	got[4].ArgumentPrefix[0] = "mutated"
+	got[6].ArgumentPrefix[0] = "mutated"
 	again := Descriptors()
 	if !reflect.DeepEqual(again, want) {
 		t.Fatalf("catalogue changed through returned descriptor: %#v", again)
@@ -107,6 +109,34 @@ func TestResolvePreservesExactArgvWithoutInventingToolOptions(t *testing.T) {
 			request: LaunchRequest{ProfileID: MimoCode, AgentID: "mimo", Name: "MiMo"},
 			want: agent.Spec{
 				ID: "mimo", Name: "MiMo", Command: []string{"mimo"}, Adapter: agent.AdapterGeneric,
+			},
+		},
+		{
+			name: "goose default executable",
+			request: LaunchRequest{
+				ProfileID: GooseCLI,
+				AgentID:   "goose-agent",
+				Name:      "Goose Agent",
+			},
+			want: agent.Spec{
+				ID:      "goose-agent",
+				Name:    "Goose Agent",
+				Command: []string{"goose"},
+				Adapter: adapters.GooseID,
+			},
+		},
+		{
+			name: "open interpreter default executable",
+			request: LaunchRequest{
+				ProfileID: OpenInterpreter,
+				AgentID:   "interpreter-agent",
+				Name:      "Open Interpreter Agent",
+			},
+			want: agent.Spec{
+				ID:      "interpreter-agent",
+				Name:    "Open Interpreter Agent",
+				Command: []string{"interpreter"},
+				Adapter: adapters.OpenInterpreterID,
 			},
 		},
 		{

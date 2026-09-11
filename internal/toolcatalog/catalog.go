@@ -15,12 +15,14 @@ import (
 type ProfileID string
 
 const (
-	Aider      ProfileID = "aider"
-	ClaudeCode ProfileID = "claude-code"
-	CodexCLI   ProfileID = "codex-cli"
-	MimoCode   ProfileID = "mimo-code"
-	Ollama     ProfileID = "ollama"
-	Custom     ProfileID = "custom"
+	Aider           ProfileID = "aider"
+	ClaudeCode      ProfileID = "claude-code"
+	CodexCLI        ProfileID = "codex-cli"
+	GooseCLI        ProfileID = "goose"
+	OpenInterpreter ProfileID = "open-interpreter"
+	MimoCode        ProfileID = "mimo-code"
+	Ollama          ProfileID = "ollama"
+	Custom          ProfileID = "custom"
 )
 
 // Descriptor contains only non-sensitive launch metadata. A descriptor is not
@@ -67,6 +69,18 @@ var descriptors = []Descriptor{
 		Name:           "Aider",
 		Executables:    []string{"aider"},
 		DefaultAdapter: adapters.AiderID,
+	},
+	{
+		ID:             GooseCLI,
+		Name:           "Goose CLI",
+		Executables:    []string{"goose"},
+		DefaultAdapter: adapters.GooseID,
+	},
+	{
+		ID:             OpenInterpreter,
+		Name:           "Open Interpreter",
+		Executables:    []string{"interpreter", "open-interpreter"},
+		DefaultAdapter: adapters.OpenInterpreterID,
 	},
 	{
 		ID:             MimoCode,

@@ -307,6 +307,10 @@ func profileDescription(id toolcatalog.ProfileID) string {
 	switch id {
 	case toolcatalog.Aider:
 		return "Aider coding assistant; interactive pair programming with terminal prompts."
+	case toolcatalog.GooseCLI:
+		return "Goose CLI; developer AI agent with automated tool and command execution prompts."
+	case toolcatalog.OpenInterpreter:
+		return "Open Interpreter; local code and command execution with human approval prompts."
 	case toolcatalog.ClaudeCode:
 		return "Claude Code; experimental rules verified on 2.1.59, then generic fallback."
 	case toolcatalog.CodexCLI:

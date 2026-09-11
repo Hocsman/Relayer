@@ -27,6 +27,8 @@ func TestRegistryDescriptorsAreDeterministicDefensiveAndHonest(t *testing.T) {
 		{ID: ClaudeID, Status: StatusExperimental, Implemented: true, Executables: []string{"claude"}},
 		{ID: CodexID, Status: StatusExperimental, Implemented: true, Executables: []string{"codex"}},
 		{ID: GenericID, Status: StatusStable, Implemented: true},
+		{ID: GooseID, Status: StatusExperimental, Implemented: true, Executables: []string{"goose"}},
+		{ID: OpenInterpreterID, Status: StatusExperimental, Implemented: true, Executables: []string{"interpreter", "open-interpreter"}},
 	}
 	got := registry.Descriptors()
 	if !reflect.DeepEqual(got, want) {
@@ -56,12 +58,16 @@ func TestRegistryResolveExplicitBuiltinsUnknownAndExecutableHints(t *testing.T) 
 		t.Fatalf("generic factories did not return independent instances: first %#v second %#v error %v", first, second, err)
 	}
 
-	for _, id := range []string{AiderID, ClaudeID, CodexID} {
+	for _, id := range []string{AiderID, ClaudeID, CodexID, GooseID, OpenInterpreterID} {
 		adapter, descriptor, err := registry.Resolve(id, "")
 		if err != nil || adapter == nil || adapter.ID() != id || descriptor.ID != id ||
 			!descriptor.Implemented || descriptor.Status != StatusExperimental {
 			t.Fatalf("Resolve(%q) = adapter %#v descriptor %#v error %v", id, adapter, descriptor, err)
 		}
+	}
+	aliasAdapter, aliasDesc, err := registry.Resolve("open-interpreter", "")
+	if err != nil || aliasAdapter == nil || aliasAdapter.ID() != OpenInterpreterID || aliasDesc.ID != OpenInterpreterID {
+		t.Fatalf("alias open-interpreter resolution failed: adapter %#v descriptor %#v error %v", aliasAdapter, aliasDesc, err)
 	}
 	if adapter, descriptor, err := registry.Resolve("not-registered", ""); adapter != nil ||
 		!errors.Is(err, ErrUnknownAdapter) || !reflect.DeepEqual(descriptor, Descriptor{}) {
@@ -75,6 +81,9 @@ func TestRegistryResolveExplicitBuiltinsUnknownAndExecutableHints(t *testing.T) 
 		{executable: "/usr/local/bin/aider", adapterID: AiderID},
 		{executable: "/opt/tools/claude", adapterID: ClaudeID},
 		{executable: `C:\tools\codex.exe`, adapterID: CodexID},
+		{executable: "/usr/bin/goose", adapterID: GooseID},
+		{executable: `C:\bin\interpreter.exe`, adapterID: OpenInterpreterID},
+		{executable: "/usr/local/bin/open-interpreter", adapterID: OpenInterpreterID},
 	} {
 		adapter, descriptor, err := registry.Resolve("", test.executable)
 		if err != nil || adapter == nil || adapter.ID() != test.adapterID || descriptor.ID != test.adapterID {
@@ -201,7 +210,7 @@ func TestRegistryConcurrentResolveAndInventory(t *testing.T) {
 				errorsFound <- err
 				return
 			}
-			if adapter.ID() != GenericID || descriptor.ID != GenericID || len(registry.Descriptors()) != 4 {
+			if adapter.ID() != GenericID || descriptor.ID != GenericID || len(registry.Descriptors()) != 6 {
 				errorsFound <- errors.New("incoherent concurrent registry result")
 			}
 		}()
