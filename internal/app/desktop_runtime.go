@@ -75,12 +75,12 @@ type DesktopSession struct {
 
 // DesktopMetadata contains non-sensitive run settings suitable for a GUI.
 type DesktopMetadata struct {
-	RunID          string `json:"runID"`
-	ConfigPath     string `json:"configPath"`
-	ConfigRevision string `json:"-"`
-	Backend        string `json:"backend"`
-	PolicyAction   string `json:"policyAction"`
-	PolicyDryRun   bool   `json:"policyDryRun"`
+	RunID            string `json:"runID"`
+	ConfigPath       string `json:"configPath"`
+	ConfigRevision   string `json:"-"`
+	Backend          string `json:"backend"`
+	PolicyAction     string `json:"policyAction"`
+	PolicyDryRun     bool   `json:"policyDryRun"`
 	AuditEnabled     bool   `json:"auditEnabled"`
 	AuditMode        string `json:"auditMode"`
 	AuditPath        string `json:"auditPath,omitempty"`
@@ -416,12 +416,12 @@ func (r *DesktopRuntime) Metadata() DesktopMetadata {
 		return DesktopMetadata{}
 	}
 	metadata := DesktopMetadata{
-		RunID:          r.runID,
-		ConfigPath:     r.configPath,
-		ConfigRevision: r.configuration.Revision,
-		Backend:        effectiveBackendLabel(r.infos),
-		PolicyAction:   string(r.configuration.Policies.DefaultAction),
-		PolicyDryRun:   r.configuration.Policies.DryRun,
+		RunID:            r.runID,
+		ConfigPath:       r.configPath,
+		ConfigRevision:   r.configuration.Revision,
+		Backend:          effectiveBackendLabel(r.infos),
+		PolicyAction:     string(r.configuration.Policies.DefaultAction),
+		PolicyDryRun:     r.configuration.Policies.DryRun,
 		AuditEnabled:     r.auditor != nil && r.auditor.Enabled(),
 		AuditMode:        string(r.configuration.Audit.Mode),
 		TelemetryEnabled: r.telemetry != nil && r.telemetry.Enabled(),

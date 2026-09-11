@@ -651,4 +651,3 @@ func TestLoadVersionOneWithTelemetry(t *testing.T) {
 		t.Fatal("expected error for invalid otlp endpoint, got nil")
 	}
 }
-

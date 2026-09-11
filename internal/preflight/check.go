@@ -723,4 +723,3 @@ func checkTelemetry(report *Report, cfg telemetry.Config) {
 	}
 	addCheck(report, "telemetry.valid", ScopeTelemetry, CheckPass, summaryTelemetryValid, "")
 }
-

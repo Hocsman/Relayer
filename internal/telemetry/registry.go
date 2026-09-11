@@ -21,24 +21,24 @@ type MetricSample struct {
 
 // HistogramSample represents the aggregated state of a histogram series.
 type HistogramSample struct {
-	Labels  map[string]string   `json:"labels"`
-	Count   uint64              `json:"count"`
-	Sum     float64             `json:"sum"`
-	Buckets map[float64]uint64  `json:"buckets"`
+	Labels  map[string]string  `json:"labels"`
+	Count   uint64             `json:"count"`
+	Sum     float64            `json:"sum"`
+	Buckets map[float64]uint64 `json:"buckets"`
 }
 
 // Snapshot contains an immutable point-in-time capture of all registry metrics.
 type Snapshot struct {
-	Timestamp            time.Time                  `json:"timestamp"`
-	SessionsActive       []MetricSample             `json:"sessions_active"`
-	EventsPending        int64                      `json:"events_pending"`
-	SessionsTotal        []MetricSample             `json:"sessions_total"`
-	EventsDetectedTotal  []MetricSample             `json:"events_detected_total"`
-	EventsWithdrawnTotal []MetricSample             `json:"events_withdrawn_total"`
-	DecisionsTotal       []MetricSample             `json:"decisions_total"`
-	OperatorInputsTotal  []MetricSample             `json:"operator_inputs_total"`
-	GuardrailsViolations []MetricSample             `json:"guardrails_violations"`
-	DecisionDurations    []HistogramSample          `json:"decision_durations"`
+	Timestamp            time.Time         `json:"timestamp"`
+	SessionsActive       []MetricSample    `json:"sessions_active"`
+	EventsPending        int64             `json:"events_pending"`
+	SessionsTotal        []MetricSample    `json:"sessions_total"`
+	EventsDetectedTotal  []MetricSample    `json:"events_detected_total"`
+	EventsWithdrawnTotal []MetricSample    `json:"events_withdrawn_total"`
+	DecisionsTotal       []MetricSample    `json:"decisions_total"`
+	OperatorInputsTotal  []MetricSample    `json:"operator_inputs_total"`
+	GuardrailsViolations []MetricSample    `json:"guardrails_violations"`
+	DecisionDurations    []HistogramSample `json:"decision_durations"`
 }
 
 // Registry aggregates and tracks metrics from audit events in a thread-safe manner.

@@ -13,7 +13,7 @@ const (
 	gooseExecuteTool         = "execute_tool"
 	gooseRunCommand          = "run_command"
 	gooseModifyFile          = "modify_file"
-	gooseExtension            = "extension_approval"
+	gooseExtension           = "extension_approval"
 )
 
 type goosePrompt struct {

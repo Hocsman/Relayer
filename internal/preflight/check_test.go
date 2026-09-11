@@ -1111,4 +1111,3 @@ func TestCheckTelemetryValidAndBlocked(t *testing.T) {
 		t.Fatalf("ValidateReport error on blocked: %v", err)
 	}
 }
-

@@ -12,7 +12,7 @@ const (
 )
 
 var (
-	sensitiveBasenameRegex = regexp.MustCompile(`(?i)^(\.env(\.[a-z0-9_-]+)?|\.envrc|id_rsa.*|id_ed25519.*|id_ecdsa.*|id_dsa.*|authorized_keys|known_hosts|credentials|service-account.*\.json|client_secret.*\.json)$`)
+	sensitiveBasenameRegex  = regexp.MustCompile(`(?i)^(\.env(\.[a-z0-9_-]+)?|\.envrc|id_rsa.*|id_ed25519.*|id_ecdsa.*|id_dsa.*|authorized_keys|known_hosts|credentials|service-account.*\.json|client_secret.*\.json)$`)
 	sensitivePathSubstrings = []string{
 		"/.ssh/",
 		"\\.ssh\\",

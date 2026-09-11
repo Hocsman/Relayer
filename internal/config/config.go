@@ -20,8 +20,8 @@ import (
 	"github.com/Hocsman/Relayer/internal/notify"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/telemetry"
-	"time"
 	"gopkg.in/yaml.v3"
+	"time"
 )
 
 const (
