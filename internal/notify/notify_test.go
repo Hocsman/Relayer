@@ -115,3 +115,44 @@ func TestDeduplicationAndThrottling(t *testing.T) {
 		t.Fatalf("expected throttle to prevent rapid bell, got %d bytes", buf.Len())
 	}
 }
+
+func TestSeverityThresholdFiltering(t *testing.T) {
+	var buf bytes.Buffer
+	// Config requires minimum severity "critical"
+	notifier := New(Config{Enabled: true, Bell: true, Desktop: false, MinSeverity: SeverityCritical}, &buf)
+
+	// Info notification should be ignored
+	notifier.Notify(Notification{EventID: "ev-info", Severity: SeverityInfo})
+	if buf.Len() != 0 {
+		t.Fatalf("expected 0 bytes for info notification, got %d", buf.Len())
+	}
+
+	// Warning notification should be ignored
+	notifier.Notify(Notification{EventID: "ev-warn", Severity: SeverityWarning})
+	if buf.Len() != 0 {
+		t.Fatalf("expected 0 bytes for warning notification, got %d", buf.Len())
+	}
+
+	// Critical notification should trigger bell
+	notifier.Notify(Notification{EventID: "ev-crit", Severity: SeverityCritical})
+	if buf.Len() != 1 {
+		t.Fatalf("expected 1 byte for critical notification, got %d", buf.Len())
+	}
+}
+
+func TestCriticalGuardrailBypassesThrottle(t *testing.T) {
+	var buf bytes.Buffer
+	notifier := New(Config{Enabled: true, Bell: true, Desktop: false}, &buf)
+
+	// First normal warning notification
+	notifier.Notify(Notification{EventID: "ev-1", Severity: SeverityWarning})
+	if buf.Len() != 1 {
+		t.Fatalf("expected 1 byte, got %d", buf.Len())
+	}
+
+	// Immediate critical notification within the 1-second throttle window MUST NOT be dropped
+	notifier.Notify(Notification{EventID: "ev-crit-2", Severity: SeverityCritical})
+	if buf.Len() != 2 {
+		t.Fatalf("expected critical notification to bypass throttle window, got %d bytes", buf.Len())
+	}
+}

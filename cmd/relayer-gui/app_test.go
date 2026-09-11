@@ -14,6 +14,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/adapters"
 	appcore "github.com/Hocsman/Relayer/internal/app"
 	"github.com/Hocsman/Relayer/internal/audit"
+	"github.com/Hocsman/Relayer/internal/notify"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/telemetry"
@@ -1642,5 +1643,82 @@ func TestEmptyManualDecisionIsRefusedBeforeDelivery(t *testing.T) {
 	}
 	if calls := engine.applySnapshot(); len(calls) != 0 {
 		t.Fatalf("an empty answer reached the agent: %#v", calls)
+	}
+}
+
+type fakeAppNotifier struct {
+	mu     sync.Mutex
+	notifs []notify.Notification
+}
+
+func (f *fakeAppNotifier) Notify(n notify.Notification) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.notifs = append(f.notifs, n)
+}
+
+func (f *fakeAppNotifier) snapshot() []notify.Notification {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	copied := make([]notify.Notification, len(f.notifs))
+	copy(copied, f.notifs)
+	return copied
+}
+
+func TestNotificationDispatchedOnPendingHumanDecision(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	engine.evaluation = policy.Evaluation{
+		Action:    policy.ActionAsk,
+		Automatic: false,
+		Reason:    policy.ReasonRule,
+	}
+	app := newBridgeForTest(engine)
+	notifier := &fakeAppNotifier{}
+	app.notifier = notifier
+
+	app.handleAdapterEvent(bridgeEvent("agent-a", "prompt-1"))
+
+	notifs := notifier.snapshot()
+	if len(notifs) != 1 {
+		t.Fatalf("expected 1 notification dispatched, got %d", len(notifs))
+	}
+	n := notifs[0]
+	if n.Kind != notify.KindPendingDecision {
+		t.Errorf("expected Kind %q, got %q", notify.KindPendingDecision, n.Kind)
+	}
+	if n.Severity != notify.SeverityWarning {
+		t.Errorf("expected Severity %q, got %q", notify.SeverityWarning, n.Severity)
+	}
+	if n.AgentName != "agent-a" {
+		t.Errorf("expected AgentName %q, got %q", "agent-a", n.AgentName)
+	}
+}
+
+func TestNotificationDispatchedOnGuardrailViolation(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	engine.evaluation = policy.Evaluation{
+		Action:    policy.ActionDeny,
+		Automatic: true,
+		Reason:    policy.ReasonDestructive,
+	}
+	app := newBridgeForTest(engine)
+	notifier := &fakeAppNotifier{}
+	app.notifier = notifier
+
+	app.handleAdapterEvent(bridgeEvent("agent-a", "prompt-guardrail"))
+
+	notifs := notifier.snapshot()
+	if len(notifs) != 1 {
+		t.Fatalf("expected 1 notification dispatched, got %d", len(notifs))
+	}
+	n := notifs[0]
+	if n.Kind != notify.KindGuardrailBlocked {
+		t.Errorf("expected Kind %q, got %q", notify.KindGuardrailBlocked, n.Kind)
+	}
+	if n.Severity != notify.SeverityCritical {
+		t.Errorf("expected Severity %q, got %q", notify.SeverityCritical, n.Severity)
+	}
+	if !strings.Contains(n.Title, "Guardrail") {
+		t.Errorf("expected title to mention Guardrail, got %q", n.Title)
 	}
 }

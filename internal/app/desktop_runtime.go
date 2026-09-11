@@ -16,6 +16,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/config"
+	"github.com/Hocsman/Relayer/internal/notify"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/telemetry"
@@ -75,18 +76,19 @@ type DesktopSession struct {
 
 // DesktopMetadata contains non-sensitive run settings suitable for a GUI.
 type DesktopMetadata struct {
-	RunID            string `json:"runID"`
-	ConfigPath       string `json:"configPath"`
-	ConfigRevision   string `json:"-"`
-	Backend          string `json:"backend"`
-	PolicyAction     string `json:"policyAction"`
-	PolicyDryRun     bool   `json:"policyDryRun"`
-	AuditEnabled     bool   `json:"auditEnabled"`
-	AuditMode        string `json:"auditMode"`
-	AuditPath        string `json:"auditPath,omitempty"`
-	TelemetryEnabled bool   `json:"telemetryEnabled"`
-	TelemetryProm    string `json:"telemetryPrometheus,omitempty"`
-	Configuration    bool   `json:"configurationCreated"`
+	RunID            string        `json:"runID"`
+	ConfigPath       string        `json:"configPath"`
+	ConfigRevision   string        `json:"-"`
+	Backend          string        `json:"backend"`
+	PolicyAction     string        `json:"policyAction"`
+	PolicyDryRun     bool          `json:"policyDryRun"`
+	AuditEnabled     bool          `json:"auditEnabled"`
+	AuditMode        string        `json:"auditMode"`
+	AuditPath        string        `json:"auditPath,omitempty"`
+	TelemetryEnabled bool          `json:"telemetryEnabled"`
+	TelemetryProm    string        `json:"telemetryPrometheus,omitempty"`
+	Configuration    bool          `json:"configurationCreated"`
+	Notifications    notify.Config `json:"-"`
 }
 
 // DesktopRuntime owns one complete Relayer run without assuming a terminal
@@ -425,6 +427,7 @@ func (r *DesktopRuntime) Metadata() DesktopMetadata {
 		TelemetryEnabled: r.telemetry != nil && r.telemetry.Enabled(),
 		TelemetryProm:    r.telemetry.PrometheusAddress(),
 		Configuration:    r.configuration.Created,
+		Notifications:    r.configuration.Notifications,
 	}
 	if metadata.AuditEnabled {
 		metadata.AuditPath = r.auditor.Path()

@@ -651,3 +651,80 @@ func TestLoadVersionOneWithTelemetry(t *testing.T) {
 		t.Fatal("expected error for invalid otlp endpoint, got nil")
 	}
 }
+
+func TestLoadVersionOneWithNotificationsAndWebhooks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "notifications.yaml")
+
+	// 1. Valid notifications with Slack & Discord webhooks
+	writeConfigTestFile(t, path, []byte(
+		"version: 1\n"+
+			"backend: pty\n"+
+			"notifications:\n"+
+			"  enabled: true\n"+
+			"  bell: true\n"+
+			"  desktop: true\n"+
+			"  min_severity: 'warning'\n"+
+			"  webhooks:\n"+
+			"    - name: 'slack-alerts'\n"+
+			"      url: 'https://hooks.slack.com/services/T00/B00/X00'\n"+
+			"      format: 'slack'\n"+
+			"      min_severity: 'warning'\n"+
+			"      timeout: '3s'\n"+
+			"      headers:\n"+
+			"        Authorization: 'Bearer token-123'\n"+
+			"    - name: 'discord-alerts'\n"+
+			"      url: 'https://discord.com/api/webhooks/123/456'\n"+
+			"      format: 'discord'\n"+
+			"      min_severity: 'critical'\n"+
+			"agents: []\n"+
+			"intercept_patterns:\n"+
+			"  - pattern: 'foo'\n"+
+			"    description: 'foo gate'\n",
+	))
+
+	result, err := LoadExisting(path)
+	if err != nil {
+		t.Fatalf("LoadExisting error: %v", err)
+	}
+
+	if !result.Notifications.Enabled || !result.Notifications.Bell || !result.Notifications.Desktop {
+		t.Fatalf("unexpected notifications flags: %#v", result.Notifications)
+	}
+	if result.Notifications.MinSeverity != "warning" {
+		t.Fatalf("expected min_severity 'warning', got %q", result.Notifications.MinSeverity)
+	}
+	if len(result.Notifications.Webhooks) != 2 {
+		t.Fatalf("expected 2 webhooks, got %d", len(result.Notifications.Webhooks))
+	}
+
+	slack := result.Notifications.Webhooks[0]
+	if slack.Name != "slack-alerts" || slack.Format != "slack" || slack.MinSeverity != "warning" || slack.Timeout != "3s" {
+		t.Fatalf("unexpected slack webhook: %#v", slack)
+	}
+	if slack.Headers["Authorization"] != "Bearer token-123" {
+		t.Fatalf("unexpected headers: %#v", slack.Headers)
+	}
+
+	discord := result.Notifications.Webhooks[1]
+	if discord.Name != "discord-alerts" || discord.Format != "discord" || discord.MinSeverity != "critical" {
+		t.Fatalf("unexpected discord webhook: %#v", discord)
+	}
+
+	// 2. Invalid webhook url
+	writeConfigTestFile(t, path, []byte(
+		"version: 1\n"+
+			"backend: pty\n"+
+			"notifications:\n"+
+			"  enabled: true\n"+
+			"  webhooks:\n"+
+			"    - url: 'not-a-valid-url'\n"+
+			"agents: []\n"+
+			"intercept_patterns:\n"+
+			"  - pattern: 'foo'\n"+
+			"    description: 'foo gate'\n",
+	))
+	_, err = LoadExisting(path)
+	if err == nil {
+		t.Fatal("expected error for invalid webhook url, got nil")
+	}
+}

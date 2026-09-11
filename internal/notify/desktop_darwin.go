@@ -19,6 +19,9 @@ func showDesktopNotification(title, body string) {
 	defer cancel()
 
 	script := fmt.Sprintf(`display notification "%s" with title "%s"`, escapeAppleScriptString(body), escapeAppleScriptString(title))
+	if strings.Contains(title, "CRITICAL") || strings.Contains(title, "Guardrail") {
+		script += ` sound name "Sosumi"`
+	}
 	cmd := exec.CommandContext(ctx, "osascript", "-e", script)
 	_ = cmd.Run()
 }

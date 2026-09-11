@@ -162,10 +162,21 @@ type configuredOTLP struct {
 	Timeout        *string           `yaml:"timeout,omitempty"`
 }
 
+type configuredWebhook struct {
+	Name        *string           `yaml:"name,omitempty"`
+	URL         *string           `yaml:"url,omitempty"`
+	Format      *string           `yaml:"format,omitempty"`
+	MinSeverity *string           `yaml:"min_severity,omitempty"`
+	Timeout     *string           `yaml:"timeout,omitempty"`
+	Headers     map[string]string `yaml:"headers,omitempty"`
+}
+
 type configuredNotifications struct {
-	Enabled *bool `yaml:"enabled,omitempty"`
-	Bell    *bool `yaml:"bell,omitempty"`
-	Desktop *bool `yaml:"desktop,omitempty"`
+	Enabled     *bool               `yaml:"enabled,omitempty"`
+	Bell        *bool               `yaml:"bell,omitempty"`
+	Desktop     *bool               `yaml:"desktop,omitempty"`
+	MinSeverity *string             `yaml:"min_severity,omitempty"`
+	Webhooks    []configuredWebhook `yaml:"webhooks,omitempty"`
 }
 
 type configuredPolicies struct {
@@ -425,11 +436,27 @@ func boolPointer(value bool) *bool {
 }
 
 func configuredNotificationsPointer(notifications notify.Config) *configuredNotifications {
-	return &configuredNotifications{
-		Enabled: boolPointer(notifications.Enabled),
-		Bell:    boolPointer(notifications.Bell),
-		Desktop: boolPointer(notifications.Desktop),
+	res := &configuredNotifications{
+		Enabled:     boolPointer(notifications.Enabled),
+		Bell:        boolPointer(notifications.Bell),
+		Desktop:     boolPointer(notifications.Desktop),
+		MinSeverity: stringPointer(notifications.MinSeverity),
 	}
+	if len(notifications.Webhooks) > 0 {
+		hooks := make([]configuredWebhook, 0, len(notifications.Webhooks))
+		for _, w := range notifications.Webhooks {
+			hooks = append(hooks, configuredWebhook{
+				Name:        stringPointer(w.Name),
+				URL:         stringPointer(w.URL),
+				Format:      stringPointer(w.Format),
+				MinSeverity: stringPointer(w.MinSeverity),
+				Timeout:     stringPointer(w.Timeout),
+				Headers:     w.Headers,
+			})
+		}
+		res.Webhooks = hooks
+	}
+	return res
 }
 
 func decodeNotifications(configured *configuredNotifications) (notify.Config, error) {
@@ -445,6 +472,37 @@ func decodeNotifications(configured *configuredNotifications) (notify.Config, er
 	}
 	if configured.Desktop != nil {
 		result.Desktop = *configured.Desktop
+	}
+	if configured.MinSeverity != nil {
+		result.MinSeverity = *configured.MinSeverity
+	}
+	if len(configured.Webhooks) > 0 {
+		hooks := make([]notify.WebhookConfig, 0, len(configured.Webhooks))
+		for _, cw := range configured.Webhooks {
+			w := notify.WebhookConfig{
+				Headers: cw.Headers,
+			}
+			if cw.Name != nil {
+				w.Name = *cw.Name
+			}
+			if cw.URL != nil {
+				w.URL = *cw.URL
+			}
+			if cw.Format != nil {
+				w.Format = *cw.Format
+			}
+			if cw.MinSeverity != nil {
+				w.MinSeverity = *cw.MinSeverity
+			}
+			if cw.Timeout != nil {
+				w.Timeout = *cw.Timeout
+			}
+			hooks = append(hooks, w)
+		}
+		result.Webhooks = hooks
+	}
+	if err := notify.Validate(result); err != nil {
+		return result, err
 	}
 	return result, nil
 }

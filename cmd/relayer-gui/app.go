@@ -237,6 +237,9 @@ func (a *App) activateRun(run *runGeneration) {
 	}
 	engine := run.engine
 	metadata := engine.Metadata()
+	if metadata.Notifications.Enabled {
+		a.notifier = notify.New(metadata.Notifications, nil)
+	}
 	sessions := engine.Sessions()
 	agents := make([]AgentState, 0, len(sessions))
 	index := make(map[string]int, len(sessions))
@@ -565,22 +568,42 @@ func (a *App) handleAdapterEventForRun(run *runGeneration, event adapters.Event)
 	a.rebuildPendingLocked()
 	a.mu.Unlock()
 	a.emit(eventSemantic, view)
-	if !evaluation.Automatic && a.notifier != nil {
+	if a.notifier != nil {
 		agentName := event.AgentID
 		if index, found := a.agentIndex[strings.ToLower(event.SessionID)]; found {
 			agentName = a.state.Agents[index].Name
 		}
-		reason := "confirmation required"
-		if requiresSecretHandling(event) || evaluation.Reason == "sensitive" {
-			reason = "sensitive input required"
+		isGuardrail := evaluation.Reason == policy.ReasonDestructive ||
+			evaluation.Reason == policy.ReasonExfiltration ||
+			evaluation.Reason == policy.ReasonGuardrailBlocked
+
+		if isGuardrail {
+			a.notifier.Notify(notify.Notification{
+				Title:     "🛡️ Relayer Guardrail Alert",
+				AgentName: agentName,
+				SessionID: event.SessionID,
+				Reason:    "security guardrail blocked (" + evaluation.Reason + ")",
+				EventID:   event.ID,
+				Kind:      notify.KindGuardrailBlocked,
+				Severity:  notify.SeverityCritical,
+				Details:   event.Summary,
+			})
+		} else if !evaluation.Automatic {
+			reason := "confirmation required"
+			if requiresSecretHandling(event) || evaluation.Reason == "sensitive" {
+				reason = "sensitive input required"
+			}
+			a.notifier.Notify(notify.Notification{
+				Title:     "Relayer",
+				AgentName: agentName,
+				SessionID: event.SessionID,
+				Reason:    reason,
+				EventID:   event.ID,
+				Kind:      notify.KindPendingDecision,
+				Severity:  notify.SeverityWarning,
+				Details:   event.Summary,
+			})
 		}
-		a.notifier.Notify(notify.Notification{
-			Title:     "Relayer",
-			AgentName: agentName,
-			SessionID: event.SessionID,
-			Reason:    reason,
-			EventID:   event.ID,
-		})
 	}
 	a.scheduleAutomatic(run, event.SessionID)
 }

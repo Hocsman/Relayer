@@ -491,14 +491,29 @@ func (m *Model) queueHumanEvent(event adapters.Event, evaluation policy.Evaluati
 	if requiresSecretHandling(event) {
 		reason = "sensitive input required"
 	}
+	kind := notify.KindPendingDecision
+	severity := notify.SeverityWarning
+	title := "Relayer"
+
+	if status == "destructive_blocked" || status == "exfiltration_blocked" || status == "guardrail_blocked" ||
+		evaluation.Reason == policy.ReasonDestructive || evaluation.Reason == policy.ReasonExfiltration || evaluation.Reason == policy.ReasonGuardrailBlocked {
+		kind = notify.KindGuardrailBlocked
+		severity = notify.SeverityCritical
+		title = "🛡️ Relayer Guardrail Alert"
+		reason = "security guardrail blocked (" + evaluation.Reason + ")"
+	}
+
 	m.appendLog(fmt.Sprintf("%s is waiting for a human decision (%s)", target.name, reason))
 	if m.notifier != nil {
 		m.notifier.Notify(notify.Notification{
-			Title:     "Relayer",
+			Title:     title,
 			AgentName: target.name,
 			SessionID: event.SessionID,
 			Reason:    reason,
 			EventID:   event.ID,
+			Kind:      kind,
+			Severity:  severity,
+			Details:   event.Summary,
 		})
 	}
 	if m.inputTarget == "" && !m.writePending {
