@@ -235,4 +235,3 @@ type AuditFilterInput struct {
 	Kind      string `json:"kind,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
 }
-
