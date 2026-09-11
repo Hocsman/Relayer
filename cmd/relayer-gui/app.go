@@ -67,6 +67,7 @@ type desktopEngine interface {
 	SupportedDecisions(adapters.Event) []adapters.Decision
 	Events() <-chan session.Event
 	Output(string) (string, error)
+	AnsiOutput(string) (string, error)
 	PendingEvent(context.Context, string) (*adapters.Event, error)
 	Evaluate(adapters.Event) policy.Evaluation
 	ApplyDecision(context.Context, string, adapters.Event, adapters.Decision, string) error
@@ -417,7 +418,10 @@ func (a *App) refreshOutputForRun(run *runGeneration, sessionID string) {
 	if !a.isActiveRun(run) {
 		return
 	}
-	output, err := run.engine.Output(sessionID)
+	output, err := run.engine.AnsiOutput(sessionID)
+	if err != nil {
+		output, err = run.engine.Output(sessionID)
+	}
 	if err != nil {
 		a.emitSafeError(run, "output_refresh_failed", "The bounded output of the session could not be refreshed.", sessionID)
 		return

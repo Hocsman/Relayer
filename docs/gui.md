@@ -343,20 +343,14 @@ For display safety, the GUI shows only the executable basename for an argv
 agent and masks every argument; explicit shell bodies are never sent to the
 WebView.
 
-This is deliberately **not** a VT/ANSI terminal emulator:
+The agent console is powered by **xterm.js** with responsive auto-fitting:
 
-- ANSI colors and cursor-control sequences are not rendered;
-- full-screen terminal applications are not faithfully reproduced;
-- the GUI does not expose arbitrary live keystroke passthrough;
-- output older than the bounded core buffer is discarded.
-
-The viewer still reports its measured rows and columns to the Go runtime so
-the underlying PTY or tmux pane can be resized. A future VT renderer requires a
-separate, bounded raw-terminal stream; the current snapshot contract must not
-be presented as one.
-
-Use the TUI and its native tmux attach path when a full interactive terminal is
-required.
+- ANSI colors (16-color palette, 256 colors, and 24-bit truecolor) are rendered faithfully;
+- Dynamic progress bars and in-place line overwrites (`\r`) update smoothly without duplicating lines;
+- The terminal cursor and text selection are supported;
+- The terminal grid automatically reports measured columns and rows to the Go runtime to resize the underlying PTY or tmux session;
+- A "Resume live" button allows locking onto the latest output or detaching to review scrollback history;
+- Arbitrary raw keystroke passthrough is deliberately not exposed directly to child processes: ordinary input passes safely through the supervised one-line composer.
 
 ## Ordinary operator input
 
