@@ -17,6 +17,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/config"
+	"github.com/Hocsman/Relayer/internal/notify"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/terminal"
@@ -296,6 +297,7 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 	if err != nil {
 		return err
 	}
+	application.SetNotifier(notify.New(configuration.Notifications, diagnostics))
 	program := tea.NewProgram(
 		application,
 		tea.WithAltScreen(),
