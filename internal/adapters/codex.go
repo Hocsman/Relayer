@@ -79,7 +79,7 @@ func (*CodexAdapter) snapshotFingerprintSource(normalized, active string, inCode
 	if !found {
 		return active
 	}
-	if block, complete := codexPromptBlock(normalized, active, prompt); complete {
+	if block, _, complete := codexPromptBlock(normalized, active, prompt); complete {
 		return prompt.interaction + "\x00" + compactFingerprintSource(block)
 	}
 	return active
@@ -127,15 +127,37 @@ func (a *CodexAdapter) Detect(state *DetectionState, chunk []byte) ([]Event, err
 	if ok {
 		activeLine := vendorProbe.detectionText[start:end]
 		if prompt, found := detectCodexPrompt(vendorProbe.detectionText, activeLine, vendorProbe.inCodeFence); found {
+			var cmd string
+			var markerOffset int
+			if block, offset, complete := codexPromptBlock(vendorProbe.detectionText, activeLine, prompt); complete {
+				cmd = extractCodexCommand(block)
+				markerOffset = offset
+			}
+			markerLineStart := strings.LastIndexByte(vendorProbe.detectionText[:markerOffset], '\n') + 1
+			markerLineEnd := markerOffset
+			if nextNL := strings.IndexByte(vendorProbe.detectionText[markerOffset:], '\n'); nextNL >= 0 {
+				markerLineEnd = markerOffset + nextNL
+			} else {
+				markerLineEnd = len(vendorProbe.detectionText)
+			}
+			questionLine := vendorProbe.detectionText[markerLineStart:markerLineEnd]
+			if cmd != "" {
+				questionLine = questionLine + "\n" + cmd
+			}
+
+			// On a rendered screen the answered question stays painted until
+			// the agent redraws without it, so suppress duplicate events across repaints.
+			if state.hasRendered && state.answersTheSameQuestion(questionLine) {
+				state.appendDetectionText(chunk)
+				return nil, nil
+			}
+
 			// Commit the already-probed normalized chunk only after a complete,
 			// structurally verified vendor prompt has been found.
 			state.appendDetectionText(chunk)
-			var cmd string
-			if block, complete := codexPromptBlock(vendorProbe.detectionText, activeLine, prompt); complete {
-				cmd = extractCodexCommand(block)
-			}
 			candidate := Event{
-				questionLine: activeLine,
+				questionLine: questionLine,
+				anchor:       state.anchorAt(markerLineStart),
 				SessionID:    state.SessionID,
 				AgentID:      state.AgentID,
 				Adapter:      CodexID,
@@ -198,22 +220,22 @@ func detectCodexPrompt(window, activeLine string, inCodeFence bool) (codexPrompt
 		if footerOffset < 0 || quotedMatch(activeLine, footerOffset, footerOffset+len(footer)) {
 			continue
 		}
-		if _, complete := codexPromptBlock(window, activeLine, prompt); complete {
+		if _, _, complete := codexPromptBlock(window, activeLine, prompt); complete {
 			return prompt, true
 		}
 	}
 	return codexPrompt{}, false
 }
 
-func codexPromptBlock(window, activeLine string, prompt codexPrompt) (string, bool) {
+func codexPromptBlock(window, activeLine string, prompt codexPrompt) (string, int, bool) {
 	activeOffset := strings.LastIndex(window, activeLine)
 	if activeOffset < 0 || strings.TrimSpace(window[activeOffset+len(activeLine):]) != "" {
-		return "", false
+		return "", 0, false
 	}
 	footerOffset, footer := lastCodexVariant(activeLine, prompt.footers)
 	if footerOffset < 0 || strings.TrimSpace(activeLine[footerOffset+len(footer):]) != "" ||
 		quotedMatch(activeLine, footerOffset, footerOffset+len(footer)) {
-		return "", false
+		return "", 0, false
 	}
 	footerStart := activeOffset + footerOffset
 	footerEnd := footerStart + len(footer)
@@ -236,12 +258,12 @@ func codexPromptBlock(window, activeLine string, prompt codexPrompt) (string, bo
 			allowOffset := firstCodexVariant(body, prompt.allows)
 			denyOffset := firstCodexVariant(body, prompt.denies)
 			if allowOffset >= 0 && denyOffset >= 0 && allowOffset < denyOffset {
-				return window[markerOffset:footerEnd], true
+				return window[markerOffset:footerEnd], markerOffset, true
 			}
 			searchEnd = markerOffset
 		}
 	}
-	return "", false
+	return "", 0, false
 }
 
 func latestCodexFooterEnd(value string) int {
