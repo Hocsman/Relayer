@@ -1,6 +1,10 @@
 import type {
   AppState,
   AgentProfilesView,
+  AuditEntryView,
+  AuditFilterInput,
+  AuditSummaryView,
+  AuditVerificationView,
   BridgeEventMap,
   BridgeEventName,
   LifecycleResult,
@@ -27,6 +31,10 @@ interface NativeBindings {
     LifecycleResult
   >;
   StopRun: NativeMethod<[string], AppState>;
+  GetAuditSummary: NativeMethod<[], AuditSummaryView>;
+  GetAuditEntries: NativeMethod<[AuditFilterInput | undefined], AuditEntryView[]>;
+  VerifyAuditJournal: NativeMethod<[], AuditVerificationView>;
+  ExportAuditReport: NativeMethod<[string], string>;
 }
 
 interface WailsRuntime {
@@ -60,7 +68,11 @@ function resolveBindings(): NativeBindings {
     typeof candidate.GetAgentProfiles !== "function" ||
     typeof candidate.SaveAgentProfiles !== "function" ||
     typeof candidate.SaveAgentProfilesAndRestart !== "function" ||
-    typeof candidate.StopRun !== "function"
+    typeof candidate.StopRun !== "function" ||
+    typeof candidate.GetAuditSummary !== "function" ||
+    typeof candidate.GetAuditEntries !== "function" ||
+    typeof candidate.VerifyAuditJournal !== "function" ||
+    typeof candidate.ExportAuditReport !== "function"
   ) {
     throw new Error("The native Relayer bridge is unavailable.");
   }
@@ -97,6 +109,10 @@ export function createWailsBridge(): RelayerBridge {
     saveAgentProfilesAndRestart: (request) =>
       bindings.SaveAgentProfilesAndRestart(request),
     stopRun: (runID) => bindings.StopRun(runID),
+    getAuditSummary: () => bindings.GetAuditSummary(),
+    getAuditEntries: (filter) => bindings.GetAuditEntries(filter ?? {}),
+    verifyAuditJournal: () => bindings.VerifyAuditJournal(),
+    exportAuditReport: (format) => bindings.ExportAuditReport(format),
     on<K extends BridgeEventName>(
       event: K,
       listener: (payload: BridgeEventMap[K]) => void,
@@ -110,3 +126,4 @@ export function createWailsBridge(): RelayerBridge {
     },
   };
 }
+

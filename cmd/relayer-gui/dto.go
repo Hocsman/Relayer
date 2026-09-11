@@ -175,3 +175,63 @@ type PreflightReport struct {
 	Agents        []PreflightAgent       `json:"agents"`
 	Checks        []PreflightCheck       `json:"checks"`
 }
+
+type AuditSummaryView struct {
+	Path           string         `json:"path"`
+	TotalEntries   int            `json:"totalEntries"`
+	RunsCount      int            `json:"runsCount"`
+	SessionsCount  int            `json:"sessionsCount"`
+	AgentCounts    map[string]int `json:"agentCounts"`
+	KindCounts     map[string]int `json:"kindCounts"`
+	DecisionsCount map[string]int `json:"decisionsCount"`
+	ActorsCount    map[string]int `json:"actorsCount"`
+	OutcomesCount  map[string]int `json:"outcomesCount"`
+	SensitiveCount int            `json:"sensitiveCount"`
+	FirstTimestamp string         `json:"firstTimestamp,omitempty"`
+	LastTimestamp  string         `json:"lastTimestamp,omitempty"`
+}
+
+type AuditVerificationIssueView struct {
+	Line    int    `json:"line"`
+	EntryID string `json:"entryID,omitempty"`
+	Message string `json:"message"`
+}
+
+type AuditVerificationView struct {
+	Path       string                       `json:"path"`
+	TotalLines int                          `json:"totalLines"`
+	TotalRuns  int                          `json:"totalRuns"`
+	ValidLines int                          `json:"validLines"`
+	Issues     []AuditVerificationIssueView `json:"issues"`
+	Passed     bool                         `json:"passed"`
+}
+
+type AuditEntryView struct {
+	Sequence   uint64            `json:"sequence"`
+	Timestamp  string            `json:"timestamp"`
+	EntryID    string            `json:"entryID"`
+	RunID      string            `json:"runID"`
+	Kind       string            `json:"kind"`
+	SessionID  string            `json:"sessionID,omitempty"`
+	AgentID    string            `json:"agentID,omitempty"`
+	Backend    string            `json:"backend,omitempty"`
+	Adapter    string            `json:"adapter,omitempty"`
+	EventType  string            `json:"eventType,omitempty"`
+	Risk       string            `json:"risk,omitempty"`
+	Rule       string            `json:"rule,omitempty"`
+	Decision   string            `json:"decision,omitempty"`
+	DecisionBy string            `json:"decisionBy,omitempty"`
+	Outcome    string            `json:"outcome,omitempty"`
+	Reason     string            `json:"reason,omitempty"`
+	Summary    string            `json:"summary,omitempty"`
+	Sensitive  bool              `json:"sensitive"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
+}
+
+type AuditFilterInput struct {
+	AgentID   string `json:"agentID,omitempty"`
+	SessionID string `json:"sessionID,omitempty"`
+	RunID     string `json:"runID,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+}

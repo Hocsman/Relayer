@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useDialogKeyboard } from "./hooks/useDialogKeyboard";
 import { AgentGrid } from "./components/AgentGrid";
 import { AgentSettingsPanel } from "./components/AgentSettingsPanel";
+import { AuditPanel } from "./components/AuditPanel";
 import { DecisionModal } from "./components/DecisionModal";
 import { PreflightPanel } from "./components/PreflightPanel";
 import { SupervisorPanel } from "./components/SupervisorPanel";
@@ -26,6 +27,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [preflightOpen, setPreflightOpen] = useState(false);
+  const [auditOpen, setAuditOpen] = useState(false);
   const [stopConfirmation, setStopConfirmation] = useState(false);
   const seenEvents = useRef(new Set<string>());
 
@@ -38,7 +40,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
 
   useEffect(() => {
     const pending = state.app?.pendingEvents ?? [];
-    if (agentsOpen || preflightOpen || state.app?.runStatus !== "running") {
+    if (agentsOpen || preflightOpen || auditOpen || state.app?.runStatus !== "running") {
       setModalOpen(false);
       return;
     }
@@ -72,7 +74,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
       setSelectedEventKey(key);
       setModalOpen(true);
     }
-  }, [agentsOpen, preflightOpen, state.app?.pendingEvents, state.app?.runStatus, selectedEventKey]);
+  }, [agentsOpen, preflightOpen, auditOpen, state.app?.pendingEvents, state.app?.runStatus, selectedEventKey]);
 
   if (state.connection === "loading" || !state.app) {
     if (state.connection === "failed") {
@@ -104,11 +106,18 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
         state={state.app}
         onOpenAgents={() => {
           setPreflightOpen(false);
+          setAuditOpen(false);
           setAgentsOpen(true);
         }}
         onOpenPreflight={() => {
           setAgentsOpen(false);
+          setAuditOpen(false);
           setPreflightOpen(true);
+        }}
+        onOpenAudit={() => {
+          setAgentsOpen(false);
+          setPreflightOpen(false);
+          setAuditOpen(true);
         }}
         onRequestStop={() => setStopConfirmation(true)}
       />
@@ -139,7 +148,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
         />
       )}
       <DecisionModal
-        event={!agentsOpen && !preflightOpen && !transitioning && modalOpen ? selectedEvent : undefined}
+        event={!agentsOpen && !preflightOpen && !auditOpen && !transitioning && modalOpen ? selectedEvent : undefined}
         agent={selectedAgent}
         queueSize={state.app.pendingEvents.length}
         onClose={() => setModalOpen(false)}
@@ -159,6 +168,9 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
       )}
       {preflightOpen && (
         <PreflightPanel bridge={bridge} onClose={() => setPreflightOpen(false)} />
+      )}
+      {auditOpen && (
+        <AuditPanel bridge={bridge} onClose={() => setAuditOpen(false)} />
       )}
       {stopConfirmation && (
         <StopRunConfirmation

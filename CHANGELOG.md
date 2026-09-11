@@ -6,6 +6,14 @@ without implying semantic-versioning stability before the first release.
 
 ## [Unreleased]
 
+### Added
+
+- Desktop GUI Audit & Compliance Panel: added dedicated Audit modal panel accessible
+  from the top bar. The panel presents chronological journal inspection, cryptographic
+  and sequence continuity verification via `audit.VerifyJournal`, human vs policy
+  decision metrics, an interactive filtered entries table with display-safe metadata
+  inspection, and instant report exports to JSON and CSV formats.
+
 ### Fixed
 
 - A question the agent takes back stops being asked. Detection was reconciled
