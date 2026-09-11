@@ -106,10 +106,6 @@ func fenceDepthBefore(text string, offset int, windowEndFence bool) bool {
 	return isLineInsideCodeFence(lines, targetLine)
 }
 
-func isFenceMarker(line string) bool {
-	return strings.HasPrefix(strings.TrimSpace(line), string(codeFenceMarker))
-}
-
 // furnitureTail reports whether everything after the match is the agent's own
 // decoration rather than new work.
 //

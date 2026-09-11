@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -13,6 +14,9 @@ import (
 )
 
 func TestRunCapturesWritesAndDryValidatesFixture(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture capture is unsupported on windows")
+	}
 	printfPath, err := exec.LookPath("printf")
 	if err != nil {
 		t.Skip("printf is unavailable")
