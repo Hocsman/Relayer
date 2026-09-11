@@ -58,6 +58,24 @@ audit:
   max_file_size_mb: 10
   max_files: 5
 
+# Live telemetry metrics (Prometheus & OpenTelemetry OTLP).
+# Compatible with `docker compose -f docker-compose.telemetry.yml up -d`
+telemetry:
+  enabled: true
+  service_name: "relayer-local"
+  environment: "development"
+  prometheus:
+    enabled: true
+    address: ":9090"
+    path: "/metrics"
+
+# Operator notifications (terminal bell, OS desktop toasts, and remote webhooks).
+notifications:
+  enabled: true
+  bell: true
+  desktop: true
+  min_severity: "warning"
+
 agents:
   # `command` is an exact argument vector. It does not invoke a shell, so
   # quoting, globbing, pipes and redirection are not interpreted. Prefer it.

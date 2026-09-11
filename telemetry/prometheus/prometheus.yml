@@ -1,0 +1,12 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: "relayer"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["host.docker.internal:9090"]
+        labels:
+          environment: "local"
+          service: "relayer-supervisor"
