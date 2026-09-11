@@ -346,6 +346,41 @@ export interface AuditFilterInput {
   limit?: number;
 }
 
+export interface DecisionBreakdown {
+  allow: number;
+  deny: number;
+  autoAllow: number;
+  autoDeny: number;
+  custom: number;
+}
+
+export interface LatencyBucketView {
+  le: number;
+  label: string;
+  count: number;
+}
+
+export interface TelemetrySnapshotView {
+  timestamp: string;
+  enabled: boolean;
+  prometheusEnabled: boolean;
+  prometheusAddress?: string;
+  otlpEnabled: boolean;
+  otlpEndpoint?: string;
+  sessionsActive: number;
+  eventsPending: number;
+  sessionsTotal: number;
+  eventsDetectedTotal: number;
+  eventsWithdrawnTotal: number;
+  decisionsTotal: number;
+  decisionsBreakdown: DecisionBreakdown;
+  operatorInputsTotal: number;
+  guardrailsTotal: number;
+  guardrailsBreakdown: Record<string, number>;
+  averageReactionTime: number;
+  decisionDurations: LatencyBucketView[];
+}
+
 export type BridgeEventName = keyof BridgeEventMap;
 
 export interface RelayerBridge {
@@ -369,6 +404,8 @@ export interface RelayerBridge {
   getAuditEntries(filter?: AuditFilterInput): Promise<AuditEntryView[]>;
   verifyAuditJournal(): Promise<AuditVerificationView>;
   exportAuditReport(format: "json" | "csv"): Promise<string>;
+  getTelemetrySnapshot(): Promise<TelemetrySnapshotView>;
   on<K extends BridgeEventName>(event: K, listener: (payload: BridgeEventMap[K]) => void): () => void;
 }
+
 

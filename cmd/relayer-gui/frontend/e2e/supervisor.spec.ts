@@ -11,6 +11,7 @@ test.describe("Relayer Desktop Supervisor E2E", () => {
     await expect(page.locator(".brand span").first()).toBeVisible();
     await expect(page.locator(".run-state--idle")).toHaveText(/Ready to start/i);
     await expect(page.locator(".button--health")).toBeVisible();
+    await expect(page.locator(".button--metrics")).toBeVisible();
     await expect(page.locator(".button--agents")).toBeVisible();
     await expect(page.locator(".button--audit")).toBeVisible();
   });
@@ -126,4 +127,36 @@ test.describe("Relayer Desktop Supervisor E2E", () => {
     await auditPanel.locator('button[aria-label="Close audit panel"]').click();
     await expect(auditPanel).not.toBeVisible();
   });
+
+  test("opens and closes the observability & live metrics panel, renders charts and exporter status", async ({ page }) => {
+    await page.locator(".button--metrics").click();
+    const metricsPanel = page.locator('section.observability-panel[role="dialog"]');
+    await expect(metricsPanel).toBeVisible();
+    await expect(metricsPanel.locator("#observability-title")).toHaveText("Observability & Metrics");
+
+    // KPI grid should be rendered
+    await expect(metricsPanel.locator(".observability-kpi-grid")).toBeVisible();
+    await expect(metricsPanel.locator(".observability-kpi-card").first()).toBeVisible();
+
+    // Decisions breakdown chart and latency histogram
+    await expect(metricsPanel.locator('svg[aria-label="Decisions ratio chart"]')).toBeVisible();
+    await expect(metricsPanel.locator('svg[aria-label="Reaction latency histogram chart"]')).toBeVisible();
+
+    // Guardrail violations list
+    await expect(metricsPanel.locator(".guardrails-list")).toBeVisible();
+
+    // Telemetry Exporters status list
+    await expect(metricsPanel.locator(".exporters-grid")).toBeVisible();
+    await expect(metricsPanel.locator(".exporter-item").first()).toBeVisible();
+
+    // Refresh button should be active and clickable
+    const refreshBtn = metricsPanel.locator('button:has-text("Refresh")');
+    await expect(refreshBtn).toBeVisible();
+    await refreshBtn.click();
+
+    // Close via close icon button
+    await metricsPanel.locator('button[aria-label="Close observability panel"]').click();
+    await expect(metricsPanel).not.toBeVisible();
+  });
 });
+

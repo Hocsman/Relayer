@@ -13,6 +13,7 @@ import type {
   PreflightReport,
   SaveAgentProfilesRequest,
   SupervisionEvent,
+  TelemetrySnapshotView,
 } from "../types/relayer";
 
 type Listener = (payload: never) => void;
@@ -656,6 +657,47 @@ export function createDemoBridge(): RelayerBridge {
         ].join(",")
       );
       return header + rows.join("\n");
+    },
+    async getTelemetrySnapshot(): Promise<TelemetrySnapshotView> {
+      await delay(100);
+      return {
+        timestamp: new Date().toISOString(),
+        enabled: true,
+        prometheusEnabled: true,
+        prometheusAddress: "http://localhost:9090/metrics",
+        otlpEnabled: true,
+        otlpEndpoint: "http://localhost:4318/v1/metrics",
+        sessionsActive: state.agents.filter((a) => a.running).length,
+        eventsPending: state.pendingEvents.length,
+        sessionsTotal: state.agents.length,
+        eventsDetectedTotal: 18,
+        eventsWithdrawnTotal: 1,
+        decisionsTotal: 15,
+        decisionsBreakdown: {
+          allow: 9,
+          deny: 3,
+          autoAllow: 2,
+          autoDeny: 1,
+          custom: 0,
+        },
+        operatorInputsTotal: 4,
+        guardrailsTotal: 3,
+        guardrailsBreakdown: {
+          destructive_command: 2,
+          sensitive_paths: 1,
+        },
+        averageReactionTime: 1.84,
+        decisionDurations: [
+          { le: 0.5, label: "< 0.5s", count: 2 },
+          { le: 1.0, label: "0.5s - 1s", count: 4 },
+          { le: 2.0, label: "1s - 2s", count: 5 },
+          { le: 5.0, label: "2s - 5s", count: 3 },
+          { le: 10.0, label: "5s - 10s", count: 1 },
+          { le: 30.0, label: "10s - 30s", count: 0 },
+          { le: 60.0, label: "30s - 60s", count: 0 },
+          { le: 300.0, label: "> 60s", count: 0 },
+        ],
+      };
     },
     on<K extends BridgeEventName>(
       event: K,

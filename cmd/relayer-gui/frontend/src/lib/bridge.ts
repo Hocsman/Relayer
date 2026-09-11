@@ -12,6 +12,7 @@ import type {
   RelayerBridge,
   SaveAgentProfilesRequest,
   SaveAgentProfilesAndRestartRequest,
+  TelemetrySnapshotView,
 } from "../types/relayer";
 
 type NativeMethod<TArgs extends unknown[], TResult> = (...args: TArgs) => Promise<TResult>;
@@ -35,6 +36,7 @@ interface NativeBindings {
   GetAuditEntries: NativeMethod<[AuditFilterInput | undefined], AuditEntryView[]>;
   VerifyAuditJournal: NativeMethod<[], AuditVerificationView>;
   ExportAuditReport: NativeMethod<[string], string>;
+  GetTelemetrySnapshot: NativeMethod<[], TelemetrySnapshotView>;
 }
 
 interface WailsRuntime {
@@ -72,7 +74,8 @@ function resolveBindings(): NativeBindings {
     typeof candidate.GetAuditSummary !== "function" ||
     typeof candidate.GetAuditEntries !== "function" ||
     typeof candidate.VerifyAuditJournal !== "function" ||
-    typeof candidate.ExportAuditReport !== "function"
+    typeof candidate.ExportAuditReport !== "function" ||
+    typeof candidate.GetTelemetrySnapshot !== "function"
   ) {
     throw new Error("The native Relayer bridge is unavailable.");
   }
@@ -113,6 +116,7 @@ export function createWailsBridge(): RelayerBridge {
     getAuditEntries: (filter) => bindings.GetAuditEntries(filter ?? {}),
     verifyAuditJournal: () => bindings.VerifyAuditJournal(),
     exportAuditReport: (format) => bindings.ExportAuditReport(format),
+    getTelemetrySnapshot: () => bindings.GetTelemetrySnapshot(),
     on<K extends BridgeEventName>(
       event: K,
       listener: (payload: BridgeEventMap[K]) => void,

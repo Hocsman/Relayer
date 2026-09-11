@@ -16,6 +16,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
+	"github.com/Hocsman/Relayer/internal/telemetry"
 	"github.com/Hocsman/Relayer/internal/terminal"
 )
 
@@ -336,6 +337,10 @@ func (f *fakeDesktopEngine) Close(context.Context) error {
 		started <- struct{}{}
 	}
 	return err
+}
+
+func (f *fakeDesktopEngine) TelemetrySnapshot() telemetry.Snapshot {
+	return telemetry.Snapshot{Timestamp: time.Now().UTC()}
 }
 
 func (f *fakeDesktopEngine) applySnapshot() []fakeApplyCall {

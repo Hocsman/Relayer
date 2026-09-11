@@ -253,6 +253,7 @@ describe("AuditPanel", () => {
       getAuditEntries: async () => sampleEntries(),
       verifyAuditJournal: async () => sampleVerification(true),
       exportAuditReport: async () => "[]",
+      getTelemetrySnapshot: async () => ({} as never),
       on: () => () => {},
     };
 

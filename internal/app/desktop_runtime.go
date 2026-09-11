@@ -218,19 +218,17 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 		return nil, fmt.Errorf("initialize the audit journal: %w", err)
 	}
 	runtime.auditor = auditor
-	if plan.configuration.Telemetry.Enabled {
-		telemetryEngine, telErr := telemetry.NewEngine(plan.configuration.Telemetry)
-		if telErr != nil {
-			cancel()
-			return nil, fmt.Errorf("initialize telemetry: %w", telErr)
-		}
-		auditor.AddObserver(telemetryEngine.Registry())
-		if startErr := telemetryEngine.Start(ctx); startErr != nil {
-			cancel()
-			return nil, fmt.Errorf("start telemetry: %w", startErr)
-		}
-		runtime.telemetry = telemetryEngine
+	telemetryEngine, telErr := telemetry.NewEngine(plan.configuration.Telemetry)
+	if telErr != nil {
+		cancel()
+		return nil, fmt.Errorf("initialize telemetry: %w", telErr)
 	}
+	auditor.AddObserver(telemetryEngine.Registry())
+	if startErr := telemetryEngine.Start(ctx); startErr != nil {
+		cancel()
+		return nil, fmt.Errorf("start telemetry: %w", startErr)
+	}
+	runtime.telemetry = telemetryEngine
 	cleanup := true
 	defer func() {
 		if !cleanup {
@@ -432,6 +430,14 @@ func (r *DesktopRuntime) Metadata() DesktopMetadata {
 		metadata.AuditPath = r.auditor.Path()
 	}
 	return metadata
+}
+
+// TelemetrySnapshot returns a point-in-time capture of the runtime telemetry metrics.
+func (r *DesktopRuntime) TelemetrySnapshot() telemetry.Snapshot {
+	if r == nil || r.telemetry == nil {
+		return telemetry.Snapshot{Timestamp: time.Now().UTC()}
+	}
+	return r.telemetry.Registry().Snapshot()
 }
 
 func (r *DesktopRuntime) Output(sessionID string) (string, error) {

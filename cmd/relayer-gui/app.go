@@ -20,6 +20,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/preflight"
 	"github.com/Hocsman/Relayer/internal/session"
+	"github.com/Hocsman/Relayer/internal/telemetry"
 	"github.com/Hocsman/Relayer/internal/terminal"
 	"github.com/Hocsman/Relayer/internal/toolcatalog"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -78,6 +79,7 @@ type desktopEngine interface {
 	BeginShutdown(context.Context) error
 	BeginRestart(context.Context) error
 	Close(context.Context) error
+	TelemetrySnapshot() telemetry.Snapshot
 }
 
 type runGeneration struct {

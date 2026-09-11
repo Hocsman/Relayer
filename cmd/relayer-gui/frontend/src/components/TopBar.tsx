@@ -5,6 +5,7 @@ interface TopBarProps {
   onOpenAgents(): void;
   onOpenPreflight(): void;
   onOpenAudit(): void;
+  onOpenObservability(): void;
   onRequestStop(): void;
 }
 
@@ -19,7 +20,7 @@ const runLabels: Record<AppState["runStatus"], string> = {
   failed: "Error",
 };
 
-export function TopBar({ state, onOpenAgents, onOpenPreflight, onOpenAudit, onRequestStop }: TopBarProps) {
+export function TopBar({ state, onOpenAgents, onOpenPreflight, onOpenAudit, onOpenObservability, onRequestStop }: TopBarProps) {
   const running = state.agents.filter((agent) => agent.running).length;
   const waiting = state.pendingEvents.length;
   const transitioning = ["starting", "restarting", "rollback", "stopping"].includes(
@@ -80,6 +81,14 @@ export function TopBar({ state, onOpenAgents, onOpenPreflight, onOpenAudit, onRe
           disabled={transitioning}
         >
           <span aria-hidden="true">📜</span> Audit
+        </button>
+        <button
+          className="button button--metrics"
+          type="button"
+          onClick={onOpenObservability}
+          disabled={transitioning}
+        >
+          <span aria-hidden="true">📊</span> Metrics
         </button>
         {state.runID && state.runStatus !== "idle" && (
           <button
