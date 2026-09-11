@@ -162,6 +162,10 @@ func (f *fakeDesktopEngine) Output(sessionID string) (string, error) {
 	return values[index], nil
 }
 
+func (f *fakeDesktopEngine) AnsiOutput(sessionID string) (string, error) {
+	return f.Output(sessionID)
+}
+
 func (f *fakeDesktopEngine) PendingEvent(_ context.Context, sessionID string) (*adapters.Event, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

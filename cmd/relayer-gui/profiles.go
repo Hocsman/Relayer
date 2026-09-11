@@ -305,6 +305,8 @@ func (a *App) catalogViewLocked() []AgentCatalogEntry {
 
 func profileDescription(id toolcatalog.ProfileID) string {
 	switch id {
+	case toolcatalog.Aider:
+		return "Aider coding assistant; interactive pair programming with terminal prompts."
 	case toolcatalog.ClaudeCode:
 		return "Claude Code; experimental rules verified on 2.1.59, then generic fallback."
 	case toolcatalog.CodexCLI:
@@ -355,6 +357,8 @@ func profileView(spec agent.Spec) AgentProfile {
 
 func safeExecutableLabel(profile toolcatalog.ProfileID) string {
 	switch profile {
+	case toolcatalog.Aider:
+		return "aider"
 	case toolcatalog.ClaudeCode:
 		return "claude"
 	case toolcatalog.CodexCLI:
@@ -432,6 +436,8 @@ func editableProfileAdapter(spec agent.Spec) bool {
 		return true
 	}
 	switch profileForExecutable(spec.Command[0]) {
+	case toolcatalog.Aider:
+		return adapterID == adapters.AiderID
 	case toolcatalog.ClaudeCode:
 		return adapterID == adapters.ClaudeID
 	case toolcatalog.CodexCLI:

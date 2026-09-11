@@ -13,6 +13,7 @@ func TestDescriptorsExposeMinimalDeclarativeInventory(t *testing.T) {
 	want := []Descriptor{
 		{ID: ClaudeCode, Name: "Claude Code", Executables: []string{"claude"}, DefaultAdapter: adapters.ClaudeID},
 		{ID: CodexCLI, Name: "Codex CLI", Executables: []string{"codex"}, DefaultAdapter: adapters.CodexID},
+		{ID: Aider, Name: "Aider", Executables: []string{"aider"}, DefaultAdapter: adapters.AiderID},
 		{ID: MimoCode, Name: "MiMo Code", Executables: []string{"mimo"}, DefaultAdapter: agent.AdapterGeneric},
 		{ID: Ollama, Name: "Ollama / DeepSeek", Executables: []string{"ollama"}, DefaultAdapter: agent.AdapterGeneric, MinimumArguments: 2, ArgumentPrefix: []string{"run"}},
 		{ID: Custom, Name: "Custom CLI", DefaultAdapter: agent.AdapterGeneric, RequiresExecutable: true},
@@ -25,7 +26,7 @@ func TestDescriptorsExposeMinimalDeclarativeInventory(t *testing.T) {
 
 	got[0].Name = "mutated"
 	got[0].Executables[0] = "mutated"
-	got[3].ArgumentPrefix[0] = "mutated"
+	got[4].ArgumentPrefix[0] = "mutated"
 	again := Descriptors()
 	if !reflect.DeepEqual(again, want) {
 		t.Fatalf("catalogue changed through returned descriptor: %#v", again)

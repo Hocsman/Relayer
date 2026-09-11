@@ -8,6 +8,7 @@ import (
 
 	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/audit"
+	"github.com/Hocsman/Relayer/internal/notify"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -72,6 +73,7 @@ type Model struct {
 	policyTracker *policy.Tracker
 	auditor       *audit.Recorder
 	auditGate     *deliveryGate
+	notifier      notify.Notifier
 	// auditUnavailable is terminal for this Model. Once a synchronous audit
 	// write fails, no further decision or attachment may reach a backend.
 	auditUnavailable bool
@@ -221,6 +223,7 @@ func NewModelWithPolicyAndAudit(
 		policyTracker:      policy.NewTracker(),
 		auditor:            auditor,
 		auditGate:          newDeliveryGate(),
+		notifier:           notify.NewNoop(),
 		panes:              make([]agentPane, len(panes)),
 		supervisor:         viewport.New(1, 1),
 		input:              input,
@@ -462,4 +465,13 @@ func (m *Model) backendLabel() string {
 func (m *Model) setPage(page int) {
 	m.page = clampInt(page, 0, pageCount(len(m.panes))-1)
 	m.layout = CalculateLayout(m.width, m.height, len(m.panes), m.page)
+}
+
+// SetNotifier configures the notification dispatcher for the TUI model.
+func (m *Model) SetNotifier(n notify.Notifier) {
+	if n == nil {
+		m.notifier = notify.NewNoop()
+		return
+	}
+	m.notifier = n
 }

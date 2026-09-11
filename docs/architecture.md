@@ -241,6 +241,22 @@ pending actionable occurrence, and appends exactly one carriage return. A
 transport failure after admission is treated as delivery uncertainty; neither
 presentation retries it automatically.
 
+## Operator notifications
+
+`internal/notify` provides multi-platform alerts when an agent enters a state
+requiring operator intervention (such as an `ask` policy evaluation or sensitive
+input request).
+
+- Terminal bell: writes an ASCII BEL (`\a`) character to standard error,
+  triggering terminal emulator visual bells, dock/taskbar flashes, or alert chimes.
+- Desktop notifications: dispatches non-blocking native OS desktop notifications
+  (Windows Action Center toast, macOS Notification Center via `osascript`, Linux
+  desktop notification via `notify-send`).
+- Deduplication and throttling: occurrences with the same event ID or prompts
+  arriving within a 1-second throttle window are debounced to prevent alert floods.
+- Configuration: controlled via `notifications:` (`enabled`, `bell`, `desktop`)
+  in `config.yaml`.
+
 ## Bubble Tea model
 
 `internal/tui` follows Bubble Tea's model/update/view architecture:

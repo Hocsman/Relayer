@@ -9,6 +9,7 @@ during alpha; it is not a runtime plugin protocol.
 | ID | Registry status | Implemented | Behavior |
 | --- | --- | --- | --- |
 | `generic` | Stable relative to the built-ins | Yes | Ordered regex prompt detection; manual input encoding. |
+| `aider` | Experimental | Yes | Aider AI coding assistant prompts (file changes, shell command execution, chat context addition, file creation); allow (`y`), deny (`n`), and manual input verified. |
 | `claude` | Experimental | Yes | Claude Code 2.1.59 workspace trust and environment-key prompts; generic fallback; manual input only. |
 | `codex` | Experimental | Yes | Codex CLI 0.148.0-alpha.21 directory trust and command approval; generic fallback; command allow/deny and directory deny bytes verified. |
 
@@ -16,7 +17,7 @@ during alpha; it is not a runtime plugin protocol.
 will remain source-compatible.
 
 If `agents[].adapter` is blank, the registry considers implemented executable
-hints and then falls back to `generic`. A basename of `claude` or `codex`
+hints and then falls back to `generic`. A basename of `aider`, `claude` or `codex`
 selects the corresponding experimental adapter. Both adapters retain every
 configured `intercept_pattern` as a generic compatibility fallback.
 

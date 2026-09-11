@@ -17,6 +17,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/config"
+	"github.com/Hocsman/Relayer/internal/notify"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/terminal"
@@ -95,6 +96,9 @@ func runWithOutputAndPreflight(
 	}
 	if len(arguments) > 0 && arguments[0] == "doctor" {
 		return runDoctor(arguments[1:], output, diagnostics, preflightRun)
+	}
+	if len(arguments) > 0 && arguments[0] == "audit" {
+		return runAudit(arguments[1:], output, diagnostics)
 	}
 	return run(arguments, diagnostics, dependencies)
 }
@@ -293,6 +297,7 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 	if err != nil {
 		return err
 	}
+	application.SetNotifier(notify.New(configuration.Notifications, diagnostics))
 	program := tea.NewProgram(
 		application,
 		tea.WithAltScreen(),

@@ -143,6 +143,29 @@ This example uses `detailed` mode so the already-generic sensitive summary is vi
 
 No value entered by the human appears in the third record.
 
+## Inspecting and verifying the audit log (`relayer audit`)
+
+Relayer includes a dedicated CLI command to inspect, summarize, and verify audit records without external tools like `jq`.
+
+```bash
+# View the most recent entries in a clean tabular format
+relayer audit show
+
+# Filter by agent and limit output to 20 records
+relayer audit show --agent claude --limit 20
+
+# Output entries as JSON for downstream tooling
+relayer audit show --json > audit-export.json
+
+# Display summary statistics (total runs, decisions, human vs policy ratio)
+relayer audit stats
+
+# Verify schema compliance, monotonic sequence continuity, and security invariants
+relayer audit verify
+```
+
+If `--path` or a positional file argument is omitted, `relayer audit` inspects the default user journal path automatically.
+
 ## Failure behavior
 
 Audit initialization and the initial run record complete before an agent process starts. A failure at that point aborts startup cleanly. During the TUI, an audit failure is shown in the supervisor and prevents further policy or manual delivery for the affected state. A failed audit write never changes a policy result into `allow`, and Relayer never retries an uncertain automatic delivery.

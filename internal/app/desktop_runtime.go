@@ -422,6 +422,13 @@ func (r *DesktopRuntime) Output(sessionID string) (string, error) {
 	return r.router.Output(sessionID)
 }
 
+func (r *DesktopRuntime) AnsiOutput(sessionID string) (string, error) {
+	if err := r.available(); err != nil {
+		return "", err
+	}
+	return r.router.AnsiOutput(sessionID)
+}
+
 func (r *DesktopRuntime) Snapshot(ctx context.Context, sessionID string) (terminal.Snapshot, error) {
 	if err := r.available(); err != nil {
 		return terminal.Snapshot{}, err

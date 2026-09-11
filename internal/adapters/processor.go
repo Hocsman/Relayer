@@ -31,10 +31,11 @@ type Hooks struct {
 // Processor separates raw transport bytes, normalized detection text and the
 // bounded sanitized text rendered by Bubble Tea. Raw bytes are never retained.
 type Processor struct {
-	adapter Adapter
-	state   *DetectionState
-	output  *buffer.Buffer
-	hooks   Hooks
+	adapter    Adapter
+	state      *DetectionState
+	output     *buffer.Buffer
+	ansiOutput *buffer.Buffer
+	hooks      Hooks
 
 	// screen renders what the agent actually painted. The output buffer above
 	// appends, which is exact for an agent that only prints and wrong for one
@@ -88,10 +89,11 @@ func NewProcessor(adapter Adapter, state *DetectionState, capacity int, hooks Ho
 		hooks.OnEvent = func(Event) {}
 	}
 	return &Processor{
-		adapter: adapter,
-		state:   state,
-		output:  buffer.New(capacity),
-		hooks:   hooks,
+		adapter:    adapter,
+		state:      state,
+		output:     buffer.New(capacity),
+		ansiOutput: buffer.New(capacity),
+		hooks:      hooks,
 		// The grid starts at a default until a caller reports the terminal it
 		// is actually attached to. It has to exist from the first byte: an
 		// agent can repaint before anything has measured its window.
@@ -205,6 +207,9 @@ func (p *Processor) Consume(chunk []byte) error {
 			p.state.UseRenderedScreen(rendered, burst, fenceParity(rendered), anchors)
 		}
 		p.screen.ClearDirty()
+	}
+	if p.ansiOutput != nil && len(complete) > 0 {
+		_, _ = p.ansiOutput.Write([]byte(complete))
 	}
 	ansiFree := stripansi.Strip(expandCursorForward(complete))
 	detection := normalizeDetectionText(ansiFree)
@@ -495,6 +500,25 @@ func (p *Processor) Output() string {
 		return p.screen.Text()
 	}
 	return p.output.String()
+}
+
+// AnsiOutput returns the bounded terminal output retaining ANSI escape
+// sequences (colors, cursor motions, progress bar carriage returns) for terminal
+// emulators such as xterm.js. If no ANSI output is buffered, it falls back to
+// Output().
+func (p *Processor) AnsiOutput() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.ansiOutput != nil && p.ansiOutput.Len() > 0 {
+		return p.ansiOutput.String()
+	}
+	if p.screen != nil && p.screen.Repainted() {
+		return p.screen.Text()
+	}
+	if p.output != nil {
+		return p.output.String()
+	}
+	return ""
 }
 
 func (p *Processor) DetectionWindowLen() int {

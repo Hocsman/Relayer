@@ -1,4 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import "@xterm/xterm/css/xterm.css";
 
 interface TerminalSnapshotViewProps {
   runID: string;
@@ -9,10 +12,30 @@ interface TerminalSnapshotViewProps {
   onResize(runID: string, sessionID: string, columns: number, rows: number): Promise<void>;
 }
 
-const FOLLOW_THRESHOLD = 12;
+const RELAYER_TERMINAL_THEME = {
+  background: "#080b11",
+  foreground: "#bfcadb",
+  cursor: "#42d9e8",
+  cursorAccent: "#080b11",
+  selectionBackground: "rgba(66, 217, 232, 0.3)",
+  black: "#080b12",
+  red: "#ff5e73",
+  green: "#49d79a",
+  yellow: "#ff9f52",
+  blue: "#42d9e8",
+  magenta: "#9a8cff",
+  cyan: "#42d9e8",
+  white: "#e8edf7",
+  brightBlack: "#8792a4",
+  brightRed: "#ff7588",
+  brightGreen: "#5fe3a8",
+  brightYellow: "#ffb273",
+  brightBlue: "#5ce0ed",
+  brightMagenta: "#aba0ff",
+  brightCyan: "#67e5f2",
+  brightWhite: "#ffffff",
+};
 
-// This is intentionally a bounded text-snapshot viewer, not a VT emulator.
-// Keeping it isolated makes a later migration to a true terminal stream local.
 export function TerminalSnapshotView({
   runID,
   sessionID,
@@ -21,96 +44,151 @@ export function TerminalSnapshotView({
   revision,
   onResize,
 }: TerminalSnapshotViewProps) {
-  const viewportRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
   const followRef = useRef(true);
   const resizeRef = useRef(onResize);
   const lastSizeRef = useRef({ columns: 0, rows: 0 });
+  const lastOutputRef = useRef<string>("");
+  const currentIdentityRef = useRef<string>("");
   const [following, setFollowing] = useState(true);
 
   resizeRef.current = onResize;
 
-  useLayoutEffect(() => {
-    const viewport = viewportRef.current;
-    if (viewport && followRef.current) {
-      viewport.scrollTop = viewport.scrollHeight;
-    }
-  }, [output, revision]);
-
+  // Initialize xterm.js instance and attach to container DOM
   useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-    let timeout = 0;
+    const term = new Terminal({
+      cursorBlink: true,
+      convertEol: true,
+      fontSize: 12,
+      fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace',
+      lineHeight: 1.4,
+      theme: RELAYER_TERMINAL_THEME,
+      scrollback: 5000,
+      allowProposedApi: true,
+    });
+
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+
+    termRef.current = term;
+    fitAddonRef.current = fitAddon;
+    term.open(container);
+
+    try {
+      fitAddon.fit();
+    } catch {
+      // Container may have 0 dimensions initially
+    }
+
+    const scrollDispose = term.onScroll(() => {
+      const isBottom = term.buffer.active.viewportY >= term.buffer.active.baseY;
+      followRef.current = isBottom;
+      setFollowing(isBottom);
+    });
+
+    let resizeTimeout = 0;
     const reportSize = () => {
-      window.clearTimeout(timeout);
-      timeout = window.setTimeout(() => {
-        const styles = window.getComputedStyle(viewport);
-        const fontSize = Number.parseFloat(styles.fontSize) || 13;
-        const lineHeight = Number.parseFloat(styles.lineHeight) || fontSize * 1.55;
-        const horizontalPadding =
-          (Number.parseFloat(styles.paddingLeft) || 0) +
-          (Number.parseFloat(styles.paddingRight) || 0);
-        const verticalPadding =
-          (Number.parseFloat(styles.paddingTop) || 0) +
-          (Number.parseFloat(styles.paddingBottom) || 0);
-
-        const canvas = document.createElement("canvas");
-        const context = canvas.getContext("2d");
-        if (context) context.font = styles.font;
-        const characterWidth = Math.max(1, context?.measureText("M").width || fontSize * 0.62);
-        const columns = Math.max(1, Math.floor((viewport.clientWidth - horizontalPadding) / characterWidth));
-        const rows = Math.max(1, Math.floor((viewport.clientHeight - verticalPadding) / lineHeight));
-
-        if (
-          columns === lastSizeRef.current.columns &&
-          rows === lastSizeRef.current.rows
-        ) {
-          return;
+      window.clearTimeout(resizeTimeout);
+      resizeTimeout = window.setTimeout(() => {
+        if (!containerRef.current || !termRef.current || !fitAddonRef.current) return;
+        try {
+          fitAddonRef.current.fit();
+          const columns = termRef.current.cols;
+          const rows = termRef.current.rows;
+          if (
+            columns > 0 &&
+            rows > 0 &&
+            (columns !== lastSizeRef.current.columns || rows !== lastSizeRef.current.rows)
+          ) {
+            lastSizeRef.current = { columns, rows };
+            void resizeRef.current(runID, sessionID, columns, rows);
+          }
+        } catch {
+          // Ignore layout transitions
         }
-        lastSizeRef.current = { columns, rows };
-        void resizeRef.current(runID, sessionID, columns, rows);
       }, 120);
     };
 
     const observer = new ResizeObserver(reportSize);
-    observer.observe(viewport);
+    observer.observe(container);
     reportSize();
+
     return () => {
       observer.disconnect();
-      window.clearTimeout(timeout);
+      window.clearTimeout(resizeTimeout);
+      scrollDispose.dispose();
+      term.dispose();
+      termRef.current = null;
+      fitAddonRef.current = null;
+      lastOutputRef.current = "";
     };
   }, [runID, sessionID]);
 
-  const handleScroll = () => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    const atBottom =
-      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= FOLLOW_THRESHOLD;
-    followRef.current = atBottom;
-    setFollowing(atBottom);
-  };
+  // Synchronize terminal output with incoming stream
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+
+    const identity = `${runID}\u0000${sessionID}`;
+    const identityChanged = currentIdentityRef.current !== identity;
+    currentIdentityRef.current = identity;
+
+    if (identityChanged) {
+      term.reset();
+      lastOutputRef.current = "";
+    }
+
+    if (!output) {
+      if (lastOutputRef.current) {
+        term.reset();
+        lastOutputRef.current = "";
+      }
+      return;
+    }
+
+    // Incremental write when stream appends, or reset if output was replaced/cleared
+    if (lastOutputRef.current && output.startsWith(lastOutputRef.current)) {
+      const delta = output.slice(lastOutputRef.current.length);
+      if (delta) {
+        term.write(delta);
+      }
+    } else {
+      term.reset();
+      term.write(output);
+    }
+
+    lastOutputRef.current = output;
+
+    if (followRef.current) {
+      term.scrollToBottom();
+    }
+  }, [output, revision, runID, sessionID]);
 
   const resumeFollowing = () => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
+    const term = termRef.current;
+    if (!term) return;
     followRef.current = true;
     setFollowing(true);
-    viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+    term.scrollToBottom();
   };
 
   return (
     <div className="terminal-shell">
       <div
-        ref={viewportRef}
+        ref={containerRef}
         className="terminal-snapshot"
         role="log"
         tabIndex={0}
         aria-label={label}
         aria-live="off"
-        onScroll={handleScroll}
         data-revision={revision}
       >
-        {output ? <pre>{output}</pre> : <p className="terminal-snapshot__empty">Waiting for output…</p>}
+        {!output && <p className="terminal-snapshot__empty">Waiting for output…</p>}
       </div>
       {!following && (
         <button className="follow-button" type="button" onClick={resumeFollowing}>
