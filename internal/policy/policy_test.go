@@ -2,6 +2,7 @@ package policy
 
 import (
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -466,5 +467,186 @@ func evaluation(action, proposed Action, ruleName, reason string, automatic, dry
 		Reason:         reason,
 		Automatic:      automatic,
 		DryRun:         dryRun,
+	}
+}
+
+func TestGuardrailBlockSensitivePaths(t *testing.T) {
+	engine, err := New(Config{
+		DefaultAction: ActionAllow,
+		Guardrails: GuardrailsConfig{
+			BlockSensitivePaths: true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	evt := actionableEvent()
+	evt.Command = "cat .env"
+	eval := engine.Evaluate(evt)
+	if eval.Action != ActionAsk || eval.Reason != ReasonSensitivePath {
+		t.Fatalf("eval = %#v, want ActionAsk with %s", eval, ReasonSensitivePath)
+	}
+
+	evt.Command = "cat src/config.ts"
+	eval = engine.Evaluate(evt)
+	if eval.Action != ActionAllow || eval.Reason != ReasonDefault {
+		t.Fatalf("eval = %#v, want ActionAllow with %s", eval, ReasonDefault)
+	}
+}
+
+func TestGuardrailBlockOutsideWorkspace(t *testing.T) {
+	ws := filepath.Clean("/my/workspace/dir")
+	engine, err := New(Config{
+		DefaultAction: ActionAllow,
+		Guardrails: GuardrailsConfig{
+			BlockOutsideWorkspace: true,
+			WorkspaceRoot:         ws,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	evt := actionableEvent()
+	evt.Command = "cat ../other/secret.txt"
+	eval := engine.Evaluate(evt)
+	if eval.Action != ActionAsk || eval.Reason != ReasonOutsideWorkspace {
+		t.Fatalf("eval = %#v, want ActionAsk with %s", eval, ReasonOutsideWorkspace)
+	}
+
+	evt.Command = "cat src/index.ts"
+	eval = engine.Evaluate(evt)
+	if eval.Action != ActionAllow || eval.Reason != ReasonDefault {
+		t.Fatalf("eval = %#v, want ActionAllow with %s", eval, ReasonDefault)
+	}
+}
+
+func TestRulesWithCommandRegexAndReadOnly(t *testing.T) {
+	roTrue := true
+	engine, err := New(Config{
+		DefaultAction: ActionAsk,
+		Rules: []Rule{
+			{
+				Name: "allow-git-status",
+				Match: Match{
+					CommandRegex: `(?i)^git\s+status`,
+					ReadOnly:     &roTrue,
+				},
+				Action: ActionAllow,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. git status read-only
+	evt := actionableEvent()
+	evt.Command = "git status"
+	eval := engine.Evaluate(evt)
+	if eval.Action != ActionAllow || eval.RuleName != "allow-git-status" {
+		t.Fatalf("git status eval = %#v, want ActionAllow", eval)
+	}
+
+	// 2. git status with write redirection
+	evt.Command = "git status > out.txt"
+	eval = engine.Evaluate(evt)
+	if eval.Action != ActionAsk || eval.Reason != ReasonDefault {
+		t.Fatalf("git status > out.txt eval = %#v, want ActionAsk", eval)
+	}
+
+	// 3. git commit (doesn't match regex)
+	evt.Command = "git commit -m 'fix'"
+	eval = engine.Evaluate(evt)
+	if eval.Action != ActionAsk || eval.Reason != ReasonDefault {
+		t.Fatalf("git commit eval = %#v, want ActionAsk", eval)
+	}
+}
+
+func TestRulesWithPathRegex(t *testing.T) {
+	engine, err := New(Config{
+		DefaultAction: ActionAsk,
+		Rules: []Rule{
+			{
+				Name: "allow-go-inspection",
+				Match: Match{
+					PathRegex: `\.go$`,
+				},
+				Action: ActionAllow,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	evt := actionableEvent()
+	evt.Command = "cat main.go"
+	eval := engine.Evaluate(evt)
+	if eval.Action != ActionAllow || eval.RuleName != "allow-go-inspection" {
+		t.Fatalf("cat main.go eval = %#v, want ActionAllow", eval)
+	}
+
+	evt.Command = "cat script.py"
+	eval = engine.Evaluate(evt)
+	if eval.Action != ActionAsk || eval.Reason != ReasonDefault {
+		t.Fatalf("cat script.py eval = %#v, want ActionAsk", eval)
+	}
+}
+
+func TestDeveloperFriendlyProfileEndToEnd(t *testing.T) {
+	ws := filepath.Clean("/workspace/test-repo")
+	devCfg := ProfileConfig(ProfileDeveloperFriendly, ws)
+	engine, err := New(devCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// git status -> auto allow
+	evt := actionableEvent()
+	evt.Command = "git status"
+	eval := engine.Evaluate(evt)
+	if eval.Action != ActionAllow || !eval.Automatic {
+		t.Fatalf("git status eval = %#v, want automatic allow", eval)
+	}
+
+	// npm test -> auto allow
+	evt.Command = "npm test"
+	eval = engine.Evaluate(evt)
+	if eval.Action != ActionAllow || !eval.Automatic {
+		t.Fatalf("npm test eval = %#v, want automatic allow", eval)
+	}
+
+	// sensitive path -> guardrail blocks
+	evt.Command = "head .env"
+	eval = engine.Evaluate(evt)
+	if eval.Action != ActionAsk || eval.Automatic || eval.Reason != ReasonSensitivePath {
+		t.Fatalf("head .env eval = %#v, want ActionAsk sensitive_path_blocked", eval)
+	}
+
+	// outside workspace -> guardrail blocks
+	evt.Command = "cat ../secret.txt"
+	eval = engine.Evaluate(evt)
+	if eval.Action != ActionAsk || eval.Automatic || eval.Reason != ReasonOutsideWorkspace {
+		t.Fatalf("cat ../secret.txt eval = %#v, want ActionAsk outside_workspace_blocked", eval)
+	}
+
+	// destructive command -> naturally ask because not read-only
+	evt.Command = "rm -rf src/"
+	eval = engine.Evaluate(evt)
+	if eval.Action != ActionAsk || eval.Automatic {
+		t.Fatalf("rm -rf eval = %#v, want ActionAsk", eval)
+	}
+
+	// In permissive profile (DefaultAction Allow), destructive command is explicitly blocked by guardrails
+	permCfg := ProfileConfig(ProfilePermissive, ws)
+	permEngine, err := New(permCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evalPerm := permEngine.Evaluate(evt)
+	if evalPerm.Action != ActionAsk || evalPerm.Automatic || evalPerm.Reason != ReasonDestructive {
+		t.Fatalf("permissive rm -rf eval = %#v, want ActionAsk destructive_command_blocked", evalPerm)
 	}
 }

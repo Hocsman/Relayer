@@ -42,9 +42,12 @@ const (
 // GuardrailsConfig defines safety boundaries that prevent autonomous execution
 // of high-risk actions even when a policy rule would otherwise allow them.
 type GuardrailsConfig struct {
-	BlockDestructive  bool
-	BlockExfiltration bool
-	BlockedPatterns   []string
+	BlockDestructive      bool
+	BlockExfiltration     bool
+	BlockSensitivePaths   bool
+	BlockOutsideWorkspace bool
+	WorkspaceRoot         string
+	BlockedPatterns       []string
 }
 
 // Config describes the ordered rules evaluated by an Engine.
@@ -69,11 +72,14 @@ type Rule struct {
 // semantics. TextRegex is evaluated against Summary + "\n" + Match but that
 // text is never retained by Engine or copied into Evaluation.
 type Match struct {
-	EventTypes []adapters.EventType
-	TextRegex  string
-	AgentIDs   []string
-	RiskLevels []adapters.RiskLevel
-	Sensitive  *bool
+	EventTypes   []adapters.EventType
+	TextRegex    string
+	AgentIDs     []string
+	RiskLevels   []adapters.RiskLevel
+	Sensitive    *bool
+	CommandRegex string
+	PathRegex    string
+	ReadOnly     *bool
 }
 
 // Evaluation separates the configured proposal from the effective action.
@@ -114,6 +120,9 @@ var (
 type compiledRule struct {
 	rule      Rule
 	text      *regexp.Regexp
+	command   *regexp.Regexp
+	path      *regexp.Regexp
+	readOnly  *bool
 	agentIDs  []string
 	sensitive *bool
 }
@@ -233,9 +242,36 @@ func New(config Config) (*Engine, error) {
 			}
 		}
 
+		var commandExpr *regexp.Regexp
+		if rule.Match.CommandRegex != "" {
+			if containsNUL(rule.Match.CommandRegex) {
+				return nil, fmt.Errorf("policy rule %q command regex contains a NUL byte", name)
+			}
+			var err error
+			commandExpr, err = regexp.Compile(rule.Match.CommandRegex)
+			if err != nil {
+				return nil, fmt.Errorf("policy rule %q has invalid command regex: %w", name, err)
+			}
+		}
+
+		var pathExpr *regexp.Regexp
+		if rule.Match.PathRegex != "" {
+			if containsNUL(rule.Match.PathRegex) {
+				return nil, fmt.Errorf("policy rule %q path regex contains a NUL byte", name)
+			}
+			var err error
+			pathExpr, err = regexp.Compile(rule.Match.PathRegex)
+			if err != nil {
+				return nil, fmt.Errorf("policy rule %q has invalid path regex: %w", name, err)
+			}
+		}
+
 		compiled = append(compiled, compiledRule{
 			rule:      cloneRule(*rule),
 			text:      expression,
+			command:   commandExpr,
+			path:      pathExpr,
+			readOnly:  cloneBool(rule.Match.ReadOnly),
 			agentIDs:  agentIDs,
 			sensitive: cloneBool(rule.Match.Sensitive),
 		})
@@ -328,6 +364,25 @@ func (e *Engine) checkGuardrails(event adapters.Event) (string, bool) {
 			return ReasonExfiltration, true
 		}
 	}
+	if e.config.Guardrails.BlockSensitivePaths {
+		if ContainsSensitivePathReference(target) {
+			return ReasonSensitivePath, true
+		}
+		paths := ExtractPaths(target)
+		for _, p := range paths {
+			if IsSensitivePath(p) {
+				return ReasonSensitivePath, true
+			}
+		}
+	}
+	if e.config.Guardrails.BlockOutsideWorkspace && e.config.Guardrails.WorkspaceRoot != "" {
+		paths := ExtractPaths(target)
+		for _, p := range paths {
+			if !IsPathInsideWorkspace(p, e.config.Guardrails.WorkspaceRoot) {
+				return ReasonOutsideWorkspace, true
+			}
+		}
+	}
 	for _, p := range e.customBlockedPatterns {
 		if p.MatchString(target) {
 			return ReasonGuardrailBlocked, true
@@ -358,6 +413,29 @@ func (r compiledRule) matches(event adapters.Event) bool {
 	if r.sensitive != nil && *r.sensitive != eventSensitive {
 		return false
 	}
+	if r.command != nil && !r.command.MatchString(event.Command) {
+		return false
+	}
+	if r.readOnly != nil {
+		isRO := IsReadOnlyCommand(event.Command)
+		if *r.readOnly != isRO {
+			return false
+		}
+	}
+	if r.path != nil {
+		targetText := strings.Join([]string{event.Command, event.Summary, event.Match}, "\n")
+		paths := ExtractPaths(targetText)
+		matched := false
+		for _, p := range paths {
+			if r.path.MatchString(p) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
 	return r.text == nil || r.text.MatchString(event.Summary+"\n"+event.Match)
 }
 
@@ -376,7 +454,8 @@ func validRisk(risk adapters.RiskLevel) bool {
 
 func hasMatcher(match Match) bool {
 	return len(match.EventTypes) > 0 || match.TextRegex != "" || len(match.AgentIDs) > 0 ||
-		len(match.RiskLevels) > 0 || match.Sensitive != nil
+		len(match.RiskLevels) > 0 || match.Sensitive != nil || match.CommandRegex != "" ||
+		match.PathRegex != "" || match.ReadOnly != nil
 }
 
 func containsEventType(values []adapters.EventType, target adapters.EventType) bool {
@@ -427,6 +506,7 @@ func cloneRule(rule Rule) Rule {
 	cloned.Match.AgentIDs = cloneSlice(rule.Match.AgentIDs)
 	cloned.Match.RiskLevels = cloneSlice(rule.Match.RiskLevels)
 	cloned.Match.Sensitive = cloneBool(rule.Match.Sensitive)
+	cloned.Match.ReadOnly = cloneBool(rule.Match.ReadOnly)
 	return cloned
 }
 

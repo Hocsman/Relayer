@@ -306,6 +306,103 @@ func TestLoadVersionOnePoliciesRejectsInvalidGuardrailsAndLimits(t *testing.T) {
 	}
 }
 
+func TestLoadVersionOnePoliciesWithProfile(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "config.yaml")
+	content := versionOnePolicyDocument(`policies:
+  profile: developer-friendly
+  rate_limit_per_minute: 45`)
+	writeConfigTestFile(t, path, []byte(content))
+
+	result, err := LoadOrCreate(path)
+	if err != nil {
+		t.Fatalf("Load returned an error: %v", err)
+	}
+
+	// Should inherit developer-friendly baseline
+	if result.Policies.DefaultAction != policy.ActionAsk {
+		t.Errorf("DefaultAction = %v, want %v", result.Policies.DefaultAction, policy.ActionAsk)
+	}
+	if result.Policies.MaxConsecutiveAutoDecisions != 10 {
+		t.Errorf("MaxConsecutiveAutoDecisions = %d, want 10", result.Policies.MaxConsecutiveAutoDecisions)
+	}
+	// YAML override
+	if result.Policies.RateLimitPerMinute != 45 {
+		t.Errorf("RateLimitPerMinute = %d, want 45", result.Policies.RateLimitPerMinute)
+	}
+	if !result.Policies.Guardrails.BlockSensitivePaths || !result.Policies.Guardrails.BlockOutsideWorkspace {
+		t.Errorf("guardrails not enabled: %#v", result.Policies.Guardrails)
+	}
+	// WorkspaceRoot defaulted to directory of config.yaml
+	if result.Policies.Guardrails.WorkspaceRoot != tempDir {
+		t.Errorf("WorkspaceRoot = %q, want %q", result.Policies.Guardrails.WorkspaceRoot, tempDir)
+	}
+	if len(result.Policies.Rules) != 3 {
+		t.Errorf("rules count = %d, want 3", len(result.Policies.Rules))
+	}
+}
+
+func TestLoadVersionOnePoliciesWithGuardrailsPathAndWorkspace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := versionOnePolicyDocument(`policies:
+  guardrails:
+    block_sensitive_paths: true
+    block_outside_workspace: true
+    workspace_root: /custom/workspace`)
+	writeConfigTestFile(t, path, []byte(content))
+
+	result, err := LoadOrCreate(path)
+	if err != nil {
+		t.Fatalf("Load returned an error: %v", err)
+	}
+
+	g := result.Policies.Guardrails
+	if !g.BlockSensitivePaths || !g.BlockOutsideWorkspace || g.WorkspaceRoot != "/custom/workspace" {
+		t.Fatalf("guardrails mismatch: %#v", g)
+	}
+}
+
+func TestLoadVersionOnePoliciesWithCommandRegexAndReadOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := versionOnePolicyDocument(`policies:
+  rules:
+    - name: safe-git
+      match:
+        command_regex: '(?i)^git status'
+        path_regex: '\.go$'
+        read_only: true
+      action: allow`)
+	writeConfigTestFile(t, path, []byte(content))
+
+	result, err := LoadOrCreate(path)
+	if err != nil {
+		t.Fatalf("Load returned an error: %v", err)
+	}
+
+	if len(result.Policies.Rules) != 1 {
+		t.Fatalf("rules count = %d, want 1", len(result.Policies.Rules))
+	}
+	r := result.Policies.Rules[0]
+	if r.Name != "safe-git" || r.Action != policy.ActionAllow {
+		t.Errorf("rule header mismatch: %#v", r)
+	}
+	if r.Match.CommandRegex != "(?i)^git status" || r.Match.PathRegex != `\.go$` ||
+		r.Match.ReadOnly == nil || !*r.Match.ReadOnly {
+		t.Errorf("rule match mismatch: %#v", r.Match)
+	}
+}
+
+func TestLoadVersionOnePoliciesRejectsInvalidProfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := versionOnePolicyDocument(`policies:
+  profile: unknown-profile-name`)
+	writeConfigTestFile(t, path, []byte(content))
+
+	if _, err := LoadOrCreate(path); err == nil {
+		t.Fatal("expected error loading unknown profile, got nil")
+	}
+}
+
 func versionOnePolicyDocument(policies string) string {
 	policies = strings.TrimSuffix(policies, "\n")
 	return strings.Replace(versionOneDocument("[]"), "agents: []\n", policies+"\nagents: []\n", 1)

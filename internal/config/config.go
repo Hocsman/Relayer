@@ -143,6 +143,7 @@ type configuredNotifications struct {
 }
 
 type configuredPolicies struct {
+	Profile                     *string                 `yaml:"profile,omitempty"`
 	DefaultAction               *string                 `yaml:"default_action,omitempty"`
 	DryRun                      *bool                   `yaml:"dry_run,omitempty"`
 	MaxConsecutiveAutoDecisions *int                    `yaml:"max_consecutive_auto_decisions,omitempty"`
@@ -152,9 +153,12 @@ type configuredPolicies struct {
 }
 
 type configuredGuardrails struct {
-	BlockDestructive  *bool     `yaml:"block_destructive,omitempty"`
-	BlockExfiltration *bool     `yaml:"block_exfiltration,omitempty"`
-	BlockedPatterns   *[]string `yaml:"blocked_patterns,omitempty"`
+	BlockDestructive      *bool     `yaml:"block_destructive,omitempty"`
+	BlockExfiltration     *bool     `yaml:"block_exfiltration,omitempty"`
+	BlockSensitivePaths   *bool     `yaml:"block_sensitive_paths,omitempty"`
+	BlockOutsideWorkspace *bool     `yaml:"block_outside_workspace,omitempty"`
+	WorkspaceRoot         *string   `yaml:"workspace_root,omitempty"`
+	BlockedPatterns       *[]string `yaml:"blocked_patterns,omitempty"`
 }
 
 type configuredAudit struct {
@@ -172,11 +176,14 @@ type configuredPolicyRule struct {
 }
 
 type configuredPolicyMatch struct {
-	EventTypes *[]string `yaml:"event_types,omitempty"`
-	TextRegex  *string   `yaml:"text_regex,omitempty"`
-	AgentIDs   *[]string `yaml:"agent_ids,omitempty"`
-	RiskLevels *[]string `yaml:"risk_levels,omitempty"`
-	Sensitive  *bool     `yaml:"sensitive,omitempty"`
+	EventTypes   *[]string `yaml:"event_types,omitempty"`
+	TextRegex    *string   `yaml:"text_regex,omitempty"`
+	AgentIDs     *[]string `yaml:"agent_ids,omitempty"`
+	RiskLevels   *[]string `yaml:"risk_levels,omitempty"`
+	Sensitive    *bool     `yaml:"sensitive,omitempty"`
+	CommandRegex *string   `yaml:"command_regex,omitempty"`
+	PathRegex    *string   `yaml:"path_regex,omitempty"`
+	ReadOnly     *bool     `yaml:"read_only,omitempty"`
 }
 
 type configuredAgent struct {
@@ -248,8 +255,8 @@ func LoadExisting(path string) (Result, error) {
 }
 
 func decodeResult(path string, data []byte, created bool) (Result, error) {
-
-	configured, err := decode(data)
+	configDir := filepath.Dir(path)
+	configured, err := decode(data, configDir)
 	if err != nil {
 		return Result{}, fmt.Errorf("invalid configuration %s: %w", path, err)
 	}
@@ -425,7 +432,10 @@ func configuredPoliciesFrom(configuration policy.Config) configuredPolicies {
 	for _, rule := range configuration.Rules {
 		name := rule.Name
 		action := string(rule.Action)
-		match := configuredPolicyMatch{Sensitive: rule.Match.Sensitive}
+		match := configuredPolicyMatch{
+			Sensitive: rule.Match.Sensitive,
+			ReadOnly:  rule.Match.ReadOnly,
+		}
 		if len(rule.Match.EventTypes) > 0 {
 			values := make([]string, len(rule.Match.EventTypes))
 			for index, value := range rule.Match.EventTypes {
@@ -435,6 +445,12 @@ func configuredPoliciesFrom(configuration policy.Config) configuredPolicies {
 		}
 		if rule.Match.TextRegex != "" {
 			match.TextRegex = stringPointer(rule.Match.TextRegex)
+		}
+		if rule.Match.CommandRegex != "" {
+			match.CommandRegex = stringPointer(rule.Match.CommandRegex)
+		}
+		if rule.Match.PathRegex != "" {
+			match.PathRegex = stringPointer(rule.Match.PathRegex)
 		}
 		if len(rule.Match.AgentIDs) > 0 {
 			values := append([]string(nil), rule.Match.AgentIDs...)
@@ -464,7 +480,9 @@ func configuredPoliciesFrom(configuration policy.Config) configuredPolicies {
 		rateLimit = &val
 	}
 	var guardrails *configuredGuardrails
-	if configuration.Guardrails.BlockDestructive || configuration.Guardrails.BlockExfiltration || len(configuration.Guardrails.BlockedPatterns) > 0 {
+	if configuration.Guardrails.BlockDestructive || configuration.Guardrails.BlockExfiltration ||
+		configuration.Guardrails.BlockSensitivePaths || configuration.Guardrails.BlockOutsideWorkspace ||
+		configuration.Guardrails.WorkspaceRoot != "" || len(configuration.Guardrails.BlockedPatterns) > 0 {
 		g := configuredGuardrails{}
 		if configuration.Guardrails.BlockDestructive {
 			bd := true
@@ -473,6 +491,18 @@ func configuredPoliciesFrom(configuration policy.Config) configuredPolicies {
 		if configuration.Guardrails.BlockExfiltration {
 			be := true
 			g.BlockExfiltration = &be
+		}
+		if configuration.Guardrails.BlockSensitivePaths {
+			bsp := true
+			g.BlockSensitivePaths = &bsp
+		}
+		if configuration.Guardrails.BlockOutsideWorkspace {
+			bow := true
+			g.BlockOutsideWorkspace = &bow
+		}
+		if configuration.Guardrails.WorkspaceRoot != "" {
+			ws := configuration.Guardrails.WorkspaceRoot
+			g.WorkspaceRoot = &ws
 		}
 		if len(configuration.Guardrails.BlockedPatterns) > 0 {
 			bp := append([]string(nil), configuration.Guardrails.BlockedPatterns...)
@@ -490,11 +520,28 @@ func configuredPoliciesFrom(configuration policy.Config) configuredPolicies {
 	}
 }
 
-func decodePolicies(configured *configuredPolicies) (policy.Config, error) {
+func decodePolicies(configured *configuredPolicies, configDir string) (policy.Config, error) {
 	result := policy.DefaultConfig()
 	if configured == nil {
 		return result, nil
 	}
+
+	if configured.Profile != nil {
+		profileName := strings.TrimSpace(*configured.Profile)
+		profile, err := policy.ParseProfile(profileName)
+		if err != nil {
+			return policy.Config{}, fmt.Errorf("invalid policies.profile: %w", err)
+		}
+		wsRoot := ""
+		if configured.Guardrails != nil && configured.Guardrails.WorkspaceRoot != nil {
+			wsRoot = *configured.Guardrails.WorkspaceRoot
+		}
+		if wsRoot == "" {
+			wsRoot = configDir
+		}
+		result = policy.ProfileConfig(profile, wsRoot)
+	}
+
 	if configured.DefaultAction != nil {
 		result.DefaultAction = policy.Action(strings.ToLower(strings.TrimSpace(*configured.DefaultAction)))
 	}
@@ -520,52 +567,79 @@ func decodePolicies(configured *configuredPolicies) (policy.Config, error) {
 		if configured.Guardrails.BlockExfiltration != nil {
 			result.Guardrails.BlockExfiltration = *configured.Guardrails.BlockExfiltration
 		}
+		if configured.Guardrails.BlockSensitivePaths != nil {
+			result.Guardrails.BlockSensitivePaths = *configured.Guardrails.BlockSensitivePaths
+		}
+		if configured.Guardrails.BlockOutsideWorkspace != nil {
+			result.Guardrails.BlockOutsideWorkspace = *configured.Guardrails.BlockOutsideWorkspace
+		}
+		if configured.Guardrails.WorkspaceRoot != nil {
+			result.Guardrails.WorkspaceRoot = *configured.Guardrails.WorkspaceRoot
+		}
+		if result.Guardrails.BlockOutsideWorkspace && result.Guardrails.WorkspaceRoot == "" {
+			result.Guardrails.WorkspaceRoot = configDir
+		}
 		if configured.Guardrails.BlockedPatterns != nil {
 			result.Guardrails.BlockedPatterns = append([]string(nil), (*configured.Guardrails.BlockedPatterns)...)
 		}
 	}
-	if configured.Rules == nil {
-		return result, nil
-	}
-	result.Rules = make([]policy.Rule, 0, len(*configured.Rules))
-	for index, configuredRule := range *configured.Rules {
-		if configuredRule.Name == nil {
-			return policy.Config{}, fmt.Errorf("missing policies.rules[%d].name", index)
-		}
-		if configuredRule.Match == nil {
-			return policy.Config{}, fmt.Errorf("missing policies.rules[%d].match", index)
-		}
-		if configuredRule.Action == nil {
-			return policy.Config{}, fmt.Errorf("missing policies.rules[%d].action", index)
-		}
-		configuredMatch := configuredRule.Match
-		match := policy.Match{Sensitive: configuredMatch.Sensitive}
-		if configuredMatch.EventTypes != nil {
-			match.EventTypes = make([]adapters.EventType, len(*configuredMatch.EventTypes))
-			for valueIndex, value := range *configuredMatch.EventTypes {
-				match.EventTypes[valueIndex] = adapters.EventType(strings.ToLower(strings.TrimSpace(value)))
+	if configured.Rules != nil {
+		customRules := make([]policy.Rule, 0, len(*configured.Rules))
+		for index, configuredRule := range *configured.Rules {
+			if configuredRule.Name == nil {
+				return policy.Config{}, fmt.Errorf("missing policies.rules[%d].name", index)
 			}
-		}
-		if configuredMatch.TextRegex != nil {
-			if strings.TrimSpace(*configuredMatch.TextRegex) == "" {
-				return policy.Config{}, fmt.Errorf("policies.rules[%d].match.text_regex cannot be empty", index)
+			if configuredRule.Match == nil {
+				return policy.Config{}, fmt.Errorf("missing policies.rules[%d].match", index)
 			}
-			match.TextRegex = *configuredMatch.TextRegex
-		}
-		if configuredMatch.AgentIDs != nil {
-			match.AgentIDs = append([]string(nil), (*configuredMatch.AgentIDs)...)
-		}
-		if configuredMatch.RiskLevels != nil {
-			match.RiskLevels = make([]adapters.RiskLevel, len(*configuredMatch.RiskLevels))
-			for valueIndex, value := range *configuredMatch.RiskLevels {
-				match.RiskLevels[valueIndex] = adapters.RiskLevel(strings.ToLower(strings.TrimSpace(value)))
+			if configuredRule.Action == nil {
+				return policy.Config{}, fmt.Errorf("missing policies.rules[%d].action", index)
 			}
+			configuredMatch := configuredRule.Match
+			match := policy.Match{
+				Sensitive: configuredMatch.Sensitive,
+				ReadOnly:  configuredMatch.ReadOnly,
+			}
+			if configuredMatch.EventTypes != nil {
+				match.EventTypes = make([]adapters.EventType, len(*configuredMatch.EventTypes))
+				for valueIndex, value := range *configuredMatch.EventTypes {
+					match.EventTypes[valueIndex] = adapters.EventType(strings.ToLower(strings.TrimSpace(value)))
+				}
+			}
+			if configuredMatch.TextRegex != nil {
+				if strings.TrimSpace(*configuredMatch.TextRegex) == "" {
+					return policy.Config{}, fmt.Errorf("policies.rules[%d].match.text_regex cannot be empty", index)
+				}
+				match.TextRegex = *configuredMatch.TextRegex
+			}
+			if configuredMatch.CommandRegex != nil {
+				if strings.TrimSpace(*configuredMatch.CommandRegex) == "" {
+					return policy.Config{}, fmt.Errorf("policies.rules[%d].match.command_regex cannot be empty", index)
+				}
+				match.CommandRegex = *configuredMatch.CommandRegex
+			}
+			if configuredMatch.PathRegex != nil {
+				if strings.TrimSpace(*configuredMatch.PathRegex) == "" {
+					return policy.Config{}, fmt.Errorf("policies.rules[%d].match.path_regex cannot be empty", index)
+				}
+				match.PathRegex = *configuredMatch.PathRegex
+			}
+			if configuredMatch.AgentIDs != nil {
+				match.AgentIDs = append([]string(nil), (*configuredMatch.AgentIDs)...)
+			}
+			if configuredMatch.RiskLevels != nil {
+				match.RiskLevels = make([]adapters.RiskLevel, len(*configuredMatch.RiskLevels))
+				for valueIndex, value := range *configuredMatch.RiskLevels {
+					match.RiskLevels[valueIndex] = adapters.RiskLevel(strings.ToLower(strings.TrimSpace(value)))
+				}
+			}
+			customRules = append(customRules, policy.Rule{
+				Name:   *configuredRule.Name,
+				Match:  match,
+				Action: policy.Action(strings.ToLower(strings.TrimSpace(*configuredRule.Action))),
+			})
 		}
-		result.Rules = append(result.Rules, policy.Rule{
-			Name:   *configuredRule.Name,
-			Match:  match,
-			Action: policy.Action(strings.ToLower(strings.TrimSpace(*configuredRule.Action))),
-		})
+		result.Rules = append(customRules, result.Rules...)
 	}
 	return result, nil
 }
@@ -630,7 +704,7 @@ func createExclusively(path string, payload []byte, linkErr error) (bool, error)
 	return true, nil
 }
 
-func decode(data []byte) (decodedFile, error) {
+func decode(data []byte, configDir string) (decodedFile, error) {
 	var document yaml.Node
 	if err := yaml.Unmarshal(data, &document); err != nil {
 		return decodedFile{}, err
@@ -660,7 +734,7 @@ func decode(data []byte) (decodedFile, error) {
 		}, nil
 	case yaml.MappingNode:
 		if mappingHasKey(root, "version") {
-			return decodeVersionOne(data, root)
+			return decodeVersionOne(data, root, configDir)
 		}
 		if sequence := mappingValue(root, "intercept_patterns"); sequence != nil {
 			if err := validatePatternNode(sequence); err != nil {
@@ -685,7 +759,7 @@ func decode(data []byte) (decodedFile, error) {
 	}
 }
 
-func decodeVersionOne(data []byte, root *yaml.Node) (decodedFile, error) {
+func decodeVersionOne(data []byte, root *yaml.Node, configDir string) (decodedFile, error) {
 	if err := rejectVersionOneIndirections(root); err != nil {
 		return decodedFile{}, err
 	}
@@ -734,7 +808,7 @@ func decodeVersionOne(data []byte, root *yaml.Node) (decodedFile, error) {
 			sessionPolicy.CleanupOnSuccess = *configured.Sessions.CleanupOnSuccess
 		}
 	}
-	configuredPolicy, err := decodePolicies(configured.Policies)
+	configuredPolicy, err := decodePolicies(configured.Policies, configDir)
 	if err != nil {
 		return decodedFile{}, err
 	}
