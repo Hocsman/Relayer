@@ -344,3 +344,74 @@ func TestARewrappedQuestionIsNotWithdrawn(t *testing.T) {
 		t.Fatalf("a question whose characters never changed was withdrawn: %#v", *withdrawn)
 	}
 }
+
+// An agent prompt often has a leading symbol ("$ ", "❯ ", "› ", "? ").
+// When the agent or user cancels the question, the row is repainted with only
+// the bare prompt leader. The question must be withdrawn even though the bare
+// prompt is a prefix of the original line.
+func TestAQuestionWithPromptPrefixCancelledToBarePromptIsWithdrawn(t *testing.T) {
+	scenarios := []struct {
+		name      string
+		ask       string
+		cancelled string
+	}{
+		{
+			name:      "dollar prompt",
+			ask:       "\x1b[2J\x1b[1;1H$ Overwrite file? [Y/n]\x1b[2;1H  [y] yes",
+			cancelled: "\x1b[2J\x1b[1;1H$ ",
+		},
+		{
+			name:      "claude arrow prompt",
+			ask:       "\x1b[2J\x1b[1;1H❯ Allow tool execution? [y/N]\x1b[2;1H  [y] yes",
+			cancelled: "\x1b[2J\x1b[1;1H❯ ",
+		},
+		{
+			name:      "codex chevron prompt",
+			ask:       "\x1b[2J\x1b[1;1H› Approve command? [y/n]\x1b[2;1H  [y] yes",
+			cancelled: "\x1b[2J\x1b[1;1H› ",
+		},
+		{
+			name:      "question mark prompt",
+			ask:       "\x1b[2J\x1b[1;1H? Do you want to proceed? [y/n]\x1b[2;1H  [y] yes",
+			cancelled: "\x1b[2J\x1b[1;1H? ",
+		},
+	}
+
+	for _, sc := range scenarios {
+		t.Run(sc.name, func(t *testing.T) {
+			processor, raised, withdrawn := withdrawProcessor(t)
+			processor.Resize(60, 10)
+
+			if err := processor.Consume([]byte(sc.ask)); err != nil {
+				t.Fatal(err)
+			}
+			if processor.Pending() == nil {
+				t.Fatal("question was not detected")
+			}
+			if len(*raised) != 1 {
+				t.Fatalf("expected 1 raised event, got %d", len(*raised))
+			}
+			offered := (*raised)[0]
+
+			// Agent cancels and returns to bare prompt:
+			if err := processor.Consume([]byte(sc.cancelled)); err != nil {
+				t.Fatal(err)
+			}
+			if got := processor.Pending(); got != nil {
+				t.Fatalf("question whose prompt cancelled to bare prompt was not withdrawn: %#v", got)
+			}
+			if len(*withdrawn) != 1 || (*withdrawn)[0].ID != offered.ID {
+				t.Fatalf("withdrawal not reported: %#v", *withdrawn)
+			}
+
+			// Late decision must be rejected
+			err := processor.Resolve(offered.ID, func() error {
+				t.Fatal("withdrawn decision reached terminal")
+				return nil
+			})
+			if !errors.Is(err, ErrEventMismatch) {
+				t.Fatalf("expected ErrEventMismatch, got %v", err)
+			}
+		})
+	}
+}

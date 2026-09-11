@@ -331,6 +331,8 @@ func (a *App) consumeEvents(run *runGeneration) {
 				a.scheduleOutputRefresh(run, value.SessionID)
 			case session.AdapterEvent:
 				a.handleAdapterEventForRun(run, value.Event.Clone())
+			case session.AdapterEventWithdrawn:
+				a.handleAdapterEventWithdrawnForRun(run, value.Event.Clone())
 			case session.Error:
 				a.markSessionError(run, value.SessionID, "backend_stream_failed")
 			case session.Exited:
@@ -447,6 +449,69 @@ func (a *App) handleAdapterEvent(event adapters.Event) {
 	if run != nil {
 		a.handleAdapterEventForRun(run, event)
 	}
+}
+
+func (a *App) handleAdapterEventWithdrawn(event adapters.Event) {
+	a.mu.RLock()
+	run := a.active
+	a.mu.RUnlock()
+	if run != nil {
+		a.handleAdapterEventWithdrawnForRun(run, event)
+	}
+}
+
+func (a *App) handleAdapterEventWithdrawnForRun(run *runGeneration, event adapters.Event) {
+	if !a.isActiveRun(run) {
+		return
+	}
+	key := makeEventKey(event.SessionID, event.ID)
+	if key.sessionID == "" || key.eventID == "" {
+		return
+	}
+
+	backend := a.backendFor(run, event.SessionID)
+	_ = a.recordAudit(run, eventWithdrawnEntry(event, backend, "agent_withdrew_occurrence"))
+
+	a.mu.Lock()
+	if _, duplicate := a.resolved[key]; duplicate {
+		a.mu.Unlock()
+		return
+	}
+	pending, found := a.pending[key]
+	if !found {
+		a.mu.Unlock()
+		return
+	}
+	delete(a.pending, key)
+	sessionKey := strings.ToLower(event.SessionID)
+	if inflightKey, busy := a.inFlight[sessionKey]; busy && inflightKey == key {
+		delete(a.inFlight, sessionKey)
+	}
+	a.markResolvedLocked(key)
+
+	hasOtherPending := false
+	for otherKey := range a.pending {
+		if strings.ToLower(otherKey.sessionID) == sessionKey {
+			hasOtherPending = true
+			break
+		}
+	}
+	currentStatus := "running"
+	if index, foundAgent := a.agentIndex[sessionKey]; foundAgent {
+		if !hasOtherPending && a.state.Agents[index].Status == "waiting" {
+			a.state.Agents[index].Status = "running"
+		}
+		currentStatus = a.state.Agents[index].Status
+	}
+	a.rebuildPendingLocked()
+	a.mu.Unlock()
+
+	view := pending.view
+	view.DeliveryStatus = "delivered"
+	a.emit(eventSemantic, view)
+	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: event.SessionID, Status: currentStatus})
+	a.refreshOutputForRun(run, event.SessionID)
+	a.scheduleAutomatic(run, event.SessionID)
 }
 
 func (a *App) handleAdapterEventForRun(run *runGeneration, event adapters.Event) {

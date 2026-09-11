@@ -29,6 +29,13 @@ func eventAuditEntry(kind audit.Kind, event adapters.Event, backend string) audi
 	return entry
 }
 
+func eventWithdrawnEntry(event adapters.Event, backend, reason string) audit.Entry {
+	entry := eventAuditEntry(audit.KindEventWithdrawn, event, backend)
+	entry.Outcome = audit.OutcomeCancelled
+	entry.Reason = safeReason(reason)
+	return entry
+}
+
 func safeExitMetadata(metadata map[string]string) map[string]string {
 	if len(metadata) == 0 {
 		return nil

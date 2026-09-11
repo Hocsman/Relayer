@@ -951,6 +951,62 @@ func TestUnsupportedAutomaticDecisionFallsBackToAsk(t *testing.T) {
 	}
 }
 
+func TestAppConsumesAdapterEventWithdrawn(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	application := newBridgeForTest(engine)
+	event := bridgeEvent("agent-a", "prompt-to-withdraw")
+	application.handleAdapterEvent(event)
+
+	state, err := application.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if len(state.PendingEvents) != 1 {
+		t.Fatalf("expected 1 pending event, got %d", len(state.PendingEvents))
+	}
+	if state.Agents[0].Status != "waiting" {
+		t.Fatalf("expected agent status 'waiting', got %q", state.Agents[0].Status)
+	}
+
+	// Backend signals that the agent withdrew its question:
+	application.handleAdapterEventWithdrawn(event)
+
+	state, err = application.GetState()
+	if err != nil {
+		t.Fatalf("GetState after withdrawal: %v", err)
+	}
+	if len(state.PendingEvents) != 0 {
+		t.Fatalf("expected 0 pending events after withdrawal, got %d", len(state.PendingEvents))
+	}
+	if state.Agents[0].Status != "running" {
+		t.Fatalf("expected agent status to return to 'running', got %q", state.Agents[0].Status)
+	}
+
+	// Late decision must be rejected:
+	err = application.SubmitDecision(activeRunIDForTest(application), event.SessionID, event.ID, "Y")
+	if !errors.Is(err, errDecisionStale) {
+		t.Fatalf("SubmitDecision after withdrawal error = %v, want errDecisionStale", err)
+	}
+
+	// Audit entry must be recorded:
+	entries := engine.auditSnapshot()
+	foundWithdrawn := false
+	for _, entry := range entries {
+		if entry.Kind == audit.KindEventWithdrawn && entry.EventID == event.ID {
+			foundWithdrawn = true
+			if entry.Outcome != audit.OutcomeCancelled {
+				t.Fatalf("expected outcome %q, got %q", audit.OutcomeCancelled, entry.Outcome)
+			}
+			if entry.Reason != "agent_withdrew_occurrence" {
+				t.Fatalf("expected reason 'agent_withdrew_occurrence', got %q", entry.Reason)
+			}
+		}
+	}
+	if !foundWithdrawn {
+		t.Fatalf("did not find audit entry for withdrawn event; audit entries = %#v", entries)
+	}
+}
+
 func TestSecondPromptForSameSessionRemainsWaitingAfterFirstDecision(t *testing.T) {
 	engine := newFakeDesktopEngine("agent-a")
 	application := newBridgeForTest(engine)

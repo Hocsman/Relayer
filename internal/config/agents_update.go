@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Hocsman/Relayer/internal/agent"
 	"gopkg.in/yaml.v3"
@@ -219,7 +220,15 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 	if contentRevision(latest) != expectedRevision {
 		return Result{}, "", ErrRevisionMismatch
 	}
-	if err := os.Rename(temporaryPath, absolutePath); err != nil {
+	var renameErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		renameErr = os.Rename(temporaryPath, absolutePath)
+		if renameErr == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if renameErr != nil {
 		return Result{}, "", errors.New("could not atomically publish configuration")
 	}
 	if err := syncConfigurationDirectory(directory); err != nil {

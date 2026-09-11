@@ -59,9 +59,18 @@ jobs:
           - name: Linux
             os: ubuntu-24.04
             go_flags: -tags=webkit2_41
+            cgo: "1"
+            race: true
           - name: macOS
             os: macos-15
             go_flags: ""
+            cgo: "1"
+            race: true
+          - name: Windows
+            os: windows-2022
+            go_flags: ""
+            cgo: "0"
+            race: false
 
     defaults:
       run:
@@ -69,7 +78,7 @@ jobs:
         working-directory: cmd/relayer-gui
 
     env:
-      CGO_ENABLED: "1"
+      CGO_ENABLED: ${{ matrix.cgo }}
       GOFLAGS: ${{ matrix.go_flags }}
 
     steps:
@@ -146,6 +155,7 @@ jobs:
         run: go test -count=1 -timeout=5m ./...
 
       - name: Test GUI module with race detector
+        if: matrix.race
         run: go test -race -count=1 -timeout=5m ./...
 
       - name: Install pinned Wails CLI
@@ -153,18 +163,27 @@ jobs:
           mkdir -p "$RUNNER_TEMP/relayer-wails-bin"
           GOBIN="$RUNNER_TEMP/relayer-wails-bin" \
             go install github.com/wailsapp/wails/v2/cmd/wails@v2.14.0
-          version_output="$("$RUNNER_TEMP/relayer-wails-bin/wails" version)"
+          wails_bin="$RUNNER_TEMP/relayer-wails-bin/wails"
+          [[ -f "$wails_bin.exe" ]] && wails_bin="$wails_bin.exe"
+          version_output="$("$wails_bin" version)"
           test "${version_output%%$'\n'*}" = "v2.14.0"
 
       - name: Build native GUI (verification only)
         run: |
+          wails_bin="$RUNNER_TEMP/relayer-wails-bin/wails"
+          [[ -f "$wails_bin.exe" ]] && wails_bin="$wails_bin.exe"
           if [[ "$RUNNER_OS" == "Linux" ]]; then
-            "$RUNNER_TEMP/relayer-wails-bin/wails" build \
+            "$wails_bin" build \
               -clean \
               -skipbindings \
               -tags webkit2_41
+          elif [[ "$RUNNER_OS" == "Windows" ]]; then
+            "$wails_bin" build \
+              -clean \
+              -skipbindings \
+              -o Relayer.exe
           else
-            "$RUNNER_TEMP/relayer-wails-bin/wails" build \
+            "$wails_bin" build \
               -clean \
               -skipbindings
           fi

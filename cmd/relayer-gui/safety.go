@@ -60,7 +60,8 @@ func safeReason(value string) string {
 		"sensitive_event", "risk_not_low", "dry_run", "engine_unavailable",
 		"event_detected", "process_exit", "decision_selected",
 		"delivery_applied", "fallback_unsupported", "fallback_stale",
-		"delivery_uncertain", "audit_unavailable", "runtime_stopped":
+		"delivery_uncertain", "audit_unavailable", "runtime_stopped",
+		"agent_withdrew_occurrence", "resync":
 		return value
 	default:
 		return "unknown"

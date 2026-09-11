@@ -884,11 +884,20 @@ func (p *Processor) reconcilePendingWithScreen() *Event {
 	if strings.Contains(line, p.state.pending.Match) {
 		return nil
 	}
-	if strings.HasPrefix(p.pendingAnchor.line, line) || strings.HasPrefix(line, p.pendingAnchor.line) {
-		// The row holds the same content, serialised differently. A wrapped
-		// line the agent repainted row by row stops being joined without a
-		// single character changing on screen.
-		return nil
+	if strings.HasPrefix(p.pendingAnchor.line, line) {
+		// A line being repainted may be observed mid-frame (e.g. "Overwri"
+		// while "Overwrite file? [Y/n]" is arriving), or a wrapped line may
+		// have stopped being joined across rows while still carrying the
+		// question characters.
+		//
+		// However, if the current line only extends up to the prompt leader
+		// that preceded the question (e.g. "$ ", "❯ ", "› ", "? "), none of
+		// the question characters are present. That is a prompt left behind
+		// after the agent cancelled its question, not a question in progress.
+		matchIndex := strings.Index(p.pendingAnchor.line, p.state.pending.Match)
+		if matchIndex < 0 || len(strings.TrimRight(line, " ")) > matchIndex {
+			return nil
+		}
 	}
 	// The snapshot fingerprint described the screen that carried the question.
 	p.pendingSnapshotFingerprint = ""
