@@ -6,7 +6,82 @@ without implying semantic-versioning stability before the first release.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-11
+
+Second minor release: native Windows support, interactive desktop terminal emulator, audit CLI, Aider adapter, decision alerts, policy engine guardrails, and virtual screen detection.
+
+### Added
+
+- Native Windows ConPTY backend (`github.com/charmbracelet/x/conpty`). Relayer runs
+  interactively on Windows without WSL or remote daemons, driving CLI agents through the
+  Windows Pseudo Console API. Process groups, window resizing, input routing, and output
+  capture are fully supported.
+
+- Interactive xterm.js terminal emulator in the desktop interface. The plain-text console
+  in the Svelte GUI is replaced by `@xterm/xterm` and `@xterm/addon-fit`, providing full
+  terminal emulation with faithful ANSI color rendering, cursor positioning, progress
+  bars, and alternate screen buffers.
+
+- `relayer audit` CLI inspection tool. Dedicated subcommands inspect and verify Relayer's
+  append-only JSONL audit trails:
+  - `relayer audit inspect` for formatted, human-readable session playback and event filtering.
+  - `relayer audit stats` for aggregated decision metrics and agent breakdown.
+  - `relayer audit verify` for cryptographic Ed25519 signature verification across the audit chain.
+
+- Native Aider coding assistant adapter (`internal/adapters/aider.go`). Dedicated pattern
+  recognition and response encoding for the Aider AI pair programmer CLI, supporting
+  tool execution confirmations, file modification prompts, and command execution approvals.
+
+- Desktop notifications and terminal BEL alerts (`internal/notify`). When an agent prompts
+  for human decision, Relayer emits a terminal BEL (`\a`) audio cue and sends a native OS
+  desktop notification via `beeep` to alert operators working in background windows. Gracefully
+  falls back or silences in headless and quiet environments.
+
+- Policy engine guardrails and rate-limiting (`internal/policy`). Added consecutive
+  auto-decision threshold (`max_consecutive_auto_decisions`) forcing human review after
+  repeated automated allowances, sliding-window rate limiting (`max_actions_per_minute`)
+  to prevent runaway loops, and high-risk destructive command inspection (blocking destructive
+  shell commands such as `rm -rf`, `mkfs`, `dd`, and exfiltration patterns).
+
+- Virtual terminal screen model (`internal/screen`). Terminal byte streams are parsed
+  through a total escape sequence parser (CSI, OSC, DCS, SOS, PM, APC) into a 2D virtual
+  character grid. Prompt detection now operates on the rendered screen rather than raw byte
+  chunks, eliminating chunk boundary fragmentation and repaint artifacts.
+
 ### Fixed
+
+- Detection on rendered screens: prompt detection evaluates the actual visual grid state,
+  eliminating chunk-boundary misses when questions are split across multiple read system
+  calls or surrounded by pinned status footers and frames (#29).
+
+- ANSI DoS protection: terminal screen parser strictly bounds escape sequence parameter
+  lengths and grid memory allocations to prevent denial-of-service from unbounded or
+  malicious byte sequences.
+
+- Question identity by full line: questions are keyed by their complete text line rather
+  than partial ambiguous fragments (#30).
+
+- Escape-only writes trigger detection: terminal updates consisting solely of cursor
+  motion or styling escape codes without printable text correctly trigger screen
+  re-evaluation (#31).
+
+- Code-fence parity tracking: orphaned or unmatched markdown code fences in agent outputs
+  no longer confuse multi-line prompt block detection (#32).
+
+- Codex adapter repaint idempotence: answered prompts are preserved across screen repaints,
+  preventing duplicate human decision requests when cursor or spinner updates occur (#33).
+
+- Answered question memory retention across partial read chunks (#35) and tmux snapshot
+  reconciliations (`ReconcileSnapshot`) (#37).
+
+- Detection burst bounding: detection is constrained to the visible viewport grid,
+  preventing ghost prompts from past scrollback lines (#36).
+
+- ECH (Erase Character) and DCH (Delete Character) escape sequences mark screen regions as
+  repaints (#38, #44).
+
+- Multi-line question continuation boundary expanded to 16 lines to support large diffs
+  and command preview displays (#39).
 
 - A question the operator answered stops suppressing a different one. The memory
   that keeps an answered question from being asked again while it is still
@@ -365,5 +440,7 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.1.0-alpha...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.2.0...main
+[0.2.0]: https://github.com/Hocsman/Relayer/compare/v0.1.1-alpha...v0.2.0
+[0.1.1-alpha]: https://github.com/Hocsman/Relayer/compare/v0.1.0-alpha...v0.1.1-alpha
 [0.1.0-alpha]: https://github.com/Hocsman/Relayer/releases/tag/v0.1.0-alpha
