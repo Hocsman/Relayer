@@ -45,10 +45,22 @@ type Event struct {
 	Type      EventType
 	Summary   string
 	Match     string
+	Command   string
 	Sensitive bool
 	Risk      RiskLevel
 	Timestamp time.Time
 	Metadata  map[string]string
+
+	// questionLine is the logical terminal line the match sits on: the question
+	// as it was asked, rather than the fragment a pattern happened to capture.
+	//
+	// It is unexported on purpose. It is terminal text, so it must not reach
+	// the audit journal, a snapshot or any consumer outside this package; it
+	// exists only so that the state can tell one question from another. Clone
+	// copies it because two occurrences of the same struct describe the same
+	// question, and a restored event simply arrives without it — which costs a
+	// question being asked again, never one being swallowed.
+	questionLine string
 
 	// anchor is the screen row this occurrence was found on, unexported because
 	// it is meaningless outside the process that rendered that screen: it is

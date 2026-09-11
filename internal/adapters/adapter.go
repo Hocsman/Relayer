@@ -90,6 +90,7 @@ type DetectionState struct {
 type answeredQuestion struct {
 	signature string
 	match     string
+	line      string
 	anchor    screen.RowID
 }
 
@@ -117,7 +118,7 @@ func (s *DetectionState) keepAnswered(live []answeredQuestion) {
 
 // rememberAnswered records what the operator just dealt with, so a screen that
 // still shows it does not ask again.
-func (s *DetectionState) rememberAnswered(signature, match string, anchor screen.RowID) {
+func (s *DetectionState) rememberAnswered(signature, match string, anchor screen.RowID, line string) {
 	if s == nil || signature == "" {
 		return
 	}
@@ -129,10 +130,13 @@ func (s *DetectionState) rememberAnswered(signature, match string, anchor screen
 			if anchor != 0 {
 				s.answered[index].anchor = anchor
 			}
+			if line != "" {
+				s.answered[index].line = line
+			}
 			return
 		}
 	}
-	s.answered = append(s.answered, answeredQuestion{signature: signature, match: match, anchor: anchor})
+	s.answered = append(s.answered, answeredQuestion{signature: signature, match: match, anchor: anchor, line: line})
 	if len(s.answered) > maxAnsweredMemory {
 		s.answered = s.answered[len(s.answered)-maxAnsweredMemory:]
 	}
@@ -141,23 +145,28 @@ func (s *DetectionState) rememberAnswered(signature, match string, anchor screen
 // answersTheSameQuestion reports whether a candidate is the question the
 // operator already dealt with, still painted on the screen.
 //
-// Signature alone is not enough. One line can match several patterns — the
-// default set matches "Overwrite file? [Y/n]" as an overwrite AND as a yes/no
-// confirmation — so suppressing the answered signature let the same line come
-// straight back under the other pattern's signature. Text that is part of the
-// answered text is part of the answered question.
-func (s *DetectionState) answersTheSameQuestion(signature, match string) bool {
+// The question is the LINE, not the fragment a pattern captured. Identifying it
+// by the fragment made two unrelated questions the same question: the shipped
+// `confirmation` pattern captures the literal "[y/n]", so every yes/no question
+// in a session produced the same signature and the second one was swallowed —
+// "Run 'npm test'? [y/n]" answered, then "Run 'rm -rf /' as root? [y/n]" never
+// reported.
+//
+// Comparing whole lines still does what the fragment comparison was there for:
+// one line can match several patterns — the default set matches "Overwrite
+// file? [Y/n]" as an overwrite AND as a yes/no confirmation — and suppressing
+// only the answered signature let it come straight back under the other
+// pattern's name. Same line, same question, whichever pattern found it.
+func (s *DetectionState) answersTheSameQuestion(line string) bool {
 	if s == nil {
 		return false
 	}
+	asked := strings.TrimSpace(line)
+	if asked == "" {
+		return false
+	}
 	for _, entry := range s.answered {
-		if signature == entry.signature {
-			return true
-		}
-		if match == "" || entry.match == "" {
-			continue
-		}
-		if strings.Contains(entry.match, match) || strings.Contains(match, entry.match) {
+		if entry.line != "" && strings.TrimSpace(entry.line) == asked {
 			return true
 		}
 	}
@@ -239,8 +248,9 @@ func (s *DetectionState) acknowledge(eventID string) (string, error) {
 	}
 	signature := s.pending.Signature
 	// The match text goes with the signature: it is how the state later notices
-	// that the question has left the screen.
-	s.rememberAnswered(signature, s.pending.Match, s.pending.anchor)
+	// that the question has left the screen. The line goes with both: it is how
+	// the state tells this question from the next one.
+	s.rememberAnswered(signature, s.pending.Match, s.pending.anchor, s.pending.questionLine)
 	s.pending = nil
 	return signature, nil
 }
@@ -295,7 +305,7 @@ func (s *DetectionState) replacePending(candidate Event) Event {
 }
 
 func (s *DetectionState) appendDetectionText(chunk []byte) (candidateStart, candidateEnd int, ok bool) {
-	if s == nil || len(chunk) == 0 {
+	if s == nil {
 		return 0, 0, false
 	}
 	// A repainting agent's text is the rendered screen, not an accumulation of
@@ -303,8 +313,14 @@ func (s *DetectionState) appendDetectionText(chunk []byte) (candidateStart, cand
 	// erases and the addressing that this loop approximates, so it replaces the
 	// window rather than being appended to it.
 	if s.hasRendered {
+		if s.rendered == "" {
+			return 0, 0, false
+		}
 		s.detectionText = s.rendered
 		return activeLineRange(s.detectionText)
+	}
+	if len(chunk) == 0 {
+		return 0, 0, false
 	}
 	// Accumulate into a byte buffer rather than reassigning the string per
 	// rune: `s.detectionText += ...` copied the whole 16 KiB window on every

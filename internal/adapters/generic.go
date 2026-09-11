@@ -49,7 +49,7 @@ func (a *GenericRegexAdapter) Detect(state *DetectionState, chunk []byte) ([]Eve
 	if state == nil {
 		return nil, fmt.Errorf("nil detection state")
 	}
-	if len(chunk) == 0 {
+	if len(chunk) == 0 && (!state.hasRendered || state.rendered == "") {
 		return nil, nil
 	}
 	burstStart := len(state.detectionText)
@@ -121,21 +121,24 @@ func (a *GenericRegexAdapter) Detect(state *DetectionState, chunk []byte) ([]Eve
 				summary = strings.TrimSpace(pattern.Name)
 			}
 			candidate := Event{
-				SessionID: state.SessionID,
-				AgentID:   state.AgentID,
-				Adapter:   GenericID,
-				Type:      eventType,
-				Summary:   summary,
-				Match:     match,
-				Sensitive: sensitive,
-				Risk:      risk,
-				Metadata:  map[string]string{"pattern": pattern.Name},
+				questionLine: matchLine,
+				SessionID:    state.SessionID,
+				AgentID:      state.AgentID,
+				Adapter:      GenericID,
+				Type:         eventType,
+				Summary:      summary,
+				Match:        match,
+				Sensitive:    sensitive,
+				Risk:         risk,
+				Metadata:     map[string]string{"pattern": pattern.Name},
+			}
+			if cmd := extractQuotedCommand(matchLine); cmd != "" {
+				candidate.Command = cmd
 			}
 			// On a rendered screen the answered question stays painted until
 			// the agent redraws without it, so the answer has to be remembered
 			// rather than the text forgotten.
-			if state.hasRendered && state.answersTheSameQuestion(
-				stableSignature(state.SessionID, GenericID, eventType, pattern.Name, match), match) {
+			if state.hasRendered && state.answersTheSameQuestion(matchLine) {
 				continue
 			}
 			candidate.Signature = stableSignature(
@@ -222,4 +225,21 @@ func tailIsFurniture(state *DetectionState, tail string) bool {
 		return furnitureTailOnScreen(tail)
 	}
 	return furnitureTail(tail)
+}
+
+func extractQuotedCommand(line string) string {
+	for _, quote := range []byte{'\'', '`'} {
+		start := strings.IndexByte(line, quote)
+		if start >= 0 {
+			rest := line[start+1:]
+			end := strings.IndexByte(rest, quote)
+			if end > 0 {
+				cmd := strings.TrimSpace(rest[:end])
+				if len(cmd) > 0 && len(cmd) <= 1024 {
+					return cmd
+				}
+			}
+		}
+	}
+	return ""
 }

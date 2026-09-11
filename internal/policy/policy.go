@@ -317,7 +317,7 @@ func (e *Engine) checkGuardrails(event adapters.Event) (string, bool) {
 	if e == nil {
 		return "", false
 	}
-	target := event.Summary + "\n" + event.Match
+	target := strings.Join([]string{event.Summary, event.Match, event.Command}, "\n")
 	for _, p := range e.destructivePatterns {
 		if p.MatchString(target) {
 			return ReasonDestructive, true

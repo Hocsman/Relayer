@@ -38,36 +38,72 @@ const maxBlankTailLines = 4
 // width; a longer run is a paragraph, not a wrap.
 const maxContinuationLines = 4
 
+type fenceInfo struct {
+	lineIndex int
+	hasInfo   bool
+}
+
+func parseFenceLines(lines []string) []fenceInfo {
+	var fences []fenceInfo
+	for idx, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, string(codeFenceMarker)) {
+			info := strings.TrimSpace(strings.TrimPrefix(trimmed, string(codeFenceMarker)))
+			fences = append(fences, fenceInfo{lineIndex: idx, hasInfo: len(info) > 0})
+		} else if strings.HasPrefix(trimmed, "~~~") {
+			info := strings.TrimSpace(strings.TrimPrefix(trimmed, "~~~"))
+			fences = append(fences, fenceInfo{lineIndex: idx, hasInfo: len(info) > 0})
+		}
+	}
+	return fences
+}
+
+func isLineInsideCodeFence(lines []string, targetLine int) bool {
+	fences := parseFenceLines(lines)
+	if len(fences) == 0 {
+		return false
+	}
+	if len(fences)%2 != 0 {
+		if !fences[0].hasInfo {
+			if targetLine <= fences[0].lineIndex {
+				return false
+			}
+			fences = fences[1:]
+		} else {
+			lastFence := fences[len(fences)-1]
+			fences = fences[:len(fences)-1]
+			if targetLine > lastFence.lineIndex {
+				return true
+			}
+		}
+	}
+	for i := 0; i+1 < len(fences); i += 2 {
+		if targetLine > fences[i].lineIndex && targetLine < fences[i+1].lineIndex {
+			return true
+		}
+	}
+	return false
+}
+
+func lineIndexAtOffset(text string, offset int) int {
+	if offset <= 0 {
+		return 0
+	}
+	if offset > len(text) {
+		offset = len(text)
+	}
+	return strings.Count(text[:offset], "\n")
+}
+
 // fenceDepthBefore reports whether the byte at offset sits inside a markdown
 // code fence.
-//
-// The state carries only inCodeFence, the parity at the END of the window, so
-// the parity at an earlier offset is recovered by unwinding the toggles between
-// the two. This needs no extra state and stays correct when the fence that
-// opened the block has already been trimmed out of the 16 KiB window.
 func fenceDepthBefore(text string, offset int, windowEndFence bool) bool {
 	if offset < 0 || offset > len(text) {
 		return windowEndFence
 	}
-	inFence := windowEndFence
-	// Every complete line after the offset toggles the parity it contributed.
-	// The final partial line has not toggled anything yet, so it is skipped.
-	rest := text[offset:]
-	for {
-		newline := strings.IndexByte(rest, '\n')
-		if newline < 0 {
-			break
-		}
-		if isFenceMarker(rest[:newline]) {
-			inFence = !inFence
-		}
-		rest = rest[newline+1:]
-	}
-	return inFence
-}
-
-func isFenceMarker(line string) bool {
-	return strings.HasPrefix(strings.TrimSpace(line), string(codeFenceMarker))
+	lines := strings.Split(text, "\n")
+	targetLine := lineIndexAtOffset(text, offset)
+	return isLineInsideCodeFence(lines, targetLine)
 }
 
 // furnitureTail reports whether everything after the match is the agent's own
@@ -126,7 +162,7 @@ func furnitureTail(tail string) bool {
 		trimmed := strings.TrimSpace(lines[continuation])
 		// Furniture is not continuation. Absorbing an option list here would
 		// consume the very anchor the rule then looks for below it.
-		if trimmed == "" || isDecorative(trimmed) || isKeyHint(trimmed) || isOptionLine(trimmed) {
+		if trimmed == "" || isDecorative(trimmed) || isKeyHint(trimmed) || isOptionLine(trimmed) || isFooterOrStatusBar(trimmed) {
 			break
 		}
 		continuation++
@@ -149,7 +185,7 @@ func furnitureTail(tail string) bool {
 			continue
 		}
 		blankRun = 0
-		if isDecorative(trimmed) || isKeyHint(trimmed) || isOptionLine(trimmed) {
+		if isDecorative(trimmed) || isKeyHint(trimmed) || isOptionLine(trimmed) || isFooterOrStatusBar(trimmed) {
 			continue
 		}
 		return false
@@ -164,7 +200,7 @@ func furnitureTail(tail string) bool {
 func hasChoiceAnchor(lines []string) bool {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if isOptionLine(trimmed) || isKeyHint(trimmed) {
+		if isOptionLine(trimmed) || isKeyHint(trimmed) || isFooterOrStatusBar(trimmed) {
 			return true
 		}
 	}
@@ -187,10 +223,12 @@ func isDecorative(trimmed string) bool {
 var (
 	keyHintKeys = []string{
 		"enter", "esc", "escape", "tab", "space", "ctrl", "arrow", "y/n", "[y", "[n",
+		"?", "h", "help",
 	}
 	keyHintActions = []string{
 		"press", "confirm", "cancel", "continue", "select", "choose", "quit",
 		"accept", "reject", "toggle", "submit", "abort", "skip",
+		"interrupt", "shortcuts", "shortcut", "help", "menu", "options", "back", "exit",
 	}
 )
 
@@ -201,6 +239,36 @@ var (
 func isKeyHint(trimmed string) bool {
 	lower := strings.ToLower(trimmed)
 	return containsAny(lower, keyHintKeys) && containsAny(lower, keyHintActions)
+}
+
+// isFooterOrStatusBar matches bottom-pinned status bars, token counters,
+// compaction notices, and shell prompt lines.
+func isFooterOrStatusBar(trimmed string) bool {
+	lower := strings.ToLower(trimmed)
+	if strings.Contains(lower, "context") && (strings.Contains(lower, "%") || strings.Contains(lower, "compact") || strings.Contains(lower, "left") || strings.Contains(lower, "window")) {
+		return true
+	}
+	if strings.Contains(lower, "tokens:") || strings.Contains(lower, "token:") || strings.Contains(lower, "tokens left") || strings.Contains(lower, "token usage") {
+		return true
+	}
+	if strings.HasPrefix(lower, "status:") || strings.HasPrefix(lower, "model:") || strings.HasPrefix(lower, "mode:") || strings.HasPrefix(lower, "cost:") {
+		return true
+	}
+	return isPromptLine(trimmed)
+}
+
+func isPromptLine(trimmed string) bool {
+	for _, sym := range []string{"❯", "➜", "›", ">", "$", "%", "#", ">>>", "...", "?"} {
+		if trimmed == sym || strings.HasPrefix(trimmed, sym+" ") {
+			return true
+		}
+	}
+	for _, sym := range []string{"❯", "➜", "›", ">", "$", "%", "#"} {
+		if strings.HasSuffix(trimmed, sym) {
+			return true
+		}
+	}
+	return false
 }
 
 // isOptionLine matches one entry of a numbered or bulleted choice list, the

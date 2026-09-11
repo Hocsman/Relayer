@@ -355,6 +355,13 @@ func (s *Screen) lineFeed() {
 }
 
 func (s *Screen) scrollUp(count int) {
+	if count <= 0 {
+		return
+	}
+	maxLines := s.scrollBottom - s.scrollTop + 1
+	if count > maxLines {
+		count = maxLines
+	}
 	for range count {
 		evicted := s.rows[s.scrollTop]
 		// Only the main screen keeps history. What scrolls off an alternate
@@ -371,6 +378,13 @@ func (s *Screen) scrollUp(count int) {
 }
 
 func (s *Screen) scrollDown(count int) {
+	if count <= 0 {
+		return
+	}
+	maxLines := s.scrollBottom - s.scrollTop + 1
+	if count > maxLines {
+		count = maxLines
+	}
 	for range count {
 		copy(s.rows[s.scrollTop+1:s.scrollBottom+1], s.rows[s.scrollTop:s.scrollBottom])
 		s.rows[s.scrollTop] = s.newRow(s.width)

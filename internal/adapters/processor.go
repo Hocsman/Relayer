@@ -222,7 +222,11 @@ func (p *Processor) Consume(chunk []byte) error {
 		err    error
 	)
 	if !p.terminated {
-		events, err = p.adapter.Detect(p.state, []byte(detection))
+		trigger := []byte(detection)
+		if len(trigger) == 0 && p.screen != nil && p.screen.Repainted() && p.state.hasRendered && p.state.rendered != "" {
+			trigger = []byte(p.state.rendered)
+		}
+		events, err = p.adapter.Detect(p.state, trigger)
 	}
 	if err == nil && len(events) > 0 {
 		fingerprint := p.snapshotFingerprint(p.state.detectionText)
@@ -760,15 +764,11 @@ func (p *Processor) refreshPendingAnchor() {
 }
 
 // fenceParity reports whether the end of the text sits inside a markdown code
-// fence. The byte-window path maintains this incrementally as it appends; a
-// rendered screen has no history to accumulate, so it is recomputed from what
-// is currently on screen.
+// fence.
 func fenceParity(text string) bool {
-	inFence := false
-	for _, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), string(codeFenceMarker)) {
-			inFence = !inFence
-		}
+	lines := strings.Split(text, "\n")
+	if len(lines) == 0 {
+		return false
 	}
-	return inFence
+	return isLineInsideCodeFence(lines, len(lines)-1)
 }
