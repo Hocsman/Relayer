@@ -233,6 +233,55 @@ func TestClaudeGenericAdapterSurvivesCommandReplacementRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSaveAgentProfilesGooseAndInterpreterAndAider(t *testing.T) {
+	directory := t.TempDir()
+	application, path := profileTestApp(t, nil)
+	view, err := application.GetAgentProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request := SaveAgentProfilesRequest{
+		ExpectedRevision: view.Revision,
+		Profiles: []AgentProfileInput{
+			{ID: "aider", Name: "Aider", PresetID: "aider", Cwd: directory, Backend: "pty", Adapter: adapters.AiderID, Argv: []string{"aider"}},
+			{ID: "goose", Name: "Goose CLI", PresetID: "goose", Cwd: directory, Backend: "pty", Adapter: adapters.GooseID, Argv: []string{"goose"}},
+			{ID: "interpreter", Name: "Open Interpreter", PresetID: "open-interpreter", Cwd: directory, Backend: "pty", Adapter: adapters.OpenInterpreterID, Argv: []string{"interpreter"}},
+		},
+	}
+	updated, err := saveAgentProfilesForTest(application, request)
+	if err != nil {
+		t.Fatalf("SaveAgentProfiles: %v", err)
+	}
+
+	for index, profile := range updated.Profiles {
+		if profile.Locked {
+			t.Fatalf("profile %d (%s) should not be locked, got reason %q", index, profile.ID, profile.ReadOnlyReason)
+		}
+	}
+
+	loaded, err := config.LoadExisting(path)
+	if err != nil {
+		t.Fatalf("LoadExisting: %v", err)
+	}
+	if len(loaded.Agents) != 3 {
+		t.Fatalf("expected 3 agents, got %d", len(loaded.Agents))
+	}
+	if loaded.Agents[0].Adapter != adapters.AiderID || loaded.Agents[1].Adapter != adapters.GooseID || loaded.Agents[2].Adapter != adapters.OpenInterpreterID {
+		t.Fatalf("unexpected adapters: %#v", loaded.Agents)
+	}
+
+	reloaded, err := application.GetAgentProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, profile := range reloaded.Profiles {
+		if profile.Locked {
+			t.Fatalf("reloaded profile %d (%s) is locked: %q", index, profile.ID, profile.ReadOnlyReason)
+		}
+	}
+}
+
 func TestSaveAgentProfilesRejectsIncompatibleAdapter(t *testing.T) {
 	application, path := profileTestApp(t, nil)
 	view, err := application.GetAgentProfiles()

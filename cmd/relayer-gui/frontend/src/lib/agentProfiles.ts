@@ -61,7 +61,7 @@ export function validateAgentProfiles(
   const catalog = new Map(view.catalog.map((entry) => [entry.id, entry]));
   const identifiers = new Map<string, number>();
   profiles.forEach((profile, index) => {
-    const id = profile.id.trim();
+    const id = (profile.id ?? "").trim();
     if (id) {
       const normalized = id.toLocaleLowerCase();
       const previous = identifiers.get(normalized);
@@ -84,11 +84,12 @@ export function validateAgentProfiles(
       errors[index].id = "Use 1 to 64 characters: lowercase letters, digits, _ or -.";
     }
 
-    const name = profile.name.trim();
+    const name = (profile.name ?? "").trim();
     if (!name || name.length > 80 || name.includes("\u0000")) {
       errors[index].name = "The name must be 1 to 80 characters long.";
     }
-    if (profile.cwd.length > 4096 || profile.cwd.includes("\u0000")) {
+    const cwd = profile.cwd ?? "";
+    if (cwd.length > 4096 || cwd.includes("\u0000")) {
       errors[index].cwd = "The working directory is invalid or too long.";
     }
 
@@ -161,12 +162,21 @@ export function nextProfileID(entry: AgentCatalogEntry, profiles: AgentProfile[]
   const baseByPreset: Record<AgentCatalogEntry["id"], string> = {
     "claude-code": "claude",
     "codex-cli": "codex",
+    aider: "aider",
+    goose: "goose",
+    "open-interpreter": "interpreter",
     "mimo-code": "mimo",
     ollama: "ollama",
     custom: "agent",
   };
-  const base = baseByPreset[entry.id];
-  const existing = new Set(profiles.map((profile) => profile.id.toLocaleLowerCase()));
+  const baseCandidate =
+    baseByPreset[entry?.id] ||
+    (entry?.id ? entry.id.toLowerCase().replace(/[^a-z0-9_-]/g, "") : "") ||
+    "agent";
+  const base = /^[a-z]/.test(baseCandidate) ? baseCandidate : `agent-${baseCandidate}`;
+  const existing = new Set(
+    profiles.map((profile) => (profile.id ?? "").toLocaleLowerCase()),
+  );
   if (!existing.has(base)) return base;
   for (let suffix = 2; suffix <= 999; suffix += 1) {
     const candidate = `${base}-${suffix}`;

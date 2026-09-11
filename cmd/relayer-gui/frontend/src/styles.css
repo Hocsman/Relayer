@@ -3131,10 +3131,34 @@ input:focus-visible {
   background: rgba(73, 215, 154, 0.075);
 }
 
+.catalog-logo--aider {
+  color: #c084fc;
+  border-color: rgba(192, 132, 252, 0.25);
+  background: rgba(192, 132, 252, 0.08);
+}
+
+.catalog-logo--goose {
+  color: #facc15;
+  border-color: rgba(250, 204, 21, 0.25);
+  background: rgba(250, 204, 21, 0.08);
+}
+
+.catalog-logo--open-interpreter {
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.25);
+  background: rgba(56, 189, 248, 0.08);
+}
+
 .catalog-logo--mimo-code {
   color: var(--cyan);
   border-color: rgba(66, 217, 232, 0.22);
   background: rgba(66, 217, 232, 0.075);
+}
+
+.catalog-logo--ollama {
+  color: #f43f5e;
+  border-color: rgba(244, 63, 94, 0.25);
+  background: rgba(244, 63, 94, 0.08);
 }
 
 .catalog-card__body {

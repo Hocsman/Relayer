@@ -587,6 +587,7 @@ function Catalog({
               disabled={!editable || count >= maximum}
               onClick={() => onAdd(entry)}
               aria-label={`Add ${entry.name}`}
+              title={`Add ${entry.name}`}
             >
               +
             </button>
@@ -807,6 +808,9 @@ function catalogInitial(id: AgentCatalogEntry["id"]): string {
   switch (id) {
     case "claude-code": return "C";
     case "codex-cli": return "⌁";
+    case "aider": return "A";
+    case "goose": return "G";
+    case "open-interpreter": return "I";
     case "mimo-code": return "M";
     case "ollama": return "O";
     default: return "+";

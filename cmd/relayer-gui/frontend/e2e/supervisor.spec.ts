@@ -42,6 +42,50 @@ test.describe("Relayer Desktop Supervisor E2E", () => {
     await expect(modal).not.toBeVisible();
   });
 
+  test("adds an agent from the catalog without crashing and saves successfully", async ({ page }) => {
+    await page.locator(".button--agents").click();
+    const modal = page.locator('section.agent-settings[role="dialog"]');
+    await expect(modal).toBeVisible();
+
+    // Wait for catalog list to be fully loaded
+    await expect(modal.locator(".catalog-list")).toBeVisible({ timeout: 10000 });
+
+    const profileCards = modal.locator(".profile-card");
+    await expect(profileCards).toHaveCount(2);
+
+    // Add Aider from catalog
+    const addAiderButton = modal.locator('button[aria-label="Add Aider"]');
+    await expect(addAiderButton).toBeVisible();
+    await addAiderButton.click();
+
+    await expect(profileCards).toHaveCount(3);
+    const aiderCard = profileCards.nth(2);
+    await expect(aiderCard).toContainText("Aider");
+    await expect(aiderCard.locator('input[placeholder="executable"]')).toHaveValue("aider");
+
+    // Add Goose CLI from catalog
+    const addGooseButton = modal.locator('button[aria-label="Add Goose CLI"]');
+    await expect(addGooseButton).toBeVisible();
+    await addGooseButton.click();
+
+    await expect(profileCards).toHaveCount(4);
+    const gooseCard = profileCards.nth(3);
+    await expect(gooseCard).toContainText("Goose CLI");
+    await expect(gooseCard.locator('input[placeholder="executable"]')).toHaveValue("goose");
+
+    // Save the configuration
+    const saveButton = modal.getByRole("button", { name: "Save", exact: true });
+    await expect(saveButton).toBeEnabled();
+    await saveButton.click();
+
+    // Verify notice appears
+    await expect(modal.locator(".settings-notice")).toContainText(/Configuration saved/i);
+
+    // Close agents settings
+    await modal.locator('button[aria-label="Close agents"]').click();
+    await expect(modal).not.toBeVisible();
+  });
+
   test("full supervision lifecycle: start agents, stream terminal, intercept event, and submit decisions", async ({ page }) => {
     // 1. Open agent settings and start the agents
     await page.locator(".button--agents").click();

@@ -367,6 +367,10 @@ func safeExecutableLabel(profile toolcatalog.ProfileID) string {
 		return "claude"
 	case toolcatalog.CodexCLI:
 		return "codex"
+	case toolcatalog.GooseCLI:
+		return "goose"
+	case toolcatalog.OpenInterpreter:
+		return "open-interpreter"
 	case toolcatalog.MimoCode:
 		return "mimo"
 	case toolcatalog.Ollama:
@@ -446,6 +450,10 @@ func editableProfileAdapter(spec agent.Spec) bool {
 		return adapterID == adapters.ClaudeID
 	case toolcatalog.CodexCLI:
 		return adapterID == adapters.CodexID
+	case toolcatalog.GooseCLI:
+		return adapterID == adapters.GooseID
+	case toolcatalog.OpenInterpreter:
+		return adapterID == adapters.OpenInterpreterID
 	default:
 		return false
 	}

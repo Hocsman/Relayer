@@ -43,6 +43,58 @@ const catalog: AgentCatalogEntry[] = [
     argumentPrefix: ["run"],
   },
   {
+    id: "codex-cli",
+    name: "Codex CLI",
+    description: "CLI",
+    installStatus: "installed",
+    installed: true,
+    adapter: "codex",
+    adapterStatus: "experimental",
+    defaultArgv: ["codex"],
+    requiresCustomArgv: false,
+    minimumArguments: 0,
+    argumentPrefix: [],
+  },
+  {
+    id: "aider",
+    name: "Aider",
+    description: "Pair programming",
+    installStatus: "installed",
+    installed: true,
+    adapter: "aider",
+    adapterStatus: "experimental",
+    defaultArgv: ["aider"],
+    requiresCustomArgv: false,
+    minimumArguments: 0,
+    argumentPrefix: [],
+  },
+  {
+    id: "goose",
+    name: "Goose CLI",
+    description: "Goose agent",
+    installStatus: "installed",
+    installed: true,
+    adapter: "goose",
+    adapterStatus: "experimental",
+    defaultArgv: ["goose"],
+    requiresCustomArgv: false,
+    minimumArguments: 0,
+    argumentPrefix: [],
+  },
+  {
+    id: "open-interpreter",
+    name: "Open Interpreter",
+    description: "Interpreter",
+    installStatus: "installed",
+    installed: true,
+    adapter: "interpreter",
+    adapterStatus: "experimental",
+    defaultArgv: ["interpreter"],
+    requiresCustomArgv: false,
+    minimumArguments: 0,
+    argumentPrefix: [],
+  },
+  {
     id: "custom",
     name: "Custom",
     description: "argv",
@@ -154,8 +206,36 @@ describe("agent profile validation", () => {
     expect(explicit.valid).toBe(true);
   });
 
-  it("generates a stable unused ID", () => {
-    expect(nextProfileID(catalog[0], [profile(), profile({ id: "claude-2" })])).toBe("claude-3");
+  it("generates a stable unused ID for all catalog presets", () => {
+    const existing = [profile({ id: "claude" })];
+    const findPreset = (id: string) => catalog.find((c) => c.id === id)!;
+
+    expect(nextProfileID(findPreset("claude-code"), existing)).toBe("claude-2");
+    expect(nextProfileID(findPreset("codex-cli"), existing)).toBe("codex");
+    expect(nextProfileID(findPreset("aider"), existing)).toBe("aider");
+    expect(nextProfileID(findPreset("goose"), existing)).toBe("goose");
+    expect(nextProfileID(findPreset("open-interpreter"), existing)).toBe("interpreter");
+    expect(nextProfileID(findPreset("mimo-code"), existing)).toBe("mimo");
+    expect(nextProfileID(findPreset("ollama"), existing)).toBe("ollama");
+    expect(nextProfileID(findPreset("custom"), existing)).toBe("agent");
+
+    const multiple = [
+      profile({ id: "aider" }),
+      profile({ id: "aider-2" }),
+      profile({ id: "goose" }),
+    ];
+    expect(nextProfileID(findPreset("aider"), multiple)).toBe("aider-3");
+    expect(nextProfileID(findPreset("goose"), multiple)).toBe("goose-2");
+
+    expect(nextProfileID({ id: "my-custom-cli" } as any, [])).toBe("my-custom-cli");
+    expect(nextProfileID({ id: "" } as any, [])).toBe("agent");
+  });
+
+  it("safely handles undefined or empty id during validation without throwing", () => {
+    const incompleteProfile = profile({ id: undefined as any });
+    expect(() => validateAgentProfiles([incompleteProfile], view)).not.toThrow();
+    const result = validateAgentProfiles([incompleteProfile], view);
+    expect(result.valid).toBe(false);
   });
 
   it("accepts a locked profile without exposing argv", () => {
