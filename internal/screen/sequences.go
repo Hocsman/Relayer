@@ -309,16 +309,21 @@ func (s *Screen) insertCharacters(count int) {
 // implementation of that layout would be a second opinion about where a byte
 // is, and the row a match is attributed to would drift from the row the
 // operator is looking at the day the two disagree.
-func serialize(rows []row) (lines []string, lineRows []RowID, firstDirty int) {
+func serialize(rows []row, scrollbackCount int) (lines []string, lineRows []RowID, firstDirty int, visibleStartLine int) {
 	lines = make([]string, 0, len(rows))
 	lineRows = make([]RowID, 0, len(rows))
 	firstDirty = -1
+	visibleStartLine = -1
 
 	var current strings.Builder
 	owner := RowID(0)
 	joining := false
-	for _, line := range rows {
-		if line.dirty && firstDirty < 0 {
+	for idx, line := range rows {
+		if idx == scrollbackCount && visibleStartLine < 0 {
+			visibleStartLine = len(lines)
+		}
+		// Dirty lines in the scrollback must never trigger a burst on the visible grid.
+		if idx >= scrollbackCount && line.dirty && firstDirty < 0 {
 			firstDirty = len(lines)
 		}
 		if !joining {
@@ -338,14 +343,20 @@ func serialize(rows []row) (lines []string, lineRows []RowID, firstDirty int) {
 		lines = append(lines, current.String())
 		lineRows = append(lineRows, owner)
 	}
+	if visibleStartLine < 0 {
+		visibleStartLine = 0
+	}
 	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
 		lines = lines[:len(lines)-1]
 		lineRows = lineRows[:len(lines)]
 	}
+	if visibleStartLine > len(lines) {
+		visibleStartLine = len(lines)
+	}
 	if firstDirty > len(lines) {
 		firstDirty = -1
 	}
-	return lines, lineRows, firstDirty
+	return lines, lineRows, firstDirty, visibleStartLine
 }
 
 func (s *Screen) allRows() []row {
@@ -363,9 +374,15 @@ func (s *Screen) allRows() []row {
 // detection state — shares a reading of the past, never a handle on the live
 // screen.
 type Anchors struct {
-	lineStart []int
-	lineRow   []RowID
-	textLen   int
+	lineStart    []int
+	lineRow      []RowID
+	textLen      int
+	visibleStart int
+}
+
+// VisibleStart returns the byte offset where the visible grid begins in the rendered text.
+func (a Anchors) VisibleStart() int {
+	return a.visibleStart
 }
 
 // RowAt names the row that painted the byte at offset. It reports false for an
@@ -383,7 +400,7 @@ func (a Anchors) RowAt(offset int) (RowID, bool) {
 	return a.lineRow[index], true
 }
 
-func newAnchors(lines []string, lineRows []RowID) Anchors {
+func newAnchors(lines []string, lineRows []RowID, visibleStart int) Anchors {
 	starts := make([]int, len(lines))
 	offset := 0
 	for index, line := range lines {
@@ -399,7 +416,7 @@ func newAnchors(lines []string, lineRows []RowID) Anchors {
 	if length < 0 {
 		length = 0
 	}
-	return Anchors{lineStart: starts, lineRow: lineRows, textLen: length}
+	return Anchors{lineStart: starts, lineRow: lineRows, textLen: length, visibleStart: visibleStart}
 }
 
 // Text renders the screen as the operator sees it: scrollback first, then the
@@ -407,7 +424,7 @@ func newAnchors(lines []string, lineRows []RowID) Anchors {
 // right margin is one line again. Trailing blank rows are dropped, because a
 // mostly empty screen is not the same as a screen full of blank lines.
 func (s *Screen) Text() string {
-	lines, _, _ := serialize(s.allRows())
+	lines, _, _, _ := serialize(s.allRows(), len(s.scrollback))
 	return strings.Join(lines, "\n")
 }
 
@@ -437,14 +454,24 @@ func (s *Screen) TextAndBurst() (text string, burstStart int) {
 // wrong row as soon as two rows carry the same fragment, and "[y/n]" is
 // everywhere.
 func (s *Screen) Render() (text string, burstStart int, anchors Anchors) {
-	lines, lineRows, firstDirty := serialize(s.allRows())
+	lines, lineRows, firstDirty, visibleStartLine := serialize(s.allRows(), len(s.scrollback))
 	text = strings.Join(lines, "\n")
-	anchors = newAnchors(lines, lineRows)
+	visibleStart := 0
+	for i := 0; i < visibleStartLine && i < len(lines); i++ {
+		visibleStart += len(lines[i]) + 1
+	}
+	if visibleStart > len(text) {
+		visibleStart = len(text)
+	}
+	anchors = newAnchors(lines, lineRows, visibleStart)
 	if firstDirty < 0 || firstDirty >= len(lines) {
 		return text, len(text), anchors
 	}
 	for index := range firstDirty {
 		burstStart += len(lines[index]) + 1
+	}
+	if burstStart < visibleStart {
+		burstStart = visibleStart
 	}
 	if burstStart > len(text) {
 		burstStart = len(text)
@@ -460,7 +487,7 @@ func (s *Screen) Render() (text string, burstStart int, anchors Anchors) {
 // agent stopped showing it, and a memory released by text-matching would then
 // never be released at all.
 func (s *Screen) VisibleText() string {
-	lines, _, _ := serialize(s.rows)
+	lines, _, _, _ := serialize(s.rows, 0)
 	return strings.Join(lines, "\n")
 }
 
@@ -472,6 +499,20 @@ func (s *Screen) VisibleText() string {
 // words on another line. A row that scrolled away, that was erased, or that now
 // says something different answers false — which is how a caller learns that
 // what it remembered about that question no longer holds.
+// RowState reports whether the named row is present on the visible grid,
+// and whether its content is currently blank.
+func (s *Screen) RowState(id RowID) (present bool, blank bool) {
+	if id == 0 {
+		return false, false
+	}
+	for index := range s.rows {
+		if s.rows[index].id == id {
+			return true, strings.TrimSpace(s.rows[index].text()) == ""
+		}
+	}
+	return false, false
+}
+
 func (s *Screen) RowShows(id RowID, text string) bool {
 	if id == 0 || text == "" {
 		return false

@@ -33,10 +33,9 @@ import (
 // rather than a judgement call spread through the predicate.
 const maxBlankTailLines = 4
 
-// maxContinuationLines bounds the wrapped remainder of a question that the tail
-// may cross. Three lines is what a long question costs at a normal terminal
-// width; a longer run is a paragraph, not a wrap.
-const maxContinuationLines = 4
+// maxContinuationLines bounds the wrapped remainder of a question, preview, or
+// diff that the tail may cross before reaching choice anchors.
+const maxContinuationLines = 16
 
 type fenceInfo struct {
 	lineIndex int

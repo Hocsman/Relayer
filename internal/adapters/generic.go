@@ -85,6 +85,11 @@ func (a *GenericRegexAdapter) Detect(state *DetectionState, chunk []byte) ([]Eve
 				continue
 			}
 			matchLineStart := strings.LastIndexByte(state.detectionText[:matchRange[0]], '\n') + 1
+			// A question that has scrolled off the visible grid into the scrollback
+			// is no longer actionable for the operator.
+			if state.hasRendered && matchLineStart < state.visibleStart() {
+				continue
+			}
 			matchLineEnd := matchRange[1]
 			if newline := strings.IndexByte(state.detectionText[matchRange[1]:], '\n'); newline >= 0 {
 				matchLineEnd += newline

@@ -204,6 +204,14 @@ func (s *DetectionState) anchorAt(offset int) screen.RowID {
 	return id
 }
 
+// visibleStart reports the byte offset in detectionText where the visible grid begins.
+func (s *DetectionState) visibleStart() int {
+	if s == nil || !s.hasRendered {
+		return 0
+	}
+	return s.renderedAnchors.VisibleStart()
+}
+
 // NewDetectionState creates independent state for one agent session.
 func NewDetectionState(sessionID, agentID, adapterID string) *DetectionState {
 	return &DetectionState{

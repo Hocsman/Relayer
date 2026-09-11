@@ -168,6 +168,14 @@ func (p *Processor) Consume(chunk []byte) error {
 				if entry.anchor != 0 {
 					if p.screen.RowShows(entry.anchor, entry.match) {
 						live = append(live, entry)
+						continue
+					}
+					present, blank := p.screen.RowState(entry.anchor)
+					if present && blank {
+						// Row was blanked mid-frame during an erase/repaint. Keep it alive
+						// until new content arrives on that row or it scrolls away.
+						live = append(live, entry)
+						continue
 					}
 					// The anchored row no longer carries the question, so the
 					// entry goes. It deliberately does not go looking for the
@@ -177,12 +185,6 @@ func (p *Processor) Consume(chunk []byte) error {
 					// new question — the failure this whole memory exists to
 					// avoid. Two tests pin that, and re-adoption here breaks
 					// both.
-					//
-					// What that costs is written in docs/adapters.md: an agent
-					// that moves its frame AFTER the answer, while still
-					// showing the answered question, has it put to the operator
-					// once more. Moving it BEFORE the answer is handled, by
-					// keeping the pending occurrence's anchor current.
 					continue
 				}
 				// No coordinate: the occurrence was raised before this agent
@@ -280,12 +282,18 @@ func (p *Processor) ReconcileSnapshot(raw []byte) (*Event, bool, error) {
 	if active == "" {
 		changed := p.state.pending != nil
 		p.state.discard()
+		p.state.keepAnswered(nil)
 		// The screen is empty, so the retained text no longer describes it.
 		p.state.resetWindow()
 		p.pendingSnapshotFingerprint = ""
 		return nil, changed, nil
 	}
 	probeState := NewDetectionState(p.state.SessionID, p.state.AgentID, p.adapter.ID())
+	probeState.answered = p.state.pendingAnswers()
+	probeState.hasRendered = true
+	probeState.rendered = normalized
+	probeState.renderedBurst = 0
+	probeState.renderedAnchors = p.state.renderedAnchors
 	candidates, err := p.adapter.Detect(probeState, []byte(normalized))
 	if err != nil {
 		return nil, false, err
@@ -295,11 +303,15 @@ func (p *Processor) ReconcileSnapshot(raw []byte) (*Event, bool, error) {
 		p.state.discard()
 		// The snapshot is authoritative about the screen: nothing detectable is
 		// on it, so the retained text is stale.
+		p.state.keepAnswered(nil)
 		p.state.resetWindow()
 		p.pendingSnapshotFingerprint = ""
 		return nil, changed, nil
 	}
 	candidate := candidates[0]
+	if p.state.answersTheSameQuestion(candidate.questionLine) {
+		return nil, false, nil
+	}
 	if p.state.pending != nil && p.state.pending.Signature == candidate.Signature {
 		occurrenceAware := false
 		if classifier, ok := p.adapter.(snapshotOccurrenceClassifier); ok {
@@ -371,6 +383,7 @@ func (p *Processor) rescanRetainedWindow(resolved string) []Event {
 	probe.answered = p.state.pendingAnswers()
 	probe.hasRendered = p.state.hasRendered
 	probe.rendered = p.state.rendered
+	probe.renderedBurst = p.state.renderedBurst
 	// The anchors go with the text they describe. Without them the probe reads
 	// the same rendered screen but can name no row, so every occurrence the
 	// rescan recovers would reach the memory with no coordinate — the one case
