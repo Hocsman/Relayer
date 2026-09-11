@@ -6,7 +6,36 @@ without implying semantic-versioning stability before the first release.
 
 ## [Unreleased]
 
+## [0.3.0-alpha.1] - 2026-09-11
+
+First pre-release of the 0.3.x cycle: multi-platform desktop distribution, Goose & Open-Interpreter agent adapters, contextual path-based policies, automated Playwright E2E testing, PTY stress endurance, and native OpenTelemetry & Prometheus telemetry export.
+
 ### Added
+
+- Multi-platform Desktop GUI release workflow (`.github/workflows/release.yml`):
+  - Automated Wails compilation matrix across Windows (x64 standalone .exe), macOS (Universal binary for Intel & Apple Silicon), and Linux (WebKitGTK-based distribution).
+  - Cryptographic release signing via Sigstore Cosign keyless signatures (`.sig`, `.pem`) and SHA-256 checksums with build provenance attestations.
+
+- New AI Agent Adapters (`internal/adapters`):
+  - Block/Goose CLI adapter (`goose`): intercepts tool execution approvals, file editing confirmations, shell execution requests, and prompt withdrawals.
+  - Open Interpreter adapter (`interpreter`): recognizes code execution prompts (Python/shell/JS), package installation requests, and interactive user inputs.
+  - Full integration into `relayer doctor` inventory and Desktop GUI agent settings catalog with `StatusExperimental` maturity classification.
+
+- Advanced Policy Engine & Contextual Rules (`internal/policy`):
+  - Path-based contextual security rules (`sensitive_paths`, `allowed_paths`): prevents unauthorized access or alteration of critical project and system targets (`.env`, `~/.ssh`, keys).
+  - Conditional auto-approval: safely auto-approves recognized read-only commands (`git status`, `npm test`, `cargo check`) while strictly requiring human arbitration for writes, installations, or deletions.
+  - Built-in policy profiles: `strict` (zero automated allowances), `developer` (convenient read-only defaults), and `permissive` (low friction for sandboxed execution).
+
+- Playwright E2E Automated Test Suite & PTY Stress Endurance:
+  - Full desktop supervisor lifecycle E2E tests (`cmd/relayer-gui/frontend/e2e/supervisor.spec.ts`) validating agent startup, dual terminal streaming, sensitive event interception, interactive modal decisions, and compliance journal inspection.
+  - PTY/ConPTY high-throughput endurance and concurrency stress tests (`internal/ptybackend/stress_test.go`) demonstrating 0 MB memory leak over 30,000+ ANSI lines and strictly bounded $\mathcal{O}(1)$ ring buffer memory consumption.
+
+- Native OpenTelemetry & Prometheus Telemetry Engine (`internal/telemetry`):
+  - Zero-leakage metric collection via `audit.EntryObserver`: metrics are derived solely from already-sanitized audit records, strictly preventing prompt, argument, or token leaks in metric labels.
+  - Embedded Prometheus HTTP exporter (default `:9090/metrics`) serving standard v0.0.4 text format with graceful shutdown.
+  - Periodic OpenTelemetry OTLP/HTTP JSON v1 metrics exporter (`/v1/metrics`) with configurable export intervals and authorization headers.
+  - Comprehensive operational metrics: active sessions, pending events, total runs, detected events, withdrawn events, decisions applied, guardrail violations, and human reaction latency histograms (`relayer_decision_duration_seconds`).
+  - Preflight checks (`telemetry.valid` under `ScopeTelemetry`), doctor command integration, and Desktop GUI metadata exposure.
 
 - Desktop GUI Audit & Compliance Panel: added dedicated Audit modal panel accessible
   from the top bar. The panel presents chronological journal inspection, cryptographic
@@ -473,7 +502,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.2.0...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.3.0-alpha.1...main
+[0.3.0-alpha.1]: https://github.com/Hocsman/Relayer/compare/v0.2.0...v0.3.0-alpha.1
 [0.2.0]: https://github.com/Hocsman/Relayer/compare/v0.1.1-alpha...v0.2.0
 [0.1.1-alpha]: https://github.com/Hocsman/Relayer/compare/v0.1.0-alpha...v0.1.1-alpha
 [0.1.0-alpha]: https://github.com/Hocsman/Relayer/releases/tag/v0.1.0-alpha
