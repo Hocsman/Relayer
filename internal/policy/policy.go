@@ -24,21 +24,37 @@ const (
 // Static evaluation reasons are safe to expose in logs. They never contain
 // event text, regex matches, metadata, or other terminal output.
 const (
-	ReasonDefault       = "default_action"
-	ReasonRule          = "rule_match"
-	ReasonInvalidEvent  = "invalid_event"
-	ReasonNonActionable = "non_actionable"
-	ReasonSensitive     = "sensitive_event"
-	ReasonRisk          = "risk_not_low"
-	ReasonDryRun        = "dry_run"
-	ReasonNoEngine      = "engine_unavailable"
+	ReasonDefault          = "default_action"
+	ReasonRule             = "rule_match"
+	ReasonInvalidEvent     = "invalid_event"
+	ReasonNonActionable    = "non_actionable"
+	ReasonSensitive        = "sensitive_event"
+	ReasonRisk             = "risk_not_low"
+	ReasonDryRun           = "dry_run"
+	ReasonNoEngine         = "engine_unavailable"
+	ReasonConsecutiveLimit = "consecutive_auto_limit"
+	ReasonRateLimit        = "rate_limit_exceeded"
+	ReasonDestructive      = "destructive_command_blocked"
+	ReasonExfiltration     = "exfiltration_attempt_blocked"
+	ReasonGuardrailBlocked = "guardrail_pattern_blocked"
 )
+
+// GuardrailsConfig defines safety boundaries that prevent autonomous execution
+// of high-risk actions even when a policy rule would otherwise allow them.
+type GuardrailsConfig struct {
+	BlockDestructive  bool
+	BlockExfiltration bool
+	BlockedPatterns   []string
+}
 
 // Config describes the ordered rules evaluated by an Engine.
 type Config struct {
-	DefaultAction Action
-	DryRun        bool
-	Rules         []Rule
+	DefaultAction               Action
+	DryRun                      bool
+	MaxConsecutiveAutoDecisions int
+	RateLimitPerMinute          int
+	Guardrails                  GuardrailsConfig
+	Rules                       []Rule
 }
 
 // Rule applies Action when every populated Match field accepts an event.
@@ -73,6 +89,28 @@ type Evaluation struct {
 	DryRun         bool
 }
 
+var (
+	builtInDestructivePatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\brm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r|--recursive\s+--force|--force\s+--recursive)\b`),
+		regexp.MustCompile(`(?i)\brm\s+(-[a-z]*[rf][a-z]*\s+)+[/~*]`),
+		regexp.MustCompile(`(?i)\b(del|erase)\s+/[sS]\s+[/\\*]`),
+		regexp.MustCompile(`(?i)\brmdir\s+/[sS]\b`),
+		regexp.MustCompile(`(?i)\bmkfs(\.[a-z0-9]+)?\b`),
+		regexp.MustCompile(`(?i)\bdd\s+.*(\bof=/dev/|\bof=\\\\.\\)`),
+		regexp.MustCompile(`(?i)\bformat\s+[a-z]:`),
+		regexp.MustCompile(`(?i)\b(fdisk|parted|gdisk|diskpart)\b`),
+		regexp.MustCompile(`(?i)\bchmod\s+(-[a-z]*R[a-z]*\s+)?(777|000)\s+[/~*]`),
+	}
+
+	builtInExfiltrationPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\b(curl|wget|fetch)\b.*\|\s*(ba|z|k|c)?sh\b`),
+		regexp.MustCompile(`(?i)\b(curl|wget)\b.*\|\s*(python[0-9]*|perl|ruby|powershell|pwsh)\b`),
+		regexp.MustCompile(`(?i)\bcat\s+.*(\.ssh/(id_|authorized_keys)|credentials|\.aws/credentials|\.env\b)`),
+		regexp.MustCompile(`(?i)\b(curl|wget)\s+.*(--data|-d|--upload-file|-T)\s+.*(@?.*(\.ssh|\.aws|\.env|id_rsa))`),
+		regexp.MustCompile(`(?i)\bnc\s+.*<.*(\.ssh|\.aws|\.env|id_rsa)`),
+	}
+)
+
 type compiledRule struct {
 	rule      Rule
 	text      *regexp.Regexp
@@ -82,8 +120,11 @@ type compiledRule struct {
 
 // Engine is immutable after construction and safe for concurrent evaluation.
 type Engine struct {
-	config Config
-	rules  []compiledRule
+	config                Config
+	rules                 []compiledRule
+	destructivePatterns   []*regexp.Regexp
+	exfiltrationPatterns  []*regexp.Regexp
+	customBlockedPatterns []*regexp.Regexp
 }
 
 // DefaultConfig preserves Relayer's human-in-the-loop behavior.
@@ -96,6 +137,37 @@ func DefaultConfig() Config {
 func New(config Config) (*Engine, error) {
 	if !validAction(config.DefaultAction) {
 		return nil, fmt.Errorf("invalid default policy action %q", config.DefaultAction)
+	}
+	if config.MaxConsecutiveAutoDecisions < 0 {
+		return nil, fmt.Errorf("max_consecutive_auto_decisions cannot be negative: %d", config.MaxConsecutiveAutoDecisions)
+	}
+	if config.RateLimitPerMinute < 0 {
+		return nil, fmt.Errorf("rate_limit_per_minute cannot be negative: %d", config.RateLimitPerMinute)
+	}
+
+	var customBlocked []*regexp.Regexp
+	for index, pattern := range config.Guardrails.BlockedPatterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			return nil, fmt.Errorf("guardrail blocked pattern %d is blank", index+1)
+		}
+		if containsNUL(pattern) {
+			return nil, fmt.Errorf("guardrail blocked pattern %d contains a NUL byte", index+1)
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("invalid guardrail blocked pattern %q: %w", pattern, err)
+		}
+		customBlocked = append(customBlocked, re)
+	}
+
+	var destructive []*regexp.Regexp
+	if config.Guardrails.BlockDestructive {
+		destructive = builtInDestructivePatterns
+	}
+	var exfiltration []*regexp.Regexp
+	if config.Guardrails.BlockExfiltration {
+		exfiltration = builtInExfiltrationPatterns
 	}
 
 	cloned := cloneConfig(config)
@@ -169,7 +241,13 @@ func New(config Config) (*Engine, error) {
 		})
 	}
 
-	return &Engine{config: cloned, rules: compiled}, nil
+	return &Engine{
+		config:                cloned,
+		rules:                 compiled,
+		destructivePatterns:   destructive,
+		exfiltrationPatterns:  exfiltration,
+		customBlockedPatterns: customBlocked,
+	}, nil
 }
 
 // Evaluate applies the first matching rule without mutating either the engine
@@ -216,6 +294,14 @@ func (e *Engine) Evaluate(event adapters.Event) Evaluation {
 		result.Reason = ReasonRisk
 		return result
 	}
+	if proposed == ActionAllow {
+		if guardReason, blocked := e.checkGuardrails(event); blocked {
+			result.Reason = guardReason
+			result.Action = ActionAsk
+			result.Automatic = false
+			return result
+		}
+	}
 	if e.config.DryRun {
 		result.Reason = ReasonDryRun
 		return result
@@ -225,6 +311,29 @@ func (e *Engine) Evaluate(event adapters.Event) Evaluation {
 	result.Automatic = proposed == ActionAllow || proposed == ActionDeny
 	result.Reason = reason
 	return result
+}
+
+func (e *Engine) checkGuardrails(event adapters.Event) (string, bool) {
+	if e == nil {
+		return "", false
+	}
+	target := strings.Join([]string{event.Summary, event.Match, event.Command}, "\n")
+	for _, p := range e.destructivePatterns {
+		if p.MatchString(target) {
+			return ReasonDestructive, true
+		}
+	}
+	for _, p := range e.exfiltrationPatterns {
+		if p.MatchString(target) {
+			return ReasonExfiltration, true
+		}
+	}
+	for _, p := range e.customBlockedPatterns {
+		if p.MatchString(target) {
+			return ReasonGuardrailBlocked, true
+		}
+	}
+	return "", false
 }
 
 // Config returns a deep copy that cannot mutate the engine.
@@ -300,6 +409,9 @@ func containsRisk(values []adapters.RiskLevel, target adapters.RiskLevel) bool {
 
 func cloneConfig(config Config) Config {
 	cloned := config
+	if config.Guardrails.BlockedPatterns != nil {
+		cloned.Guardrails.BlockedPatterns = cloneSlice(config.Guardrails.BlockedPatterns)
+	}
 	if config.Rules != nil {
 		cloned.Rules = make([]Rule, len(config.Rules))
 		for index, rule := range config.Rules {

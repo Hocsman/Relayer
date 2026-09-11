@@ -244,6 +244,68 @@ func TestGeneratedConfigPublishesSafePolicyDefaultsAndDoesNotOverwrite(t *testin
 	assertConfigFileBytes(t, path, original)
 }
 
+func TestLoadVersionOnePoliciesGuardrailsAndLimits(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := versionOnePolicyDocument(`policies:
+  default_action: ask
+  dry_run: false
+  max_consecutive_auto_decisions: 5
+  rate_limit_per_minute: 10
+  guardrails:
+    block_destructive: true
+    block_exfiltration: true
+    blocked_patterns:
+      - '(?i)drop\s+database'
+  rules: []`)
+	writeConfigTestFile(t, path, []byte(content))
+
+	result, err := LoadOrCreate(path)
+	if err != nil {
+		t.Fatalf("Load returned an error: %v", err)
+	}
+
+	if result.Policies.MaxConsecutiveAutoDecisions != 5 {
+		t.Fatalf("expected MaxConsecutiveAutoDecisions=5, got %d", result.Policies.MaxConsecutiveAutoDecisions)
+	}
+	if result.Policies.RateLimitPerMinute != 10 {
+		t.Fatalf("expected RateLimitPerMinute=10, got %d", result.Policies.RateLimitPerMinute)
+	}
+	if !result.Policies.Guardrails.BlockDestructive {
+		t.Fatal("expected BlockDestructive=true")
+	}
+	if !result.Policies.Guardrails.BlockExfiltration {
+		t.Fatal("expected BlockExfiltration=true")
+	}
+	if len(result.Policies.Guardrails.BlockedPatterns) != 1 || result.Policies.Guardrails.BlockedPatterns[0] != `(?i)drop\s+database` {
+		t.Fatalf("unexpected BlockedPatterns: %#v", result.Policies.Guardrails.BlockedPatterns)
+	}
+}
+
+func TestLoadVersionOnePoliciesRejectsInvalidGuardrailsAndLimits(t *testing.T) {
+	tests := map[string]string{
+		"consecutive wrong type":  "policies:\n  max_consecutive_auto_decisions: 'five'\n",
+		"rate limit wrong type":   "policies:\n  rate_limit_per_minute: 'ten'\n",
+		"negative consecutive":    "policies:\n  max_consecutive_auto_decisions: -1\n",
+		"negative rate limit":     "policies:\n  rate_limit_per_minute: -1\n",
+		"guardrails not object":   "policies:\n  guardrails: true\n",
+		"destructive wrong type":  "policies:\n  guardrails:\n    block_destructive: 'yes'\n",
+		"exfiltration wrong type": "policies:\n  guardrails:\n    block_exfiltration: 'yes'\n",
+		"blocked patterns scalar": "policies:\n  guardrails:\n    blocked_patterns: 'pattern'\n",
+		"blocked pattern int":     "policies:\n  guardrails:\n    blocked_patterns: [123]\n",
+	}
+
+	for name, block := range tests {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			content := versionOnePolicyDocument(block)
+			writeConfigTestFile(t, path, []byte(content))
+			if _, err := LoadOrCreate(path); err == nil {
+				t.Fatalf("expected error loading invalid config %s, got nil", name)
+			}
+		})
+	}
+}
+
 func versionOnePolicyDocument(policies string) string {
 	policies = strings.TrimSuffix(policies, "\n")
 	return strings.Replace(versionOneDocument("[]"), "agents: []\n", policies+"\nagents: []\n", 1)

@@ -188,7 +188,7 @@ jobs:
         run: go build -trimpath -buildvcs=false ./...
 
   windows-config:
-    name: Windows configuration locking
+    name: Windows native execution & test suite
     runs-on: windows-2022
     timeout-minutes: 15
 
@@ -206,11 +206,20 @@ jobs:
       - name: Download modules
         run: go mod download
 
-      - name: Test native Windows configuration locking
-        run: go test -count=1 -timeout=2m ./internal/config
+      - name: Verify downloaded modules
+        run: go mod verify
 
-      - name: Vet Windows configuration code
-        run: go vet ./internal/config
+      - name: Vet all code
+        run: go vet ./...
+
+      - name: Build all commands
+        run: go build -trimpath -buildvcs=false ./...
+
+      - name: Run Windows test suite
+        run: go test -count=1 -timeout=10m ./...
+
+      - name: Run native ConPTY smoke tests
+        run: go test -v -count=1 -timeout=2m ./internal/ptybackend
 
   tmux-integration:
     name: tmux integration (${{ matrix.os }})

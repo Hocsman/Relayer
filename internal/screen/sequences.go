@@ -252,6 +252,13 @@ func (s *Screen) insertLines(count int) {
 	if s.cursor.row < s.scrollTop || s.cursor.row > s.scrollBottom {
 		return
 	}
+	if count <= 0 {
+		return
+	}
+	maxLines := s.scrollBottom - s.cursor.row + 1
+	if count > maxLines {
+		count = maxLines
+	}
 	for range count {
 		copy(s.rows[s.cursor.row+1:s.scrollBottom+1], s.rows[s.cursor.row:s.scrollBottom])
 		s.rows[s.cursor.row] = s.newRow(s.width)
@@ -261,6 +268,13 @@ func (s *Screen) insertLines(count int) {
 func (s *Screen) deleteLines(count int) {
 	if s.cursor.row < s.scrollTop || s.cursor.row > s.scrollBottom {
 		return
+	}
+	if count <= 0 {
+		return
+	}
+	maxLines := s.scrollBottom - s.cursor.row + 1
+	if count > maxLines {
+		count = maxLines
 	}
 	for range count {
 		copy(s.rows[s.cursor.row:s.scrollBottom], s.rows[s.cursor.row+1:s.scrollBottom+1])

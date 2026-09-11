@@ -378,6 +378,13 @@ func (m *Model) handleActionableEvent(observed adapters.Event) tea.Cmd {
 			evaluation.Reason = policy.ReasonDryRun
 		}
 	}
+	if evaluation.Automatic && m.policyTracker != nil {
+		if limitAction, limitReason, allowed := m.policyTracker.CheckLimits(observed.SessionID, m.policyConfig); !allowed {
+			evaluation.Action = limitAction
+			evaluation.Automatic = false
+			evaluation.Reason = limitReason
+		}
+	}
 	snapshotUnavailable := !snapshotKnown && m.backendSupportsSnapshots()
 	if snapshotUnavailable {
 		// Without the authoritative occurrence snapshot, a configured allow or
@@ -396,12 +403,25 @@ func (m *Model) handleActionableEvent(observed adapters.Event) tea.Cmd {
 			status = "dry_run"
 		} else if snapshotUnavailable {
 			status = "snapshot_unavailable"
+		} else if evaluation.Reason == policy.ReasonConsecutiveLimit {
+			status = "consecutive_limit"
+		} else if evaluation.Reason == policy.ReasonRateLimit {
+			status = "rate_limit"
+		} else if evaluation.Reason == policy.ReasonDestructive {
+			status = "destructive_blocked"
+		} else if evaluation.Reason == policy.ReasonExfiltration {
+			status = "exfiltration_blocked"
+		} else if evaluation.Reason == policy.ReasonGuardrailBlocked {
+			status = "guardrail_blocked"
 		}
 		return m.queueHumanEvent(observed, evaluation, status)
 	}
 
 	if !m.recordDecision(paneIndex, observed, decisionForAdapter(decision), audit.DecisionByPolicy) {
 		return nil
+	}
+	if m.policyTracker != nil {
+		m.policyTracker.RecordAutoDecision(observed.SessionID)
 	}
 	key := semanticEventKey(observed.SessionID, observed.ID)
 	m.automaticInFlight[key] = automaticAttempt{event: observed.Clone(), evaluation: evaluation}
@@ -478,6 +498,17 @@ func (m *Model) queueHumanEvent(event adapters.Event, evaluation policy.Evaluati
 func humanPolicyTag(evaluation policy.Evaluation, status string) string {
 	if evaluation.DryRun || status == "dry_run" {
 		return "DRY RUN • ASK"
+	}
+	if status == "consecutive_limit" || evaluation.Reason == policy.ReasonConsecutiveLimit {
+		return "LIMIT • ASK"
+	}
+	if status == "rate_limit" || evaluation.Reason == policy.ReasonRateLimit {
+		return "RATE LIMIT • ASK"
+	}
+	if status == "destructive_blocked" || evaluation.Reason == policy.ReasonDestructive ||
+		status == "exfiltration_blocked" || evaluation.Reason == policy.ReasonExfiltration ||
+		status == "guardrail_blocked" || evaluation.Reason == policy.ReasonGuardrailBlocked {
+		return "GUARD • ASK"
 	}
 	if strings.HasPrefix(status, "fallback_") || status == "snapshot_unavailable" {
 		return "AUTO → ASK"
@@ -648,6 +679,9 @@ func (m *Model) clearAutomaticState(sessionID string) {
 		delete(m.automaticBySession, sessionKey)
 	}
 	delete(m.deferredEvents, sessionKey)
+	if m.policyTracker != nil {
+		m.policyTracker.Reset(sessionID)
+	}
 }
 
 func requiresHumanSafety(event adapters.Event) bool {

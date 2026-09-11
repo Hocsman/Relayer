@@ -117,6 +117,9 @@ func (m *Model) applyLineInputResult(message lineInputDeliveredMsg) tea.Cmd {
 		if !m.recordOperatorInput(paneIndex, audit.OutcomeApplied, "operator_input_applied") {
 			return nil
 		}
+		if m.policyTracker != nil {
+			m.policyTracker.RecordHumanDecision(message.SessionID)
+		}
 		m.appendLog(fmt.Sprintf("Direct instruction submitted to %s", safePolicyField(m.panes[paneIndex].name)))
 		return m.resumeDeferredLineEvent(message.SessionID, nil, false)
 	case errors.Is(message.Err, errAuditUnavailable):

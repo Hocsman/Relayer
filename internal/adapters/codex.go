@@ -98,7 +98,7 @@ func (a *CodexAdapter) Detect(state *DetectionState, chunk []byte) ([]Event, err
 	if state == nil {
 		return nil, fmt.Errorf("nil detection state")
 	}
-	if len(chunk) == 0 {
+	if len(chunk) == 0 && (!state.hasRendered || state.rendered == "") {
 		return nil, nil
 	}
 	// Retain the output before returning on a pending occurrence, the way the
@@ -130,14 +130,20 @@ func (a *CodexAdapter) Detect(state *DetectionState, chunk []byte) ([]Event, err
 			// Commit the already-probed normalized chunk only after a complete,
 			// structurally verified vendor prompt has been found.
 			state.appendDetectionText(chunk)
+			var cmd string
+			if block, complete := codexPromptBlock(vendorProbe.detectionText, activeLine, prompt); complete {
+				cmd = extractCodexCommand(block)
+			}
 			candidate := Event{
-				SessionID: state.SessionID,
-				AgentID:   state.AgentID,
-				Adapter:   CodexID,
-				Type:      EventPermission,
-				Summary:   prompt.summary,
-				Match:     prompt.match,
-				Risk:      prompt.risk,
+				questionLine: activeLine,
+				SessionID:    state.SessionID,
+				AgentID:      state.AgentID,
+				Adapter:      CodexID,
+				Type:         EventPermission,
+				Summary:      prompt.summary,
+				Match:        prompt.match,
+				Command:      cmd,
+				Risk:         prompt.risk,
 				Metadata: map[string]string{
 					codexInteractionMetadata: prompt.interaction,
 				},
@@ -331,4 +337,26 @@ func (a *CodexAdapter) EncodeDecision(event Event, decision Decision, manualInpu
 		return nil, fmt.Errorf("%w: Codex interaction %q", ErrDecisionUnsupported, interaction)
 	}
 	return nil, fmt.Errorf("%w: %q for Codex interaction %q", ErrDecisionUnsupported, decision, interaction)
+}
+
+func extractCodexCommand(block string) string {
+	for _, line := range strings.Split(block, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "$ ") {
+			cmd := strings.TrimSpace(strings.TrimPrefix(trimmed, "$ "))
+			if len(cmd) > 0 && len(cmd) <= 1024 {
+				return cmd
+			}
+		}
+	}
+	if start := strings.IndexByte(block, '`'); start >= 0 {
+		rest := block[start+1:]
+		if end := strings.IndexByte(rest, '`'); end > 0 {
+			cmd := strings.TrimSpace(rest[:end])
+			if len(cmd) > 0 && len(cmd) <= 1024 {
+				return cmd
+			}
+		}
+	}
+	return ""
 }

@@ -272,6 +272,13 @@ requires a match to reach the active line changed by new output. See
 policies:
   default_action: ask
   dry_run: false
+  max_consecutive_auto_decisions: 5 # Force human review after N continuous automatic decisions (0 = unlimited)
+  rate_limit_per_minute: 10         # Maximum automatic decisions allowed per minute (0 = unlimited)
+  guardrails:
+    block_destructive: true         # Intercept destructive file deletions & formatting (rm -rf, mkfs, format, etc.)
+    block_exfiltration: true        # Intercept piped shell execution & secret reading (curl | bash, .ssh, .env)
+    blocked_patterns:               # Optional custom regex patterns that force human review
+      - '(?i)drop\s+database'
   rules:
     - name: ask-unknown-risk-confirmations
       match:
@@ -311,6 +318,16 @@ Policy evaluation does not guarantee delivery. The resolved adapter must be
 able to encode that action for the exact pending event. The generic adapter can
 currently encode only human manual input, so its automatic allow and deny both
 fall back to `ask`. Deny is an adapter response, not a process kill.
+
+### Guardrails and Rate Limiting
+
+To prevent autonomous agent runaway loops and accidental destructive execution:
+- **`max_consecutive_auto_decisions`**: When set to $N > 0$, after $N$ consecutive automatic decisions for an agent session without human operator intervention, the policy engine forces an `ask` decision with audit reason `consecutive_auto_limit` and tag `LIMIT • ASK`. Any manual operator decision or direct line input resets the counter to zero.
+- **`rate_limit_per_minute`**: When set to $N > 0$, enforces a sliding window rate limit. If an agent attempts more than $N$ automatic decisions within any 60-second window, subsequent decisions fall back to `ask` with audit reason `rate_limit_exceeded` and tag `RATE LIMIT • ASK`.
+- **`guardrails`**:
+  - `block_destructive`: When enabled, intercepts commands matching destructive deletion or disk formatting patterns (`rm -rf`, `mkfs`, `format`, `dd of=`, `del /s`, `rmdir /s`, etc.) and forces `ask` with audit reason `destructive_command_blocked` and tag `GUARD • ASK`.
+  - `block_exfiltration`: When enabled, intercepts untrusted pipe executions or attempts to read sensitive credential files (`curl | bash`, reading `.ssh`, `.aws`, `.env`) and forces `ask` with audit reason `exfiltration_attempt_blocked` and tag `GUARD • ASK`.
+  - `blocked_patterns`: Custom list of regular expressions. Any matching event that would otherwise be allowed is forced to `ask` with audit reason `guardrail_pattern_blocked` and tag `GUARD • ASK`.
 
 ## Audit
 

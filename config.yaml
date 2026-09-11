@@ -7,6 +7,12 @@ sessions:
 policies:
   default_action: ask
   dry_run: false
+  # max_consecutive_auto_decisions: 5 # Force human review after N consecutive automatic decisions
+  # rate_limit_per_minute: 10         # Maximum automatic decisions allowed per minute
+  # guardrails:
+  #   block_destructive: true         # Intercept destructive file deletions & formatting (rm -rf, mkfs, etc.)
+  #   block_exfiltration: true        # Intercept piped shell execution & secret reading (curl | bash, .ssh, .env)
+  #   blocked_patterns: []            # Optional custom regex patterns to intercept and force human review
   rules: []
 audit:
   enabled: true
