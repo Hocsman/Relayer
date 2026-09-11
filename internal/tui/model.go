@@ -116,6 +116,17 @@ type Model struct {
 	automaticInFlight  map[eventKey]automaticAttempt
 	automaticBySession map[string]eventKey
 	deferredEvents     map[string]adapters.Event
+
+	showMetrics      bool
+	sessionStart     time.Time
+	promptDetectedAt map[eventKey]time.Time
+	latencies        []time.Duration
+	humanAllows      int
+	humanDenies      int
+	autoAllows       int
+	autoDenies       int
+	guardrailBlocks  int
+	operatorInputs   int
 }
 
 // NewModel builds a ready-to-run Bubble Tea model around one to eight existing
@@ -235,6 +246,8 @@ func NewModelWithPolicyAndAudit(
 		automaticBySession: make(map[string]eventKey),
 		deferredEvents:     make(map[string]adapters.Event),
 		lineDeferredEvents: make(map[string]adapters.Event),
+		sessionStart:       time.Now(),
+		promptDetectedAt:   make(map[eventKey]time.Time),
 	}
 	for index, pane := range panes {
 		name := pane.Name
@@ -474,4 +487,16 @@ func (m *Model) SetNotifier(n notify.Notifier) {
 		return
 	}
 	m.notifier = n
+}
+
+// MetricsActive reports whether the metrics overlay is currently shown.
+func (m *Model) MetricsActive() bool {
+	return m != nil && m.showMetrics
+}
+
+// ToggleMetrics toggles visibility of the live session metrics overlay.
+func (m *Model) ToggleMetrics() {
+	if m != nil {
+		m.showMetrics = !m.showMetrics
+	}
 }

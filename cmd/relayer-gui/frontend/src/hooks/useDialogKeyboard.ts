@@ -64,13 +64,15 @@ function isTopmost(container: HTMLElement): boolean {
  */
 export function useDialogKeyboard(
   containerRef: RefObject<HTMLElement | null>,
-  options: { onClose?: () => void; closable?: boolean; active?: boolean } = {},
+  options: { onClose?: () => void; onEscape?: () => void; closable?: boolean; active?: boolean } = {},
 ): void {
-  const { onClose, closable = true, active = true } = options;
+  const { onClose, onEscape, closable = true, active = true } = options;
 
   const onCloseRef = useRef(onClose);
+  const onEscapeRef = useRef(onEscape);
   const closableRef = useRef(closable);
   onCloseRef.current = onClose;
+  onEscapeRef.current = onEscape;
   closableRef.current = closable;
 
   const previouslyFocused = useRef<HTMLElement | null>(null);
@@ -97,10 +99,14 @@ export function useDialogKeyboard(
       if (!isTopmost(container)) return;
 
       if (event.key === "Escape") {
-        if (closableRef.current && onCloseRef.current) {
+        if (closableRef.current) {
           event.preventDefault();
           event.stopPropagation();
-          onCloseRef.current();
+          if (onEscapeRef.current) {
+            onEscapeRef.current();
+          } else if (onCloseRef.current) {
+            onCloseRef.current();
+          }
         }
         return;
       }

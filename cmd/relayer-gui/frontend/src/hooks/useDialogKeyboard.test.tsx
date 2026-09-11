@@ -189,4 +189,21 @@ describe("useDialogKeyboard", () => {
     expect(document.activeElement).not.toBe(document.body);
     expect(document.querySelector('[role="dialog"]')!.contains(document.activeElement)).toBe(true);
   });
+
+  it("calls custom onEscape handler instead of onClose when provided", async () => {
+    const onClose = vi.fn();
+    const onEscape = vi.fn();
+
+    function CustomDialog() {
+      const dialogRef = useRef<HTMLDivElement>(null);
+      useDialogKeyboard(dialogRef, { onClose, onEscape, active: true });
+      return <div ref={dialogRef} role="dialog"><button type="button">inside</button></div>;
+    }
+
+    render(<CustomDialog />);
+    press("Escape");
+
+    expect(onEscape).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });

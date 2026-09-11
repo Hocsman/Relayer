@@ -11,11 +11,15 @@ import type {
   AgentCatalogEntry,
   AgentProfile,
   AgentProfilesView,
+  FullSettingsView,
   LifecycleResult,
+  NotificationSettings,
+  NotificationWebhookSetting,
   RelayerBridge,
   RunStatus,
   SaveAgentProfilesAndRestartRequest,
   SaveAgentProfilesRequest,
+  SecuritySettings,
   SupervisionEvent,
 } from "../types/relayer";
 
@@ -30,6 +34,7 @@ interface AgentSettingsPanelProps {
 }
 
 type Notice = { tone: "success" | "warning"; text: string };
+type SettingsTab = "agents" | "security" | "notifications";
 
 export function AgentSettingsPanel({
   bridge,
@@ -40,8 +45,29 @@ export function AgentSettingsPanel({
   onSaveAndRestart,
   onClose,
 }: AgentSettingsPanelProps) {
+  const [activeTab, setActiveTab] = useState<SettingsTab>("agents");
   const [view, setView] = useState<AgentProfilesView>();
+  const [fullView, setFullView] = useState<FullSettingsView>();
   const [draft, setDraft] = useState<AgentProfile[]>([]);
+  const [securityDraft, setSecurityDraft] = useState<SecuritySettings>({
+    profile: "developer-friendly",
+    defaultAction: "ask",
+    dryRun: false,
+    blockDestructive: true,
+    blockExfiltration: true,
+    blockSensitivePaths: true,
+    blockOutsideWorkspace: false,
+    workspaceRoot: "",
+    rateLimitPerMinute: 30,
+    maxConsecutiveAutoDecisions: 10,
+  });
+  const [notificationDraft, setNotificationDraft] = useState<NotificationSettings>({
+    enabled: true,
+    bell: true,
+    desktop: true,
+    minSeverity: "info",
+    webhooks: [],
+  });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [activating, setActivating] = useState(false);
@@ -52,10 +78,24 @@ export function AgentSettingsPanel({
 
   useEffect(() => {
     let active = true;
-    void bridge.getAgentProfiles().then(
+    const loader = typeof bridge.getFullSettings === "function"
+      ? bridge.getFullSettings()
+      : bridge.getAgentProfiles().then((loaded) => ({
+          ...loaded,
+          security: securityDraft,
+          notifications: notificationDraft,
+        }));
+
+    void loader.then(
       (loaded) => {
         if (!active) return;
         setView(loaded);
+        if ("security" in loaded && (loaded as FullSettingsView).security) {
+          const fullLoaded = loaded as FullSettingsView;
+          setFullView(fullLoaded);
+          setSecurityDraft(fullLoaded.security);
+          setNotificationDraft(fullLoaded.notifications);
+        }
         setDraft(cloneProfiles(loaded.profiles).slice(0, 8));
         if (loaded.restartRequired) {
           setNotice({
@@ -67,7 +107,7 @@ export function AgentSettingsPanel({
       },
       () => {
         if (!active) return;
-        setError("The agent configuration could not be loaded.");
+        setError("The configuration could not be loaded.");
         setLoading(false);
       },
     );
@@ -83,9 +123,16 @@ export function AgentSettingsPanel({
         : { valid: false, global: [], profiles: [] },
     [draft, view],
   );
-  const dirty = view
+  const agentsDirty = view
     ? JSON.stringify(draft) !== JSON.stringify(view.profiles)
     : false;
+  const securityDirty = fullView
+    ? JSON.stringify(securityDraft) !== JSON.stringify(fullView.security)
+    : false;
+  const notificationsDirty = fullView
+    ? JSON.stringify(notificationDraft) !== JSON.stringify(fullView.notifications)
+    : false;
+  const dirty = agentsDirty || securityDirty || notificationsDirty;
   const transitioning = ["starting", "restarting", "rollback", "stopping"].includes(runStatus);
   const canActivate = runStatus === "idle" || runStatus === "running";
   const busy = saving || activating || transitioning;
@@ -153,33 +200,62 @@ export function AgentSettingsPanel({
     setError(undefined);
     setNotice(undefined);
     try {
-      const result = await onSave(runID, {
-        expectedRevision: view.revision,
-        profiles: profilesForSave(draft),
-      });
-      setView(result);
-      setDraft(cloneProfiles(result.profiles));
-      setNotice(result.restartRequired
-        ? {
-            tone: "warning",
-            text: "Configuration saved — it will be applied at the next startup.",
-          }
-        : {
-            tone: "success",
-            text: "Configuration saved.",
-          });
-      setCloseConfirmation(false);
+      if (typeof bridge.saveFullSettings === "function") {
+        const result = await bridge.saveFullSettings(runID, {
+          expectedRevision: view.revision,
+          profiles: agentsDirty ? profilesForSave(draft) : undefined,
+          security: securityDirty ? securityDraft : undefined,
+          notifications: notificationsDirty ? notificationDraft : undefined,
+        });
+        setFullView(result);
+        setView(result);
+        setDraft(cloneProfiles(result.profiles));
+        setSecurityDraft(result.security);
+        setNotificationDraft(result.notifications);
+        setNotice(result.restartRequired
+          ? {
+              tone: "warning",
+              text: "Configuration saved — restart required to apply agent changes.",
+            }
+          : {
+              tone: "success",
+              text: "Configuration saved and applied immediately.",
+            });
+        setCloseConfirmation(false);
+      } else {
+        const result = await onSave(runID, {
+          expectedRevision: view.revision,
+          profiles: profilesForSave(draft),
+        });
+        setView(result);
+        setDraft(cloneProfiles(result.profiles));
+        setNotice(result.restartRequired
+          ? {
+              tone: "warning",
+              text: "Configuration saved — it will be applied at the next startup.",
+            }
+          : {
+              tone: "success",
+              text: "Configuration saved.",
+            });
+        setCloseConfirmation(false);
+      }
     } catch {
-      // A stale CAS or a post-commit durability uncertainty rotates the
-      // opaque revision token. Reload the authoritative snapshot so the next
-      // save cannot loop forever with stale authority.
       try {
-        const reloaded = await bridge.getAgentProfiles();
+        const reloaded = typeof bridge.getFullSettings === "function"
+          ? await bridge.getFullSettings()
+          : await bridge.getAgentProfiles();
         setView(reloaded);
+        if ("security" in reloaded && (reloaded as FullSettingsView).security) {
+          const fullReloaded = reloaded as FullSettingsView;
+          setFullView(fullReloaded);
+          setSecurityDraft(fullReloaded.security);
+          setNotificationDraft(fullReloaded.notifications);
+        }
         setDraft(cloneProfiles(reloaded.profiles));
         setError("The configuration changed or its state was uncertain. The saved version has been reloaded.");
       } catch {
-        setError("The agents could not be saved. No sensitive detail is shown.");
+        setError("The configuration could not be saved. No sensitive detail is shown.");
       }
     } finally {
       setSaving(false);
@@ -194,6 +270,14 @@ export function AgentSettingsPanel({
     setError(undefined);
     setNotice(undefined);
     try {
+      if (typeof bridge.saveFullSettings === "function" && (securityDirty || notificationsDirty)) {
+        await bridge.saveFullSettings(runID, {
+          expectedRevision: view.revision,
+          profiles: profilesForSave(draft),
+          security: securityDraft,
+          notifications: notificationDraft,
+        });
+      }
       const result = await onSaveAndRestart({
         expectedRunID: runID,
         expectedRevision: view.revision,
@@ -207,9 +291,6 @@ export function AgentSettingsPanel({
           text: "The new run did not start. The previous YAML was restored and the earlier plan was relaunched under a new run.",
         });
       } else {
-        // The agents are running behind this panel. Leaving it open with a
-        // green line makes the operator dismiss a dialog to reach the thing
-        // they just asked for; the dashboard is the confirmation.
         setActivating(false);
         onClose();
         return;
@@ -220,8 +301,6 @@ export function AgentSettingsPanel({
         setView(reloaded);
         setDraft(cloneProfiles(reloaded.profiles));
       } catch {
-        // The lifecycle error below is deliberately complete without exposing
-        // a native error or any command/configuration value.
       }
       setError("The run change failed. Decisions stay blocked until the engine is back in a safe state.");
     } finally {
@@ -275,51 +354,101 @@ export function AgentSettingsPanel({
           </div>
         ) : (
           <>
-            <fieldset className="agent-settings__content" disabled={busy} aria-busy={busy}>
-              <Catalog
-                entries={view.catalog}
-                count={draft.length}
-                maximum={Math.min(8, view.maxProfiles)}
-                editable={view.editable}
-                onAdd={addProfile}
-              />
-              <section className="profile-editor" aria-label="Configured profiles">
-                <header className="profile-editor__header">
-                  <div>
-                    <span className="eyebrow">Configured team</span>
-                    <h2>{draft.length} agent{draft.length !== 1 ? "s" : ""}</h2>
-                  </div>
-                  <span className="profile-limit">{draft.length} / {Math.min(8, view.maxProfiles)}</span>
-                </header>
+            <nav className="settings-tabs" aria-label="Settings sections">
+              <button
+                type="button"
+                className={`settings-tab ${activeTab === "agents" ? "settings-tab--active" : ""}`}
+                onClick={() => setActiveTab("agents")}
+              >
+                🤖 Agents
+              </button>
+              <button
+                type="button"
+                className={`settings-tab ${activeTab === "security" ? "settings-tab--active" : ""}`}
+                onClick={() => setActiveTab("security")}
+              >
+                🛡️ Security & Guardrails
+              </button>
+              <button
+                type="button"
+                className={`settings-tab ${activeTab === "notifications" ? "settings-tab--active" : ""}`}
+                onClick={() => setActiveTab("notifications")}
+              >
+                🔔 Notifications & Webhooks
+              </button>
+            </nav>
 
-                {validation.global.map((message) => (
-                  <p className="settings-error" role="alert" key={message}>{message}</p>
-                ))}
+            {activeTab === "agents" && (
+              <fieldset className="agent-settings__content" disabled={busy} aria-busy={busy}>
+                <Catalog
+                  entries={view.catalog}
+                  count={draft.length}
+                  maximum={Math.min(8, view.maxProfiles)}
+                  editable={view.editable}
+                  onAdd={addProfile}
+                />
+                <section className="profile-editor" aria-label="Configured profiles">
+                  <header className="profile-editor__header">
+                    <div>
+                      <span className="eyebrow">Configured team</span>
+                      <h2>{draft.length} agent{draft.length !== 1 ? "s" : ""}</h2>
+                    </div>
+                    <span className="profile-limit">{draft.length} / {Math.min(8, view.maxProfiles)}</span>
+                  </header>
 
-                {!view.editable && (
-                  <p className="settings-error" role="alert">
-                    This legacy configuration is read-only. Migrate it to <code>version: 1</code> before editing the agents.
-                  </p>
-                )}
-
-                <div className="profile-list">
-                  {draft.map((profile, index) => (
-                    <ProfileCard
-                      key={`${index}-${profile.id}`}
-                      profile={profile}
-                      index={index}
-                      count={draft.length}
-                      minimum={Math.max(1, view.minProfiles)}
-                      catalog={view.catalog}
-                      errors={validation.profiles[index] || {}}
-                      onChange={(next) => updateProfile(index, next)}
-                      onMove={(direction) => moveProfile(index, direction)}
-                      onRemove={() => removeProfile(index)}
-                    />
+                  {validation.global.map((message) => (
+                    <p className="settings-error" role="alert" key={message}>{message}</p>
                   ))}
-                </div>
-              </section>
-            </fieldset>
+
+                  {!view.editable && (
+                    <p className="settings-error" role="alert">
+                      This legacy configuration is read-only. Migrate it to <code>version: 1</code> before editing the agents.
+                    </p>
+                  )}
+
+                  <div className="profile-list">
+                    {draft.map((profile, index) => (
+                      <ProfileCard
+                        key={`${index}-${profile.id}`}
+                        profile={profile}
+                        index={index}
+                        count={draft.length}
+                        minimum={Math.max(1, view.minProfiles)}
+                        catalog={view.catalog}
+                        errors={validation.profiles[index] || {}}
+                        onChange={(next) => updateProfile(index, next)}
+                        onMove={(direction) => moveProfile(index, direction)}
+                        onRemove={() => removeProfile(index)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              </fieldset>
+            )}
+
+            {activeTab === "security" && (
+              <SecuritySettingsTab
+                settings={securityDraft}
+                onChange={(next) => {
+                  setSecurityDraft(next);
+                  setNotice(undefined);
+                  setError(undefined);
+                }}
+                disabled={busy}
+              />
+            )}
+
+            {activeTab === "notifications" && (
+              <NotificationSettingsTab
+                settings={notificationDraft}
+                onChange={(next) => {
+                  setNotificationDraft(next);
+                  setNotice(undefined);
+                  setError(undefined);
+                }}
+                disabled={busy}
+              />
+            )}
 
             <footer className="agent-settings__footer">
               <div className="settings-footer__status">
@@ -702,3 +831,394 @@ function readOnlyReasonLabel(reason: AgentProfile["readOnlyReason"]): string {
       return "This profile uses advanced fields that stay protected against a partial rewrite.";
   }
 }
+
+function SecuritySettingsTab({
+  settings,
+  onChange,
+  disabled,
+}: {
+  settings: SecuritySettings;
+  onChange(settings: SecuritySettings): void;
+  disabled: boolean;
+}) {
+  const patch = <K extends keyof SecuritySettings>(field: K, value: SecuritySettings[K]) =>
+    onChange({ ...settings, [field]: value });
+
+  const onProfilePresetChange = (profile: string) => {
+    if (profile === "strict") {
+      onChange({
+        ...settings,
+        profile: "strict",
+        defaultAction: "ask",
+        dryRun: false,
+        blockDestructive: true,
+        blockExfiltration: true,
+        blockSensitivePaths: true,
+        blockOutsideWorkspace: true,
+        rateLimitPerMinute: 20,
+        maxConsecutiveAutoDecisions: 5,
+      });
+    } else if (profile === "developer-friendly") {
+      onChange({
+        ...settings,
+        profile: "developer-friendly",
+        defaultAction: "ask",
+        dryRun: false,
+        blockDestructive: true,
+        blockExfiltration: true,
+        blockSensitivePaths: true,
+        blockOutsideWorkspace: false,
+        rateLimitPerMinute: 30,
+        maxConsecutiveAutoDecisions: 10,
+      });
+    } else if (profile === "permissive") {
+      onChange({
+        ...settings,
+        profile: "permissive",
+        defaultAction: "allow",
+        dryRun: true,
+        blockDestructive: false,
+        blockExfiltration: false,
+        blockSensitivePaths: false,
+        blockOutsideWorkspace: false,
+        rateLimitPerMinute: 60,
+        maxConsecutiveAutoDecisions: 30,
+      });
+    } else {
+      patch("profile", profile);
+    }
+  };
+
+  return (
+    <div className="settings-section" aria-label="Security settings">
+      <div className="settings-group">
+        <h3>Policy Profile & Arbitration</h3>
+        <p>Choose an established safety posture or calibrate individual security parameters.</p>
+        <div className="settings-row">
+          <span>Security Profile</span>
+          <select
+            className="settings-select"
+            value={settings.profile}
+            onChange={(e) => onProfilePresetChange(e.target.value)}
+            disabled={disabled}
+            aria-label="Security profile"
+          >
+            <option value="developer-friendly">developer-friendly (Balanced)</option>
+            <option value="strict">strict (High Security)</option>
+            <option value="permissive">permissive (Audit / Dry-Run)</option>
+            <option value="custom">custom</option>
+          </select>
+        </div>
+        <div className="settings-row">
+          <span>Default Action</span>
+          <select
+            className="settings-select"
+            value={settings.defaultAction}
+            onChange={(e) => patch("defaultAction", e.target.value)}
+            disabled={disabled}
+            aria-label="Default action"
+          >
+            <option value="ask">ask (Require human confirmation)</option>
+            <option value="allow">allow (Execute if no rule denies)</option>
+            <option value="deny">deny (Block unless explicitly permitted)</option>
+          </select>
+        </div>
+        <div className="settings-row">
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={settings.dryRun}
+              onChange={(e) => patch("dryRun", e.target.checked)}
+              disabled={disabled}
+            />
+            <span>Dry-Run Mode (Evaluate policies without blocking commands)</span>
+          </label>
+        </div>
+      </div>
+
+      <div className="settings-group">
+        <h3>Guardrails & Path Protection</h3>
+        <p>Automated interceptors that prevent accidental system damage or data leakage.</p>
+        <div className="settings-row">
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={settings.blockDestructive}
+              onChange={(e) => patch("blockDestructive", e.target.checked)}
+              disabled={disabled}
+            />
+            <span>Block Destructive Commands (e.g. rm -rf, drop database, format)</span>
+          </label>
+        </div>
+        <div className="settings-row">
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={settings.blockExfiltration}
+              onChange={(e) => patch("blockExfiltration", e.target.checked)}
+              disabled={disabled}
+            />
+            <span>Block Data Exfiltration (curl, wget, reverse shells, suspicious egress)</span>
+          </label>
+        </div>
+        <div className="settings-row">
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={settings.blockSensitivePaths}
+              onChange={(e) => patch("blockSensitivePaths", e.target.checked)}
+              disabled={disabled}
+            />
+            <span>Block Sensitive Paths (.env, .git/config, id_rsa, credentials)</span>
+          </label>
+        </div>
+        <div className="settings-row">
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={settings.blockOutsideWorkspace}
+              onChange={(e) => patch("blockOutsideWorkspace", e.target.checked)}
+              disabled={disabled}
+            />
+            <span>Block File Access Outside Workspace</span>
+          </label>
+        </div>
+        <div className="settings-row">
+          <span>Workspace Root Directory</span>
+          <input
+            className="settings-input"
+            style={{ width: "280px" }}
+            value={settings.workspaceRoot}
+            placeholder="Empty = current directory"
+            onChange={(e) => patch("workspaceRoot", e.target.value)}
+            disabled={disabled}
+            aria-label="Workspace root"
+          />
+        </div>
+      </div>
+
+      <div className="settings-group">
+        <h3>Rate Limiting & Safety Bounds</h3>
+        <p>Prevent runaway loops and excessive automated approvals.</p>
+        <div className="settings-row">
+          <span>Rate Limit (Decisions / Minute)</span>
+          <input
+            className="settings-input"
+            type="number"
+            min={1}
+            max={600}
+            style={{ width: "100px" }}
+            value={settings.rateLimitPerMinute}
+            onChange={(e) => patch("rateLimitPerMinute", parseInt(e.target.value, 10) || 30)}
+            disabled={disabled}
+            aria-label="Rate limit per minute"
+          />
+        </div>
+        <div className="settings-row">
+          <span>Max Consecutive Auto Decisions</span>
+          <input
+            className="settings-input"
+            type="number"
+            min={1}
+            max={100}
+            style={{ width: "100px" }}
+            value={settings.maxConsecutiveAutoDecisions}
+            onChange={(e) => patch("maxConsecutiveAutoDecisions", parseInt(e.target.value, 10) || 10)}
+            disabled={disabled}
+            aria-label="Max consecutive auto decisions"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NotificationSettingsTab({
+  settings,
+  onChange,
+  disabled,
+}: {
+  settings: NotificationSettings;
+  onChange(settings: NotificationSettings): void;
+  disabled: boolean;
+}) {
+  const [webhookName, setWebhookName] = useState("");
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookFormat, setWebhookFormat] = useState("slack");
+  const [webhookSeverity, setWebhookSeverity] = useState("warning");
+
+  const patch = <K extends keyof NotificationSettings>(field: K, value: NotificationSettings[K]) =>
+    onChange({ ...settings, [field]: value });
+
+  const addWebhook = () => {
+    if (!webhookName.trim() || !webhookUrl.trim()) return;
+    const newHook: NotificationWebhookSetting = {
+      name: webhookName.trim(),
+      url: webhookUrl.trim(),
+      format: webhookFormat,
+      minSeverity: webhookSeverity,
+      timeout: "5s",
+    };
+    patch("webhooks", [...(settings.webhooks || []), newHook]);
+    setWebhookName("");
+    setWebhookUrl("");
+  };
+
+  const removeWebhook = (index: number) => {
+    patch("webhooks", (settings.webhooks || []).filter((_, i) => i !== index));
+  };
+
+  return (
+    <div className="settings-section" aria-label="Notification settings">
+      <div className="settings-group">
+        <h3>Dispatch Channels</h3>
+        <p>Choose where and how arbitration alerts and guardrail intercepts are sent.</p>
+        <div className="settings-row">
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={settings.enabled}
+              onChange={(e) => patch("enabled", e.target.checked)}
+              disabled={disabled}
+            />
+            <span>Enable Notifications Master Switch</span>
+          </label>
+        </div>
+        <div className="settings-row">
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={settings.desktop}
+              onChange={(e) => patch("desktop", e.target.checked)}
+              disabled={disabled}
+            />
+            <span>Desktop Native Notifications (Windows Toast, macOS Notification Center, libnotify)</span>
+          </label>
+        </div>
+        <div className="settings-row">
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={settings.bell}
+              onChange={(e) => patch("bell", e.target.checked)}
+              disabled={disabled}
+            />
+            <span>Terminal Acoustic Bell (\a on pending events)</span>
+          </label>
+        </div>
+        <div className="settings-row">
+          <span>Global Minimum Severity</span>
+          <select
+            className="settings-select"
+            value={settings.minSeverity}
+            onChange={(e) => patch("minSeverity", e.target.value)}
+            disabled={disabled}
+            aria-label="Minimum severity"
+          >
+            <option value="info">info (All events)</option>
+            <option value="warning">warning (Arbitrations & Warnings)</option>
+            <option value="critical">critical (Security intercepts & Guardrail blocks)</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="settings-group">
+        <h3>Webhooks</h3>
+        <p>Broadcast security events to team channels (Slack, Discord, or generic JSON endpoints).</p>
+
+        {settings.webhooks && settings.webhooks.length > 0 ? (
+          <table className="settings-webhooks-table" aria-label="Configured webhooks">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>URL</th>
+                <th>Format</th>
+                <th>Min Severity</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {settings.webhooks.map((hook, index) => (
+                <tr key={`${index}-${hook.name}`}>
+                  <td><strong>{hook.name}</strong></td>
+                  <td style={{ maxWidth: "240px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={hook.url}>
+                    {hook.url}
+                  </td>
+                  <td><span className="catalog-badge">{hook.format}</span></td>
+                  <td>{hook.minSeverity}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="button button--ghost button--small"
+                      onClick={() => removeWebhook(index)}
+                      disabled={disabled}
+                      aria-label={`Remove webhook ${hook.name}`}
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p style={{ margin: "4px 0 10px", color: "var(--faint)", fontSize: "11px" }}>
+            No webhooks configured.
+          </p>
+        )}
+
+        <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "8px", flexWrap: "wrap" }}>
+          <input
+            className="settings-input"
+            style={{ width: "130px" }}
+            placeholder="Name (e.g. #security)"
+            value={webhookName}
+            onChange={(e) => setWebhookName(e.target.value)}
+            disabled={disabled}
+            aria-label="New webhook name"
+          />
+          <input
+            className="settings-input"
+            style={{ flex: "1 1 200px" }}
+            placeholder="https://hooks.slack.com/... or Discord URL"
+            value={webhookUrl}
+            onChange={(e) => setWebhookUrl(e.target.value)}
+            disabled={disabled}
+            aria-label="New webhook URL"
+          />
+          <select
+            className="settings-select"
+            value={webhookFormat}
+            onChange={(e) => setWebhookFormat(e.target.value)}
+            disabled={disabled}
+            aria-label="New webhook format"
+          >
+            <option value="slack">Slack</option>
+            <option value="discord">Discord</option>
+            <option value="generic">Generic JSON</option>
+          </select>
+          <select
+            className="settings-select"
+            value={webhookSeverity}
+            onChange={(e) => setWebhookSeverity(e.target.value)}
+            disabled={disabled}
+            aria-label="New webhook severity"
+          >
+            <option value="info">info</option>
+            <option value="warning">warning</option>
+            <option value="critical">critical</option>
+          </select>
+          <button
+            type="button"
+            className="button button--ghost button--small"
+            onClick={addWebhook}
+            disabled={disabled || !webhookName.trim() || !webhookUrl.trim()}
+          >
+            + Add Webhook
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+

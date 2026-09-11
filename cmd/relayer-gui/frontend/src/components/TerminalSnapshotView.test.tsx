@@ -38,4 +38,20 @@ describe("TerminalSnapshotView", () => {
     expect(markup).toContain('class="terminal-shell"');
     expect(markup).not.toContain("Waiting for output");
   });
+
+  it("renders the interactive search trigger button with aria-label", () => {
+    const markup = renderToStaticMarkup(
+      <TerminalSnapshotView
+        runID="run-1"
+        sessionID="agent-1"
+        label="Output from Test Agent"
+        output="sample output"
+        revision={1}
+        onResize={async () => {}}
+      />
+    );
+
+    expect(markup).toContain('class="terminal-search-trigger"');
+    expect(markup).toContain('aria-label="Search terminal output"');
+  });
 });

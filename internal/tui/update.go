@@ -57,6 +57,16 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.movePage(1)
 			commands = append(commands, m.syncFocus())
 		default:
+			if m.showMetrics {
+				if msg.Type == tea.KeyEsc || msg.String() == "m" || msg.String() == "M" {
+					m.showMetrics = false
+					break
+				}
+			} else if (msg.String() == "m" || msg.String() == "M") && m.inputTarget == "" && m.lineInputTarget == "" {
+				m.showMetrics = true
+				break
+			}
+
 			// A pending human response always wins over pane actions. In
 			// particular, Enter must keep submitting PTY responses even if the
 			// user temporarily moved focus away from the supervisor.

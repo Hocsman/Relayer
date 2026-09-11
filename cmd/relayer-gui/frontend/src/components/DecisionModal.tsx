@@ -23,6 +23,11 @@ const decisionLabels: Record<SemanticDecision, string> = {
   deny: "Deny",
 };
 
+const decisionShortcuts: Partial<Record<SemanticDecision, string>> = {
+  allow: "Ctrl+↵",
+  deny: "Esc",
+};
+
 export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDecide }: DecisionModalProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const transcriptRef = useRef<HTMLPreElement>(null);
@@ -57,25 +62,14 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
     }
   }, [event?.runID, event?.sessionID, event?.id]);
 
-  useDialogKeyboard(dialogRef, { onClose, closable: !busy, active: Boolean(event) });
-
-  if (!event) return null;
-
-  const indeterminateDelivery = deliveryRequiresResync(event);
-  // Only what the adapter reported for this exact occurrence. An unknown value
-  // arriving from a stale bridge is dropped rather than rendered as a button.
-  // What the pane was showing when it stopped. A decision made without it is
-  // made on a one-line summary.
-  //
-  // A sensitive prompt is excluded: safeEventSummary already refuses to repeat
-  // its text here, and reprinting the pane tail underneath would undo that.
-  const context = event.sensitive ? [] : promptContextLines(agent?.output ?? "");
-  const offered = (event.decisions ?? []).filter(
+  const indeterminateDelivery = event ? deliveryRequiresResync(event) : false;
+  const context = event?.sensitive ? [] : promptContextLines(agent?.output ?? "");
+  const offered = (event?.decisions ?? []).filter(
     (decision): decision is SemanticDecision => decision === "allow" || decision === "deny",
   );
 
   const decide = async (decision: SemanticDecision) => {
-    if (busy || indeterminateDelivery) return;
+    if (busy || indeterminateDelivery || !event) return;
     setBusy(true);
     try {
       const delivered = await onDecide(event.runID, event.sessionID, event.id, decision);
@@ -85,22 +79,62 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
     }
   };
 
-  const submit = async (formEvent: FormEvent) => {
-    formEvent.preventDefault();
-    const input = inputRef.current;
-    if (!input || input.value.length === 0 || busy || indeterminateDelivery) return;
-    const value = input.value;
-    input.value = "";
+  const submitDirect = async (value: string) => {
+    if (!inputRef.current || value.length === 0 || busy || indeterminateDelivery || !event) return;
+    inputRef.current.value = "";
     setBusy(true);
     try {
       const delivered = await onSubmit(event.runID, event.sessionID, event.id, value);
       if (delivered) onClose();
     } finally {
-      // The manual value is never put in component state, notifications or logs.
-      input.value = "";
+      if (inputRef.current) inputRef.current.value = "";
       setBusy(false);
     }
   };
+
+  const submit = async (formEvent: FormEvent) => {
+    formEvent.preventDefault();
+    const input = inputRef.current;
+    if (!input || input.value.length === 0) return;
+    await submitDirect(input.value);
+  };
+
+  const handleEscape = () => {
+    if (offered.includes("deny")) {
+      void decide("deny");
+    } else {
+      onClose();
+    }
+  };
+
+  useDialogKeyboard(dialogRef, {
+    onClose,
+    onEscape: handleEscape,
+    closable: !busy,
+    active: Boolean(event),
+  });
+
+  useEffect(() => {
+    if (!event || busy || indeterminateDelivery) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        const inputVal = inputRef.current?.value.trim() ?? "";
+        if (inputVal.length > 0) {
+          void submitDirect(inputVal);
+        } else if (offered.includes("allow")) {
+          void decide("allow");
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [event, busy, indeterminateDelivery, offered]);
+
+  if (!event) return null;
 
   return (
     <div className="modal-layer" role="presentation">
@@ -171,7 +205,12 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
                 disabled={busy || indeterminateDelivery}
                 onClick={() => void decide(decision)}
               >
-                {decisionLabels[decision]}
+                <span>{decisionLabels[decision]}</span>
+                {decisionShortcuts[decision] && (
+                  <kbd className="button__shortcut" title={`Shortcut: ${decisionShortcuts[decision]}`}>
+                    {decisionShortcuts[decision]}
+                  </kbd>
+                )}
               </button>
             ))}
             <span>Answer encoded by the {event.adapter} adapter.</span>

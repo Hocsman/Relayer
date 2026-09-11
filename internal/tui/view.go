@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -26,6 +27,10 @@ func (m *Model) View() string {
 				m.height,
 				len(m.panes),
 			))
+	}
+
+	if m.showMetrics {
+		return m.renderMetricsFullscreen()
 	}
 
 	agents := m.renderAgentArea()
@@ -169,6 +174,15 @@ func (m *Model) renderSupervisorPane(outer Rect) string {
 		m.layout.Page+1,
 		m.layout.PageCount,
 	)
+	if m.showMetrics {
+		title = "SUPERVISOR  •  METRICS & OBSERVABILITY OVERLAY"
+	}
+	titleColor := colorMuted
+	if intercepting {
+		titleColor = colorBlocked
+	}
+	title = lipgloss.NewStyle().Foreground(titleColor).Bold(true).MaxWidth(innerWidth).MaxHeight(1).Render(title)
+
 	enterHelp := "Enter: answer"
 	if m.hasBackend("tmux") {
 		enterHelp = "Enter: open/answer • Ctrl+B then D: back to Relayer"
@@ -183,18 +197,102 @@ func (m *Model) renderSupervisorPane(outer Rect) string {
 	if m.inputTarget != "" && m.lineInputTarget == "" {
 		enterHelp += " • F2: allow • F3: deny"
 	}
+	enterHelp += " • M: metrics"
 	help := lipgloss.NewStyle().Foreground(colorMuted).MaxWidth(innerWidth).MaxHeight(1).Render(
 		enterHelp + " • Ctrl+←/→: focus • Ctrl+PgUp/PgDn: page • ↑/↓, PgUp/PgDn, wheel: history • Ctrl+C: quit",
 	)
-	titleColor := colorMuted
-	if intercepting {
-		titleColor = colorBlocked
-	}
-	title = lipgloss.NewStyle().Foreground(titleColor).Bold(true).MaxWidth(innerWidth).MaxHeight(1).Render(title)
 	content := title + "\n" +
 		m.supervisor.View() + "\n" +
 		m.input.View() + "\n" + help
 	return style.Width(innerWidth).Height(innerHeight).Render(content)
+}
+
+func (m *Model) renderMetricsFullscreen() string {
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorAgentA).
+		Width(maxInt(1, m.width-2)).
+		Height(maxInt(1, m.height-2)).
+		Padding(1, 2)
+	var totalSessions, activeSessions, finishedSessions, errorSessions int
+	for _, pane := range m.panes {
+		totalSessions++
+		if pane.exited {
+			if pane.exitErr != nil {
+				errorSessions++
+			} else {
+				finishedSessions++
+			}
+		} else {
+			activeSessions++
+		}
+	}
+
+	uptime := time.Since(m.sessionStart).Round(time.Second)
+	totalDecisions := m.humanAllows + m.humanDenies + m.autoAllows + m.autoDenies
+
+	var avgLatencyStr = "0.00s"
+	var minLatencyStr = "N/A"
+	var maxLatencyStr = "N/A"
+	if len(m.latencies) > 0 {
+		var sum time.Duration
+		minLat := m.latencies[0]
+		maxLat := m.latencies[0]
+		for _, d := range m.latencies {
+			sum += d
+			if d < minLat {
+				minLat = d
+			}
+			if d > maxLat {
+				maxLat = d
+			}
+		}
+		avg := sum / time.Duration(len(m.latencies))
+		avgLatencyStr = fmt.Sprintf("%.2fs", avg.Seconds())
+		minLatencyStr = fmt.Sprintf("%.2fs", minLat.Seconds())
+		maxLatencyStr = fmt.Sprintf("%.2fs", maxLat.Seconds())
+	}
+
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(colorSuccess)
+	labelStyle := lipgloss.NewStyle().Bold(true).Foreground(colorAgentA)
+	valStyle := lipgloss.NewStyle().Foreground(colorText)
+	mutedStyle := lipgloss.NewStyle().Foreground(colorMuted)
+
+	lines := []string{
+		headerStyle.Render("═══ RELAYER OBSERVABILITY & SESSION METRICS ═════════════════════════"),
+		"",
+		fmt.Sprintf("  %s %s   %s %s",
+			labelStyle.Render("UPTIME:"), valStyle.Render(uptime.String()),
+			labelStyle.Render("SESSIONS:"), valStyle.Render(fmt.Sprintf("%d active / %d total (%d finished, %d err)", activeSessions, totalSessions, finishedSessions, errorSessions)),
+		),
+		"",
+		fmt.Sprintf("  %s %s",
+			labelStyle.Render("DECISIONS:"), valStyle.Render(fmt.Sprintf("%d total", totalDecisions)),
+		),
+		fmt.Sprintf("    • %s %s",
+			mutedStyle.Render("Human Operator:"), valStyle.Render(fmt.Sprintf("%d (Allow: %d, Deny: %d)", m.humanAllows+m.humanDenies, m.humanAllows, m.humanDenies)),
+		),
+		fmt.Sprintf("    • %s %s",
+			mutedStyle.Render("Automated Rules:"), valStyle.Render(fmt.Sprintf("%d (Allow: %d, Deny: %d)", m.autoAllows+m.autoDenies, m.autoAllows, m.autoDenies)),
+		),
+		"",
+		fmt.Sprintf("  %s %s   %s %s",
+			labelStyle.Render("GUARDRAILS:"), valStyle.Render(fmt.Sprintf("%d intercept(s) blocked", m.guardrailBlocks)),
+			labelStyle.Render("DIRECT INPUTS:"), valStyle.Render(fmt.Sprintf("%d line(s) sent", m.operatorInputs)),
+		),
+		"",
+		fmt.Sprintf("  %s %s (samples: %d, min: %s, max: %s)",
+			labelStyle.Render("HUMAN REACTION LATENCY (AVG):"),
+			valStyle.Render(avgLatencyStr),
+			len(m.latencies),
+			minLatencyStr,
+			maxLatencyStr,
+		),
+		"",
+		mutedStyle.Render("  [Press 'M' or 'Esc' to return to supervisor activity stream]"),
+	}
+
+	return style.Render(strings.Join(lines, "\n"))
 }
 
 func (m *Model) hasBackend(name string) bool {

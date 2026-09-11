@@ -569,6 +569,220 @@ input:focus-visible {
   pointer-events: none;
 }
 
+.terminal-search-bar {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: rgba(16, 23, 38, 0.95);
+  border: 1px solid rgba(66, 217, 232, 0.3);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+}
+
+.terminal-search-input {
+  width: 170px;
+  padding: 3px 8px;
+  background: rgba(8, 11, 17, 0.8);
+  border: 1px solid rgba(104, 126, 165, 0.25);
+  border-radius: 4px;
+  color: #e8edf7;
+  font-family: var(--mono);
+  font-size: 11px;
+  outline: none;
+}
+
+.terminal-search-input:focus {
+  border-color: #42d9e8;
+}
+
+.terminal-search-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid rgba(104, 126, 165, 0.2);
+  border-radius: 4px;
+  color: #8792a4;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.terminal-search-btn:hover {
+  background: rgba(66, 217, 232, 0.15);
+  color: #42d9e8;
+  border-color: rgba(66, 217, 232, 0.4);
+}
+
+.terminal-search-btn--close:hover {
+  background: rgba(255, 94, 115, 0.15);
+  color: #ff5e73;
+  border-color: rgba(255, 94, 115, 0.4);
+}
+
+.terminal-search-trigger {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: rgba(16, 23, 38, 0.6);
+  border: 1px solid rgba(104, 126, 165, 0.15);
+  border-radius: 4px;
+  color: #8792a4;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.terminal-search-trigger:hover {
+  opacity: 1;
+  background: rgba(16, 23, 38, 0.9);
+  color: #42d9e8;
+  border-color: rgba(66, 217, 232, 0.3);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Visual Configuration Editor (Settings Modal Tabs & Form)                   */
+/* -------------------------------------------------------------------------- */
+
+.settings-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 0 20px 12px;
+  border-bottom: 1px solid rgba(104, 126, 165, 0.15);
+  margin-bottom: 16px;
+}
+
+.settings-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted, #8792a4);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.settings-tab:hover {
+  color: #e8edf7;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.settings-tab--active {
+  color: #42d9e8;
+  background: rgba(66, 217, 232, 0.1);
+  border-color: rgba(66, 217, 232, 0.3);
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px 20px 20px;
+}
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: rgba(16, 23, 38, 0.6);
+  border: 1px solid rgba(104, 126, 165, 0.15);
+  border-radius: 8px;
+}
+
+.settings-group h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e8edf7;
+}
+
+.settings-group p {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #8792a4;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #e8edf7;
+}
+
+.settings-toggle input[type="checkbox"] {
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+  accent-color: #42d9e8;
+}
+
+.settings-select,
+.settings-input {
+  padding: 6px 10px;
+  background: rgba(8, 11, 17, 0.8);
+  border: 1px solid rgba(104, 126, 165, 0.25);
+  border-radius: 5px;
+  color: #e8edf7;
+  font-size: 12.5px;
+  font-family: inherit;
+  outline: none;
+}
+
+.settings-select:focus,
+.settings-input:focus {
+  border-color: #42d9e8;
+}
+
+.settings-webhooks-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.settings-webhooks-table th,
+.settings-webhooks-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid rgba(104, 126, 165, 0.12);
+}
+
+.settings-webhooks-table th {
+  color: #8792a4;
+  font-weight: 500;
+}
+
 .follow-button {
   position: absolute;
   z-index: 4;

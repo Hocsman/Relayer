@@ -13,6 +13,8 @@ import type {
   SaveAgentProfilesRequest,
   SaveAgentProfilesAndRestartRequest,
   TelemetrySnapshotView,
+  FullSettingsView,
+  SaveFullSettingsRequest,
 } from "../types/relayer";
 
 type NativeMethod<TArgs extends unknown[], TResult> = (...args: TArgs) => Promise<TResult>;
@@ -37,6 +39,8 @@ interface NativeBindings {
   VerifyAuditJournal: NativeMethod<[], AuditVerificationView>;
   ExportAuditReport: NativeMethod<[string], string>;
   GetTelemetrySnapshot: NativeMethod<[], TelemetrySnapshotView>;
+  GetFullSettings: NativeMethod<[], FullSettingsView>;
+  SaveFullSettings: NativeMethod<[string, SaveFullSettingsRequest], FullSettingsView>;
 }
 
 interface WailsRuntime {
@@ -117,6 +121,8 @@ export function createWailsBridge(): RelayerBridge {
     verifyAuditJournal: () => bindings.VerifyAuditJournal(),
     exportAuditReport: (format) => bindings.ExportAuditReport(format),
     getTelemetrySnapshot: () => bindings.GetTelemetrySnapshot(),
+    getFullSettings: () => bindings.GetFullSettings(),
+    saveFullSettings: (runID, request) => bindings.SaveFullSettings(runID, request),
     on<K extends BridgeEventName>(
       event: K,
       listener: (payload: BridgeEventMap[K]) => void,

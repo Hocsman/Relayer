@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/audit"
@@ -177,6 +178,9 @@ func safeProcessExitMetadata(metadata map[string]string) map[string]string {
 }
 
 func (m *Model) recordEventDetected(paneIndex int, event adapters.Event) bool {
+	if m.promptDetectedAt != nil {
+		m.promptDetectedAt[eventKey{sessionID: event.SessionID, eventID: event.ID}] = time.Now()
+	}
 	entry := m.eventAuditEntry(paneIndex, audit.KindEventDetected, event)
 	entry.Outcome = audit.OutcomeDetected
 	entry.Reason = "event_detected"
@@ -201,6 +205,9 @@ func (m *Model) recordPolicyEvaluation(
 	event adapters.Event,
 	evaluation policy.Evaluation,
 ) bool {
+	if evaluation.Action == policy.ActionDeny {
+		m.guardrailBlocks++
+	}
 	entry := m.eventAuditEntry(paneIndex, audit.KindPolicyEvaluated, event)
 	entry.DecisionBy = audit.DecisionByPolicy
 	entry.Rule = evaluation.RuleName
@@ -255,6 +262,26 @@ func (m *Model) recordDecision(
 	decision audit.Decision,
 	actor audit.DecisionBy,
 ) bool {
+	if m.promptDetectedAt != nil {
+		key := eventKey{sessionID: event.SessionID, eventID: event.ID}
+		if t, ok := m.promptDetectedAt[key]; ok {
+			m.latencies = append(m.latencies, time.Since(t))
+			delete(m.promptDetectedAt, key)
+		}
+	}
+	if actor == audit.DecisionByHuman {
+		if decision == audit.DecisionAllow {
+			m.humanAllows++
+		} else if decision == audit.DecisionDeny {
+			m.humanDenies++
+		}
+	} else if actor == audit.DecisionByPolicy {
+		if decision == audit.DecisionAllow {
+			m.autoAllows++
+		} else if decision == audit.DecisionDeny {
+			m.autoDenies++
+		}
+	}
 	entry := m.eventAuditEntry(paneIndex, audit.KindDecision, event)
 	entry.Decision = decision
 	entry.DecisionBy = actor
@@ -297,6 +324,7 @@ func (m *Model) recordOperatorInput(
 	outcome audit.Outcome,
 	reason string,
 ) bool {
+	m.operatorInputs++
 	entry := audit.Entry{
 		Kind:       audit.KindOperatorInput,
 		DecisionBy: audit.DecisionByHuman,

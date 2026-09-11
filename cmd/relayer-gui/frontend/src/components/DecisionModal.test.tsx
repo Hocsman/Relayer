@@ -128,8 +128,10 @@ describe("DecisionModal answer weighting", () => {
 
   // Exactly one primary action per dialog, and never the permissive one. With
   // no semantic answer the manual field is the only way to answer at all.
-  it("keeps the manual submit primary only when the adapter offers nothing", () => {
-    expect(render(event({ decisions: [] }))).toContain("button--primary");
-    expect(render(event({ decisions: ["allow", "deny"] }))).toContain("button--ghost");
+  it("renders keyboard shortcut badges on Allow and Deny buttons", () => {
+    const markup = render(event({ decisions: ["allow", "deny"] }));
+    expect(markup).toContain("Ctrl+↵");
+    expect(markup).toContain("Esc");
+    expect(markup).toContain('class="button__shortcut"');
   });
 });

@@ -78,6 +78,36 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
     }
   }, [agentsOpen, preflightOpen, auditOpen, observabilityOpen, state.app?.pendingEvents, state.app?.runStatus, selectedEventKey]);
 
+  useEffect(() => {
+    if (state.app?.runStatus !== "running") return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+        const num = parseInt(event.key, 10);
+        if (num >= 1 && num <= 8) {
+          const index = num - 1;
+          const agents = state.app?.agents ?? [];
+          if (index < agents.length) {
+            event.preventDefault();
+            const target = agents[index];
+            const pending = (state.app?.pendingEvents ?? []).find(
+              (e) => e.sessionID === target.sessionID,
+            );
+            if (pending) {
+              setSelectedEventKey(supervisionEventKey(pending.runID, pending.sessionID, pending.id));
+              setModalOpen(true);
+            } else {
+              setModalOpen(false);
+              const inputEl = document.getElementById(`line-${state.app?.runID}-${target.sessionID}`);
+              inputEl?.focus();
+            }
+          }
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [state.app?.runStatus, state.app?.runID, state.app?.agents, state.app?.pendingEvents]);
+
   if (state.connection === "loading" || !state.app) {
     if (state.connection === "failed") {
       return <StartupFailure message={state.fatalError || "The Relayer engine is not responding."} />;

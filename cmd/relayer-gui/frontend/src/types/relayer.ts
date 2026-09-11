@@ -383,6 +383,47 @@ export interface TelemetrySnapshotView {
 
 export type BridgeEventName = keyof BridgeEventMap;
 
+export interface SecuritySettings {
+  profile: string;
+  defaultAction: string;
+  dryRun: boolean;
+  blockDestructive: boolean;
+  blockExfiltration: boolean;
+  blockSensitivePaths: boolean;
+  blockOutsideWorkspace: boolean;
+  workspaceRoot: string;
+  rateLimitPerMinute: number;
+  maxConsecutiveAutoDecisions: number;
+}
+
+export interface NotificationWebhookSetting {
+  name: string;
+  url: string;
+  format: string;
+  minSeverity: string;
+  timeout: string;
+}
+
+export interface NotificationSettings {
+  enabled: boolean;
+  bell: boolean;
+  desktop: boolean;
+  minSeverity: string;
+  webhooks: NotificationWebhookSetting[];
+}
+
+export interface FullSettingsView extends AgentProfilesView {
+  security: SecuritySettings;
+  notifications: NotificationSettings;
+}
+
+export interface SaveFullSettingsRequest {
+  expectedRevision: string;
+  profiles?: AgentProfileInput[];
+  security?: SecuritySettings;
+  notifications?: NotificationSettings;
+}
+
 export interface RelayerBridge {
   getState(): Promise<AppState>;
   runPreflight(): Promise<PreflightReport>;
@@ -399,6 +440,8 @@ export interface RelayerBridge {
   getAgentProfiles(): Promise<AgentProfilesView>;
   saveAgentProfiles(runID: string, request: SaveAgentProfilesRequest): Promise<AgentProfilesView>;
   saveAgentProfilesAndRestart(request: SaveAgentProfilesAndRestartRequest): Promise<LifecycleResult>;
+  getFullSettings(): Promise<FullSettingsView>;
+  saveFullSettings(runID: string, request: SaveFullSettingsRequest): Promise<FullSettingsView>;
   stopRun(runID: string): Promise<AppState>;
   getAuditSummary(): Promise<AuditSummaryView>;
   getAuditEntries(filter?: AuditFilterInput): Promise<AuditEntryView[]>;
@@ -407,5 +450,6 @@ export interface RelayerBridge {
   getTelemetrySnapshot(): Promise<TelemetrySnapshotView>;
   on<K extends BridgeEventName>(event: K, listener: (payload: BridgeEventMap[K]) => void): () => void;
 }
+
 
 

@@ -511,12 +511,50 @@ export function createDemoBridge(): RelayerBridge {
     async getAgentProfiles() {
       return structuredClone(profiles);
     },
+    async getFullSettings() {
+      return {
+        ...structuredClone(profiles),
+        security: {
+          profile: "developer-friendly",
+          defaultAction: "ask",
+          dryRun: false,
+          blockDestructive: true,
+          blockExfiltration: true,
+          blockSensitivePaths: true,
+          blockOutsideWorkspace: false,
+          workspaceRoot: "/workspace",
+          rateLimitPerMinute: 30,
+          maxConsecutiveAutoDecisions: 10,
+        },
+        notifications: {
+          enabled: true,
+          bell: true,
+          desktop: true,
+          minSeverity: "info",
+          webhooks: [
+            {
+              name: "Slack Ops",
+              url: "https://hooks.slack.com/services/demo",
+              format: "slack",
+              minSeverity: "warning",
+              timeout: "5s",
+            },
+          ],
+        },
+      };
+    },
     async saveAgentProfiles(runID, request) {
       requireRun(runID);
       if (["starting", "restarting", "rollback", "stopping"].includes(state.runStatus)) {
         throw new Error("A run change is already in progress.");
       }
       return saveProfiles(request);
+    },
+    async saveFullSettings(runID, request) {
+      if (request.profiles) {
+        saveProfiles({ expectedRevision: request.expectedRevision, profiles: request.profiles });
+      }
+      return this.getFullSettings();
     },
     async saveAgentProfilesAndRestart(request) {
       requireRun(request.expectedRunID);
