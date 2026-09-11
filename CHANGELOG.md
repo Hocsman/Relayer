@@ -6,7 +6,36 @@ without implying semantic-versioning stability before the first release.
 
 ## [Unreleased]
 
-## [0.3.0-alpha.1] - 2026-09-11
+## [0.3.0] - 2026-09-11
+
+General Availability (GA) release of Relayer, concluding the Alpha phase with enterprise telemetry, multi-channel alerting, visual configuration hot-reload, terminal comfort, and strict TUI/GUI parities.
+
+### Added
+
+- **Visual Settings Editor (Desktop GUI)**:
+  - Interactive tabbed configuration: `🤖 Agents`, `🛡️ Security & Guardrails`, and `🔔 Notifications & Webhooks`.
+  - Zero-downtime hot-reload: security policies, guardrails, and webhook endpoints are updated without restarting or interrupting active agent processes.
+- **Terminal Search (`Ctrl+F`)**:
+  - Integrated `@xterm/addon-search` in Desktop GUI agent viewports with match counter, match highlighting, and circular navigation (`Enter` / `Shift+Enter`).
+- **Rapid Arbitration Shortcuts**:
+  - `Alt+1..8`: Direct focus switch and instant arbitration dialog opening.
+  - `Ctrl+Enter`: Quick approval (`Allow`) or direct line send.
+  - `Esc`: Quick refusal (`Deny`).
+- **TUI Metrics Overlay (`m` / `M`)**:
+  - Bubble Tea full-screen overlay displaying session uptime, decision counts, guardrail blocks, and operator reaction latency statistics.
+- **Enterprise Observability & Grafana Stack**:
+  - Official Grafana dashboard template (`telemetry/grafana/dashboards/relayer-dashboard.json`).
+  - Pre-provisioned `docker-compose.telemetry.yml` with Prometheus and Grafana.
+- **Multi-Channel Alerts**:
+  - Native OS notifications on Windows (Toast), macOS (osascript), and Linux (`notify-send`).
+  - Webhooks for Slack (`blocks`), Discord (`embeds`), and generic JSON with adaptive rate limiting.
+
+### Changed
+
+- Promoted Relayer to General Availability (GA) status across CLI and Desktop GUI packages.
+- Enhanced Desktop GUI typography with enlarged, comfortable font sizes in tables, badges, and inventory cards.
+
+
 
 First pre-release of the 0.3.x cycle: multi-platform desktop distribution, Goose & Open-Interpreter agent adapters, contextual path-based policies, automated Playwright E2E testing, PTY stress endurance, and native OpenTelemetry & Prometheus telemetry export.
 
@@ -502,7 +531,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.3.0-alpha.1...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.3.0...main
+[0.3.0]: https://github.com/Hocsman/Relayer/releases/tag/v0.3.0
 [0.3.0-alpha.1]: https://github.com/Hocsman/Relayer/compare/v0.2.0...v0.3.0-alpha.1
 [0.2.0]: https://github.com/Hocsman/Relayer/compare/v0.1.1-alpha...v0.2.0
 [0.1.1-alpha]: https://github.com/Hocsman/Relayer/compare/v0.1.0-alpha...v0.1.1-alpha

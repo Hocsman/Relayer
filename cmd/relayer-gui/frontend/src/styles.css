@@ -768,19 +768,22 @@ input:focus-visible {
 .settings-webhooks-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 13.5px;
 }
 
 .settings-webhooks-table th,
 .settings-webhooks-table td {
-  padding: 8px 10px;
+  padding: 10px 12px;
   text-align: left;
   border-bottom: 1px solid rgba(104, 126, 165, 0.12);
 }
 
 .settings-webhooks-table th {
   color: #8792a4;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .follow-button {
@@ -1737,8 +1740,8 @@ input:focus-visible {
   text-align: center;
 }
 
-.preflight-counts dt { color: var(--faint); font-size: 7.5px; text-transform: uppercase; }
-.preflight-counts dd { margin: 3px 0 0; color: var(--text); font-size: 15px; font-weight: 720; }
+.preflight-counts dt { color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+.preflight-counts dd { margin: 3px 0 0; color: var(--text); font-size: 16px; font-weight: 720; }
 
 .preflight-facts {
   display: grid;
@@ -1755,8 +1758,8 @@ input:focus-visible {
   background: rgba(255, 255, 255, 0.014);
 }
 
-.preflight-facts dt { color: var(--faint); font-size: 7.5px; text-transform: uppercase; }
-.preflight-facts dd { margin: 4px 0 0; overflow: hidden; color: #bdc8da; font-size: 9px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.preflight-facts dt { color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+.preflight-facts dd { margin: 4px 0 0; overflow: hidden; color: #bdc8da; font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 
 .preflight-inventory {
   display: grid;
@@ -1776,7 +1779,7 @@ input:focus-visible {
 .preflight-inventory h2 {
   margin: 0 0 7px;
   color: var(--faint);
-  font-size: 7.5px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -1796,14 +1799,14 @@ input:focus-visible {
   justify-content: space-between;
   gap: 10px;
   color: var(--muted);
-  font-size: 8.5px;
+  font-size: 12px;
 }
 
 .preflight-inventory li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.preflight-inventory li strong { color: #b8c3d5; font-size: 8px; font-weight: 650; }
+.preflight-inventory li strong { color: #b8c3d5; font-size: 11.5px; font-weight: 650; }
 .preflight-inventory .preflight-agent { align-items: flex-start; }
 .preflight-agent > div { display: grid; min-width: 0; gap: 2px; }
-.preflight-agent small { color: var(--faint); font-size: 7.5px; }
+.preflight-agent small { color: var(--faint); font-size: 11px; }
 .preflight-agent > strong { max-width: 50%; line-height: 1.4; text-align: right; }
 .inventory-status--installed { color: var(--green) !important; }
 .inventory-status--not_installed { color: var(--red) !important; }
@@ -1819,8 +1822,8 @@ input:focus-visible {
   margin-bottom: 9px;
 }
 
-.preflight-results__heading h2 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
-.preflight-results__heading span { color: var(--faint); font-size: 8.5px; }
+.preflight-results__heading h2 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+.preflight-results__heading span { color: var(--faint); font-size: 11px; }
 
 .preflight-checks {
   display: grid;
@@ -1835,7 +1838,7 @@ input:focus-visible {
   border: 1px dashed var(--border);
   border-radius: 10px;
   color: var(--faint);
-  font-size: 9px;
+  font-size: 12px;
   text-align: center;
 }
 
@@ -1854,11 +1857,11 @@ input:focus-visible {
 .preflight-check--block { border-color: rgba(255, 94, 115, 0.24); }
 
 .preflight-check__mark {
-  width: 23px;
-  height: 23px;
+  width: 24px;
+  height: 24px;
   color: var(--green);
   background: rgba(73, 215, 154, 0.1);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .preflight-check--warning .preflight-check__mark { color: var(--orange); background: rgba(255, 159, 82, 0.1); }
@@ -1866,18 +1869,19 @@ input:focus-visible {
 
 .preflight-check__content { min-width: 0; }
 .preflight-check__content > div { display: flex; align-items: center; gap: 8px; }
-.preflight-check__content strong { font-size: 10.5px; }
-.preflight-check__content span { color: var(--faint); font-size: 7.5px; text-transform: uppercase; }
-.preflight-check__content p { margin: 4px 0 0; color: var(--muted); font-size: 8.5px; line-height: 1.45; }
+.preflight-check__content strong { font-size: 12.5px; }
+.preflight-check__content span { color: var(--faint); font-size: 11px; text-transform: uppercase; }
+.preflight-check__content p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
 
 .preflight-check__status {
-  padding: 4px 7px;
+  padding: 4px 8px;
   border-radius: 999px;
   color: var(--green);
   background: rgba(73, 215, 154, 0.08);
-  font-size: 7.5px;
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .preflight-check--warning .preflight-check__status { color: var(--orange); background: rgba(255, 159, 82, 0.08); }
@@ -1894,7 +1898,7 @@ input:focus-visible {
   background: rgba(7, 10, 17, 0.85);
 }
 
-.preflight-panel__footer p { margin: 0; color: var(--faint); font-size: 8.5px; }
+.preflight-panel__footer p { margin: 0; color: var(--faint); font-size: 11.5px; }
 
 /* Audit Panel Layer & Container */
 .audit-layer {
@@ -2179,15 +2183,15 @@ input:focus-visible {
 .audit-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 9px;
+  font-size: 12.5px;
   text-align: left;
 }
 
 .audit-table th {
-  padding: 8px 10px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   color: var(--faint);
-  font-size: 7.5px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-weight: 650;
@@ -2196,7 +2200,7 @@ input:focus-visible {
 }
 
 .audit-table td {
-  padding: 7px 10px;
+  padding: 9px 12px;
   border-bottom: 1px solid rgba(146, 163, 194, 0.08);
   color: var(--muted);
   vertical-align: middle;
@@ -2212,7 +2216,7 @@ input:focus-visible {
 
 .audit-cell--mono {
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -2224,9 +2228,9 @@ input:focus-visible {
 .audit-cell--reason code {
   color: var(--cyan);
   background: rgba(66, 217, 232, 0.08);
-  padding: 2px 4px;
+  padding: 2px 6px;
   border-radius: 4px;
-  font-size: 8px;
+  font-size: 11.5px;
 }
 
 .audit-table__empty {
@@ -2234,21 +2238,21 @@ input:focus-visible {
   border: 1px dashed var(--border);
   border-radius: 12px;
   color: var(--faint);
-  font-size: 9.5px;
+  font-size: 13px;
   text-align: center;
 }
 
 .audit-row__expand-button {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.03);
   cursor: pointer;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
   padding: 0;
 }
 
@@ -2260,7 +2264,7 @@ input:focus-visible {
 
 /* Detail accordion */
 .audit-row-detail td {
-  padding: 12px 14px;
+  padding: 14px 16px;
   background: rgba(10, 14, 23, 0.85);
   border-bottom: 1px solid var(--border);
 }
@@ -2268,23 +2272,23 @@ input:focus-visible {
 .audit-detail-content {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .audit-detail-facts {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .audit-detail-facts dt,
 .audit-detail-summary dt,
 .audit-detail-metadata dt {
   color: var(--faint);
-  font-size: 7.5px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  margin-bottom: 2px;
+  margin-bottom: 4px;
 }
 
 .audit-detail-facts dd,
@@ -2292,21 +2296,21 @@ input:focus-visible {
 .audit-detail-metadata dd {
   margin: 0;
   color: var(--text);
-  font-size: 9px;
+  font-size: 12.5px;
 }
 
 .audit-detail-meta-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 
 .audit-meta-tag {
-  padding: 2px 6px;
+  padding: 3px 8px;
   border: 1px solid var(--border);
   border-radius: 5px;
   background: rgba(255, 255, 255, 0.03);
-  font-size: 8px;
+  font-size: 11.5px;
   color: var(--muted);
 }
 
@@ -2318,9 +2322,9 @@ input:focus-visible {
 .audit-badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 6px;
+  padding: 3px 8px;
   border-radius: 999px;
-  font-size: 7.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;

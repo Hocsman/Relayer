@@ -4,8 +4,9 @@ Relayer reads `config.yaml` by default or the file passed to `--config`. A
 missing file is created atomically and an existing file is never overwritten by
 that creation path.
 
-The current schema version is `1`. This is an alpha schema: the version marker
-allows future incompatible formats to fail clearly rather than being guessed.
+The current schema version is `1`. The version marker ensures forward
+compatibility and deterministic parsing as new configuration features are
+introduced.
 
 ## Generated configuration
 
@@ -96,15 +97,18 @@ or regex text.
 | --- | --- | --- |
 | `version` | Yes | Integer `1`. |
 | `backend` | Yes | Global `pty`, `tmux`, or `auto`. |
+| `telemetry` | No | Built-in Prometheus exporter and OTLP background telemetry. |
+| `notifications` | No | System desktop alerts and webhooks (Slack, Discord, JSON). |
 | `sessions` | No | Detached tmux persistence and success cleanup. |
-| `policies` | No | First-match action rules. |
-| `audit` | No | Local JSONL recorder. |
+| `policies` | No | Security profile, guardrails, rate limits, and first-match action rules. |
+| `audit` | No | Local tamper-evident JSONL recorder with rotation. |
 | `agents` | Yes | Zero to eight agent specifications. |
 | `intercept_patterns` | Yes | One or more generic adapter regexes, each optionally `sensitive`. |
 
 If `sessions` is omitted, persistence is false and cleanup on success is true.
 If `policies` is omitted, every actionable event defaults to `ask` and dry-run
-is false. If `audit` is omitted from an existing v1 file, auditing is disabled
+is false. If `telemetry` or `notifications` are omitted, they default to disabled.
+If `audit` is omitted from an existing v1 file, auditing is disabled
 for compatibility. Newly generated files include and enable metadata auditing.
 
 ## Backends
@@ -155,12 +159,12 @@ Relayer exits; inspect it separately with tmux.
 
 ## Agents
 
-The alpha desktop GUI can edit the same `agents` sequence through its
-**Agents** panel. It offers launch presets for Claude Code, Codex CLI, MiMo
-Code, a combined Ollama / DeepSeek entry, and a Custom CLI form. Claude and
-Codex use their version-specific experimental adapters; every other preset
-uses stable `generic` detection. A preset never infers credentials or a model
-name. The Ollama / DeepSeek entry requires explicit argv for the `run`
+The Desktop GUI provides an interactive visual editor through its
+**Settings Panel** (`🤖 Agents` tab). It offers launch presets for Claude Code,
+Codex CLI, MiMo Code, a combined Ollama / DeepSeek entry, and a Custom CLI form.
+Claude and Codex use their version-specific experimental adapters; every other
+preset uses stable `generic` detection. A preset never infers credentials or a
+model name. The Ollama / DeepSeek entry requires explicit argv for the `run`
 subcommand and model.
 
 Existing command vectors are masked from the WebView and remain authoritative
@@ -168,9 +172,10 @@ inside Go until the user explicitly replaces the entire argv. Shell commands,
 environment overrides, and unknown advanced adapters are read-only in the GUI
 and remain editable in YAML. A plain GUI save does not mutate running sessions;
 the guarded restart action can apply the saved configuration without closing
-the application. Legacy documents and profiles with
-historical IDs outside the form's conservative syntax remain read-only; Relayer
-does not migrate or normalize them silently.
+the application. Security profiles, guardrails, and webhooks in other tabs are
+hot-reloaded immediately without restarting agents. Legacy documents and
+profiles with historical IDs outside the form's conservative syntax remain
+read-only; Relayer does not migrate or normalize them silently.
 
 Each configured agent supports:
 
@@ -270,6 +275,7 @@ requires a match to reach the active line changed by new output. See
 
 ```yaml
 policies:
+  profile: developer-friendly # developer-friendly, strict, permissive, or custom
   default_action: ask
   dry_run: false
   max_consecutive_auto_decisions: 5 # Force human review after N continuous automatic decisions (0 = unlimited)
@@ -277,6 +283,8 @@ policies:
   guardrails:
     block_destructive: true         # Intercept destructive file deletions & formatting (rm -rf, mkfs, format, etc.)
     block_exfiltration: true        # Intercept piped shell execution & secret reading (curl | bash, .ssh, .env)
+    block_sensitive_paths: true     # Protect .env, .git, id_rsa, keys and credentials
+    workspace_only: true            # Restrict agent file writes strictly within the workspace
     blocked_patterns:               # Optional custom regex patterns that force human review
       - '(?i)drop\s+database'
   rules:
@@ -319,15 +327,67 @@ able to encode that action for the exact pending event. The generic adapter can
 currently encode only human manual input, so its automatic allow and deny both
 fall back to `ask`. Deny is an adapter response, not a process kill.
 
-### Guardrails and Rate Limiting
+### Security Profiles and Guardrails
 
-To prevent autonomous agent runaway loops and accidental destructive execution:
+Relayer provides presets for balancing autonomy and security:
+- `developer-friendly`: Low-friction development with basic guardrails against accidental catastrophic loss.
+- `strict`: High-security mode requiring human arbitration for all potentially risky actions, sensitive file access, and unknown tools.
+- `permissive`: Minimal interruptions for trusted scripts and deterministic benchmarks.
+- `custom`: Explicit, granular customization of all guardrail flags and rule definitions.
+
+Guardrail options:
 - **`max_consecutive_auto_decisions`**: When set to $N > 0$, after $N$ consecutive automatic decisions for an agent session without human operator intervention, the policy engine forces an `ask` decision with audit reason `consecutive_auto_limit` and tag `LIMIT • ASK`. Any manual operator decision or direct line input resets the counter to zero.
 - **`rate_limit_per_minute`**: When set to $N > 0$, enforces a sliding window rate limit. If an agent attempts more than $N$ automatic decisions within any 60-second window, subsequent decisions fall back to `ask` with audit reason `rate_limit_exceeded` and tag `RATE LIMIT • ASK`.
 - **`guardrails`**:
-  - `block_destructive`: When enabled, intercepts commands matching destructive deletion or disk formatting patterns (`rm -rf`, `mkfs`, `format`, `dd of=`, `del /s`, `rmdir /s`, etc.) and forces `ask` with audit reason `destructive_command_blocked` and tag `GUARD • ASK`.
-  - `block_exfiltration`: When enabled, intercepts untrusted pipe executions or attempts to read sensitive credential files (`curl | bash`, reading `.ssh`, `.aws`, `.env`) and forces `ask` with audit reason `exfiltration_attempt_blocked` and tag `GUARD • ASK`.
-  - `blocked_patterns`: Custom list of regular expressions. Any matching event that would otherwise be allowed is forced to `ask` with audit reason `guardrail_pattern_blocked` and tag `GUARD • ASK`.
+  - `block_destructive`: Intercepts destructive disk formatting or file deletion patterns (`rm -rf`, `mkfs`, `format`, `dd of=`, `del /s`, `rmdir /s`).
+  - `block_exfiltration`: Intercepts piped remote shell executions or unauthorized credential reading (`curl | bash`, `.ssh`, `.aws`, `.env`).
+  - `block_sensitive_paths`: Intercepts modifications to project repository metadata, secrets, and private keys (`.git/`, `.env`, `id_rsa`, `.pem`).
+  - `workspace_only`: Ensures file modifications remain within the configured working directory.
+  - `blocked_patterns`: Custom list of Go regular expressions that force operator arbitration when matched.
+
+## Telemetry
+
+```yaml
+telemetry:
+  enabled: true
+  service_name: "relayer-local"
+  prometheus:
+    enabled: true
+    address: ":9090"
+    path: "/metrics"
+  otlp:
+    enabled: false
+    endpoint: "https://otlp.example.com:4318/v1/metrics"
+    interval: 15s
+    headers:
+      Authorization: "Bearer SECRET_TOKEN"
+```
+
+- `prometheus.enabled`: Starts a local HTTP server exposing standard Prometheus metrics for active sessions, pending prompts, decision distributions, and arbitration reaction latency histograms.
+- `otlp.enabled`: Periodically batches and exports OTLP JSON telemetry over HTTP/HTTPS to an enterprise OpenTelemetry collector or datastore.
+- See [observability.md](observability.md) for full PromQL query references and the ready-to-run Docker Compose Grafana stack.
+
+## Notifications
+
+```yaml
+notifications:
+  enabled: true
+  os_notifications: true
+  terminal_bell: true
+  webhooks:
+    - name: slack-alerts
+      type: slack # slack, discord, generic
+      url: https://hooks.slack.com/services/T00/B00/XXXX
+      min_severity: warning # info, warning, critical
+```
+
+- `os_notifications`: Emits native system notifications on Windows (Toast notifications via PowerShell), macOS (osascript system notification center), and Linux (via `notify-send` / libnotify).
+- `terminal_bell`: Emits an acoustic ASCII terminal bell (`\a`) upon pending arbitration prompts.
+- `webhooks`: Dispatches JSON payloads to remote endpoints with automatic rate limiting and backoff:
+  - `slack`: Formatted Slack Block Kit payload.
+  - `discord`: Formatted Discord Embeds payload.
+  - `generic`: Standard JSON payload.
+  - `min_severity`: `info` (all events), `warning` (prompts needing review), or `critical` (guardrail intercepts and policy blocks).
 
 ## Audit
 

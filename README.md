@@ -29,13 +29,12 @@ Try it in one command — no configuration, no credentials, two synthetic agents
 go run github.com/Hocsman/Relayer/cmd/relayer@latest
 ```
 
-> [!WARNING]
-> Relayer is alpha software. Configuration, adapter, backend, and audit APIs may
-> change without compatibility guarantees. Prompt detection is heuristic: it can
-> miss a prompt, so this is supervision rather than enforcement. Use it with
-> disposable work first, review every proposed action, and keep independent
-> backups. See the [security model](docs/security-model.md) before using it on
-> valuable data.
+> [!NOTE]
+> **Relayer v0.3.0 is General Availability (GA)**. It provides production-ready
+> supervision, enterprise telemetry, system alerts, and visual configuration.
+> Prompt detection is heuristic: it assists human operators rather than replacing
+> security boundaries. Always review proposed actions and maintain independent
+> backups. See the [security model](docs/security-model.md).
 
 ## What works today
 
@@ -43,6 +42,13 @@ go run github.com/Hocsman/Relayer/cmd/relayer@latest
 - Exact argument-vector commands, or explicitly requested shell commands
   (`/bin/sh -c` on Unix, `cmd.exe /c` on Windows).
 - PTY, tmux, automatic tmux-to-PTY selection, and mixed concrete backends.
+- Native Windows Pseudo Console (ConPTY) support for full native Windows execution.
+- Visual configuration editor in Desktop GUI with hot-reload (Policies, Guardrails, Webhooks) without agent restart.
+- Interactive terminal text search (`Ctrl+F`) with circular navigation and highlighting via `@xterm/addon-search`.
+- Operator arbitration shortcuts: `Alt+1..8` (agent focus/modal), `Ctrl+Enter` (Allow), `Esc` (Deny).
+- Fullscreen TUI metrics overlay (`m` / `M`) reporting uptime, decision ratios, and reaction latency stats.
+- Enterprise telemetry: built-in Prometheus exporter (`:9090/metrics`), OTLP batch exporter, and Grafana Docker Compose stack.
+- Multi-channel notifications: native OS desktop alerts (Windows Toast, macOS Notification Center, Linux notify-send) and remote webhooks (Slack, Discord, generic JSON).
 - A bounded terminal-output view and bounded streaming prompt detection.
 - Deliberate single-line operator input in the TUI and GUI, separate from
   semantic prompt decisions and guarded by an atomic no-pending-event check.
@@ -59,11 +65,8 @@ go run github.com/Hocsman/Relayer/cmd/relayer@latest
 - Optional local JSONL audit records with rotation, restrictive Unix
   permissions, bounded fields, and mandatory redaction.
 - Two deterministic Bash mock agents when `agents: []` is configured.
-- An optional source-built Wails desktop GUI for macOS, Linux, and Windows; the TUI
-  remains fully available. Its local agent picker can prepare one to eight
-  Claude Code, Codex CLI, MiMo Code, Ollama / DeepSeek, or custom CLI
-  launch profiles, then start, stop, or generation-safely restart them without
-  closing the application.
+- Desktop GUI (Wails) for macOS, Linux, and Windows; the Bubble Tea TUI
+  remains fully available.
 
 Relayer is not a sandbox, a policy enforcement boundary, a terminal emulator,
 or a substitute for reviewing an agent's work. See the
@@ -71,12 +74,12 @@ or a substitute for reviewing an agent's work. See the
 
 ## Platform status
 
-| Platform | Alpha status | Notes |
+| Platform | Status | Notes |
 | --- | --- | --- |
-| Linux | Supported (CI); GUI alpha | PTY backend; tmux backend when tmux is installed. |
-| macOS | Supported (CI); GUI alpha | PTY backend; tmux backend when tmux is installed. |
-| Windows, native | Supported; GUI alpha | Native ConPTY backend for PTY execution. tmux backend unavailable. |
-| WSL | Not validated | No support guarantee during alpha. |
+| Linux | Supported (GA) | PTY backend; tmux backend when tmux is installed. Desktop GUI and CLI packages published. |
+| macOS | Supported (GA) | PTY backend; tmux backend when tmux is installed. Universal Desktop GUI and CLI packages published. |
+| Windows, native | Supported (GA) | Native ConPTY backend for PTY execution. Desktop GUI and CLI packages published. |
+| WSL | Community | PTY and tmux backends functional under WSL Linux distributions. |
 
 ## Prerequisites
 
@@ -137,13 +140,13 @@ warnings, and `1` when startup should remain blocked. The desktop GUI exposes
 the same report through **Health** and **Check the installation**. See the
 [doctor guide](docs/doctor.md) for the checks and their limits.
 
-### Desktop GUI (alpha)
+### Desktop GUI
 
 ![Two agents side by side, one stopped and marked as needing action, with the supervision queue and the audit and policy state on the right](docs/gui-dashboard.png)
 
-The same supervision, in a window. Each agent keeps its own pane; the queue on
-the right is what is waiting for a human, and both agents here are marked
-`SIMULATED` because the demo runs scripted mocks rather than real CLIs.
+The same supervision, in a high-performance desktop window. Each agent keeps its
+own pane; the queue on the right is what is waiting for a human, and both agents
+here are marked `SIMULATED` because the demo runs scripted mocks rather than real CLIs.
 
 ![A supervision prompt with the end of the agent output, an Allow and a Deny button of equal weight, and a field to answer manually](docs/gui-decision.png)
 
@@ -153,61 +156,33 @@ verified bytes for them — here the Codex adapter — and they carry the same
 weight, because a supervision tool must not make the permissive answer the one
 the eye picks. Everything else is answered by typing what the CLI expects.
 
-The optional GUI uses Wails v2.14.0 and is currently a source build for macOS
-and Linux. It does not provide functional Windows agent execution, an
-installer, or a published desktop release.
+Pre-compiled, signed standalone desktop bundles are published for Windows (`x64`),
+macOS (Universal `x64` + `arm64`), and Linux (`amd64`) on the [Releases page](https://github.com/Hocsman/Relayer/releases).
+
+You can also build the desktop GUI from source using Wails v2.14.0:
 
 ```bash
 go install github.com/wailsapp/wails/v2/cmd/wails@v2.14.0
 cd cmd/relayer-gui
 wails doctor
 wails dev       # development window
-wails build     # local development artifact below build/bin/
+wails build     # local production artifact below build/bin/
 ```
 
 By default the GUI loads
 `os.UserConfigDir()/relayer/config.yaml`; set `RELAYER_CONFIG` to use another
-path. Applications opened from Finder may not inherit the Homebrew paths used
-by an interactive shell, so use absolute executable paths or launch the app
-with an explicit `PATH` when required.
+path. Applications opened from Finder or desktop launchers may not inherit the shell
+`PATH`, so use absolute executable paths or launch the app with an explicit `PATH`
+when required.
 
-Agent panels display bounded, ANSI-stripped text snapshots, not a full VT/ANSI
-terminal. The Bubble Tea TUI and its native tmux attach workflow are preserved.
-Each running card also has a single-line composer for ordinary agent
-instructions. Its text is cleared before the native call and is never written
-to the audit log; only static attempt/outcome metadata is recorded.
-Use **Agents** in the top bar to configure exact argv, working directory, and
-backend. Existing argv values are never sent to the WebView: replacing a
-command requires re-entering its complete vector. Newly entered argv, including
-an explicit Ollama model identifier, is persisted in the local YAML; Relayer
-never infers a model, and secret-shaped-argument filtering remains heuristic.
-The GUI opens idle and does
-not launch a process until you choose **Save and start**. While a run
-is active, **Save** changes only the YAML; **Save and restart**
-applies it through a guarded lifecycle transaction. Historical configuration
-shapes are shown read-only until migrated to `version: 1`.
-
-Each desktop run has a new opaque `runID`. Session mutations and emitted events
-carry that identity, so a delayed result from a stopped generation cannot act
-on a replacement run. Before a GUI stop or restart, Relayer stops admitting
-new decisions and begins a strict PTY/tmux stop so blocked I/O can return. It
-then drains every already-admitted mutation and its terminal audit outcome
-before closing the run. This explicit lifecycle stop overrides
-`sessions.persist_on_exit`; ordinary application shutdown keeps the configured
-persistence behavior.
-
-A restart publishes and preflights the candidate configuration before stopping
-the active run. If candidate startup then fails, Relayer atomically restores
-the exact previous YAML when the candidate revision is still current, then
-attempts to launch the previous immutable plan as a fresh run. A concurrent
-Relayer writer is protected by the revision lock. An editor that does not use
-that lock remains best-effort because portable filesystems do not provide an
-atomic compare-and-swap for file contents. If cleanup or restoration is
-uncertain, the GUI enters a failed, fail-closed state and does not start
-another run.
+The Desktop GUI features:
+- **Visual Settings Editor**: Interactive tabs for `🤖 Agents`, `🛡️ Security & Guardrails`, and `🔔 Notifications & Webhooks`. Edit policies, sensitive paths, and webhooks with immediate **hot-reload** without interrupting or restarting running agent processes.
+- **Terminal Search (`Ctrl+F`)**: Integrated xterm search toolbar with match count, highlighting, circular `Enter` / `Shift+Enter` navigation, and `Esc` dismissal.
+- **Arbitration Shortcuts**: `Alt+1..8` to focus agents / open pending arbitration modals, `Ctrl+Enter` to approve (`Allow`), and `Esc` to deny (`Deny`).
+- **Live Observability Dashboard**: Circular SVG gauges for decision ratios, operator reaction latency histograms, guardrail block counts, and live exporter status.
 
 See the [desktop GUI guide](docs/gui.md) for prerequisites, configuration,
-build commands, platform status, and rendering limitations.
+shortcuts, and settings reference.
 
 ### Releases
 
@@ -220,7 +195,7 @@ Select a published `OS` (`linux` or `darwin`) and `ARCH` (`amd64` or `arm64`),
 then download and verify the matching archive:
 
 ```bash
-VERSION=0.1.0-alpha
+VERSION=0.3.0
 OS=linux
 ARCH=amd64
 ARCHIVE="relayer_${VERSION}_${OS}_${ARCH}.tar.gz"
@@ -296,6 +271,18 @@ agents, but they are deprecated. Their values are tokenized into an argument
 vector; shell operators, variable expansion, globbing, pipes, substitutions,
 and redirections are not interpreted.
 
+## Observability with Prometheus & Grafana
+
+Relayer exports enterprise-grade telemetry out of the box. Spin up the bundled Prometheus and Grafana stack in one command:
+
+```bash
+docker compose -f docker-compose.telemetry.yml up -d
+```
+
+- **Prometheus** runs at `http://localhost:9090` and scrapes Relayer's `:9090/metrics` endpoint.
+- **Grafana** is pre-configured at `http://localhost:3000` (anonymous viewer access, or `admin`/`admin`) with the official dashboard visualising active sessions, pending prompts, decision ratios (allow/deny/auto), guardrail violations, and 95th percentile human reaction latencies.
+- See the [observability guide](docs/observability.md) for metric schemas and OTLP exporter setup.
+
 ## TUI controls
 
 | Key or input | Action |
@@ -303,10 +290,11 @@ and redirections are not interpreted.
 | `Ctrl+Left`, `Ctrl+Right` | Move focus between agents and the supervisor. |
 | `Ctrl+PageUp`, `Ctrl+PageDown` | Move between pages of agents. |
 | `Up`, `Down`, `PageUp`, `PageDown` | Scroll the focused viewport. |
-| Mouse wheel | Scroll the viewport under the pointer. |
-| Left click | Select an agent or the supervisor. |
+| `Mouse wheel` | Scroll the viewport under the pointer. |
+| `Left click` | Select an agent or the supervisor. |
+| `m`, `M` | Toggle fullscreen session metrics & latency overlay. |
 | `i` on a focused idle agent | Compose one ordinary line for that agent. |
-| `Esc` while composing | Cancel and erase the ordinary line. |
+| `Esc` while composing | Cancel and erase the ordinary line (or close metrics overlay). |
 | `Enter` while composing | Send the ordinary line with one carriage return. |
 | `Enter` on a pending prompt | Send the supervisor input to that agent. An empty field is refused: the answer must be typed. |
 | `F2`, `F3` on a pending prompt | Answer semantically: allow, or deny. The adapter encodes it, and the audit records the decision as made by a human. Adapters that cannot represent the answer leave the prompt pending. |
@@ -344,13 +332,40 @@ starts. The following example shows every top-level section:
 version: 1
 backend: auto # pty, tmux, or auto
 
+telemetry:
+  enabled: true
+  service_name: "relayer-local"
+  prometheus:
+    enabled: true
+    address: ":9090"
+    path: "/metrics"
+  otlp:
+    enabled: false
+    endpoint: ""
+    interval: 15s
+
+notifications:
+  enabled: true
+  os_notifications: true
+  terminal_bell: true
+  webhooks:
+    - name: slack-ops
+      type: slack # slack, discord, generic
+      url: https://hooks.slack.com/services/...
+      min_severity: warning
+
 sessions:
   persist_on_exit: false
   cleanup_on_success: true
 
 policies:
+  profile: developer-friendly # developer-friendly, strict, permissive, custom
   default_action: ask
   dry_run: false
+  guardrails:
+    block_destructive: true   # Blocks rm -rf, mkfs, format
+    block_exfiltration: true  # Blocks curl | bash, reading .ssh / .env
+    workspace_only: true      # Restricts agent modifications to workspace
   rules:
     - name: ask-reviewer-confirmations
       match:
@@ -513,8 +528,7 @@ sensitive repositories.
 - Separate Relayer processes do not coordinate rotation of one shared audit
   path.
 - Configuration files and command-line arguments are not secret stores.
-- WSL has not been validated, and native Windows agent execution is
-  unsupported.
+- Native Windows agent execution uses ConPTY; the tmux backend remains Unix-only.
 
 See [troubleshooting](docs/troubleshooting.md) for startup, tmux, prompt,
 rendering, persistence, and audit diagnostics.

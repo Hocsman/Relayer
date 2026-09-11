@@ -7,12 +7,9 @@ output after those programs have started. Read the complete
 
 ## Supported versions
 
-Relayer is alpha software and has no published release at the time of writing.
-The current `main` branch receives best-effort security fixes. There is no
-security support promise, backport policy, or response-time SLA for older
-commits, forks, or unreviewed binaries.
-
-This policy will be revised when the project publishes supported releases.
+Relayer v0.3.0 is the current General Availability (GA) release. Security fixes
+are published for the latest supported release and the `main` branch. Official
+releases, signatures, and SBOMs are published on GitHub Releases.
 
 ## Reporting a vulnerability
 
@@ -70,7 +67,7 @@ Relayer does not:
   malware, backups, disk snapshots, or process inspection;
 - make its local JSONL audit tamper-evident or cryptographically signed;
 - guarantee redaction of unknown secret formats;
-- validate or support native Windows or WSL during the alpha.
+- native Windows is supported via ConPTY (tmux backend is Unix-only).
 
 The detailed threat model, controls, residual risks, and safer operating
 practices are in [docs/security-model.md](docs/security-model.md). Audit-specific

@@ -1,7 +1,6 @@
 # Architecture
 
-This document describes the current alpha implementation. Package boundaries
-and internal interfaces are intentionally allowed to change.
+This document describes the architecture of Relayer v0.3.0 General Availability (GA).
 
 ## Data flow
 
@@ -59,14 +58,19 @@ root entry point. Startup proceeds in this order:
 4. Compile policy regexes and validate policy references to configured agents.
 5. Build the adapter registry and resolve every agent adapter.
 6. Resolve each backend, including `auto`, before starting an agent.
-7. Open the audit recorder and durably record `run_started`.
-8. Construct concrete backends and start sessions sequentially.
-9. Record session startup, construct the TUI, and begin event supervision.
+7. Initialize the telemetry engine (`internal/telemetry`: Prometheus exporter / OTLP exporter) and notification dispatcher (`internal/notify`: OS alerts / Webhooks) if configured.
+8. Open the audit recorder and durably record `run_started`.
+9. Construct concrete backends and start sessions sequentially.
+10. Record session startup, construct the TUI or Desktop GUI, and begin event supervision.
 
 Configuration, adapter, policy, audit, and explicit tmux-availability failures
 therefore occur before a subprocess starts. If a later session cannot start, or
 its session-start audit record fails, the application rolls back sessions that
 already started.
+
+Runtime updates to policies, guardrails, and webhooks in the Desktop GUI are
+handled dynamically by `internal/config` and applied with hot-reload without
+stopping running agent sessions.
 
 ## Agent plans
 

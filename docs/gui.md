@@ -1,20 +1,20 @@
-# Desktop GUI (alpha)
+# Desktop GUI
 
-Relayer includes an optional Wails desktop interface alongside the existing
-Bubble Tea TUI. The GUI is an alpha source build: it is not a replacement for
-the TUI, and the project does not currently publish a desktop release,
-installer, Developer ID-signed application, or notarized package.
+Relayer includes an official Wails desktop application alongside the existing
+Bubble Tea TUI. Standalone, signed packages are published on GitHub Releases
+for macOS (Universal binary), Linux (`amd64`), and Windows (`x64`), accompanied
+by Cosign signatures, SHA-256 checksums, and SLSA SBOM attestations.
 
 ## Platform status
  
 | Platform | GUI status | Terminal backend |
 | --- | --- | --- |
-| macOS | Alpha, build and run from source | Unix PTY; tmux when installed and visible on `PATH` |
-| Linux | Alpha, build and run from source | Unix PTY; tmux when installed and visible on `PATH` |
-| Windows | Alpha, build and run from source | Native ConPTY backend for PTY execution |
+| macOS | Supported (GA) | Unix PTY; tmux when installed and visible on `PATH` |
+| Linux | Supported (GA) | Unix PTY; tmux when installed and visible on `PATH` |
+| Windows | Supported (GA) | Native ConPTY backend for PTY execution |
 
 On Windows, Relayer uses the Windows Pseudo Console (ConPTY) API to spawn
-and supervise child processes. The tmux backend remains Unix-specific.
+and supervise child processes natively. The tmux backend remains Unix-specific.
 
 The terminal TUI remains available on supported systems:
 
@@ -187,10 +187,14 @@ provider `--version`, contact a service, validate a login, or certify a binary.
 Warnings do not prevent startup, while a blocker means the configuration is not
 ready on the inspected host. See [doctor](doctor.md) for the shared contract.
 
-## Choosing local agents
+## Visual Settings Editor
 
-Open **Agents** in the desktop top bar to prepare between one and eight launch
-profiles. The built-in catalogue currently provides:
+Open **Settings** in the desktop top bar to access the visual configuration editor.
+The panel is organized into three tabs:
+
+### 1. `🤖 Agents` Tab
+
+Prepare and manage between one and eight launch profiles:
 
 | Profile | Default executable | Detection and decisions |
 | --- | --- | --- |
@@ -214,30 +218,46 @@ environment variables, API keys, passwords, or provider credentials. Configure
 authentication through the chosen CLI's own supported flow, and never place a
 credential in argv.
 
-DeepSeek is generally a provider or model rather than one canonical local
-executable. The combined Ollama / DeepSeek catalogue entry requires the exact
-`run` subcommand and a model identifier supplied by the user. Relayer does not
-invent a `deepseek` executable, choose a model, or imply a DeepSeek-specific
-adapter.
-
 For confidentiality, argv already stored in YAML never crosses into the
 WebView. The picker shows only a fixed known executable label (or “custom
 command”) and an argument count. Select **Replace the command** to enter a
 complete new argv. Profiles using `shell`, environment overrides, or
 unknown advanced adapters remain read-only and are preserved server-side.
-Profiles whose historical identifiers cannot be represented by the stricter
-form are also preserved read-only. A legacy configuration document must first
-be migrated to `version: 1`; the GUI never rewrites it implicitly.
+
+### 2. `🛡️ Security & Guardrails` Tab
+
+Configure policy enforcement and safety guardrails:
+- **Security Profiles**: Quickly toggle between `developer-friendly`, `strict`, `permissive`, or `custom` presets.
+- **Default Action**: Set default fallback action (`ask`, `allow`, `deny`) for unmatched prompt occurrences.
+- **Simulation Mode**: Toggle `dry-run` to log proposed policy decisions without auto-delivering them to agents.
+- **Guardrails**:
+  - Destructive command blocker (`rm -rf`, `mkfs`, disk formats).
+  - Exfiltration protection (`curl | bash`, accessing `.ssh`, `.aws`, `.env`).
+  - Sensitive paths protector (`.git/`, credentials, certificates).
+  - Strict workspace confinement (restricts file writes to agent working directory).
+- **Rate Limiting**: Configurable maximum consecutive automatic decisions and per-minute sliding window limits.
+
+### 3. `🔔 Notifications & Webhooks` Tab
+
+Configure human supervisor alerts:
+- **Master Notifications Switch**: Enable or silence all outbound alerts.
+- **OS Notifications**: Enable native desktop toasts/notifications on Windows, macOS, and Linux.
+- **Terminal Bell**: Enable acoustic ASCII `\a` alert bell.
+- **Webhooks Table**: Add, edit, or remove outbound webhooks for **Slack** (Block Kit), **Discord** (Embeds), or generic JSON with min-severity filtering (`info`, `warning`, `critical`).
+
+### Hot-Reload Without Agent Interruption
+
+Saving changes in **Security & Guardrails** or **Notifications & Webhooks**
+updates `config.yaml` atomically and updates the active runtime engine
+immediately **without restarting or killing running agent processes**.
+Only structural agent modifications (`command`, `cwd`, `backend`, or agent addition/removal)
+require an intentional generation restart.
 
 Saving uses an opaque revision token, a per-file lock, and atomic replacement.
 Concurrent Relayer writers cannot both publish from the same revision; an
 external editor that does not honor Relayer's lock is still best-effort. The
 lock wait is bounded, and a stale or post-commit-uncertain save reloads the
-authoritative file before another attempt. The Go bridge repeats the
-cardinality, length, identifier, adapter, required-argv-prefix, and conservative
-secret-shaped-argument validation rather than trusting the WebView. Secret
-detection is a heuristic defense in depth, not a guarantee that arbitrary
-credentials will be recognized.
+authoritative file before another attempt.
 
 ## Starting, stopping, and restarting
 
@@ -395,12 +415,41 @@ own output, files, or tmux history. The GUI is a supervision interface, not a
 sandbox, secret manager, or operating-system enforcement boundary. Read the
 [security model](security-model.md) before supervising untrusted commands.
 
+## Terminal search (`Ctrl+F`)
+
+Every agent card terminal snapshot includes interactive text search:
+- **Shortcut**: Press `Ctrl+F` while focusing the terminal to open the floating search toolbar.
+- **Incremental search**: Type any query to highlight matching occurrences across scrollback history.
+- **Navigation**:
+  - `Enter`: Jump to next matching occurrence.
+  - `Shift+Enter`: Jump to previous matching occurrence.
+  - `Esc`: Close search toolbar and clear highlights.
+- **Match counter**: Live indicator shows active match index and total match count (e.g. `2 / 14`).
+
+## Keyboard shortcuts and rapid arbitration
+
+Operators can supervise and arbitrate without reaching for the mouse:
+
+| Shortcut | Context | Action |
+| --- | --- | --- |
+| `Alt+1` .. `Alt+8` | Global | Focus agent 1 to 8. If a decision is pending, immediately opens the arbitration modal. If idle, focuses direct line input. |
+| `Ctrl+Enter` | Decision Modal | Instantly approve with `Allow` (or submit manual input). |
+| `Esc` | Decision Modal | Instantly reject with `Deny`. |
+| `Ctrl+F` | Terminal Pane | Open interactive text search. |
+| `Esc` | Search Bar | Close terminal search. |
+
+## Observability dashboard (`📊 Metrics`)
+
+The **Metrics** button in the top bar opens the real-time observability panel:
+- **Decision Ratio Gauge**: Circular SVG donut chart displaying proportion of `allow`, `deny`, and `auto` decisions.
+- **Arbitration Latency Histogram**: Distribution of operator reaction times (under 5s, 5–15s, 15–30s, 30s+).
+- **Guardrail Interceptions**: Live counters for blocked destructive commands, sensitive path access, and exfiltration attempts.
+- **Export Status**: Visual green/gray badges indicating the status of the local Prometheus endpoint (`:9090/metrics`) and background OTLP exporter.
+
 ## Current non-goals
 
-The alpha GUI currently provides no:
+The Desktop GUI intentionally does not provide:
 
-- installer, auto-updater, Developer ID signing, or notarization;
-- published desktop release;
-- remote audit or synchronization service;
-- guarantee of complete prompt detection;
-- VT/ANSI emulation.
+- OS-specific installers (e.g. Windows `.msi`/`.exe` setup wizard, macOS `.pkg`); signed `.zip` and `.tar.gz` portable archives are provided instead;
+- Remote audit synchronization service (the audit log remains strictly local);
+- Complete VT/ANSI terminal emulation (the GUI uses xterm.js for crisp output rendering, while the TUI uses tmux native attach for full interactive sessions).
