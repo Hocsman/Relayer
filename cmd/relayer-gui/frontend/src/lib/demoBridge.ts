@@ -3,6 +3,10 @@ import type {
   AgentProfilesView,
   AgentState,
   AppState,
+  AuditEntryView,
+  AuditFilterInput,
+  AuditSummaryView,
+  AuditVerificationView,
   BridgeEventMap,
   BridgeEventName,
   RelayerBridge,
@@ -527,6 +531,93 @@ export function createDemoBridge(): RelayerBridge {
       emit("relayer:status", { runID, scope: "run", status: "idle" });
       return structuredClone(state);
     },
+    async getAuditSummary() {
+      await delay(120);
+      const entries = demoAuditEntries();
+      const agentCounts: Record<string, number> = {};
+      const kindCounts: Record<string, number> = {};
+      const decisionsCount: Record<string, number> = {};
+      const actorsCount: Record<string, number> = {};
+      const outcomesCount: Record<string, number> = {};
+      let sensitiveCount = 0;
+      for (const e of entries) {
+        if (e.agentID) agentCounts[e.agentID] = (agentCounts[e.agentID] ?? 0) + 1;
+        if (e.kind) kindCounts[e.kind] = (kindCounts[e.kind] ?? 0) + 1;
+        if (e.decision) decisionsCount[e.decision] = (decisionsCount[e.decision] ?? 0) + 1;
+        if (e.decisionBy) actorsCount[e.decisionBy] = (actorsCount[e.decisionBy] ?? 0) + 1;
+        if (e.outcome) outcomesCount[e.outcome] = (outcomesCount[e.outcome] ?? 0) + 1;
+        if (e.sensitive) sensitiveCount += 1;
+      }
+      return {
+        path: "/tmp/relayer-demo/audit.jsonl",
+        totalEntries: entries.length,
+        runsCount: 1,
+        sessionsCount: 2,
+        agentCounts,
+        kindCounts,
+        decisionsCount,
+        actorsCount,
+        outcomesCount,
+        sensitiveCount,
+        firstTimestamp: entries[0]?.timestamp,
+        lastTimestamp: entries[entries.length - 1]?.timestamp,
+      };
+    },
+    async getAuditEntries(filter?: AuditFilterInput) {
+      await delay(150);
+      let entries = demoAuditEntries();
+      if (filter?.agentID) {
+        entries = entries.filter((e) => e.agentID?.toLowerCase() === filter.agentID?.toLowerCase());
+      }
+      if (filter?.kind) {
+        entries = entries.filter((e) => e.kind === filter.kind);
+      }
+      if (filter?.limit && filter.limit > 0 && entries.length > filter.limit) {
+        entries = entries.slice(entries.length - filter.limit);
+      }
+      return entries;
+    },
+    async verifyAuditJournal() {
+      await delay(200);
+      const entries = demoAuditEntries();
+      return {
+        path: "/tmp/relayer-demo/audit.jsonl",
+        totalLines: entries.length,
+        totalRuns: 1,
+        validLines: entries.length,
+        issues: [],
+        passed: true,
+      };
+    },
+    async exportAuditReport(format: "json" | "csv") {
+      await delay(100);
+      const entries = demoAuditEntries();
+      if (format === "json") {
+        return JSON.stringify(entries, null, 2);
+      }
+      const header = "sequence,timestamp,entry_id,run_id,agent_id,session_id,kind,event_type,decision,decision_by,outcome,risk,sensitive,rule,reason,summary\n";
+      const rows = entries.map((e) =>
+        [
+          e.sequence,
+          e.timestamp,
+          e.entryID,
+          e.runID,
+          e.agentID ?? "",
+          e.sessionID ?? "",
+          e.kind,
+          e.eventType ?? "",
+          e.decision ?? "",
+          e.decisionBy ?? "",
+          e.outcome ?? "",
+          e.risk ?? "",
+          e.sensitive ? "true" : "false",
+          e.rule ?? "",
+          e.reason ?? "",
+          `"${(e.summary ?? "").replace(/"/g, '""')}"`,
+        ].join(",")
+      );
+      return header + rows.join("\n");
+    },
     on<K extends BridgeEventName>(
       event: K,
       listener: (payload: BridgeEventMap[K]) => void,
@@ -537,4 +628,127 @@ export function createDemoBridge(): RelayerBridge {
       return () => set.delete(listener as Listener);
     },
   };
+}
+
+function demoAuditEntries(): AuditEntryView[] {
+  const base = new Date(Date.now() - 3600000);
+  return [
+    {
+      sequence: 1,
+      timestamp: new Date(base.getTime() + 1000).toISOString(),
+      entryID: "demo-ent-1",
+      runID: "demo-run-1",
+      kind: "run_started",
+      decisionBy: "system",
+      outcome: "started",
+      summary: "Relayer supervision engine started",
+      sensitive: false,
+    },
+    {
+      sequence: 2,
+      timestamp: new Date(base.getTime() + 2000).toISOString(),
+      entryID: "demo-ent-2",
+      runID: "demo-run-1",
+      sessionID: "demo-sess-1",
+      agentID: "claude-code",
+      backend: "pty",
+      adapter: "claude",
+      kind: "session_started",
+      decisionBy: "system",
+      outcome: "started",
+      summary: "Agent session initialized",
+      sensitive: false,
+    },
+    {
+      sequence: 3,
+      timestamp: new Date(base.getTime() + 15000).toISOString(),
+      entryID: "demo-ent-3",
+      runID: "demo-run-1",
+      sessionID: "demo-sess-1",
+      agentID: "claude-code",
+      backend: "pty",
+      adapter: "claude",
+      kind: "policy_evaluated",
+      eventType: "permission",
+      risk: "high",
+      rule: "deny_sensitive_exec",
+      decision: "deny",
+      decisionBy: "policy",
+      outcome: "in_flight",
+      reason: "Command requires explicit operator authorization",
+      summary: "curl execution intercepted",
+      sensitive: true,
+      metadata: { automatic: "false", mode: "enforce" },
+    },
+    {
+      sequence: 4,
+      timestamp: new Date(base.getTime() + 25000).toISOString(),
+      entryID: "demo-ent-4",
+      runID: "demo-run-1",
+      sessionID: "demo-sess-1",
+      agentID: "claude-code",
+      backend: "pty",
+      adapter: "claude",
+      kind: "decision",
+      eventType: "permission",
+      decision: "allow",
+      decisionBy: "human",
+      outcome: "applied",
+      reason: "decision_selected",
+      sensitive: false,
+    },
+    {
+      sequence: 5,
+      timestamp: new Date(base.getTime() + 26000).toISOString(),
+      entryID: "demo-ent-5",
+      runID: "demo-run-1",
+      sessionID: "demo-sess-1",
+      agentID: "claude-code",
+      backend: "pty",
+      adapter: "claude",
+      kind: "delivery",
+      eventType: "permission",
+      decision: "allow",
+      decisionBy: "human",
+      outcome: "succeeded",
+      reason: "delivered_to_backend",
+      sensitive: false,
+    },
+    {
+      sequence: 6,
+      timestamp: new Date(base.getTime() + 45000).toISOString(),
+      entryID: "demo-ent-6",
+      runID: "demo-run-1",
+      sessionID: "demo-sess-2",
+      agentID: "codex-cli",
+      backend: "pty",
+      adapter: "codex",
+      kind: "policy_evaluated",
+      eventType: "confirmation",
+      risk: "low",
+      rule: "auto_allow_git_status",
+      decision: "allow",
+      decisionBy: "policy",
+      outcome: "applied",
+      reason: "Matched automated read-only rule",
+      summary: "git status auto-authorized",
+      sensitive: false,
+      metadata: { automatic: "true", mode: "enforce" },
+    },
+    {
+      sequence: 7,
+      timestamp: new Date(base.getTime() + 60000).toISOString(),
+      entryID: "demo-ent-7",
+      runID: "demo-run-1",
+      sessionID: "demo-sess-2",
+      agentID: "codex-cli",
+      backend: "pty",
+      adapter: "codex",
+      kind: "operator_input",
+      decisionBy: "human",
+      outcome: "succeeded",
+      reason: "line_submitted",
+      sensitive: false,
+    },
+  ];
 }

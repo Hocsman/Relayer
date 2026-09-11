@@ -282,6 +282,66 @@ export type BridgeEventMap = {
   "relayer:error": SafeErrorEvent;
 };
 
+export interface AuditSummaryView {
+  path: string;
+  totalEntries: number;
+  runsCount: number;
+  sessionsCount: number;
+  agentCounts: Record<string, number>;
+  kindCounts: Record<string, number>;
+  decisionsCount: Record<string, number>;
+  actorsCount: Record<string, number>;
+  outcomesCount: Record<string, number>;
+  sensitiveCount: number;
+  firstTimestamp?: string;
+  lastTimestamp?: string;
+}
+
+export interface AuditVerificationIssueView {
+  line: number;
+  entryID?: string;
+  message: string;
+}
+
+export interface AuditVerificationView {
+  path: string;
+  totalLines: number;
+  totalRuns: number;
+  validLines: number;
+  issues: AuditVerificationIssueView[];
+  passed: boolean;
+}
+
+export interface AuditEntryView {
+  sequence: number;
+  timestamp: string;
+  entryID: string;
+  runID: string;
+  kind: string;
+  sessionID?: string;
+  agentID?: string;
+  backend?: string;
+  adapter?: string;
+  eventType?: string;
+  risk?: string;
+  rule?: string;
+  decision?: string;
+  decisionBy?: string;
+  outcome?: string;
+  reason?: string;
+  summary?: string;
+  sensitive: boolean;
+  metadata?: Record<string, string>;
+}
+
+export interface AuditFilterInput {
+  agentID?: string;
+  sessionID?: string;
+  runID?: string;
+  kind?: string;
+  limit?: number;
+}
+
 export type BridgeEventName = keyof BridgeEventMap;
 
 export interface RelayerBridge {
@@ -301,5 +361,10 @@ export interface RelayerBridge {
   saveAgentProfiles(runID: string, request: SaveAgentProfilesRequest): Promise<AgentProfilesView>;
   saveAgentProfilesAndRestart(request: SaveAgentProfilesAndRestartRequest): Promise<LifecycleResult>;
   stopRun(runID: string): Promise<AppState>;
+  getAuditSummary(): Promise<AuditSummaryView>;
+  getAuditEntries(filter?: AuditFilterInput): Promise<AuditEntryView[]>;
+  verifyAuditJournal(): Promise<AuditVerificationView>;
+  exportAuditReport(format: "json" | "csv"): Promise<string>;
   on<K extends BridgeEventName>(event: K, listener: (payload: BridgeEventMap[K]) => void): () => void;
 }
+
