@@ -174,6 +174,34 @@ export function useRelayer(bridge: RelayerBridge) {
     [bridge],
   );
 
+  const startSession = useCallback(
+    async (runID: string, sessionID: string) => {
+      try {
+        await bridge.startSession(runID, sessionID);
+      } catch {
+        dispatch({
+          type: "error",
+          error: localError(runID, "start_failed", "Starting the session failed.", sessionID),
+        });
+      }
+    },
+    [bridge],
+  );
+
+  const restartSession = useCallback(
+    async (runID: string, sessionID: string) => {
+      try {
+        await bridge.restartSession(runID, sessionID);
+      } catch {
+        dispatch({
+          type: "error",
+          error: localError(runID, "restart_failed", "Restarting the session failed.", sessionID),
+        });
+      }
+    },
+    [bridge],
+  );
+
   const saveAgentProfiles = useCallback(
     (runID: string, request: SaveAgentProfilesRequest) =>
       bridge.saveAgentProfiles(runID, request),
@@ -229,6 +257,8 @@ export function useRelayer(bridge: RelayerBridge) {
     submitLine,
     resizeSession,
     stopSession,
+    startSession,
+    restartSession,
     saveAgentProfiles,
     saveAgentProfilesAndRestart,
     stopRun,

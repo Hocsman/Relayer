@@ -49,6 +49,9 @@ var (
 	errLineUnsupported     = errors.New("backend does not support free-text input")
 	errRuntimeStopped      = errors.New("the Relayer engine is stopped")
 	errRunStale            = errors.New("this Relayer run is no longer active")
+	errAgentUnknown        = errors.New("unknown agent for this run")
+	errAgentNotRunning     = errors.New("the agent has no running process")
+	errAgentStillRunning   = errors.New("the agent process is still running")
 )
 
 type eventKey struct {
@@ -75,6 +78,9 @@ type desktopEngine interface {
 	SendLine(context.Context, string, string) error
 	Resize(context.Context, string, terminal.Size) error
 	Stop(context.Context, string) error
+	StartAgent(context.Context, string) error
+	StopAgent(context.Context, string) error
+	RestartAgent(context.Context, string) error
 	RecordAudit(audit.Entry) error
 	BeginShutdown(context.Context) error
 	BeginRestart(context.Context) error
@@ -1315,7 +1321,7 @@ func (a *App) StopSession(runID, sessionID string) error {
 	a.mu.Unlock()
 	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "stopping"})
 	ctx, cancel := context.WithTimeout(run.ctx, 6*time.Second)
-	err = run.engine.Stop(ctx, sessionID)
+	err = run.engine.StopAgent(ctx, sessionID)
 	cancel()
 	if err != nil {
 		a.mu.Lock()
@@ -1330,6 +1336,155 @@ func (a *App) StopSession(runID, sessionID string) error {
 	a.mu.Unlock()
 	a.markLineSessionUnavailable(run, sessionKey, "exited")
 	return nil
+}
+
+// StartSession launches a fresh process for one stopped or exited agent under
+// its unchanged identity and plan specification, without interrupting the
+// other agents of the run.
+func (a *App) StartSession(runID, sessionID string) error {
+	run, err := a.activeRun(runID)
+	if err != nil {
+		return err
+	}
+	if !a.beginDelivery() {
+		return errRuntimeStopped
+	}
+	defer a.endDelivery()
+	sessionKey := strings.ToLower(strings.TrimSpace(sessionID))
+	a.mu.Lock()
+	if a.active != run || a.shuttingDown {
+		a.mu.Unlock()
+		return errRuntimeStopped
+	}
+	if a.auditFailed {
+		a.mu.Unlock()
+		return errAuditUnavailable
+	}
+	if a.stoppingSessions[sessionKey] {
+		a.mu.Unlock()
+		return errLineUnavailable
+	}
+	index, found := a.agentIndex[sessionKey]
+	if !found {
+		a.mu.Unlock()
+		return errAgentUnknown
+	}
+	if a.state.Agents[index].Running {
+		a.mu.Unlock()
+		return errAgentStillRunning
+	}
+	a.stoppingSessions[sessionKey] = true
+	a.state.Agents[index].Status = "starting"
+	displaySessionID := a.state.Agents[index].SessionID
+	a.mu.Unlock()
+	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "starting"})
+	ctx, cancel := context.WithTimeout(run.ctx, 10*time.Second)
+	err = run.engine.StartAgent(ctx, sessionID)
+	cancel()
+	if err != nil {
+		a.mu.Lock()
+		delete(a.stoppingSessions, sessionKey)
+		if index, found := a.agentIndex[sessionKey]; found {
+			a.state.Agents[index].Status = "failed"
+		}
+		a.mu.Unlock()
+		a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: sessionID, Status: "failed"})
+		a.emitSafeError(run, "start_failed", "session could not be started", sessionID)
+		return errors.New("session could not be started")
+	}
+	a.completeAgentStart(run, sessionKey)
+	return nil
+}
+
+// RestartSession transactionally stops then starts one agent in place. An
+// unconfirmed stop never produces a replacement process; a failed start
+// leaves the agent down with its identity locked for an explicit retry.
+func (a *App) RestartSession(runID, sessionID string) error {
+	run, err := a.activeRun(runID)
+	if err != nil {
+		return err
+	}
+	if !a.beginDelivery() {
+		return errRuntimeStopped
+	}
+	defer a.endDelivery()
+	sessionKey := strings.ToLower(strings.TrimSpace(sessionID))
+	a.mu.Lock()
+	if a.active != run || a.shuttingDown {
+		a.mu.Unlock()
+		return errRuntimeStopped
+	}
+	if a.auditFailed {
+		a.mu.Unlock()
+		return errAuditUnavailable
+	}
+	if a.lineInFlight[sessionKey] {
+		a.mu.Unlock()
+		return errLineInFlight
+	}
+	if _, busy := a.inFlight[sessionKey]; busy {
+		a.mu.Unlock()
+		return errDecisionInFlight
+	}
+	if a.stoppingSessions[sessionKey] {
+		a.mu.Unlock()
+		return errLineUnavailable
+	}
+	index, found := a.agentIndex[sessionKey]
+	if !found {
+		a.mu.Unlock()
+		return errAgentUnknown
+	}
+	a.stoppingSessions[sessionKey] = true
+	a.state.Agents[index].Status = "stopping"
+	displaySessionID := a.state.Agents[index].SessionID
+	a.mu.Unlock()
+	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "stopping"})
+	ctx, cancel := context.WithTimeout(run.ctx, 12*time.Second)
+	err = run.engine.RestartAgent(ctx, sessionID)
+	cancel()
+	if err != nil {
+		a.mu.Lock()
+		delete(a.stoppingSessions, sessionKey)
+		if index, found := a.agentIndex[sessionKey]; found {
+			a.state.Agents[index].Status = "failed"
+		}
+		a.mu.Unlock()
+		a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: sessionID, Status: "failed"})
+		a.freezeLineSession(run, sessionKey)
+		a.emitSafeError(run, "restart_failed", "session could not be restarted cleanly", sessionID)
+		return errors.New("session could not be restarted cleanly")
+	}
+	a.completeAgentStart(run, sessionKey)
+	return nil
+}
+
+// completeAgentStart republishes a freshly started agent: output, freeze and
+// exit state belong to the previous process instance and never carry over.
+// Revision stays monotonic across process instances so the follow-up output
+// snapshot is accepted by the presentation's revision guard.
+func (a *App) completeAgentStart(run *runGeneration, sessionKey string) {
+	a.mu.Lock()
+	delete(a.stoppingSessions, sessionKey)
+	delete(a.frozen, sessionKey)
+	displaySessionID := ""
+	if index, found := a.agentIndex[sessionKey]; found {
+		agent := &a.state.Agents[index]
+		agent.Running = true
+		agent.Attached = false
+		agent.Status = "running"
+		agent.ExitCode = nil
+		agent.InputFrozen = false
+		agent.Output = ""
+		agent.Revision++
+		displaySessionID = agent.SessionID
+	}
+	a.mu.Unlock()
+	if displaySessionID == "" {
+		return
+	}
+	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "running"})
+	a.refreshOutputForRun(run, displaySessionID)
 }
 
 func (a *App) Shutdown() error {

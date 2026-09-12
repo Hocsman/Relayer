@@ -81,6 +81,15 @@ type fakeDesktopEngine struct {
 	restartCalls  int
 	restartStart  chan struct{}
 	restartWait   <-chan struct{}
+
+	agentStartErr       error
+	agentStartCalls     []string
+	agentStartStarted   chan string
+	agentStartRelease   <-chan struct{}
+	agentRestartErr     error
+	agentRestartCalls   []string
+	agentRestartStarted chan string
+	agentRestartRelease <-chan struct{}
 	shutdownErr   error
 	shutdownCalls int
 	closeErr      error
@@ -263,6 +272,45 @@ func (f *fakeDesktopEngine) Stop(_ context.Context, sessionID string) error {
 		<-release
 	}
 	return f.stopErr
+}
+
+// StopAgent shares the Stop fixture hooks: the bridge now routes operator
+// stops through the audited per-agent lifecycle path, and existing stop tests
+// must keep observing the exact same behavior.
+func (f *fakeDesktopEngine) StopAgent(ctx context.Context, sessionID string) error {
+	return f.Stop(ctx, sessionID)
+}
+
+func (f *fakeDesktopEngine) StartAgent(_ context.Context, sessionID string) error {
+	f.mu.Lock()
+	f.agentStartCalls = append(f.agentStartCalls, sessionID)
+	started := f.agentStartStarted
+	release := f.agentStartRelease
+	err := f.agentStartErr
+	f.mu.Unlock()
+	if started != nil {
+		started <- sessionID
+	}
+	if release != nil {
+		<-release
+	}
+	return err
+}
+
+func (f *fakeDesktopEngine) RestartAgent(_ context.Context, sessionID string) error {
+	f.mu.Lock()
+	f.agentRestartCalls = append(f.agentRestartCalls, sessionID)
+	started := f.agentRestartStarted
+	release := f.agentRestartRelease
+	err := f.agentRestartErr
+	f.mu.Unlock()
+	if started != nil {
+		started <- sessionID
+	}
+	if release != nil {
+		<-release
+	}
+	return err
 }
 
 func (f *fakeDesktopEngine) RecordAudit(entry audit.Entry) error {

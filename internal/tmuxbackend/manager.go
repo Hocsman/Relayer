@@ -67,6 +67,7 @@ var _ terminal.Backend = (*Manager)(nil)
 var _ terminal.EventSender = (*Manager)(nil)
 var _ terminal.LineSender = (*Manager)(nil)
 var _ terminal.PendingEventProvider = (*Manager)(nil)
+var _ terminal.SessionRemover = (*Manager)(nil)
 
 // NewManager verifies tmux before creating any session and allocates a private
 // 0700 runtime directory for specs and FIFO transports.
@@ -1240,6 +1241,50 @@ func (m *Manager) Stop(ctx context.Context, id string) error {
 		m.emitWithContext(ctx, session.AdapterEvent{Event: target.processExitEvent(stopped)}, true)
 	}
 	target.closeTransport()
+	return nil
+}
+
+// Remove forgets one fully stopped session so a later Start can recreate it
+// under the same identity. A session still present on the tmux server —
+// including one intentionally persisted by remain-on-exit — is killed first
+// with the same ownership proof Stop requires. When that proof or the kill
+// fails, the identity stays registered and locked so no replacement process
+// can ever share it.
+func (m *Manager) Remove(ctx context.Context, id string) error {
+	operationCtx, finishOperation, err := m.beginOperation(ctx)
+	if err != nil {
+		return err
+	}
+	defer finishOperation()
+	ctx = operationCtx
+
+	target, err := m.session(id)
+	if err != nil {
+		return err
+	}
+	if target.isPresent() {
+		if err := m.killSession(ctx, target); err != nil {
+			return err
+		}
+		stopped := terminal.Snapshot{
+			ID:      target.info.ID,
+			Status:  terminal.StatusExited,
+			Running: false,
+		}
+		target.updateProcessExitState(stopped)
+		if target.finish() {
+			m.emitWithContext(ctx, session.AdapterEvent{Event: target.processExitEvent(stopped)}, true)
+		}
+	}
+	target.closeTransport()
+	m.mu.Lock()
+	for existingID, candidate := range m.sessions {
+		if candidate == target {
+			delete(m.sessions, existingID)
+			break
+		}
+	}
+	m.mu.Unlock()
 	return nil
 }
 

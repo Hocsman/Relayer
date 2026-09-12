@@ -14,11 +14,13 @@ interface AgentCardProps {
   event?: SupervisionEvent;
   onResize(runID: string, sessionID: string, columns: number, rows: number): Promise<void>;
   onStop(runID: string, sessionID: string): Promise<void>;
+  onStart(runID: string, sessionID: string): Promise<void>;
+  onRestart(runID: string, sessionID: string): Promise<void>;
   onOpenEvent(runID: string, sessionID: string, eventID: string): void;
   onSubmitLine(runID: string, sessionID: string, line: string): Promise<void>;
 }
 
-export function AgentCard({ runID, agent, event, onResize, onStop, onOpenEvent, onSubmitLine }: AgentCardProps) {
+export function AgentCard({ runID, agent, event, onResize, onStop, onStart, onRestart, onOpenEvent, onSubmitLine }: AgentCardProps) {
   const waiting = Boolean(event) || agent.status === "waiting";
   const inputRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
@@ -138,13 +140,35 @@ export function AgentCard({ runID, agent, event, onResize, onStop, onOpenEvent, 
             </button>
           )}
           {agent.running && (
+            <>
+              <button
+                className="button button--ghost button--small"
+                type="button"
+                disabled={agent.status === "stopping"}
+                title="Stop this agent without interrupting the other agents"
+                onClick={() => void onStop(runID, agent.sessionID)}
+              >
+                Stop
+              </button>
+              <button
+                className="button button--ghost button--small"
+                type="button"
+                disabled={agent.status === "stopping" || Boolean(event)}
+                title="Restart this agent in place with a fresh terminal; its pending request must be answered first"
+                onClick={() => void onRestart(runID, agent.sessionID)}
+              >
+                Restart
+              </button>
+            </>
+          )}
+          {!agent.running && agent.status !== "stopping" && agent.status !== "starting" && (
             <button
               className="button button--ghost button--small"
               type="button"
-              disabled={agent.status === "stopping"}
-              onClick={() => void onStop(runID, agent.sessionID)}
+              title="Start this agent again under the same configuration, without interrupting the other agents"
+              onClick={() => void onStart(runID, agent.sessionID)}
             >
-              Stop
+              Start
             </button>
           )}
         </div>

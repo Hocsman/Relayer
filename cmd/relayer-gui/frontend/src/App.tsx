@@ -20,6 +20,8 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
     submitLine,
     resizeSession,
     stopSession,
+    startSession,
+    restartSession,
     saveAgentProfiles,
     saveAgentProfilesAndRestart,
     stopRun,
@@ -170,6 +172,8 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
             events={state.app.pendingEvents}
             onResize={resizeSession}
             onStop={stopSession}
+            onStart={startSession}
+            onRestart={restartSession}
             onOpenEvent={openEvent}
             onSubmitLine={submitLine}
           />

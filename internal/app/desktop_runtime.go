@@ -102,6 +102,7 @@ type DesktopRuntime struct {
 	events        chan session.Event
 	policyEngine  *policy.Engine
 	policyTracker *policy.Tracker
+	lifecycle     *agentLifecycle
 	auditor       *audit.Recorder
 	telemetry     *telemetry.Engine
 	configuration config.Result
@@ -323,6 +324,10 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 		runtime.startupLogs = append(runtime.startupLogs, "Local audit disabled")
 	}
 
+	// Every startup session is known-running at this point; a failure above
+	// aborts the whole run instead of leaving a partially started plan.
+	runtime.lifecycle = newAgentLifecycle(router, auditor, plan.resolution.Specs, plan.initialSize, runtime.policyTracker)
+
 	cleanup = false
 	return runtime, nil
 }
@@ -532,6 +537,45 @@ func (r *DesktopRuntime) Stop(ctx context.Context, sessionID string) error {
 	return r.router.Stop(ctx, sessionID)
 }
 
+// StopAgent strictly terminates one agent's process while its siblings keep
+// running. The transition is audited with the human operator as its actor. It
+// holds the quiescence lock so an operator stop can never interleave with a
+// strict whole-run stop or close.
+func (r *DesktopRuntime) StopAgent(ctx context.Context, agentID string) error {
+	if err := r.available(); err != nil {
+		return err
+	}
+	r.quiesceMu.Lock()
+	defer r.quiesceMu.Unlock()
+	return r.lifecycle.StopAgent(ctx, agentID, "operator_stop")
+}
+
+// StartAgent launches a fresh process for one stopped agent under its
+// unchanged identity, reusing the immutable preflight specification. The
+// audit record is written before the process launches.
+func (r *DesktopRuntime) StartAgent(ctx context.Context, agentID string) error {
+	if err := r.available(); err != nil {
+		return err
+	}
+	r.quiesceMu.Lock()
+	defer r.quiesceMu.Unlock()
+	_, err := r.lifecycle.StartAgent(ctx, agentID, "operator_start")
+	return err
+}
+
+// RestartAgent transactionally stops then starts one agent. An unconfirmed
+// stop blocks the start; a failed start leaves the agent down in an explicit
+// state rather than half-replaced.
+func (r *DesktopRuntime) RestartAgent(ctx context.Context, agentID string) error {
+	if err := r.available(); err != nil {
+		return err
+	}
+	r.quiesceMu.Lock()
+	defer r.quiesceMu.Unlock()
+	_, err := r.lifecycle.RestartAgent(ctx, agentID)
+	return err
+}
+
 // RecordAudit is a synchronous, fail-closed persistence boundary for desktop
 // decisions. Callers must not perform a backend write when it returns an error.
 func (r *DesktopRuntime) RecordAudit(entry audit.Entry) error {
@@ -590,6 +634,11 @@ func (r *DesktopRuntime) BeginRestart(ctx context.Context) error {
 	r.strictStopped = stopErr == nil
 	if stopErr == nil && r.auditor != nil {
 		for _, info := range r.infos {
+			if r.lifecycle.finishedRecorded(info.ID) {
+				// An operator-stopped agent already has its terminal record;
+				// one process instance never gets two session_finished entries.
+				continue
+			}
 			if err := r.auditor.Record(audit.Entry{
 				Kind:       audit.KindSessionFinished,
 				SessionID:  info.ID,

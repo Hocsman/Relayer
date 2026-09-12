@@ -43,6 +43,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			break
 		}
+		m.disarmLifecycleConfirm(msg)
 		switch msg.Type {
 		case tea.KeyCtrlLeft:
 			m.moveFocus(-1)
@@ -109,6 +110,12 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					commands = append(commands, m.beginAttach(paneIndex))
 					break
 				}
+				if action, ok := lifecycleKeyAction(msg); ok {
+					if command := m.requestAgentLifecycle(action, paneIndex); command != nil {
+						commands = append(commands, command)
+					}
+					break
+				}
 				var command tea.Cmd
 				m.panes[paneIndex].viewport, command = m.panes[paneIndex].viewport.Update(msg)
 				commands = append(commands, command)
@@ -129,6 +136,10 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		commands = append(commands, m.handleActionableEvent(observed))
 	case session.AdapterEventWithdrawn:
 		commands = append(commands, m.applyWithdrawnEvent(msg.Event.Clone()))
+	case agentLifecycleMsg:
+		if command := m.applyLifecycleResult(msg); command != nil {
+			commands = append(commands, command)
+		}
 	case session.Exited:
 		if paneIndex := m.paneIndex(msg.SessionID); paneIndex >= 0 {
 			// Legacy producers may still emit Exited beside the canonical

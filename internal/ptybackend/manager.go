@@ -28,6 +28,7 @@ var _ terminal.Backend = (*Manager)(nil)
 var _ terminal.EventSender = (*Manager)(nil)
 var _ terminal.LineSender = (*Manager)(nil)
 var _ terminal.PendingEventProvider = (*Manager)(nil)
+var _ terminal.SessionRemover = (*Manager)(nil)
 
 func New(
 	parent context.Context,
@@ -209,6 +210,25 @@ func (m *Manager) Stop(ctx context.Context, id terminal.SessionID) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// Remove releases one fully stopped session identity so Start can register it
+// again. The inner manager proves the process was reaped before forgetting
+// it; a live process keeps the identity locked with terminal.ErrSessionRunning.
+func (m *Manager) Remove(ctx context.Context, id terminal.SessionID) error {
+	if err := m.check(ctx, id); err != nil {
+		return err
+	}
+	if err := m.inner.Remove(id); err != nil {
+		if errors.Is(err, session.ErrClosed) {
+			err = terminal.ErrClosed
+		}
+		return &terminal.OperationError{Backend: m.Name(), Operation: "remove", SessionID: id, Err: err}
+	}
+	m.mu.Lock()
+	delete(m.ownedIDs, strings.ToLower(id))
+	m.mu.Unlock()
+	return nil
 }
 
 func (m *Manager) Close(ctx context.Context) error {

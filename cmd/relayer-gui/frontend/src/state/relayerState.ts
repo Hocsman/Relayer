@@ -160,13 +160,23 @@ export function relayerReducer(state: RelayerUIState, action: RelayerAction): Re
         };
       }
       if (!action.status.sessionID) return state;
+      const nextStatus = action.status.status as AppState["agents"][number]["status"];
       return {
         ...state,
         app: {
           ...state.app,
           agents: state.app.agents.map((agent) =>
             agent.sessionID === action.status.sessionID
-              ? { ...agent, status: action.status.status as AppState["agents"][number]["status"] }
+              ? {
+                  ...agent,
+                  status: nextStatus,
+                  running:
+                    nextStatus === "running"
+                      ? true
+                      : nextStatus === "exited" || nextStatus === "failed"
+                        ? false
+                        : agent.running,
+                }
               : agent,
           ),
         },

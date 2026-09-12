@@ -177,6 +177,7 @@ when required.
 
 The Desktop GUI features:
 - **Visual Settings Editor**: Interactive tabs for `🤖 Agents`, `🛡️ Security & Guardrails`, and `🔔 Notifications & Webhooks`. Edit policies, sensitive paths, and webhooks with immediate **hot-reload** without interrupting or restarting running agent processes.
+- **Per-Agent Process Controls**: Granular `Stop`, `Restart`, and `Start` controls on each agent terminal card in the workspace to manage individual agents in place without interrupting sibling processes.
 - **Terminal Search (`Ctrl+F`)**: Integrated xterm search toolbar with match count, highlighting, circular `Enter` / `Shift+Enter` navigation, and `Esc` dismissal.
 - **Arbitration Shortcuts**: `Alt+1..8` to focus agents / open pending arbitration modals, `Ctrl+Enter` to approve (`Allow`), and `Esc` to deny (`Deny`).
 - **Live Observability Dashboard**: Circular SVG gauges for decision ratios, operator reaction latency histograms, guardrail block counts, and live exporter status.

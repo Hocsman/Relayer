@@ -62,6 +62,8 @@ describe("AgentCard safe line path", () => {
         agent={frozenAgent}
         onResize={async () => {}}
         onStop={async () => {}}
+        onStart={async () => {}}
+        onRestart={async () => {}}
         onOpenEvent={() => {}}
         onSubmitLine={async () => {}}
       />,
@@ -85,6 +87,8 @@ describe("AgentCard simulated agents", () => {
         agent={value}
         onResize={async () => {}}
         onStop={async () => {}}
+        onStart={async () => {}}
+        onRestart={async () => {}}
         onOpenEvent={() => {}}
         onSubmitLine={async () => {}}
       />,
@@ -103,5 +107,50 @@ describe("AgentCard simulated agents", () => {
     expect(markup).not.toContain("agent-card--simulated");
     expect(markup).not.toContain("simulated-tag");
     expect(markup).toContain("Supervision active");
+  });
+
+  it("renders Stop and Restart buttons when agent is running", () => {
+    const markup = render({ ...agent(), running: true, status: "running" });
+    expect(markup).toContain(">Stop<");
+    expect(markup).toContain(">Restart<");
+    expect(markup).not.toContain(">Start<");
+  });
+
+  it("renders Start button when agent is stopped or exited", () => {
+    const markup = render({ ...agent(), running: false, status: "exited" });
+    expect(markup).toContain(">Start<");
+    expect(markup).not.toContain(">Stop<");
+    expect(markup).not.toContain(">Restart<");
+  });
+
+  it("disables Restart button while an arbitration event is pending", () => {
+    const markup = renderToStaticMarkup(
+      <AgentCard
+        runID="run-1"
+        agent={{ ...agent(), running: true, status: "waiting" }}
+        event={{
+          runID: "run-1",
+          id: "prompt-1",
+          sessionID: "agent-1",
+          agentID: "agent-1",
+          adapter: "generic",
+          type: "confirmation",
+          summary: "Allow action?",
+          sensitive: false,
+          risk: "unknown",
+          timestamp: "2026-01-01T00:00:00Z",
+          evaluation: { action: "ask", proposedAction: "ask", reason: "default", automatic: false, dryRun: false },
+          deliveryStatus: "pending",
+        }}
+        onResize={async () => {}}
+        onStop={async () => {}}
+        onStart={async () => {}}
+        onRestart={async () => {}}
+        onOpenEvent={() => {}}
+        onSubmitLine={async () => {}}
+      />,
+    );
+    expect(markup).toContain(">Restart<");
+    expect(markup).toContain("disabled");
   });
 });

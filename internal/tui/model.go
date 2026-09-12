@@ -100,7 +100,12 @@ type Model struct {
 	// direct line still awaits its terminal audit result. Policy must not run
 	// before that result is reduced by Update.
 	lineDeferredEvents map[string]adapters.Event
-	attachPending      string
+	// lifecycleConfirm arms the two-press confirmation for a destructive
+	// per-agent action; lifecycleBusy records at most one in-flight lifecycle
+	// command per session so a slow teardown cannot be requested twice.
+	lifecycleConfirm lifecycleConfirmation
+	lifecycleBusy    map[string]string
+	attachPending    string
 	// attachFinishedAudited prevents a failed terminal client followed by a
 	// Resync callback from producing two terminal records for one attachment.
 	attachFinishedAudited bool
@@ -246,6 +251,7 @@ func NewModelWithPolicyAndAudit(
 		automaticBySession: make(map[string]eventKey),
 		deferredEvents:     make(map[string]adapters.Event),
 		lineDeferredEvents: make(map[string]adapters.Event),
+		lifecycleBusy:      make(map[string]string),
 		sessionStart:       time.Now(),
 		promptDetectedAt:   make(map[eventKey]time.Time),
 	}

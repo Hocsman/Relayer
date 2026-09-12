@@ -328,6 +328,28 @@ func (r *backendRouter) Stop(ctx context.Context, id string) error {
 	return backend.Stop(effectiveContext(ctx, r.ctx), id)
 }
 
+// Remove releases one fully stopped session identity so Start can register it
+// again. The concrete backend must prove the previous process is gone before
+// the route is dropped; while removal is impossible the identity stays locked
+// and no replacement session can share it.
+func (r *backendRouter) Remove(ctx context.Context, id string) error {
+	backend, err := r.backendFor(id)
+	if err != nil {
+		return err
+	}
+	remover, ok := backend.(terminal.SessionRemover)
+	if !ok {
+		return fmt.Errorf("%w: backend %s without session removal", terminal.ErrUnsupported, backend.Name())
+	}
+	if err := remover.Remove(effectiveContext(ctx, r.ctx), id); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	delete(r.routes, strings.ToLower(id))
+	r.mu.Unlock()
+	return nil
+}
+
 // Resync lets a backend reconcile attachment-specific state before the TUI
 // fetches its latest snapshot. PTY needs only a regular resize.
 func (r *backendRouter) Resync(ctx context.Context, id string, columns, rows int) error {
@@ -449,7 +471,35 @@ func effectiveContext(request, owner context.Context) context.Context {
 
 // tuiBackendAdapter translates Bubble Tea's small historical boundary to the
 // exact-byte, context-aware backend contract.
-type tuiBackendAdapter struct{ router *backendRouter }
+type tuiBackendAdapter struct {
+	router    *backendRouter
+	lifecycle *agentLifecycle
+}
+
+// StopSession implements the TUI's per-agent lifecycle capability. A nil
+// controller keeps historical test adapters valid without the feature.
+func (a *tuiBackendAdapter) StopSession(id string) error {
+	if a.lifecycle == nil {
+		return terminal.ErrUnsupported
+	}
+	return a.lifecycle.StopAgent(a.router.Context(), id, "operator_stop")
+}
+
+func (a *tuiBackendAdapter) StartSession(id string) error {
+	if a.lifecycle == nil {
+		return terminal.ErrUnsupported
+	}
+	_, err := a.lifecycle.StartAgent(a.router.Context(), id, "operator_start")
+	return err
+}
+
+func (a *tuiBackendAdapter) RestartSession(id string) error {
+	if a.lifecycle == nil {
+		return terminal.ErrUnsupported
+	}
+	_, err := a.lifecycle.RestartAgent(a.router.Context(), id)
+	return err
+}
 
 func (a *tuiBackendAdapter) Name() string             { return a.router.Name() }
 func (a *tuiBackendAdapter) Context() context.Context { return a.router.Context() }

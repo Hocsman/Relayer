@@ -7,11 +7,13 @@ interface AgentGridProps {
   events: SupervisionEvent[];
   onResize(runID: string, sessionID: string, columns: number, rows: number): Promise<void>;
   onStop(runID: string, sessionID: string): Promise<void>;
+  onStart(runID: string, sessionID: string): Promise<void>;
+  onRestart(runID: string, sessionID: string): Promise<void>;
   onOpenEvent(runID: string, sessionID: string, eventID: string): void;
   onSubmitLine(runID: string, sessionID: string, line: string): Promise<void>;
 }
 
-export function AgentGrid({ runID, agents, events, onResize, onStop, onOpenEvent, onSubmitLine }: AgentGridProps) {
+export function AgentGrid({ runID, agents, events, onResize, onStop, onStart, onRestart, onOpenEvent, onSubmitLine }: AgentGridProps) {
   if (agents.length === 0) {
     return (
       <section className="empty-agents">
@@ -33,6 +35,8 @@ export function AgentGrid({ runID, agents, events, onResize, onStop, onOpenEvent
           )}
           onResize={onResize}
           onStop={onStop}
+          onStart={onStart}
+          onRestart={onRestart}
           onOpenEvent={onOpenEvent}
           onSubmitLine={onSubmitLine}
         />

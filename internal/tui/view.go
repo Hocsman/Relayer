@@ -94,7 +94,10 @@ func (m *Model) renderAgentPane(cell Cell) string {
 
 	status := "RUNNING"
 	statusColor := agentColor(index)
-	if m.auditUnavailable && !pane.exited {
+	if action, busy := m.lifecycleBusy[pane.sessionID]; busy {
+		status = strings.ToUpper(lifecycleVerb(action)) + "…"
+		statusColor = colorMuted
+	} else if m.auditUnavailable && !pane.exited {
 		status = "AUDIT UNAVAILABLE"
 		statusColor = colorBlocked
 	} else if pane.policyFrozen {
@@ -124,6 +127,15 @@ func (m *Model) renderAgentPane(cell Cell) string {
 	}
 	if pane.policyTag != "" {
 		title += "  " + lipgloss.NewStyle().Foreground(statusColor).Render("POLICY "+pane.policyTag)
+	}
+	if m.lifecycleConfirm.sessionID == pane.sessionID {
+		keyLabel := "X"
+		if m.lifecycleConfirm.action == "restart" {
+			keyLabel = "R"
+		}
+		title += "  " + lipgloss.NewStyle().Foreground(colorBlocked).Bold(true).Render("PRESS "+keyLabel+" AGAIN TO CONFIRM")
+	} else if pane.exited && m.lifecycleBusy[pane.sessionID] == "" {
+		title += "  " + lipgloss.NewStyle().Foreground(colorMuted).Render("R: restart")
 	}
 	title = lipgloss.NewStyle().MaxWidth(innerWidth).MaxHeight(1).Render(title)
 	content := title + "\n" + pane.viewport.View()
@@ -198,6 +210,7 @@ func (m *Model) renderSupervisorPane(outer Rect) string {
 		enterHelp += " • F2: allow • F3: deny"
 	}
 	enterHelp += " • M: metrics"
+	enterHelp += " • X/R: stop/restart agent"
 	help := lipgloss.NewStyle().Foreground(colorMuted).MaxWidth(innerWidth).MaxHeight(1).Render(
 		enterHelp + " • Ctrl+←/→: focus • Ctrl+PgUp/PgDn: page • ↑/↓, PgUp/PgDn, wheel: history • Ctrl+C: quit",
 	)

@@ -437,6 +437,8 @@ export interface RelayerBridge {
   submitLine(runID: string, sessionID: string, line: string): Promise<void>;
   resizeSession(runID: string, sessionID: string, columns: number, rows: number): Promise<void>;
   stopSession(runID: string, sessionID: string): Promise<void>;
+  startSession(runID: string, sessionID: string): Promise<void>;
+  restartSession(runID: string, sessionID: string): Promise<void>;
   getAgentProfiles(): Promise<AgentProfilesView>;
   saveAgentProfiles(runID: string, request: SaveAgentProfilesRequest): Promise<AgentProfilesView>;
   saveAgentProfilesAndRestart(request: SaveAgentProfilesAndRestartRequest): Promise<LifecycleResult>;

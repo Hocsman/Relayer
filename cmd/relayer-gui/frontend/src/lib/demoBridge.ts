@@ -305,6 +305,31 @@ export function createDemoBridge(): RelayerBridge {
     `${profiles.profiles.length} agent(s) simulated by browser scripts`,
   ];
 
+  // The demo shares the real core's restart semantics for one scripted agent:
+  // a fresh process under the same identity, a clean terminal, and no carried
+  // over pending request, freeze, or exit state.
+  const startDemoAgent = (runID: string, agent: AgentState) => {
+    agent.running = true;
+    agent.status = "running";
+    agent.attached = false;
+    agent.exitCode = undefined;
+    agent.inputFrozen = false;
+    agent.output = "Relayer demo — agent restarted with a fresh terminal\n";
+    agent.revision += 1;
+    state.pendingEvents = state.pendingEvents.filter((event) => event.sessionID !== agent.sessionID);
+    emit("relayer:status", { runID, scope: "session", sessionID: agent.sessionID, status: "running" });
+    emit("relayer:snapshot", {
+      runID,
+      sessionID: agent.sessionID,
+      revision: agent.revision,
+      output: agent.output,
+      status: agent.status,
+      running: true,
+      attached: false,
+      inputFrozen: false,
+    });
+  };
+
   const agentsFromProfiles = (): AgentState[] => profiles.profiles.map((profile) => ({
     sessionID: profile.id,
     agentID: profile.id,
@@ -507,6 +532,23 @@ export function createDemoBridge(): RelayerBridge {
       agent.exitCode = 130;
       state.pendingEvents = state.pendingEvents.filter((event) => event.sessionID !== sessionID);
       emit("relayer:status", { runID, scope: "session", sessionID, status: "exited" });
+    },
+    async startSession(runID, sessionID) {
+      requireRun(runID, true);
+      const agent = state.agents.find((candidate) => candidate.sessionID === sessionID);
+      if (!agent) throw new Error("The demo session was not found.");
+      if (agent.running) throw new Error("The demo session is already running.");
+      startDemoAgent(runID, agent);
+    },
+    async restartSession(runID, sessionID) {
+      requireRun(runID, true);
+      const agent = state.agents.find((candidate) => candidate.sessionID === sessionID);
+      if (!agent) throw new Error("The demo session was not found.");
+      state.pendingEvents = state.pendingEvents.filter((event) => event.sessionID !== sessionID);
+      agent.running = false;
+      agent.status = "exited";
+      emit("relayer:status", { runID, scope: "session", sessionID, status: "stopping" });
+      startDemoAgent(runID, agent);
     },
     async getAgentProfiles() {
       return structuredClone(profiles);

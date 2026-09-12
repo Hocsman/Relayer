@@ -77,6 +77,17 @@ type EventSnapshotBackend interface {
 	PendingEvent(context.Context, string) (*adapters.Event, error)
 }
 
+// SessionLifecycleBackend is the optional hot per-agent lifecycle capability.
+// Implementations audit every transition with the operator as its actor and
+// never start a replacement process while a previous stop stays unconfirmed.
+// The TUI invokes these outside Update through a Bubble Tea command so the
+// interface never blocks on process teardown.
+type SessionLifecycleBackend interface {
+	StopSession(id string) error
+	StartSession(id string) error
+	RestartSession(id string) error
+}
+
 // Pane describes one agent already started by the caller.
 type Pane struct {
 	ID      string

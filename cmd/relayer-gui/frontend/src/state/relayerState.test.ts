@@ -210,4 +210,23 @@ describe("relayerReducer", () => {
     });
     expect(frozen.app?.agents.every((agent) => agent.inputFrozen)).toBe(true);
   });
+
+  it("updates agent status and running state synchronously on session status events", () => {
+    const loaded = relayerReducer(initialRelayerState, { type: "loaded", state: appState() });
+    expect(loaded.app?.agents[0].running).toBe(true);
+
+    const exited = relayerReducer(loaded, {
+      type: "status",
+      status: { runID: "run-1", scope: "session", sessionID: "a", status: "exited" },
+    });
+    expect(exited.app?.agents[0].status).toBe("exited");
+    expect(exited.app?.agents[0].running).toBe(false);
+
+    const restarted = relayerReducer(exited, {
+      type: "status",
+      status: { runID: "run-1", scope: "session", sessionID: "a", status: "running" },
+    });
+    expect(restarted.app?.agents[0].status).toBe("running");
+    expect(restarted.app?.agents[0].running).toBe(true);
+  });
 });

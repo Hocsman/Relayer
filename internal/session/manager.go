@@ -17,6 +17,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/intercept"
 	"github.com/Hocsman/Relayer/internal/platform"
+	"github.com/Hocsman/Relayer/internal/terminal"
 )
 
 // Manager is the sole owner of process lifecycles and PTY descriptors.
@@ -353,6 +354,42 @@ func (m *Manager) Stop(sessionID string) error {
 	}
 	session.requestStop()
 	return session.waitForStop()
+}
+
+// Remove releases the identity of one fully terminated session so a later
+// Start can reuse it. It refuses while the process might still be alive:
+// session.done only closes after Wait has reaped the process, so an open
+// channel means the previous process may still run and a replacement could
+// never share the identity safely.
+func (m *Manager) Remove(sessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return ErrClosed
+	}
+	if m.ctx.Err() != nil {
+		return ErrClosed
+	}
+	var (
+		target  *processSession
+		ownedID string
+	)
+	for existingID, session := range m.sessions {
+		if strings.EqualFold(existingID, sessionID) {
+			target, ownedID = session, existingID
+			break
+		}
+	}
+	if target == nil {
+		return fmt.Errorf("unknown session %q", sessionID)
+	}
+	select {
+	case <-target.done:
+	default:
+		return terminal.ErrSessionRunning
+	}
+	delete(m.sessions, ownedID)
+	return nil
 }
 
 func (m *Manager) Output(sessionID string) (string, error) {

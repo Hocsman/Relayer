@@ -277,6 +277,14 @@ The **Agents** panel separates persistence from activation:
 - **Stop the run** returns the application to an editable `idle` state without
   closing the window.
 
+### Per-agent lifecycle (Stop, Start, Restart)
+
+In addition to whole-run lifecycle control, Relayer supports granular, operator-initiated per-agent lifecycle management directly from each terminal card in the workspace:
+
+- **Stop**: Strictly terminates one agent's process without interrupting its siblings. The audit trail records `session_finished` with the human operator as the actor.
+- **Restart**: Transactionally stops and restarts the agent in-place with a clean terminal under its unchanged identity and preflight specification. Its streak of consecutive auto-decisions restarts cleanly.
+- **Start**: Once an agent has exited or been stopped, clicking **Start** relaunches a fresh process instance for that agent while all sibling agents keep running uninterrupted.
+
 Each successful start receives a new opaque `runID`. Snapshots, supervision
 events, status/error events, decisions, resizes, and session-stop requests all
 carry that ID. Both Go and the WebView reject data for any run other than the

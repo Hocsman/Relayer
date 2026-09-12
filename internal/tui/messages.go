@@ -55,6 +55,16 @@ type automaticDecisionFinishedMsg struct {
 
 type backendStoppedMsg struct{}
 
+// agentLifecycleMsg reports the settled outcome of one operator-initiated
+// per-agent stop or restart. It deliberately carries no terminal content, no
+// specification, and no environment data — only the lifecycle facts.
+type agentLifecycleMsg struct {
+	Action    string
+	SessionID string
+	Name      string
+	Err       error
+}
+
 type attachFinishedMsg struct {
 	SessionID string
 	Err       error

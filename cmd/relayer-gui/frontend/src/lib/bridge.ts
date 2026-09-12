@@ -27,6 +27,8 @@ interface NativeBindings {
   SubmitLine: NativeMethod<[string, string, string], void>;
   ResizeSession: NativeMethod<[string, string, number, number], void>;
   StopSession: NativeMethod<[string, string], void>;
+  StartSession: NativeMethod<[string, string], void>;
+  RestartSession: NativeMethod<[string, string], void>;
   GetAgentProfiles: NativeMethod<[], AgentProfilesView>;
   SaveAgentProfiles: NativeMethod<[string, SaveAgentProfilesRequest], AgentProfilesView>;
   SaveAgentProfilesAndRestart: NativeMethod<
@@ -71,6 +73,8 @@ function resolveBindings(): NativeBindings {
     typeof candidate.SubmitLine !== "function" ||
     typeof candidate.ResizeSession !== "function" ||
     typeof candidate.StopSession !== "function" ||
+    typeof candidate.StartSession !== "function" ||
+    typeof candidate.RestartSession !== "function" ||
     typeof candidate.GetAgentProfiles !== "function" ||
     typeof candidate.SaveAgentProfiles !== "function" ||
     typeof candidate.SaveAgentProfilesAndRestart !== "function" ||
@@ -111,6 +115,8 @@ export function createWailsBridge(): RelayerBridge {
     resizeSession: (runID, sessionID, columns, rows) =>
       bindings.ResizeSession(runID, sessionID, columns, rows),
     stopSession: (runID, sessionID) => bindings.StopSession(runID, sessionID),
+    startSession: (runID, sessionID) => bindings.StartSession(runID, sessionID),
+    restartSession: (runID, sessionID) => bindings.RestartSession(runID, sessionID),
     getAgentProfiles: () => bindings.GetAgentProfiles(),
     saveAgentProfiles: (runID, request) => bindings.SaveAgentProfiles(runID, request),
     saveAgentProfilesAndRestart: (request) =>

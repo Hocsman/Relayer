@@ -28,8 +28,12 @@ Patch release addressing GUI agent creation crashes, adapter lockout behavior, a
 
 ### Added
 
-- Automated E2E Playwright test (`cmd/relayer-gui/frontend/e2e/supervisor.spec.ts`) verifying dynamic agent creation from the catalog, form validation, and successful persistent save.
-- Unit and integration tests in Go (`profiles_test.go`) and Vitest (`agentProfiles.test.ts`) covering all 8 catalog templates and adapter round-trips.
+- **Granular Per-Agent Lifecycle (Stop, Start, Restart)**:
+  - Added individual `Stop`, `Restart`, and `Start` controls on each agent terminal card in the Desktop GUI, allowing operators to terminate, reboot in place, or restart an agent without interrupting other running processes.
+  - Implemented TUI hot keys `x` (Stop active agent) and `r` (Restart active agent) with two-press safety confirmation and timeout disarm.
+  - Introduced `internal/app.agentLifecycle` with fail-closed process ownership, `terminal.SessionRemover` backend release verification, and human operator attribution across the entire cryptographic audit trail.
+- Automated E2E Playwright test (`cmd/relayer-gui/frontend/e2e/supervisor.spec.ts`) verifying dynamic agent creation from the catalog, form validation, and per-agent lifecycle operations.
+- Unit and integration tests in Go (`profiles_test.go`, `agent_lifecycle_test.go`) and Vitest (`agentProfiles.test.ts`, `relayerState.test.ts`, `AgentCard.test.tsx`) covering all 8 catalog templates, adapter round-trips, and lifecycle states.
 
 ## [0.3.0] - 2026-09-11
 

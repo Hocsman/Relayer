@@ -300,8 +300,15 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 	} else {
 		startupLogs = append(startupLogs, "Local audit disabled")
 	}
+	lifecycle := newAgentLifecycle(
+		router,
+		auditor,
+		resolution.Specs,
+		terminal.Size{Columns: initialWidth, Rows: initialHeight},
+		nil,
+	)
 	application, err := tui.NewModelWithPolicyAndAudit(
-		&tuiBackendAdapter{router: router},
+		&tuiBackendAdapter{router: router, lifecycle: lifecycle},
 		events,
 		panes,
 		initialWidth,

@@ -295,6 +295,15 @@ The audit deliberately distinguishes:
 That distinction prevents a detached persistent session from being reported as
 terminated merely because the TUI exited. See [audit.md](audit.md).
 
+## Per-Agent Process Lifecycle
+
+The `internal/app.agentLifecycle` controller coordinates operator-initiated per-agent stop, start, and restart operations across both presentations (TUI and Desktop GUI):
+
+- **Zero shared identity**: A replacement process is never started while the previous stop is unconfirmed;
+- **Audit ordering**: `session_started` is durably recorded in the cryptographic journal before any process launches, preserving the foundational invariant that audit precedes execution;
+- **Operator attribution**: Every lifecycle transition explicitly attributes the human operator as the decision actor;
+- **Safe backend release**: Backends implement `terminal.SessionRemover` to ensure operating system processes are fully reaped and removed before an identity can be reused.
+
 ## Shutdown
 
 `Ctrl+C` first calls `BeginShutdown`, preventing new work, then exits the Bubble

@@ -135,6 +135,38 @@ test.describe("Relayer Desktop Supervisor E2E", () => {
     await expect(decisionModal).not.toBeVisible();
   });
 
+  test("controls per-agent lifecycle: stopping and restarting individual agents without affecting siblings", async ({ page }) => {
+    // 1. Open agent settings and start the agents
+    await page.locator(".button--agents").click();
+    const settingsModal = page.locator('section.agent-settings[role="dialog"]');
+    await expect(settingsModal).toBeVisible();
+    await settingsModal.locator('button:has-text("Start the agents")').click();
+    await expect(settingsModal).not.toBeVisible();
+    await expect(page.locator(".run-state--running")).toBeVisible({ timeout: 10000 });
+
+    const agentCards = page.locator(".agent-card");
+    await expect(agentCards).toHaveCount(2);
+
+    const firstAgent = agentCards.first();
+    const secondAgent = agentCards.nth(1);
+
+    // Stop the first agent
+    const stopFirstButton = firstAgent.locator('button:has-text("Stop")');
+    await expect(stopFirstButton).toBeVisible();
+    await stopFirstButton.click();
+
+    // First agent displays Start button
+    const startFirstButton = firstAgent.locator('button:has-text("Start")');
+    await expect(startFirstButton).toBeVisible({ timeout: 5000 });
+
+    // Second agent remains running and unaffected
+    await expect(secondAgent.locator('button:has-text("Stop")')).toBeVisible();
+
+    // Restart the first agent
+    await startFirstButton.click();
+    await expect(firstAgent.locator('button:has-text("Stop")')).toBeVisible({ timeout: 5000 });
+  });
+
   test("inspects audit journal, verifies cryptographic integrity, and filters entries", async ({ page }) => {
     await page.locator(".button--audit").click();
     const auditPanel = page.locator('section.audit-panel[role="dialog"]');

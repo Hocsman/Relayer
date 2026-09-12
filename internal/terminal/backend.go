@@ -71,6 +71,10 @@ var (
 	ErrNotAttachable   = errors.New("terminal session not attachable")
 	ErrUnavailable     = errors.New("terminal backend unavailable")
 	ErrUnsupported     = errors.New("terminal backend not supported")
+	// ErrSessionRunning rejects releasing a session identity while its process
+	// may still be alive. A replacement session must never be started under a
+	// identity whose previous process has not been proven gone.
+	ErrSessionRunning = errors.New("terminal session still running")
 	// These aliases preserve one errors.Is identity from the Processor through
 	// session, backend, router and presentation boundaries.
 	ErrEventPending          = adapters.ErrEventPending
@@ -134,6 +138,15 @@ type LineSender interface {
 // while reducing an already-delivered event.
 type PendingEventProvider interface {
 	PendingEvent(context.Context, SessionID) (*adapters.Event, error)
+}
+
+// SessionRemover is the optional per-agent lifecycle capability that releases
+// a fully stopped session identity so a later Start may reuse it.
+// Implementations must prove the previous process is gone before forgetting
+// the session; when that proof is impossible they return ErrSessionRunning
+// and keep the identity locked.
+type SessionRemover interface {
+	Remove(context.Context, SessionID) error
 }
 
 func clamp(value, minimum, maximum int) int {
