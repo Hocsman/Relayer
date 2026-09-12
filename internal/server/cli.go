@@ -16,10 +16,7 @@ func init() {
 }
 
 // RunServe parses arguments and launches the Relayer Web Gateway.
-func RunServe(arguments []string, output io.Writer, diagnostics io.Writer) error {
-	if output == nil {
-		output = io.Discard
-	}
+func RunServe(arguments []string, _ io.Writer, diagnostics io.Writer) error {
 	if diagnostics == nil {
 		diagnostics = io.Discard
 	}
