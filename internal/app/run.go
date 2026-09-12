@@ -11,6 +11,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
@@ -54,6 +55,18 @@ func RunWithOutput(arguments []string, output io.Writer, diagnostics io.Writer) 
 		diagnostics,
 		productionBackendDependencies(),
 	)
+}
+
+var (
+	serveHandlerMu sync.RWMutex
+	serveHandler   func(arguments []string, output io.Writer, diagnostics io.Writer) error
+)
+
+// RegisterServeHandler registers an external handler for the "serve" subcommand.
+func RegisterServeHandler(handler func(arguments []string, output io.Writer, diagnostics io.Writer) error) {
+	serveHandlerMu.Lock()
+	defer serveHandlerMu.Unlock()
+	serveHandler = handler
 }
 
 func runWithOutput(
@@ -100,6 +113,15 @@ func runWithOutputAndPreflight(
 	}
 	if len(arguments) > 0 && arguments[0] == "audit" {
 		return runAudit(arguments[1:], output, diagnostics)
+	}
+	if len(arguments) > 0 && arguments[0] == "serve" {
+		serveHandlerMu.RLock()
+		handler := serveHandler
+		serveHandlerMu.RUnlock()
+		if handler != nil {
+			return handler(arguments[1:], output, diagnostics)
+		}
+		return errors.New("serve subcommand is not registered in this build")
 	}
 	return run(arguments, diagnostics, dependencies)
 }

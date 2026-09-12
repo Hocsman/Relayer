@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/Hocsman/Relayer/internal/app"
+	_ "github.com/Hocsman/Relayer/internal/server"
 	"github.com/Hocsman/Relayer/internal/tmuxbackend"
 )
 
