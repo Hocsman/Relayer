@@ -103,13 +103,13 @@ func NewController(configPath string, diagnostics io.Writer) (*Controller, error
 	}
 
 	return &Controller{
-		configPath:   configPath,
-		diagnostics:  diagnostics,
-		agentIndex:   make(map[string]int),
-		pending:      make(map[string]pendingItem),
-		subscribers:  make(map[uint64]func(event string, payload any)),
-		detector:     toolcatalog.DefaultDetector(),
-		notifier:     notify.New(notify.DefaultConfig(), diagnostics),
+		configPath:  configPath,
+		diagnostics: diagnostics,
+		agentIndex:  make(map[string]int),
+		pending:     make(map[string]pendingItem),
+		subscribers: make(map[uint64]func(event string, payload any)),
+		detector:    toolcatalog.DefaultDetector(),
+		notifier:    notify.New(notify.DefaultConfig(), diagnostics),
 	}, nil
 }
 
@@ -329,16 +329,16 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 			ts = time.Now().UTC()
 		}
 		view := SupervisionEvent{
-			RunID:          c.runID,
-			ID:             adapterEv.ID,
-			SessionID:      adapterEv.SessionID,
-			AgentID:        adapterEv.AgentID,
-			Adapter:        adapterEv.Adapter,
-			Type:           string(adapterEv.Type),
-			Summary:        adapterEv.Summary,
-			Sensitive:      adapterEv.Sensitive,
-			Risk:           string(adapterEv.Risk),
-			Timestamp:      ts.Format(time.RFC3339),
+			RunID:     c.runID,
+			ID:        adapterEv.ID,
+			SessionID: adapterEv.SessionID,
+			AgentID:   adapterEv.AgentID,
+			Adapter:   adapterEv.Adapter,
+			Type:      string(adapterEv.Type),
+			Summary:   adapterEv.Summary,
+			Sensitive: adapterEv.Sensitive,
+			Risk:      string(adapterEv.Risk),
+			Timestamp: ts.Format(time.RFC3339),
 			Evaluation: PolicyEvaluation{
 				Action:         string(evaluation.Action),
 				ProposedAction: string(evaluation.ProposedAction),

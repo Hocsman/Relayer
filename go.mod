@@ -10,6 +10,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.8.0
 	github.com/charmbracelet/x/conpty v0.2.0
 	github.com/creack/pty v1.1.24
+	github.com/gorilla/websocket v1.5.3
 	github.com/mattn/go-runewidth v0.0.16
 	golang.org/x/sys v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -20,7 +21,6 @@ require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/charmbracelet/x/term v0.2.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect

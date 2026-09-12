@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -14,8 +15,16 @@ import (
 	"time"
 
 	"github.com/Hocsman/Relayer/internal/config"
+	"github.com/Hocsman/Relayer/internal/tmuxbackend"
 	"github.com/gorilla/websocket"
 )
+
+func TestMain(m *testing.M) {
+	if handled, exitCode := tmuxbackend.HelperMain(os.Args[1:], io.Discard); handled {
+		os.Exit(exitCode)
+	}
+	os.Exit(m.Run())
+}
 
 func TestServerLifecycleAndAgentAddition(t *testing.T) {
 	// Create temporary configuration directory and file
@@ -201,7 +210,7 @@ func TestServerLifecycleAndAgentAddition(t *testing.T) {
 	// We add a new agent profile to the existing profiles and call saveAgentProfilesAndRestart
 	workerArgv := []string{"cmd.exe", "/c", "echo worker"}
 	if runtime.GOOS != "windows" {
-		workerArgv = []string{"sh", "-c", "echo worker"}
+		workerArgv = []string{"sh", "-c", "sleep 10"}
 	}
 	newAgentID := "agent-new-worker"
 	newProfile := AgentProfileInput{
@@ -481,4 +490,3 @@ func TestCLIServeParsing(t *testing.T) {
 		t.Fatal("Expected error for unknown flag to relayer serve")
 	}
 }
-
