@@ -945,7 +945,7 @@ input:focus-visible {
   display: block;
   margin-bottom: 5px;
   color: var(--cyan);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 750;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -3027,19 +3027,19 @@ input:focus-visible {
 
 .agent-settings__header h1 {
   margin: 0;
-  font-size: 20px;
+  font-size: 22px;
   letter-spacing: -0.025em;
 }
 
 .agent-settings__header p {
   margin: 5px 0 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .agent-settings__content {
   display: grid;
-  grid-template-columns: 306px minmax(0, 1fr);
+  grid-template-columns: 320px minmax(0, 1fr);
   min-inline-size: 0;
   min-width: 0;
   min-height: 0;
@@ -3067,14 +3067,14 @@ input:focus-visible {
 .agent-catalog h2,
 .profile-editor h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: 16px;
   letter-spacing: -0.015em;
 }
 
 .agent-catalog header p {
   margin: 5px 0 0;
   color: var(--faint);
-  font-size: 9px;
+  font-size: 12.5px;
   line-height: 1.45;
 }
 
@@ -3167,22 +3167,22 @@ input:focus-visible {
 
 .catalog-card h3 {
   margin: 0;
-  font-size: 11px;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 /* These descriptions are how an operator picks a CLI, and the column had room to
    spare, so they wrap instead of being cut mid-word on one line. Three lines is
    measured, not guessed: at this width the longest catalogue entry in
    cmd/relayer-gui/profiles.go takes exactly three. The clamp stays as a bound on
-   a future longer entry, not as a cut on the current ones. 8.5px was also the
-   file's only half-pixel size below 9. */
+   a future longer entry, not as a cut on the current ones. */
 .catalog-card p {
   display: -webkit-box;
-  margin: 3px 0 0;
+  margin: 4px 0 0;
   overflow: hidden;
   color: var(--faint);
-  font-size: 9px;
-  line-height: 1.4;
+  font-size: 12px;
+  line-height: 1.45;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   line-clamp: 3;
@@ -3191,18 +3191,18 @@ input:focus-visible {
 .catalog-badges {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 7px;
+  gap: 5px;
+  margin-top: 8px;
 }
 
 .catalog-badge {
-  padding: 2px 5px;
+  padding: 3px 6px;
   border: 1px solid var(--border);
   border-radius: 5px;
   color: var(--faint);
-  font-size: 7px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
 }
 
@@ -3219,15 +3219,15 @@ input:focus-visible {
 
 .catalog-add {
   display: grid;
-  width: 27px;
-  height: 27px;
+  width: 30px;
+  height: 30px;
   place-items: center;
   border: 1px solid rgba(66, 217, 232, 0.2);
   border-radius: 8px;
   color: var(--cyan);
   background: rgba(66, 217, 232, 0.055);
   cursor: pointer;
-  font-size: 15px;
+  font-size: 16px;
 }
 
 .catalog-add:hover:not(:disabled) {
@@ -3246,7 +3246,7 @@ input:focus-visible {
   border-radius: 8px;
   color: #7e9d91;
   background: rgba(73, 215, 154, 0.03);
-  font-size: 8px;
+  font-size: 11.5px;
   line-height: 1.5;
 }
 
@@ -3265,13 +3265,14 @@ input:focus-visible {
 }
 
 .profile-limit {
-  padding: 5px 8px;
+  padding: 5px 9px;
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--muted);
   background: rgba(255, 255, 255, 0.02);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .profile-list {
@@ -3300,54 +3301,55 @@ input:focus-visible {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
-  min-height: 48px;
-  padding: 8px 10px;
+  gap: 12px;
+  min-height: 52px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   background: rgba(4, 7, 12, 0.2);
 }
 
 .profile-order {
   display: grid;
-  width: 27px;
-  height: 27px;
+  width: 30px;
+  height: 30px;
   place-items: center;
   border: 1px solid rgba(154, 140, 255, 0.2);
   border-radius: 8px;
   color: #bdb5ff;
   background: rgba(154, 140, 255, 0.065);
-  font-size: 9px;
+  font-size: 13px;
   font-weight: 750;
 }
 
 .profile-card__header h3 {
   margin: 0;
-  font-size: 11px;
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .profile-card__header div > span {
   display: block;
-  margin-top: 2px;
+  margin-top: 3px;
   color: var(--faint);
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .profile-card__controls {
   display: flex;
-  gap: 4px;
+  gap: 5px;
 }
 
 .profile-card__controls button,
 .argv-editor__title button,
 .argv-row button {
-  min-width: 25px;
-  height: 25px;
+  min-width: 28px;
+  height: 28px;
   border: 1px solid var(--border);
   border-radius: 7px;
   color: var(--muted);
   background: rgba(255, 255, 255, 0.025);
   cursor: pointer;
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .profile-card__controls button:hover:not(:disabled),
@@ -3389,9 +3391,9 @@ input:focus-visible {
 
 .profile-field > span,
 .argv-editor__title strong {
-  color: #aeb9cb;
-  font-size: 8.5px;
-  font-weight: 650;
+  color: #c0cde0;
+  font-size: 12.5px;
+  font-weight: 600;
 }
 
 .profile-field input,
@@ -3399,14 +3401,14 @@ input:focus-visible {
 .argv-row input {
   width: 100%;
   min-width: 0;
-  height: 31px;
-  padding: 0 9px;
+  height: 36px;
+  padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: 7px;
   color: #c9d2e0;
   background: rgba(6, 9, 15, 0.72);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 13px;
 }
 
 .profile-field select {
@@ -3436,7 +3438,7 @@ input:focus-visible {
 .field-error {
   margin: 0;
   color: #ff8d9d;
-  font-size: 7.5px;
+  font-size: 11.5px;
   line-height: 1.4;
 }
 
@@ -3450,7 +3452,7 @@ input:focus-visible {
   justify-content: space-between;
   gap: 16px;
   margin: 8px 11px 11px;
-  padding: 10px 11px;
+  padding: 12px 14px;
   border: 1px solid rgba(66, 217, 232, 0.12);
   border-radius: 9px;
   background: rgba(66, 217, 232, 0.025);
@@ -3459,30 +3461,31 @@ input:focus-visible {
 .argv-editor--masked > div {
   display: grid;
   min-width: 0;
-  gap: 2px;
+  gap: 3px;
 }
 
 .argv-editor--masked strong {
   color: #b9c6d8;
-  font-size: 9px;
+  font-size: 14px;
 }
 
 .argv-editor--masked span,
 .argv-editor--masked small {
   color: var(--faint);
-  font-size: 7.5px;
+  font-size: 12px;
 }
 
 .argv-editor--masked button {
   flex: 0 0 auto;
-  height: 28px;
-  padding: 0 9px;
+  height: 32px;
+  padding: 0 12px;
   border: 1px solid rgba(66, 217, 232, 0.2);
   border-radius: 7px;
   color: var(--cyan);
   background: rgba(66, 217, 232, 0.05);
   cursor: pointer;
-  font-size: 8px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .argv-editor--masked button:hover {
@@ -3494,40 +3497,42 @@ input:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 7px;
+  margin-bottom: 8px;
 }
 
 .argv-editor__title > div {
   display: grid;
-  gap: 2px;
+  gap: 3px;
 }
 
 .argv-editor__title span {
   color: var(--faint);
-  font-size: 7.5px;
+  font-size: 12px;
 }
 
 .argv-editor__title button {
   width: auto;
-  padding: 0 8px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
 }
 
 .argv-list {
   display: grid;
-  gap: 5px;
+  gap: 6px;
 }
 
 .argv-row {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .argv-row > span {
   color: var(--faint);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 12px;
   text-align: right;
 }
 
@@ -3555,20 +3560,20 @@ input:focus-visible {
 }
 
 .profile-lock strong {
-  font-size: 10px;
+  font-size: 13.5px;
 }
 
 .profile-lock p {
   margin: 4px 0;
   color: var(--muted);
-  font-size: 8.5px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
 .profile-lock small {
   color: var(--faint);
   font-family: var(--mono);
-  font-size: 7.5px;
+  font-size: 11.5px;
 }
 
 .settings-error {
@@ -3578,7 +3583,7 @@ input:focus-visible {
   border-radius: 8px;
   color: #ff9baa;
   background: rgba(255, 94, 115, 0.06);
-  font-size: 9px;
+  font-size: 12.5px;
 }
 
 .agent-settings__footer {
@@ -3595,9 +3600,9 @@ input:focus-visible {
 .settings-footer__status {
   display: grid;
   min-width: 0;
-  gap: 3px;
+  gap: 4px;
   color: var(--faint);
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .settings-path {
@@ -3605,17 +3610,18 @@ input:focus-visible {
   overflow: hidden;
   color: var(--muted);
   font-family: var(--mono);
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .settings-save-error {
   color: #ff8d9d;
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .settings-notice {
-  font-size: 8.5px;
+  font-size: 12.5px;
 }
 
 .settings-notice--success { color: var(--green); }
@@ -3623,7 +3629,7 @@ input:focus-visible {
 
 .restart-guidance {
   color: #bca988;
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .settings-footer__actions,
@@ -3636,7 +3642,7 @@ input:focus-visible {
 
 .inline-confirm {
   color: var(--orange);
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .agent-settings__loading,
@@ -3649,18 +3655,18 @@ input:focus-visible {
   padding: 30px;
   color: var(--muted);
   text-align: center;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .agent-settings__failure strong {
   color: var(--text);
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .agent-settings__failure p {
   max-width: 480px;
   margin: 0;
-  font-size: 10px;
+  font-size: 13px;
   line-height: 1.55;
 }
 
