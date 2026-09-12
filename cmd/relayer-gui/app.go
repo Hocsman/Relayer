@@ -50,7 +50,6 @@ var (
 	errRuntimeStopped      = errors.New("the Relayer engine is stopped")
 	errRunStale            = errors.New("this Relayer run is no longer active")
 	errAgentUnknown        = errors.New("unknown agent for this run")
-	errAgentNotRunning     = errors.New("the agent has no running process")
 	errAgentStillRunning   = errors.New("the agent process is still running")
 )
 

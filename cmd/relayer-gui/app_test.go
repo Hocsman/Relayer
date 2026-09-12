@@ -71,16 +71,16 @@ type fakeDesktopEngine struct {
 	auditStarted         chan struct{}
 	auditRelease         <-chan struct{}
 
-	resizeErr     error
-	resizeCalls   []string
-	stopErr       error
-	stopCalls     []string
-	stopStarted   chan string
-	stopRelease   <-chan struct{}
-	restartErr    error
-	restartCalls  int
-	restartStart  chan struct{}
-	restartWait   <-chan struct{}
+	resizeErr    error
+	resizeCalls  []string
+	stopErr      error
+	stopCalls    []string
+	stopStarted  chan string
+	stopRelease  <-chan struct{}
+	restartErr   error
+	restartCalls int
+	restartStart chan struct{}
+	restartWait  <-chan struct{}
 
 	agentStartErr       error
 	agentStartCalls     []string
@@ -90,13 +90,13 @@ type fakeDesktopEngine struct {
 	agentRestartCalls   []string
 	agentRestartStarted chan string
 	agentRestartRelease <-chan struct{}
-	shutdownErr   error
-	shutdownCalls int
-	closeErr      error
-	closeCalls    int
-	closeStarted  chan struct{}
-	closed        bool
-	operations    []string
+	shutdownErr         error
+	shutdownCalls       int
+	closeErr            error
+	closeCalls          int
+	closeStarted        chan struct{}
+	closed              bool
+	operations          []string
 }
 
 func newFakeDesktopEngine(sessionIDs ...string) *fakeDesktopEngine {

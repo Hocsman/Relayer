@@ -19,16 +19,6 @@ func markAgentExitedForTest(application *App, sessionID string) {
 	}
 }
 
-func markAgentFrozenForTest(application *App, sessionID string) {
-	application.mu.Lock()
-	defer application.mu.Unlock()
-	key := strings.ToLower(strings.TrimSpace(sessionID))
-	application.frozen[key] = true
-	if index, found := application.agentIndex[key]; found {
-		application.state.Agents[index].InputFrozen = true
-	}
-}
-
 func agentStateForTest(application *App, sessionID string) AgentState {
 	application.mu.RLock()
 	defer application.mu.RUnlock()

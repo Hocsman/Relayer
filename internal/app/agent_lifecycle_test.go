@@ -63,7 +63,7 @@ func lifecycleTestRecorder(t *testing.T) *audit.Recorder {
 	t.Helper()
 	// Detailed mode keeps bounded lifecycle metadata (restart_count); metadata
 	// mode deliberately omits every metadata map from the journal.
-	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	path := filepath.Join(t.TempDir(), "private", "audit.jsonl")
 	recorder, err := audit.Open(audit.Config{
 		Enabled:       true,
 		Mode:          audit.ModeDetailed,

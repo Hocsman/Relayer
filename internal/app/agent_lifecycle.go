@@ -25,10 +25,10 @@ const (
 )
 
 var (
-	errAgentNotRunning    = errors.New("agent has no running process")
-	errAgentRunning       = errors.New("agent process is still running")
-	errAgentBusy          = errors.New("an agent lifecycle operation is already in progress")
-	errAgentStopUncertain = errors.New("the previous stop was never confirmed, so no replacement may start")
+	errAgentNotRunning     = errors.New("agent has no running process")
+	errAgentRunning        = errors.New("agent process is still running")
+	errAgentBusy           = errors.New("an agent lifecycle operation is already in progress")
+	errAgentStopUncertain  = errors.New("the previous stop was never confirmed, so no replacement may start")
 	errLifecycleRouterDown = errors.New("the backend router is unavailable")
 )
 
