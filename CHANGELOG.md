@@ -6,6 +6,31 @@ without implying semantic-versioning stability before the first release.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-12
+
+Patch release addressing GUI agent creation crashes, adapter lockout behavior, and enhancing visual ergonomics.
+
+### Fixed
+
+- **GUI Agent Catalog Creation Crash (`nextProfileID`)**:
+  - Resolved an uncaught `TypeError: Cannot read properties of undefined (reading 'trim')` crash when adding Aider, Goose CLI, or Open Interpreter profiles via the GUI catalog (`+`).
+  - Added full preset mapping and defensive fallbacks in `nextProfileID` to guarantee valid, non-empty IDs for all built-in and third-party CLIs.
+  - Added null-coalescing guards in `validateAgentProfiles` to prevent component unmounting on malformed or incomplete profile inputs.
+- **Agent Profile Lockout (`editableProfileAdapter`)**:
+  - Registered `toolcatalog.GooseCLI` (`goose`) and `toolcatalog.OpenInterpreter` (`interpreter`) in `editableProfileAdapter` and `safeExecutableLabel`.
+  - Prevented saved Goose and Open Interpreter profiles from being erroneously flagged as locked `advanced_adapter`, ensuring they remain fully editable within the visual settings editor.
+
+### Changed
+
+- **Visual Comfort & Typography**:
+  - Enlarged typography and table font sizes across the Desktop GUI (Audit Trail tables, Webhooks inventory, Preflight checks, and modal cards) from 7.5–9px to 11–13.5px for increased readability on modern high-DPI displays.
+  - Added dedicated catalog logo initials and visual color schemes for Aider (`A`), Goose (`G`), Open Interpreter (`I`), and Ollama (`O`).
+
+### Added
+
+- Automated E2E Playwright test (`cmd/relayer-gui/frontend/e2e/supervisor.spec.ts`) verifying dynamic agent creation from the catalog, form validation, and successful persistent save.
+- Unit and integration tests in Go (`profiles_test.go`) and Vitest (`agentProfiles.test.ts`) covering all 8 catalog templates and adapter round-trips.
+
 ## [0.3.0] - 2026-09-11
 
 General Availability (GA) release of Relayer, concluding the Alpha phase with enterprise telemetry, multi-channel alerting, visual configuration hot-reload, terminal comfort, and strict TUI/GUI parities.
