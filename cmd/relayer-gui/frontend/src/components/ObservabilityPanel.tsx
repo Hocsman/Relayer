@@ -419,25 +419,26 @@ function LatencyHistogramChart({
     );
   }
 
-  const chartHeight = 110;
-  const barWidth = 26;
-  const gap = 12;
-  const startX = 14;
+  const chartHeight = 105;
+  const barWidth = 30;
+  const gap = 22;
+  const startX = 18;
 
   return (
     <div className="histogram-wrapper">
       <svg
-        viewBox={`0 0 ${buckets.length * (barWidth + gap) + 20} 145`}
+        viewBox={`0 0 ${buckets.length * (barWidth + gap) + 24} 145`}
         className="histogram-svg"
         aria-label="Reaction latency histogram chart"
       >
         {/* Grid horizontal line */}
-        <line x1="10" y1={chartHeight} x2={buckets.length * (barWidth + gap) + 10} y2={chartHeight} stroke="rgba(255,255,255,0.08)" />
+        <line x1="10" y1={chartHeight} x2={buckets.length * (barWidth + gap) + 14} y2={chartHeight} stroke="rgba(255,255,255,0.08)" />
 
         {buckets.map((b, i) => {
           const x = startX + i * (barWidth + gap);
-          const barHeight = b.count > 0 ? Math.max((b.count / maxCount) * (chartHeight - 20), 6) : 2;
+          const barHeight = b.count > 0 ? Math.max((b.count / maxCount) * (chartHeight - 22), 6) : 2;
           const y = chartHeight - barHeight;
+          const displayLabel = b.label.replace(/\s*-\s*/, "-");
 
           return (
             <g key={b.label} className="histogram-bar-group">
@@ -457,7 +458,7 @@ function LatencyHistogramChart({
               {b.count > 0 && (
                 <text
                   x={x + barWidth / 2}
-                  y={y - 5}
+                  y={y - 6}
                   textAnchor="middle"
                   className="histogram-value-text"
                 >
@@ -468,11 +469,11 @@ function LatencyHistogramChart({
               {/* Label below bar */}
               <text
                 x={x + barWidth / 2}
-                y={chartHeight + 16}
+                y={chartHeight + 18}
                 textAnchor="middle"
                 className="histogram-label-text"
               >
-                {b.label}
+                {displayLabel}
               </text>
             </g>
           );

@@ -2480,14 +2480,14 @@ input:focus-visible {
 
 .observability-panel__title-group h1 {
   margin: 0;
-  font-size: 20px;
+  font-size: 22px;
   letter-spacing: -0.02em;
 }
 
 .observability-panel__title-group p {
   margin: 4px 0 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .observability-panel__actions {
@@ -2500,12 +2500,12 @@ input:focus-visible {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 9px;
+  padding: 6px 12px;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.02);
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -2562,7 +2562,7 @@ input:focus-visible {
 
 .observability-kpi-card__label {
   color: var(--faint);
-  font-size: 8.5px;
+  font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -2576,7 +2576,7 @@ input:focus-visible {
 }
 
 .observability-kpi-card__value {
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 750;
   letter-spacing: -0.02em;
 }
@@ -2591,7 +2591,7 @@ input:focus-visible {
 
 .observability-kpi-card__sub {
   color: var(--muted);
-  font-size: 8.5px;
+  font-size: 12px;
 }
 
 /* Charts Row */
@@ -2613,7 +2613,7 @@ input:focus-visible {
 .observability-chart-card__title,
 .observability-card__title {
   margin: 0 0 14px;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 650;
   letter-spacing: -0.01em;
 }
@@ -2630,12 +2630,12 @@ input:focus-visible {
 }
 
 .observability-pill {
-  padding: 3px 8px;
+  padding: 4px 10px;
   border: 1px solid rgba(66, 217, 232, 0.3);
   border-radius: 999px;
   color: var(--cyan);
   background: rgba(66, 217, 232, 0.08);
-  font-size: 8px;
+  font-size: 11.5px;
   font-weight: 700;
 }
 
@@ -2682,13 +2682,15 @@ input:focus-visible {
 }
 
 .donut-center-text strong {
-  font-size: 20px;
+  font-size: 24px;
   letter-spacing: -0.02em;
 }
 
 .donut-center-text span {
   color: var(--faint);
-  font-size: 7.5px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -2698,7 +2700,7 @@ input:focus-visible {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 9px;
   flex: 1;
 }
 
@@ -2706,12 +2708,12 @@ input:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 9px;
+  font-size: 13px;
 }
 
 .donut-legend__color {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   flex: 0 0 auto;
 }
@@ -2727,7 +2729,7 @@ input:focus-visible {
 
 .donut-legend__pct {
   color: var(--faint);
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .donut-chart-empty,
@@ -2739,7 +2741,7 @@ input:focus-visible {
   gap: 8px;
   min-height: 130px;
   color: var(--faint);
-  font-size: 9.5px;
+  font-size: 13px;
   text-align: center;
 }
 
@@ -2775,13 +2777,13 @@ input:focus-visible {
 
 .histogram-value-text {
   fill: var(--text);
-  font-size: 8.5px;
+  font-size: 12px;
   font-weight: 700;
 }
 
 .histogram-label-text {
   fill: var(--faint);
-  font-size: 7.5px;
+  font-size: 10px;
   font-family: var(--mono);
 }
 
@@ -2807,7 +2809,7 @@ input:focus-visible {
   border-radius: 8px;
   color: var(--green);
   background: rgba(73, 215, 154, 0.06);
-  font-size: 9.5px;
+  font-size: 13px;
 }
 
 .guardrails-list {
@@ -2820,14 +2822,14 @@ input:focus-visible {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 12px;
+  padding: 10px 14px;
   border: 1px solid rgba(255, 159, 82, 0.22);
   border-radius: 10px;
   background: rgba(255, 159, 82, 0.04);
 }
 
 .guardrail-item__icon {
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .guardrail-item__info {
@@ -2835,26 +2837,26 @@ input:focus-visible {
   flex-direction: column;
   flex: 1;
   min-width: 0;
-  gap: 2px;
+  gap: 3px;
 }
 
 .guardrail-item__info strong {
-  font-size: 9.5px;
+  font-size: 13.5px;
   color: var(--text);
 }
 
 .guardrail-item__info code {
-  font-size: 7.5px;
+  font-size: 11.5px;
   color: var(--faint);
 }
 
 .guardrail-item__badge {
-  padding: 3px 8px;
+  padding: 4px 10px;
   border-radius: 999px;
   color: var(--orange);
   background: rgba(255, 159, 82, 0.12);
-  font-size: 8px;
-  font-weight: 700;
+  font-size: 11.5px;
+  font-weight: 650;
   white-space: nowrap;
 }
 
@@ -2866,7 +2868,7 @@ input:focus-visible {
 }
 
 .exporter-item {
-  padding: 11px 13px;
+  padding: 12px 15px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.02);
@@ -2880,14 +2882,14 @@ input:focus-visible {
 }
 
 .exporter-item__name {
-  font-size: 10.5px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 650;
 }
 
 .exporter-badge {
-  padding: 2px 7px;
+  padding: 3px 8px;
   border-radius: 999px;
-  font-size: 7.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
 }
@@ -2907,13 +2909,13 @@ input:focus-visible {
 .exporter-item__detail {
   margin: 0;
   color: var(--muted);
-  font-size: 8.5px;
+  font-size: 12px;
   font-family: var(--mono);
 }
 
 .copy-endpoint-button {
   margin-top: 8px;
-  font-size: 8px;
+  font-size: 11.5px;
 }
 
 /* Footer */
@@ -2929,7 +2931,7 @@ input:focus-visible {
 
 .observability-timestamp {
   color: var(--faint);
-  font-size: 8.5px;
+  font-size: 12px;
   font-family: var(--mono);
 }
 
