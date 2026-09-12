@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the architecture of Relayer v0.3.0 General Availability (GA).
+This document describes the architecture of Relayer v0.4.0 General Availability (GA).
 
 ## Data flow
 

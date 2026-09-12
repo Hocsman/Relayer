@@ -30,8 +30,9 @@ go run github.com/Hocsman/Relayer/cmd/relayer@latest
 ```
 
 > [!NOTE]
-> **Relayer v0.3.0 is General Availability (GA)**. It provides production-ready
-> supervision, enterprise telemetry, system alerts, and visual configuration.
+> **Relayer v0.4.0 is General Availability (GA)**. It provides production-ready
+> supervision, enterprise telemetry, system alerts, visual configuration, and
+> granular per-agent process lifecycle management.
 > Prompt detection is heuristic: it assists human operators rather than replacing
 > security boundaries. Always review proposed actions and maintain independent
 > backups. See the [security model](docs/security-model.md).
@@ -39,6 +40,8 @@ go run github.com/Hocsman/Relayer/cmd/relayer@latest
 ## What works today
 
 - One to eight agents, with up to four visible per page.
+- Granular per-agent process lifecycle: stop, start, or restart individual agents
+  in-place without restarting the supervisor session or affecting siblings.
 - Exact argument-vector commands, or explicitly requested shell commands
   (`/bin/sh -c` on Unix, `cmd.exe /c` on Windows).
 - PTY, tmux, automatic tmux-to-PTY selection, and mixed concrete backends.
@@ -196,7 +199,7 @@ Select a published `OS` (`linux` or `darwin`) and `ARCH` (`amd64` or `arm64`),
 then download and verify the matching archive:
 
 ```bash
-VERSION=0.3.0
+VERSION=0.4.0
 OS=linux
 ARCH=amd64
 ARCHIVE="relayer_${VERSION}_${OS}_${ARCH}.tar.gz"

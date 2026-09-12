@@ -1,14 +1,39 @@
 # Changelog
 
-All notable user-visible changes are documented here. Relayer is alpha software
-and this file follows the structure of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
-without implying semantic-versioning stability before the first release.
+All notable user-visible changes are documented here. This file follows the structure of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-12
+
+Minor release introducing granular per-agent process lifecycle controls, a comprehensive typography and UI visual overhaul, and cross-platform CI hardening.
+
+### Added
+
+- **Granular Per-Agent Lifecycle (Stop, Start, Restart)**:
+  - Added individual `Stop`, `Restart`, and `Start` controls on each agent terminal card in the Desktop GUI, allowing operators to terminate, reboot in place, or restart an agent without interrupting other running processes.
+  - Implemented TUI hot keys `x` (Stop active agent) and `r` (Restart active agent) with two-press safety confirmation and timeout disarm.
+  - Introduced `internal/app.agentLifecycle` with fail-closed process ownership, `terminal.SessionRemover` backend release verification, and human operator attribution across the entire cryptographic audit trail.
+  - Automated E2E Playwright test (`cmd/relayer-gui/frontend/e2e/supervisor.spec.ts`) validating dynamic agent creation from the catalog, form validation, and per-agent lifecycle operations.
+  - Unit and integration tests in Go (`profiles_test.go`, `agent_lifecycle_test.go`) and Vitest (`agentProfiles.test.ts`, `relayerState.test.ts`, `AgentCard.test.tsx`) covering all 8 catalog templates, adapter round-trips, and lifecycle states.
+
+### Changed
+
+- **Visual Comfort & Typography Overhaul**:
+  - Scaled up small text and table font sizes across the Desktop GUI (Settings editor, Catalog, Audit Trail tables, Webhooks inventory, Preflight checks, and modal cards) from 7.5–9px to 11–13.5px for increased readability on high-DPI displays.
+  - Scaled up typography across the Observability & Metrics panel (KPI cards, Donut chart center and legend, histogram values and labels, security guardrails, and telemetry exporters) from 7.5–10px to 10–24px.
+  - Optimized latency histogram bar widths, gaps, and compact interval labels to prevent any text clipping or label collision.
+  - Added dedicated catalog logo initials and visual color schemes for Aider (`A`), Goose (`G`), Open Interpreter (`I`), and Ollama (`O`).
+
+### Fixed
+
+- **Cross-Platform Audit Permissions & CI Hardening**:
+  - Scoped Unix-specific file permission assertions (`syscall.Stat_t`) under `//go:build unix` build constraints to ensure seamless cross-compilation on Windows.
+  - Resolved staticcheck unused parameter warnings and standardized code formatting across internal supervisor packages.
+
 ## [0.3.1] - 2026-09-12
 
-Patch release addressing GUI agent creation crashes, adapter lockout behavior, and enhancing visual ergonomics.
+Patch release addressing GUI agent creation crashes and adapter lockout behavior.
 
 ### Fixed
 
@@ -19,21 +44,6 @@ Patch release addressing GUI agent creation crashes, adapter lockout behavior, a
 - **Agent Profile Lockout (`editableProfileAdapter`)**:
   - Registered `toolcatalog.GooseCLI` (`goose`) and `toolcatalog.OpenInterpreter` (`interpreter`) in `editableProfileAdapter` and `safeExecutableLabel`.
   - Prevented saved Goose and Open Interpreter profiles from being erroneously flagged as locked `advanced_adapter`, ensuring they remain fully editable within the visual settings editor.
-
-### Changed
-
-- **Visual Comfort & Typography**:
-  - Enlarged typography and table font sizes across the Desktop GUI (Audit Trail tables, Webhooks inventory, Preflight checks, and modal cards) from 7.5–9px to 11–13.5px for increased readability on modern high-DPI displays.
-  - Added dedicated catalog logo initials and visual color schemes for Aider (`A`), Goose (`G`), Open Interpreter (`I`), and Ollama (`O`).
-
-### Added
-
-- **Granular Per-Agent Lifecycle (Stop, Start, Restart)**:
-  - Added individual `Stop`, `Restart`, and `Start` controls on each agent terminal card in the Desktop GUI, allowing operators to terminate, reboot in place, or restart an agent without interrupting other running processes.
-  - Implemented TUI hot keys `x` (Stop active agent) and `r` (Restart active agent) with two-press safety confirmation and timeout disarm.
-  - Introduced `internal/app.agentLifecycle` with fail-closed process ownership, `terminal.SessionRemover` backend release verification, and human operator attribution across the entire cryptographic audit trail.
-- Automated E2E Playwright test (`cmd/relayer-gui/frontend/e2e/supervisor.spec.ts`) verifying dynamic agent creation from the catalog, form validation, and per-agent lifecycle operations.
-- Unit and integration tests in Go (`profiles_test.go`, `agent_lifecycle_test.go`) and Vitest (`agentProfiles.test.ts`, `relayerState.test.ts`, `AgentCard.test.tsx`) covering all 8 catalog templates, adapter round-trips, and lifecycle states.
 
 ## [0.3.0] - 2026-09-11
 
@@ -560,7 +570,9 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.3.0...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.4.0...main
+[0.4.0]: https://github.com/Hocsman/Relayer/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/Hocsman/Relayer/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Hocsman/Relayer/releases/tag/v0.3.0
 [0.3.0-alpha.1]: https://github.com/Hocsman/Relayer/compare/v0.2.0...v0.3.0-alpha.1
 [0.2.0]: https://github.com/Hocsman/Relayer/compare/v0.1.1-alpha...v0.2.0
