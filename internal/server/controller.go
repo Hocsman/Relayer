@@ -442,10 +442,23 @@ func (c *Controller) rebuildPendingEventsLocked() {
 // RelayerBridge API Implementations
 // -------------------------------------------------------------
 
+func (c *Controller) cloneStateLocked() AppState {
+	cloned := c.state
+	cloned.Agents = make([]AgentState, len(c.state.Agents))
+	copy(cloned.Agents, c.state.Agents)
+	cloned.PendingEvents = make([]SupervisionEvent, len(c.state.PendingEvents))
+	copy(cloned.PendingEvents, c.state.PendingEvents)
+	if c.state.Notices != nil {
+		cloned.Notices = make([]string, len(c.state.Notices))
+		copy(cloned.Notices, c.state.Notices)
+	}
+	return cloned
+}
+
 func (c *Controller) GetState() AppState {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.state
+	return c.cloneStateLocked()
 }
 
 func (c *Controller) RunPreflight(ctx context.Context) (PreflightReport, error) {
@@ -597,7 +610,7 @@ func (c *Controller) StopRun(runID string) (AppState, error) {
 		_ = c.runtime.Close(context.Background())
 	}
 	c.state.RunStatus = "stopped"
-	return c.state, nil
+	return c.cloneStateLocked(), nil
 }
 
 // -------------------------------------------------------------
@@ -790,7 +803,7 @@ func (c *Controller) SaveAgentProfilesAndRestart(req SaveAgentProfilesAndRestart
 	profilesView, _ := c.loadAgentProfilesLocked()
 	return LifecycleResult{
 		Outcome:  "restarted",
-		State:    c.state,
+		State:    c.cloneStateLocked(),
 		Profiles: profilesView,
 	}, nil
 }

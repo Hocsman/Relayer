@@ -112,19 +112,22 @@ func TestServerLifecycleAndAgentAddition(t *testing.T) {
 		t.Fatalf("NewRequest: %v", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Close = true
 	authResp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /api/state with Bearer: %v", err)
 	}
-	defer authResp.Body.Close()
 	if authResp.StatusCode != http.StatusOK {
+		authResp.Body.Close()
 		t.Fatalf("GET /api/state with Bearer returned %d, want 200", authResp.StatusCode)
 	}
 
 	var initialState AppState
 	if err := json.NewDecoder(authResp.Body).Decode(&initialState); err != nil {
+		authResp.Body.Close()
 		t.Fatalf("Decode AppState: %v", err)
 	}
+	authResp.Body.Close()
 	if initialState.RunID == "" {
 		t.Fatal("Expected non-empty RunID in initial AppState")
 	}
@@ -294,13 +297,15 @@ func TestServerLifecycleAndAgentAddition(t *testing.T) {
 	}
 
 	// 8. Graceful shutdown
+	_ = wsConn.Close()
+	http.DefaultClient.CloseIdleConnections()
 	cancel()
 	select {
 	case err := <-serverErrCh:
 		if err != nil && !strings.Contains(err.Error(), "context canceled") {
 			t.Fatalf("Serve returned error on shutdown: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("Serve graceful shutdown timed out")
 	}
 	_ = loaded

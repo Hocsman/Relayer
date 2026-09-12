@@ -16,6 +16,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -50,8 +51,32 @@ type wsEventMessage struct {
 }
 
 type clientConnection struct {
-	ws   *websocket.Conn
-	send chan []byte
+	ws     *websocket.Conn
+	send   chan []byte
+	closed atomic.Bool
+	mu     sync.Mutex
+}
+
+func (c *clientConnection) safeSend(msg []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed.Load() {
+		return
+	}
+	select {
+	case c.send <- msg:
+	default:
+	}
+}
+
+func (c *clientConnection) close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed.Swap(true) {
+		return
+	}
+	_ = c.ws.Close()
+	close(c.send)
 }
 
 var upgrader = websocket.Upgrader{
@@ -113,6 +138,7 @@ func Serve(ctx context.Context, opts Options) error {
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 	}
+	httpServer.RegisterOnShutdown(handler.closeClients)
 
 	displayHost := opts.Bind
 	if displayHost == "0.0.0.0" {
@@ -187,15 +213,19 @@ func newGatewayHandler(ctrl *Controller, token, staticDir string, diagnostics io
 		gh.clientsMu.RLock()
 		defer gh.clientsMu.RUnlock()
 		for client := range gh.clients {
-			select {
-			case client.send <- msgBytes:
-			default:
-				// Buffer full, skip to prevent blocking
-			}
+			client.safeSend(msgBytes)
 		}
 	})
 
 	return gh
+}
+
+func (gh *gatewayHandler) closeClients() {
+	gh.clientsMu.Lock()
+	defer gh.clientsMu.Unlock()
+	for client := range gh.clients {
+		client.close()
+	}
 }
 
 func (gh *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -280,8 +310,7 @@ func (gh *gatewayHandler) handleWebSocket(w http.ResponseWriter, r *http.Request
 		gh.clientsMu.Lock()
 		delete(gh.clients, client)
 		gh.clientsMu.Unlock()
-		close(client.send)
-		_ = conn.Close()
+		client.close()
 	}()
 
 	// Write pump
@@ -323,10 +352,7 @@ func (gh *gatewayHandler) dispatchRPC(client *clientConnection, req wsRequest) {
 
 	respBytes, err := json.Marshal(resp)
 	if err == nil {
-		select {
-		case client.send <- respBytes:
-		default:
-		}
+		client.safeSend(respBytes)
 	}
 }
 
