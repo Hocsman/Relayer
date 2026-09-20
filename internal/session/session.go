@@ -118,17 +118,23 @@ func (s *processSession) resize(columns, rows int) error {
 		s.processor.Resize(columns, rows)
 	}
 
+	// Unlike write, the resize ioctl is issued while holding fileMu. Releasing
+	// it first and resizing afterwards lets closePTY close the descriptor
+	// underneath the ioctl, and a closed fd can already have been reused: the
+	// resize would then land on an unrelated file. write can release the lock
+	// because a saturated write has to be unblockable by Close; an ioctl never
+	// blocks, so it has no such need.
 	s.fileMu.RLock()
-	device := s.device
-	s.fileMu.RUnlock()
-	if device == nil {
+	if s.device == nil {
+		s.fileMu.RUnlock()
 		return ErrClosed
 	}
+	err := s.device.Resize(columns, rows)
+	s.fileMu.RUnlock()
 
-	err := device.Resize(columns, rows)
-	// Outside fileMu for the same reason the comment above gives: the recorder
-	// is another subsystem with its own lock, and taking it under fileMu
-	// inverts the order closePTY's writer depends on.
+	// Recorded after the unlock: the recorder is another subsystem with its own
+	// lock, and taking it under fileMu inverts the order closePTY's writer
+	// depends on.
 	if err == nil && s.recordResize != nil {
 		s.recordResize(time.Now(), columns, rows)
 	}
