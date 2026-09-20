@@ -57,6 +57,14 @@ and an ownership check on Unix. It provides no protection from the same
 operating-system user, an administrator, root, malware, backups, or disk
 snapshots.
 
+> [!IMPORTANT]
+> A configured `path` must either **not exist yet**, so Relayer creates it at
+> `0700`, or already be private. A directory you created yourself with `mkdir`
+> is `0755` on most systems — other local users could read the transcripts — so
+> Relayer refuses it rather than silently widening or narrowing permissions you
+> set. Recording then stays off for that run and says so on standard error.
+> Either let Relayer create the directory, or `chmod 700` it first.
+
 Each transcript has a JSON sidecar holding its identity, geometry, byte and
 frame counts, and its end time. The sidecar is written when the transcript opens
 and rewritten when it closes, so a transcript whose process died mid-run is

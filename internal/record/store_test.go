@@ -16,7 +16,10 @@ func testConfig(t *testing.T) Config {
 	t.Helper()
 	config := DefaultConfig()
 	config.Enabled = true
-	config.Path = t.TempDir()
+	// A directory the store creates itself, not t.TempDir() directly: temporary
+	// directories are 0755 on Unix and the store refuses a transcript directory
+	// anyone else can read. internal/audit's tests are shaped the same way.
+	config.Path = filepath.Join(t.TempDir(), "recordings")
 	config.MaxFileSizeMB = 1
 	config.MaxTotalSizeMB = 1
 	config.RetentionDays = 0

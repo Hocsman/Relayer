@@ -121,7 +121,12 @@ func TestAuditPanel_ValidJournal(t *testing.T) {
 			Outcome:       audit.OutcomeInFlight,
 			Reason:        "curl command matched restricted pattern",
 			Sensitive:     true,
-			Metadata:      map[string]string{"cmd": "curl"},
+			// Only keys allowlisted for this kind. The fixture is written raw,
+			// bypassing SanitizeEntry, so a key the sanitizer would have dropped
+			// would model a journal Relayer cannot produce -- and verification
+			// now reports exactly that. "cmd": "curl" was also raw command text,
+			// which the audit model never stores.
+			Metadata: map[string]string{"effective_action": "deny", "proposed_action": "deny"},
 		},
 		{
 			SchemaVersion: audit.CurrentSchemaVersion,
