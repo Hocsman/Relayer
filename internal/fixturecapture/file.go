@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/Hocsman/Relayer/internal/platform"
 )
 
 // encoding/json may expand one safe output byte (notably '<', '>', or '&') to
@@ -347,7 +349,7 @@ func WriteFile(path string, fixture Fixture, anonymizer *Anonymizer) error {
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close temporary fixture: %w", err)
 	}
-	if err := os.Rename(temporaryPath, path); err != nil {
+	if err := platform.PublishByRename(temporaryPath, path); err != nil {
 		return fmt.Errorf("publish fixture: %w", err)
 	}
 	committed = true

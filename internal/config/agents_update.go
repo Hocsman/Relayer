@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/Hocsman/Relayer/internal/agent"
+	"github.com/Hocsman/Relayer/internal/platform"
 	"gopkg.in/yaml.v3"
 )
 
@@ -219,7 +220,7 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 	if contentRevision(latest) != expectedRevision {
 		return Result{}, "", ErrRevisionMismatch
 	}
-	if renameErr := publishByRename(temporaryPath, absolutePath); renameErr != nil {
+	if renameErr := platform.PublishByRename(temporaryPath, absolutePath); renameErr != nil {
 		return Result{}, "", errors.New("could not atomically publish configuration")
 	}
 	if err := syncConfigurationDirectory(directory); err != nil {
@@ -304,7 +305,7 @@ func publishConfigurationBytes(path string, data []byte, mode os.FileMode) error
 	if _, err := LoadExisting(temporaryPath); err != nil {
 		return errors.New("invalid restore snapshot")
 	}
-	if err := publishByRename(temporaryPath, path); err != nil {
+	if err := platform.PublishByRename(temporaryPath, path); err != nil {
 		return errors.New("could not atomically publish restore")
 	}
 	if err := syncConfigurationDirectory(directory); err != nil {

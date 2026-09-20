@@ -16,6 +16,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/Hocsman/Relayer/internal/platform"
 )
 
 const (
@@ -738,7 +740,10 @@ func writeCaptureStatus(path string, status captureLaunchStatus) error {
 	if err := file.Close(); err != nil {
 		return errors.New("close private fixture launch status")
 	}
-	if err := os.Rename(temporaryPath, path); err != nil {
+	// Through the platform helper like every other file replacement in the
+	// repository, so a reader greping for os.Rename finds no exception. This
+	// file never builds on Windows, so the retry is inert here.
+	if err := platform.PublishByRename(temporaryPath, path); err != nil {
 		return errors.New("commit private fixture launch status")
 	}
 	committed = true

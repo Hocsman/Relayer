@@ -1,6 +1,6 @@
 //go:build windows
 
-package config
+package platform
 
 import (
 	"os"
@@ -52,9 +52,9 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-// TestRetryableRenameErrorClassifiesRealWindowsRefusals drives the classifier
+// TestTransientFileErrorClassifiesRealWindowsRefusals drives the classifier
 // with errors the kernel actually produced rather than with constructed ones.
-func TestRetryableRenameErrorClassifiesRealWindowsRefusals(t *testing.T) {
+func TestTransientFileErrorClassifiesRealWindowsRefusals(t *testing.T) {
 	directory := t.TempDir()
 	source := filepath.Join(directory, "source.tmp")
 	target := filepath.Join(directory, "config.yaml")
@@ -69,7 +69,7 @@ func TestRetryableRenameErrorClassifiesRealWindowsRefusals(t *testing.T) {
 		if err == nil {
 			t.Fatal("Windows accepted a rename over a file held exclusively")
 		}
-		if !retryableRenameError(err) {
+		if !TransientFileError(err) {
 			t.Fatalf("error %v was not classified as transient", err)
 		}
 	})
@@ -84,7 +84,7 @@ func TestRetryableRenameErrorClassifiesRealWindowsRefusals(t *testing.T) {
 		if err == nil {
 			t.Fatal("Windows accepted a rename of a file held exclusively")
 		}
-		if !retryableRenameError(err) {
+		if !TransientFileError(err) {
 			t.Fatalf("error %v was not classified as transient", err)
 		}
 	})
@@ -104,7 +104,7 @@ func TestRetryableRenameErrorClassifiesRealWindowsRefusals(t *testing.T) {
 		if renameErr == nil {
 			t.Skip("this Windows build allows a rename over an open file")
 		}
-		if !retryableRenameError(renameErr) {
+		if !TransientFileError(renameErr) {
 			t.Fatalf("error %v was not classified as transient", renameErr)
 		}
 	})
@@ -114,7 +114,7 @@ func TestRetryableRenameErrorClassifiesRealWindowsRefusals(t *testing.T) {
 		if err == nil {
 			t.Fatal("renaming a missing file succeeded")
 		}
-		if retryableRenameError(err) {
+		if TransientFileError(err) {
 			t.Fatalf("error %v was classified as transient; waiting will not create the file", err)
 		}
 	})
@@ -142,7 +142,7 @@ func TestPublishByRenameOutlastsATransientHold(t *testing.T) {
 	}()
 
 	start := time.Now()
-	if err := publishByRename(source, target); err != nil {
+	if err := PublishByRename(source, target); err != nil {
 		t.Fatalf("publishByRename gave up on a hold that cleared: %v", err)
 	}
 	elapsed := time.Since(start)
@@ -162,9 +162,9 @@ func TestPublishByRenameOutlastsATransientHold(t *testing.T) {
 // TestPublishByRenameGivesUpOnAPermanentHold pins the other side: a file nobody
 // ever releases must fail, bounded, rather than hang the caller.
 func TestPublishByRenameGivesUpOnAPermanentHold(t *testing.T) {
-	previous := configurationPublishTimeout
-	configurationPublishTimeout = 150 * time.Millisecond
-	t.Cleanup(func() { configurationPublishTimeout = previous })
+	previous := ReplaceTimeout
+	ReplaceTimeout = 150 * time.Millisecond
+	t.Cleanup(func() { ReplaceTimeout = previous })
 
 	directory := t.TempDir()
 	source := filepath.Join(directory, "source.tmp")
@@ -176,7 +176,7 @@ func TestPublishByRenameGivesUpOnAPermanentHold(t *testing.T) {
 	defer release()
 
 	start := time.Now()
-	err := publishByRename(source, target)
+	err := PublishByRename(source, target)
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -192,16 +192,16 @@ func TestPublishByRenameGivesUpOnAPermanentHold(t *testing.T) {
 	}
 }
 
-// TestRetryableRenameErrorRejectsUnrelatedErrno guards the classifier against
+// TestTransientFileErrorRejectsUnrelatedErrno guards the classifier against
 // widening into codes that do not clear on their own.
-func TestRetryableRenameErrorRejectsUnrelatedErrno(t *testing.T) {
+func TestTransientFileErrorRejectsUnrelatedErrno(t *testing.T) {
 	for _, errno := range []syscall.Errno{
 		syscall.Errno(2),  // ERROR_FILE_NOT_FOUND
 		syscall.Errno(3),  // ERROR_PATH_NOT_FOUND
 		syscall.Errno(87), // ERROR_INVALID_PARAMETER
 	} {
 		err := &os.LinkError{Op: "rename", Old: "a", New: "b", Err: errno}
-		if retryableRenameError(err) {
+		if TransientFileError(err) {
 			t.Errorf("errno %d was classified as transient", uintptr(errno))
 		}
 	}

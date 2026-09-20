@@ -11,6 +11,7 @@ import (
 
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/notify"
+	"github.com/Hocsman/Relayer/internal/platform"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"gopkg.in/yaml.v3"
 )
@@ -144,7 +145,7 @@ func UpdateFullConfiguration(path, expectedRevision string, update FullConfigura
 		return Result{}, "", ErrRevisionMismatch
 	}
 
-	if renameErr := publishByRename(temporaryPath, absolutePath); renameErr != nil {
+	if renameErr := platform.PublishByRename(temporaryPath, absolutePath); renameErr != nil {
 		return Result{}, "", errors.New("could not atomically publish configuration")
 	}
 	if err := syncConfigurationDirectory(directory); err != nil {

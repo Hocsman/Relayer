@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Hocsman/Relayer/internal/platform"
 )
 
 type openOptions struct {
@@ -624,8 +626,13 @@ func renameGeneration(source, target string) error {
 	if err := requireCurrentUserOwner(info, source); err != nil {
 		return err
 	}
-	if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+	// Both steps go through the platform helpers. Windows refuses a remove and
+	// a rename alike while any other handle is open on the path, and Go does
+	// not pass FILE_SHARE_DELETE when it opens a file, so a reader of an older
+	// generation is enough. Rotation runs on the write path of a fail-closed
+	// journal: a refusal that would have cleared must not become a lost record.
+	if err := platform.RemoveFile(target); err != nil {
 		return err
 	}
-	return os.Rename(source, target)
+	return platform.PublishByRename(source, target)
 }

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Hocsman/Relayer/internal/platform"
 )
 
 const (
@@ -519,7 +521,10 @@ func writeMetadata(path string, metadata Metadata) error {
 		_ = os.Remove(temporary)
 		return fmt.Errorf("close the recording sidecar %s: %w", path, err)
 	}
-	if err := os.Rename(temporary, path); err != nil {
+	// Windows refuses a rename while any other handle is open on either path,
+	// and a sidecar is rewritten on every transcript finish -- including while
+	// the Recordings panel may be listing it.
+	if err := platform.PublishByRename(temporary, path); err != nil {
 		_ = os.Remove(temporary)
 		return fmt.Errorf("replace the recording sidecar %s: %w", path, err)
 	}

@@ -1,4 +1,4 @@
-package config
+package platform
 
 import (
 	"errors"
@@ -12,9 +12,9 @@ import (
 // refuses a rename. The real classifier and the real os.Rename are covered by
 // the Windows test beside this file.
 
-func TestRetryRenameReturnsOnFirstSuccess(t *testing.T) {
+func TestRetryWhileTransientReturnsOnFirstSuccess(t *testing.T) {
 	calls := 0
-	err := retryRename(
+	err := retryWhileTransient(
 		func() error { calls++; return nil },
 		func(error) bool { t.Fatal("a successful rename must not be classified"); return false },
 		time.Second,
@@ -27,12 +27,12 @@ func TestRetryRenameReturnsOnFirstSuccess(t *testing.T) {
 	}
 }
 
-func TestRetryRenameSucceedsOnceInterferenceClears(t *testing.T) {
+func TestRetryWhileTransientSucceedsOnceInterferenceClears(t *testing.T) {
 	transient := errors.New("held by another process")
 	calls := 0
 
 	start := time.Now()
-	err := retryRename(
+	err := retryWhileTransient(
 		func() error {
 			calls++
 			if calls < 3 {
@@ -53,17 +53,17 @@ func TestRetryRenameSucceedsOnceInterferenceClears(t *testing.T) {
 	}
 	// The old budget was five attempts ten milliseconds apart. This asserts the
 	// loop actually waits between attempts rather than spinning.
-	if elapsed < renameBackoffStart {
-		t.Fatalf("elapsed = %s, want at least one backoff of %s", elapsed, renameBackoffStart)
+	if elapsed < replaceBackoffStart {
+		t.Fatalf("elapsed = %s, want at least one backoff of %s", elapsed, replaceBackoffStart)
 	}
 }
 
-func TestRetryRenameDoesNotWaitOnAPermanentFailure(t *testing.T) {
+func TestRetryWhileTransientDoesNotWaitOnAPermanentFailure(t *testing.T) {
 	permanent := errors.New("no such file or directory")
 	calls := 0
 
 	start := time.Now()
-	err := retryRename(
+	err := retryWhileTransient(
 		func() error { calls++; return permanent },
 		func(error) bool { return false },
 		10*time.Second,
@@ -82,12 +82,12 @@ func TestRetryRenameDoesNotWaitOnAPermanentFailure(t *testing.T) {
 	}
 }
 
-func TestRetryRenameGivesUpAtTheDeadlineAndReportsTheRealError(t *testing.T) {
+func TestRetryWhileTransientGivesUpAtTheDeadlineAndReportsTheRealError(t *testing.T) {
 	transient := errors.New("still held")
 	calls := 0
 
 	start := time.Now()
-	err := retryRename(
+	err := retryWhileTransient(
 		func() error { calls++; return transient },
 		func(error) bool { return true },
 		80*time.Millisecond,
@@ -109,11 +109,11 @@ func TestRetryRenameGivesUpAtTheDeadlineAndReportsTheRealError(t *testing.T) {
 	}
 }
 
-func TestRetryRenameBackoffIsBounded(t *testing.T) {
+func TestRetryWhileTransientBackoffIsBounded(t *testing.T) {
 	var gaps []time.Duration
 	last := time.Now()
 
-	_ = retryRename(
+	_ = retryWhileTransient(
 		func() error {
 			now := time.Now()
 			gaps = append(gaps, now.Sub(last))
@@ -130,8 +130,8 @@ func TestRetryRenameBackoffIsBounded(t *testing.T) {
 	// Every wait stays under the cap, so a long hold never turns into one long
 	// blind sleep. The allowance absorbs scheduler jitter on a loaded runner.
 	for index, gap := range gaps[1:] {
-		if gap > renameBackoffMax+150*time.Millisecond {
-			t.Fatalf("gap %d = %s, want at most about %s", index, gap, renameBackoffMax)
+		if gap > replaceBackoffMax+150*time.Millisecond {
+			t.Fatalf("gap %d = %s, want at most about %s", index, gap, replaceBackoffMax)
 		}
 	}
 }
@@ -144,7 +144,7 @@ func TestPublishByRenameMovesTheFile(t *testing.T) {
 	if err := os.WriteFile(source, []byte("published"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	if err := publishByRename(source, target); err != nil {
+	if err := PublishByRename(source, target); err != nil {
 		t.Fatalf("publishByRename: %v", err)
 	}
 
@@ -164,7 +164,7 @@ func TestPublishByRenameReportsAMissingSourceImmediately(t *testing.T) {
 	directory := t.TempDir()
 
 	start := time.Now()
-	err := publishByRename(
+	err := PublishByRename(
 		directory+string(os.PathSeparator)+"absent.tmp",
 		directory+string(os.PathSeparator)+"config.yaml",
 	)
@@ -178,8 +178,8 @@ func TestPublishByRenameReportsAMissingSourceImmediately(t *testing.T) {
 	}
 }
 
-func TestRetryableRenameErrorRefusesNil(t *testing.T) {
-	if retryableRenameError(nil) {
+func TestTransientFileErrorRefusesNil(t *testing.T) {
+	if TransientFileError(nil) {
 		t.Fatal("a nil error is not a transient rename failure")
 	}
 }
