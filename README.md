@@ -77,8 +77,17 @@ go run github.com/Hocsman/Relayer/cmd/relayer@latest
   the effective backend it also proves tmux can run a session, inside its own
   private socket.
 - A stable, product-neutral `generic` regex adapter.
-- Experimental, fixture-backed Claude Code and Codex CLI adapters with the
-  stable generic detector retained as fallback.
+- Experimental Claude Code and Codex CLI adapters backed by captured fixtures
+  in `internal/adapters/testdata/`, plus experimental Aider, Goose and Open
+  Interpreter adapters whose patterns are hand-written and backed by no
+  captured output. All of them retain the stable generic detector as fallback.
+- Structured MCP tool-call badges beside an arbitration prompt, naming the
+  server, the tool, its risk and the bounded arguments an agent printed, so an
+  operator can see what a tool is about to be given before answering. Detection
+  and display only: Relayer never intercepts the call, the badge is suppressed
+  on a confidential prompt, and an absent badge is not evidence no tool ran.
+  Heuristic, and not fixture-backed.
+  See [MCP tool calls](docs/adapters.md#mcp-tool-calls).
 - First-match approval policies with conservative handling of credentials,
   sensitive events, high or unknown risk, and dry runs.
 - Optional local JSONL audit records with rotation, restrictive Unix
@@ -483,11 +492,14 @@ The current generic adapter encodes manual supervisor input only. Consequently,
 an `allow` or `deny` policy evaluated against a generic prompt falls back to a
 human ask. `deny` means an adapter-defined refusal, not process termination.
 
-Three adapters are implemented: stable `generic`, plus version-specific
-experimental `claude` and `codex`. Claude Code coverage is limited to the
-workspace-trust and detected-environment-key prompts observed with 2.1.59;
-Codex coverage is limited to directory trust and command approval observed
-with `codex-cli 0.148.0-alpha.21`. Every other prompt still uses the configured
+Six adapters are implemented: stable `generic`, plus experimental `aider`,
+`claude`, `codex`, `goose` and `interpreter`. Claude Code coverage is limited
+to the workspace-trust and detected-environment-key prompts observed with
+2.1.59; Codex coverage is limited to directory trust and command approval
+observed with `codex-cli 0.148.0-alpha.21`. The Aider, Goose and Open
+Interpreter patterns were written by hand and were never checked against a
+recorded session, so a version that words its prompts differently is not
+detected by them. Every other prompt still uses the configured
 `intercept_patterns` fallback. See [adapters](docs/adapters.md) for the exact
 decision bytes and non-claims.
 
@@ -538,7 +550,13 @@ sensitive repositories.
   not read yet; the no-pending CAS protects only events already detected.
 - Prompt-like output can spoof the supervisor; a real prompt can evade regexes.
 - Generic and Claude cannot automate allow/deny delivery; Codex automation is
-  limited to the exact fixture-backed interactions documented above.
+  limited to the exact fixture-backed interactions documented above. Aider,
+  Goose and Open Interpreter do encode allow and deny, but on unverified
+  patterns, so what an automatic decision is answering there is less certain
+  than for Codex.
+- An MCP tool-call reading is a guess about agent output, not an interception
+  point: a call can run with nothing printed for it to read, and text shaped
+  like a tool name is read as a call whether or not one is being made.
 - Terminal rendering is intentionally bounded and not a complete emulator.
 - tmux persistence can intentionally leave processes running after Relayer
   exits; inspect them with `tmux list-sessions`.

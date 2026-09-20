@@ -51,6 +51,17 @@ type Event struct {
 	Timestamp time.Time
 	Metadata  map[string]string
 
+	// ToolCall is the MCP tool invocation this occurrence is asking about, when
+	// one could be read out of the prompt block. It is nil far more often than
+	// not: most prompts are not tool calls, and an agent may run a tool without
+	// printing anything recognisable.
+	//
+	// Its parameter values are agent-controlled terminal text. They exist so an
+	// operator can see what a tool is about to be given before answering, and
+	// they must never reach the audit journal, which has no field for content.
+	// Only the tool's identity is journalled.
+	ToolCall *ToolCall
+
 	// questionLine is the logical terminal line the match sits on: the question
 	// as it was asked, rather than the fragment a pattern happened to capture.
 	//
@@ -110,6 +121,16 @@ func (e Event) Clone() Event {
 		for key, value := range e.Metadata {
 			clone.Metadata[key] = value
 		}
+	}
+	// Deep-copied for the same reason Metadata is: two clones describe the same
+	// occurrence, and a slice shared between them would let one consumer's edit
+	// show up in another's copy.
+	if e.ToolCall != nil {
+		call := *e.ToolCall
+		if e.ToolCall.Params != nil {
+			call.Params = append([]ToolCallParam(nil), e.ToolCall.Params...)
+		}
+		clone.ToolCall = &call
 	}
 	return clone
 }

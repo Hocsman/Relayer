@@ -57,6 +57,25 @@ type SupervisionEvent struct {
 	Evaluation     PolicyEvaluation `json:"evaluation"`
 	DeliveryStatus string           `json:"deliveryStatus"`
 	Decisions      []string         `json:"decisions"`
+	// ToolCall is present only when the prompt is about an MCP tool call.
+	// Its parameter values are agent-controlled terminal text shown so an
+	// operator can see what a tool is about to be given; they are display
+	// data, never instructions, and never reach the audit journal.
+	ToolCall *ToolCallView `json:"toolCall,omitempty"`
+}
+
+type ToolCallParamView struct {
+	Name      string `json:"name"`
+	Value     string `json:"value"`
+	Truncated bool   `json:"truncated,omitempty"`
+}
+
+type ToolCallView struct {
+	Server          string              `json:"server"`
+	Tool            string              `json:"tool"`
+	Risk            string              `json:"risk"`
+	Params          []ToolCallParamView `json:"params,omitempty"`
+	ParamsTruncated bool                `json:"paramsTruncated,omitempty"`
 }
 
 type AppState struct {

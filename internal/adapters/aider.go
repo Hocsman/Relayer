@@ -14,6 +14,10 @@ const (
 	aiderRunCommand          = "run_command"
 	aiderAddToChat           = "add_to_chat"
 	aiderCreateFile          = "create_file"
+	aiderGitCommit           = "git_commit"
+	aiderGitPush             = "git_push"
+	aiderGitAdd              = "git_add"
+	aiderGitIgnore           = "git_ignore"
 )
 
 type aiderPrompt struct {
@@ -28,6 +32,11 @@ type aiderPrompt struct {
 	footers     []string
 }
 
+// aiderPrompts is ordered, and detection takes the first entry whose block is
+// complete. A line that satisfies two entries therefore resolves to the earlier
+// one, so the broad markers sit at the end: "Create " matches "Create branch and
+// Push to remote?", and reading that as a low-risk file creation would hide the
+// push behind a confirmation.
 var aiderPrompts = []aiderPrompt{
 	{
 		interaction: aiderApplyChanges,
@@ -55,6 +64,78 @@ var aiderPrompts = []aiderPrompt{
 			"Run shell command?",
 			"Run tests?",
 			"Run command?",
+		},
+		allows:  []string{"(Y)es", "[Yes]"},
+		denies:  []string{"(N)o"},
+		footers: []string{"[Yes]:", "(y/n)", "(Y/n)"},
+	},
+	// The git entries below are heuristic and unverified. Aider is not installed
+	// on the development machine, no fixture in testdata backs them, and none of
+	// the wordings has been checked against a real Aider build. They are guesses
+	// chosen to be narrow: every marker carries a git verb and a question mark.
+	// That narrowness bounds nothing on its own, though: like every entry here,
+	// they fire on any line that ends in one of the footers, so a diff, a log
+	// line or a commit message quoting a whole Aider prompt is read as one.
+	// Confirm or correct the wording with a capture, see docs/fixture-capture.md.
+	{
+		interaction: aiderGitPush,
+		summary:     "Aider asks to push commits to the remote (y=allow, n=deny)",
+		match:       "Push to remote?",
+		eventType:   EventPermission,
+		risk:        RiskHigh,
+		markers: []string{
+			"Push to remote?",
+			"Push to the remote?",
+			"Push commits to remote?",
+			"Push changes to origin?",
+		},
+		allows:  []string{"(Y)es", "[Yes]"},
+		denies:  []string{"(N)o"},
+		footers: []string{"[Yes]:", "(y/n)", "(Y/n)"},
+	},
+	{
+		interaction: aiderGitCommit,
+		summary:     "Aider asks to commit changes (y=allow, n=deny)",
+		match:       "Commit changes?",
+		eventType:   EventConfirmation,
+		risk:        RiskLow,
+		markers: []string{
+			"Commit changes?",
+			"Commit changes to git?",
+			"Commit before the chat proceeds?",
+			"Commit edits to the repo?",
+		},
+		allows:  []string{"(Y)es", "[Yes]"},
+		denies:  []string{"(N)o"},
+		footers: []string{"[Yes]:", "(y/n)", "(Y/n)"},
+	},
+	{
+		interaction: aiderGitAdd,
+		summary:     "Aider asks to track files in git (y=allow, n=deny)",
+		match:       "Add files to git?",
+		eventType:   EventConfirmation,
+		risk:        RiskLow,
+		markers: []string{
+			"Add files to git?",
+			"Add file to git?",
+			"Add to git?",
+		},
+		allows:  []string{"(Y)es", "[Yes]"},
+		denies:  []string{"(N)o"},
+		footers: []string{"[Yes]:", "(y/n)", "(Y/n)"},
+	},
+	// Ignoring a path is the opposite of tracking it, so it carries its own
+	// summary rather than sharing the one above. An operator reading "track
+	// files in git" and answering yes to a .gitignore question would be
+	// answering a question they were not shown.
+	{
+		interaction: aiderGitIgnore,
+		summary:     "Aider asks to add a path to .gitignore (y=allow, n=deny)",
+		match:       "Add to .gitignore?",
+		eventType:   EventConfirmation,
+		risk:        RiskLow,
+		markers: []string{
+			"Add to .gitignore?",
 		},
 		allows:  []string{"(Y)es", "[Yes]"},
 		denies:  []string{"(N)o"},

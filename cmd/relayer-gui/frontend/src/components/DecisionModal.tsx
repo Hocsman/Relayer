@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ToolCallBadge } from "./ToolCallBadge";
 import { useDialogKeyboard } from "../hooks/useDialogKeyboard";
 import { promptContextLines, safeEventSummary } from "../lib/safety";
 import { deliveryRequiresResync } from "../lib/delivery";
@@ -182,6 +183,11 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
           <div><span>Action</span><strong>{event.evaluation.action}</strong></div>
           <div><span>Delivery</span><strong>{event.deliveryStatus}</strong></div>
         </div>
+
+        {/* Above the transcript: the question is what this tool call will do,
+            so it should be readable without scrolling the output. Suppressed on
+            a sensitive event for the same reason the transcript is. */}
+        {!event.sensitive && <ToolCallBadge toolCall={event.toolCall} />}
 
         {context.length > 0 && (
           <div className="decision-transcript">

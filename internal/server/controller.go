@@ -367,6 +367,7 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 			},
 			DeliveryStatus: "pending",
 			Decisions:      decisionStrings,
+			ToolCall:       toolCallView(adapterEv.ToolCall),
 		}
 
 		c.mu.Lock()
@@ -1806,4 +1807,33 @@ func projectPreflightReport(report preflight.Report) PreflightReport {
 		Agents: agents,
 		Checks: checks,
 	}
+}
+
+// toolCallView converts a detected MCP tool call into its display DTO.
+//
+// A sensitive occurrence never carries one: the detector refuses to parse a
+// credential prompt's surroundings, so nil here is the normal case and not a
+// failure to report.
+func toolCallView(call *adapters.ToolCall) *ToolCallView {
+	if call == nil {
+		return nil
+	}
+
+	view := &ToolCallView{
+		Server:          call.Server,
+		Tool:            call.Tool,
+		Risk:            string(call.Risk),
+		ParamsTruncated: call.ParamsTruncated,
+	}
+	if len(call.Params) > 0 {
+		view.Params = make([]ToolCallParamView, 0, len(call.Params))
+		for _, param := range call.Params {
+			view.Params = append(view.Params, ToolCallParamView{
+				Name:      param.Name,
+				Value:     param.Value,
+				Truncated: param.Truncated,
+			})
+		}
+	}
+	return view
 }

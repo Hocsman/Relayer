@@ -4,6 +4,24 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+### Added
+
+- **MCP Tool-Call Badges**:
+  - Added `internal/adapters/mcp.go`, which reads a detected prompt block and reports whether it describes a Model Context Protocol tool call: the server, the tool, a bounded argument list, and a risk level.
+  - Recognition anchors on the `mcp__<server>__<tool>` naming convention rather than on the frame an agent draws around a call. The convention is agent-independent; the layout differs per CLI and per version, and no captured output exists to match one against.
+  - Risk is classified from the tool name alone and never from an argument value, because an argument is agent-controlled: a delete or shell tool carrying a reassuring path would otherwise read as low risk exactly when it should not. A block resolves to the most dangerous name it carries, so a decoy name printed inside an argument can only raise risk, never lower it.
+  - The web interface renders the result as a badge beside the arbitration prompt, so an operator sees what a tool is about to be given before answering. The badge is suppressed on a confidential occurrence, where reprinting the surrounding text would undo the masking next to it.
+  - The audit journal records the tool's identity only — `mcp_server`, `mcp_tool` and an argument count — so it can answer which tool somebody approved. Argument values never reach it, enforced independently by the metadata allowlist in `internal/audit`.
+  - Detection and display only. Relayer does not intercept, sandbox or block a tool call, no policy decision changes, and an agent may call a tool without printing anything readable — an absent badge is not evidence that no tool ran. Heuristic, and not fixture-backed. See [docs/adapters.md](docs/adapters.md#mcp-tool-calls).
+
+- **Aider git interactions**: the Aider adapter now recognises commit, push, git-add and gitignore confirmations alongside the four interactions it already covered. A commit is `RiskLow` and a push `RiskHigh`, because a push leaves the machine and Relayer cannot undo it. The push entry is ordered ahead of the broad `create_file` marker, which previously swallowed `Create branch and Push to remote?` and presented a high-risk push as a low-risk confirmation. Like the rest of the Aider adapter, these markers are hand-written and unverified against a real Aider build.
+
+### Fixed
+
+- **The README's adapter inventory was two releases out of date**: it named only Claude Code and Codex as adapters, and described both as fixture-backed. `internal/adapters` also contains Aider, Goose and Open Interpreter, all registered in the tool catalog, and only Claude and Codex have captured fixtures. A reader trusting the README concluded three supported agents were unsupported. The registry table in `docs/adapters.md` was missing Goose and Open Interpreter entirely, and claimed Aider's decisions had been "verified" when no fixture backs them.
+- **The README understated which adapters can act automatically**: it said only the generic and Claude adapters cannot encode an automatic allow or deny. Aider, Goose and Open Interpreter all encode `y`/`n`, so a low-risk occurrence from them is eligible for automatic approval on patterns that no captured output backs. That is now stated where the limit is described.
+
+
 ## [0.7.1] - 2026-09-20
 
 Patch release re-cut so the released commit passes its own build. It contains **no product change**: the only difference from v0.7.0 is in test files, and the two releases behave identically.

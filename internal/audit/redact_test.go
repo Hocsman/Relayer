@@ -462,3 +462,69 @@ func TestSanitizeEntryOperatorFieldAndMetadata(t *testing.T) {
 		t.Fatalf("expected operator bob, got %q", opInput.Operator)
 	}
 }
+
+// TestAllowedMetadataKeyAdmitsToolCallIdentityNotArguments pins the boundary for
+// MCP tool calls: which tool was asked for is journalled, what it was asked to
+// do with is not. An argument value is agent-controlled terminal text, and the
+// audit model has no field for that.
+func TestAllowedMetadataKeyAdmitsToolCallIdentityNotArguments(t *testing.T) {
+	admitted := []string{"mcp_server", "mcp_tool", "mcp_params"}
+	refused := []string{
+		"mcp_param_path", "mcp_args", "mcp_arguments", "mcp_input",
+		"mcp_value", "mcp_params_json", "mcp", "params", "tool",
+	}
+
+	for _, kind := range []Kind{KindEventDetected, KindDecision, KindDelivery} {
+		for _, key := range admitted {
+			if !allowedMetadataKey(kind, key) {
+				t.Errorf("allowedMetadataKey(%q, %q) = false, want true", kind, key)
+			}
+		}
+		for _, key := range refused {
+			if allowedMetadataKey(kind, key) {
+				t.Errorf("allowedMetadataKey(%q, %q) = true, want the argument content refused", kind, key)
+			}
+		}
+	}
+
+	// The tool-call keys belong to the kinds that describe a tool call, and to
+	// no others: a lifecycle or control record has no business carrying one.
+	for _, kind := range []Kind{
+		KindRunStarted, KindSessionStarted, KindPolicyEvaluated,
+		KindAttachStarted, KindControlGranted, KindRecordingStarted,
+	} {
+		for _, key := range admitted {
+			if allowedMetadataKey(kind, key) {
+				t.Errorf("allowedMetadataKey(%q, %q) = true, want tool-call keys confined to tool-call kinds", kind, key)
+			}
+		}
+	}
+}
+
+// TestSanitizeEntryDropsToolCallArgumentValues proves the allowlist actually
+// bites on a real entry rather than only in the predicate above.
+func TestSanitizeEntryDropsToolCallArgumentValues(t *testing.T) {
+	entry := SanitizeEntry(Entry{
+		Kind:       KindEventDetected,
+		DecisionBy: DecisionBySystem,
+		Reason:     "event_detected",
+		Metadata: map[string]string{
+			"mcp_server":     "github",
+			"mcp_tool":       "create_issue",
+			"mcp_params":     "3",
+			"mcp_param_body": "ghp_REDACTME_TOKEN_IN_AN_ARGUMENT",
+			"arguments":      "--password hunter2",
+		},
+	}, ModeDetailed)
+
+	if entry.Metadata["mcp_tool"] != "create_issue" {
+		t.Fatalf("tool identity was dropped: %v", entry.Metadata)
+	}
+	for key, value := range entry.Metadata {
+		switch key {
+		case "mcp_server", "mcp_tool", "mcp_params":
+		default:
+			t.Fatalf("argument content survived sanitization: %q = %q", key, value)
+		}
+	}
+}

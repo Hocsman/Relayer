@@ -102,10 +102,27 @@ export interface SupervisionEvent {
   timestamp: string;
   evaluation: PolicyEvaluation;
   deliveryStatus: DeliveryStatus;
+  // Present only when the prompt is about an MCP tool call. Parameter values
+  // are agent-controlled terminal text: display them, never act on them.
+  toolCall?: ToolCallView;
   // The semantic answers this exact occurrence accepts, decided by the adapter
   // that produced it. Never inferred here: an Allow button the adapter has no
   // bytes for would promise a delivery that fails.
   decisions?: SemanticDecision[];
+}
+
+export interface ToolCallParamView {
+  name: string;
+  value: string;
+  truncated?: boolean;
+}
+
+export interface ToolCallView {
+  server: string;
+  tool: string;
+  risk: RiskLevel;
+  params?: ToolCallParamView[];
+  paramsTruncated?: boolean;
 }
 
 export type SemanticDecision = "allow" | "deny";

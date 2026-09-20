@@ -81,6 +81,75 @@ func TestAiderPromptsDetection(t *testing.T) {
 			risk:        RiskLow,
 			summary:     "Aider asks to create file (y=allow, n=deny)",
 		},
+		{
+			name:        "commit changes",
+			input:       "Commit changes? (Y)es/(N)o [Yes]: ",
+			interaction: aiderGitCommit,
+			eventType:   EventConfirmation,
+			risk:        RiskLow,
+			summary:     "Aider asks to commit changes (y=allow, n=deny)",
+		},
+		{
+			name:        "commit before the chat proceeds",
+			input:       "Commit before the chat proceeds? (Y)es/(N)o [Yes]: ",
+			interaction: aiderGitCommit,
+			eventType:   EventConfirmation,
+			risk:        RiskLow,
+			summary:     "Aider asks to commit changes (y=allow, n=deny)",
+		},
+		{
+			name:        "push to remote",
+			input:       "Push to remote? (Y)es/(N)o [Yes]: ",
+			interaction: aiderGitPush,
+			eventType:   EventPermission,
+			risk:        RiskHigh,
+			summary:     "Aider asks to push commits to the remote (y=allow, n=deny)",
+		},
+		{
+			name:        "push commits to remote",
+			input:       "Push commits to remote? (Y)es/(N)o [Yes]: ",
+			interaction: aiderGitPush,
+			eventType:   EventPermission,
+			risk:        RiskHigh,
+			summary:     "Aider asks to push commits to the remote (y=allow, n=deny)",
+		},
+		{
+			name:        "add files to git",
+			input:       "Add files to git? (Y)es/(N)o [Yes]: ",
+			interaction: aiderGitAdd,
+			eventType:   EventConfirmation,
+			risk:        RiskLow,
+			summary:     "Aider asks to track files in git (y=allow, n=deny)",
+		},
+		// Ignoring a path is not tracking it, so it must not borrow the
+		// tracking summary: the summary is what the operator answers.
+		{
+			name:        "add to gitignore",
+			input:       "Add to .gitignore? (Y)es/(N)o [Yes]: ",
+			interaction: aiderGitIgnore,
+			eventType:   EventConfirmation,
+			risk:        RiskLow,
+			summary:     "Aider asks to add a path to .gitignore (y=allow, n=deny)",
+		},
+		// A line that satisfies both the broad create marker and a git marker
+		// resolves to the git reading, so a push is never hidden behind a
+		// low-risk file confirmation.
+		{
+			name:        "create and push resolves to the push",
+			input:       "Create branch and Push to remote? (Y)es/(N)o [Yes]: ",
+			interaction: aiderGitPush,
+			eventType:   EventPermission,
+			risk:        RiskHigh,
+			summary:     "Aider asks to push commits to the remote (y=allow, n=deny)",
+		},
+		{
+			name:        "create and add to git resolves to the git add",
+			input:       "Create file and Add to git? (Y)es/(N)o [Yes]: ",
+			interaction: aiderGitAdd,
+			eventType:   EventConfirmation,
+			risk:        RiskLow,
+			summary:     "Aider asks to track files in git (y=allow, n=deny)",
+		},
 	}
 
 	for _, tc := range tests {
@@ -193,6 +262,63 @@ func TestAiderSuppression(t *testing.T) {
 				t.Fatalf("NewAiderAdapter: %v", err)
 			}
 			state := NewDetectionState("session-suppress", "agent-aider", AiderID)
+
+			events, err := adapter.Detect(state, []byte(tc.input))
+			if err != nil {
+				t.Fatalf("Detect error: %v", err)
+			}
+			if len(events) != 0 {
+				t.Fatalf("expected no events, got: %#v", events)
+			}
+		})
+	}
+}
+
+// TestAiderGitSuppression guards the git markers, which are heuristic and have
+// no fixture behind them, against firing on text that only talks about git.
+func TestAiderGitSuppression(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "diff line mentioning commit",
+			input: "@@ -8,7 +8,7 @@\n-  # Commit changes? is handled by the git layer\n",
+		},
+		{
+			name:  "diff line with prompt shape but no options",
+			input: "+  label = Commit changes? (y/n)\n",
+		},
+		{
+			name:  "push prompt inside code fence",
+			input: "```\nPush to remote? (Y)es/(N)o [Yes]: \n```\n",
+		},
+		{
+			name:  "quoted push prompt in backticks",
+			input: "Answer `Push to remote? (Y)es/(N)o [Yes]:` when the tests pass\n",
+		},
+		{
+			name:  "prose about committing without prompt footer",
+			input: "Aider will commit changes to git and push to remote once the edits apply.\n",
+		},
+		{
+			name:  "log prefix commit prompt",
+			input: "log: Commit changes? (Y)es/(N)o [Yes]: \n",
+		},
+		{
+			name:  "quote block prefix push prompt",
+			input: "> Push to remote? (Y)es/(N)o [Yes]: \n",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			adapter, err := NewAiderAdapter(nil)
+			if err != nil {
+				t.Fatalf("NewAiderAdapter: %v", err)
+			}
+			state := NewDetectionState("session-git-suppress", "agent-aider", AiderID)
 
 			events, err := adapter.Detect(state, []byte(tc.input))
 			if err != nil {

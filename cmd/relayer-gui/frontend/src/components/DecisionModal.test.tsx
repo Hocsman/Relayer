@@ -159,3 +159,34 @@ describe("DecisionModal readOnly mode (Viewer)", () => {
     expect(markup).toContain('type="submit" disabled');
   });
 });
+
+describe("DecisionModal tool call badge", () => {
+  const call = {
+    server: "fs",
+    tool: "delete_file",
+    risk: "high" as const,
+    params: [{ name: "path", value: "/etc/passwd" }],
+  };
+
+  it("shows the tool a prompt is about, with its arguments", () => {
+    const markup = render(event({ toolCall: call }));
+    expect(markup).toContain("delete_file");
+    expect(markup).toContain("/etc/passwd");
+    expect(markup).toContain("tool-call--high");
+  });
+
+  it("renders no badge when the prompt is not a tool call", () => {
+    expect(render(event({}))).not.toContain("tool-call__name");
+  });
+
+  it("suppresses the badge on a confidential prompt", () => {
+    // A credential prompt's surroundings are exactly what must not be
+    // reprinted; a badge built from them would undo the masking beside it.
+    const markup = render(
+      event({ sensitive: true, summary: "Enter your API token", toolCall: call }),
+    );
+    expect(markup).not.toContain("tool-call__name");
+    expect(markup).not.toContain("/etc/passwd");
+    expect(markup).toContain("Confidential input required");
+  });
+});

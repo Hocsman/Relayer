@@ -4599,3 +4599,121 @@ input:focus-visible {
   .recordings-row__actions { justify-content: flex-start; }
   .cast-transport { flex-wrap: wrap; row-gap: 6px; }
 }
+
+/* MCP tool call badge. The left border carries the risk, matching how the
+   notification toast and the interactive banner signal severity. */
+.tool-call {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--faint);
+  border-radius: 8px;
+  background: rgba(146, 163, 194, 0.06);
+  font-size: 11px;
+}
+
+.tool-call--high {
+  border-left-color: var(--red);
+  background: rgba(255, 94, 115, 0.07);
+}
+
+.tool-call--low {
+  border-left-color: var(--green);
+}
+
+.tool-call--unknown {
+  border-left-color: var(--orange);
+}
+
+.tool-call__header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.tool-call__icon {
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.tool-call__name {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.tool-call__server {
+  color: var(--muted);
+}
+
+.tool-call__separator {
+  color: var(--faint);
+}
+
+.tool-call__tool {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.tool-call__risk {
+  flex-shrink: 0;
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+}
+
+.tool-call__params {
+  margin: 7px 0 0;
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 2px 10px;
+}
+
+.tool-call__param {
+  display: contents;
+}
+
+.tool-call__param-name {
+  color: var(--faint);
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.tool-call__param-value {
+  margin: 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.tool-call__ellipsis {
+  color: var(--faint);
+}
+
+.tool-call__empty,
+.tool-call__notice {
+  margin: 7px 0 0;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.tool-call__notice--caveat {
+  font-style: italic;
+}
+
+@media (max-width: 620px) {
+  .tool-call__params {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0 0;
+  }
+
+  .tool-call__param {
+    display: block;
+    margin-bottom: 4px;
+  }
+}

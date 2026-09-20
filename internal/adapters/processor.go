@@ -287,6 +287,7 @@ func (p *Processor) Consume(chunk []byte) error {
 		p.sightPendingOnScreen()
 	}
 	if err == nil && len(events) > 0 {
+		attachToolCall(events, p.state)
 		fingerprint := p.snapshotFingerprint(p.state.detectionText)
 		p.lastSnapshotFingerprint = fingerprint
 		p.pendingSnapshotFingerprint = fingerprint

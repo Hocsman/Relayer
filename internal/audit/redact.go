@@ -190,11 +190,13 @@ func allowedMetadataKey(kind Kind, value string) bool {
 		case "exit_code", "failed":
 			return true
 		}
+		return allowedToolCallKey(compact)
 	case KindDecision, KindDelivery:
 		switch compact {
 		case "operator", "role", "active":
 			return true
 		}
+		return allowedToolCallKey(compact)
 	case KindAttachStarted, KindAttachFinished:
 		// Attach records name the connection that took or dropped the terminal,
 		// the same identity the control kinds carry.
@@ -219,6 +221,23 @@ func allowedMetadataKey(kind Kind, value string) bool {
 		case "operator", "role", "conn_id", "target_operator", "target_conn_id":
 			return true
 		}
+	}
+	return false
+}
+
+// allowedToolCallKey admits the identity of a detected MCP tool call onto the
+// entries that describe one: which tool an agent asked to run, and which tool an
+// operator then allowed.
+//
+// The identity only. A tool NAME is a structural identifier bounded to the same
+// shape as a reason code, so it is as safe to journal as the rest of the closed
+// set. A tool ARGUMENT is agent-controlled terminal text of arbitrary content --
+// a file path, a commit body, a credential someone pasted -- and the audit model
+// has no field for that. Only the argument COUNT is admitted, never a value.
+func allowedToolCallKey(compact string) bool {
+	switch compact {
+	case "mcp_server", "mcp_tool", "mcp_params":
+		return true
 	}
 	return false
 }

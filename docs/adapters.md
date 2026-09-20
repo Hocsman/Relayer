@@ -9,17 +9,26 @@ during alpha; it is not a runtime plugin protocol.
 | ID | Registry status | Implemented | Behavior |
 | --- | --- | --- | --- |
 | `generic` | Stable relative to the built-ins | Yes | Ordered regex prompt detection; manual input encoding. |
-| `aider` | Experimental | Yes | Aider AI coding assistant prompts (file changes, shell command execution, chat context addition, file creation); allow (`y`), deny (`n`), and manual input verified. |
+| `aider` | Experimental | Yes | Aider prompts (file changes, shell command execution, chat context addition, file creation, git commit, push, add and ignore); allow (`y`), deny (`n`), and manual input. Hand-written patterns, no captured fixture. |
 | `claude` | Experimental | Yes | Claude Code 2.1.59 workspace trust and environment-key prompts; generic fallback; manual input only. |
 | `codex` | Experimental | Yes | Codex CLI 0.148.0-alpha.21 directory trust and command approval; generic fallback; command allow/deny and directory deny bytes verified. |
+| `goose` | Experimental | Yes | Goose prompts (tool execution, shell command execution, file modification, extension approval); allow (`y`), deny (`n`), and manual input. Hand-written patterns, no captured fixture. |
+| `interpreter` | Experimental | Yes | Open Interpreter prompts (running code, shell command execution, package installation, saving files); allow (`y`), deny (`n`), and manual input. Hand-written patterns, no captured fixture. `open-interpreter` is accepted as an alias. |
 
 “Stable” here is a registry maturity label, not a promise that the alpha API
 will remain source-compatible.
 
 If `agents[].adapter` is blank, the registry considers implemented executable
-hints and then falls back to `generic`. A basename of `aider`, `claude` or `codex`
-selects the corresponding experimental adapter. Both adapters retain every
-configured `intercept_pattern` as a generic compatibility fallback.
+hints and then falls back to `generic`. A basename of `aider`, `claude`,
+`codex`, `goose`, `interpreter` or `open-interpreter` selects the corresponding
+experimental adapter. Every experimental adapter retains each configured
+`intercept_pattern` as a generic compatibility fallback.
+
+Only `claude` and `codex` are backed by captured output. The `aider`, `goose`
+and `interpreter` patterns were written by hand from published documentation
+and never checked against a recorded session, so an installed version that
+words its prompts differently is simply not detected by them and falls back to
+`generic`.
 
 The desktop catalogue also contains generic launch profiles for MiMo Code, a
 combined Ollama / DeepSeek entry, and a custom CLI. A launch profile is not an
@@ -381,6 +390,88 @@ or command. Command approval carries unknown risk and directory trust high
 risk, so the policy engine still refuses automatic allow; a verified,
 non-sensitive deny may be automatic. No file-write, network, credential, MCP,
 review, or other Codex prompt is claimed.
+
+## MCP tool calls
+
+`internal/adapters/mcp.go` reads a prompt block that detection has already
+raised and reports whether it describes a Model Context Protocol tool call.
+`DetectToolCall` returns the server, the tool, a bounded argument list and a
+risk level.
+
+The processor attaches the result to the occurrence it raised, and the web
+interface renders it as a badge beside the arbitration prompt: the server, the
+tool, its risk, and the arguments that were readable. An operator can therefore
+see what a tool is about to be given before answering.
+
+No policy consults it. Risk on the badge is informational; the policy engine
+still evaluates the occurrence exactly as it would without one, so a tool call
+never becomes auto-approvable because its badge says low.
+
+The badge is suppressed on a confidential occurrence. A credential prompt's
+surrounding text is precisely what must not be reprinted, and a badge built
+from it would undo the masking sitting next to it.
+
+This is a separate capability from the vendor adapters above, and it does not
+contradict them. The Claude and Codex sections say that no MCP prompt is
+claimed: that statement is about the captured fixtures, which contain no such
+prompt, and it remains true. The parser here claims nothing about any
+particular agent's MCP prompt layout.
+
+Recognition anchors on the `mcp__<server>__<tool>` naming convention rather than
+on the frame, wording, or choice list an agent draws around it. That convention
+is a client convention, not part of the protocol: it is how Claude Code names an
+MCP tool when it exposes one to a model, and no check was made of what any other
+client does. A client that names tools differently is simply not recognized.
+Anchoring on the name rather than the layout was still the narrower choice,
+because the layout differs per agent and changes between versions and no
+captured output exists to match one against.
+
+Parameters are best effort. They are extracted from the same normalized text,
+bounded in count and in length, and sanitised. A parameter value is terminal
+text the agent produced: it is not authenticated, it is not necessarily what the
+tool will actually receive, and it must never be treated as an instruction or as
+evidence about the call. Read it the way you would read any other line of agent
+output.
+
+Risk is classified from the tool name alone and never from an argument value.
+An argument is agent-controlled, so classifying on one would let the agent talk
+a dangerous call down: a delete or a shell tool carrying a reassuring-looking
+path, flag, or comment would read as low risk precisely when the operator most
+needs the opposite.
+
+Keeping that promise takes more than not reading the argument field, because an
+argument can carry a second name. A block is therefore resolved to the most
+dangerous name it carries, and among equals to the last one. Taking the last
+name alone was enough to lose the promise: in
+`mcp__fs__delete_file path=mcp__docs__get_page` the decoy sits after the real
+name, so a plain last-name rule reported a page fetch. A second name can now
+only raise the risk of a block, never lower it, at the cost of reporting the
+wrong name upward when a block genuinely carries two calls.
+
+The keyword lists are matched asymmetrically for the same reason. A high-risk
+keyword matches as a substring, so the classifier over-reports danger. A
+low-risk keyword has to match a whole token, because as a substring it
+under-reports: `spreadsheet` carries `read` and `forget_session` carries `get`,
+and either would have turned an unknown tool into a low-risk one.
+
+The [audit journal](audit.md) records the tool's identity and nothing else. A
+recognized call adds `mcp_server`, `mcp_tool` and `mcp_params` — a count — to
+the occurrence and to the decision an operator then took, so the journal can
+answer which tool somebody approved. Argument values never reach it: they are
+agent-controlled content, and the audit model has no field for content. The
+allowlist in `internal/audit` enforces that independently, so a value added at
+the emitting end without a matching rule there is dropped rather than written.
+
+This is parsing only. It does not intercept, sandbox, proxy, or block a tool
+call, and it changes no policy decision. An agent can also call a tool without
+ever printing anything Relayer can see, in which case there is nothing to read —
+reading no call is not evidence that no tool ran.
+
+The parser is heuristic and is not fixture-backed. Its patterns were written by
+hand, not captured from a recorded session, so a real call can go unread, and
+output that merely mentions a tool name — prose, a README printed by `cat`, a
+diff line, a log line, a commit message — is read as a call. Nothing in the
+parser distinguishes a name being used from a name being discussed.
 
 ## Fixtures and test policy
 
