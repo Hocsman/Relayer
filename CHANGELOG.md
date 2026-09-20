@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-20
+
+Minor release adding structured MCP tool-call badges beside the arbitration prompt, git interactions for the Aider adapter, and a correction to an adapter inventory that had been two releases out of date.
+
 ### Added
 
 - **MCP Tool-Call Badges**:
@@ -700,7 +704,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.7.1...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.0...main
+[0.8.0]: https://github.com/Hocsman/Relayer/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/Hocsman/Relayer/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/Hocsman/Relayer/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Hocsman/Relayer/compare/v0.5.0...v0.6.0
