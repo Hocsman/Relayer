@@ -19,16 +19,39 @@ interface AgentCardProps {
   onRestart(runID: string, sessionID: string): Promise<void>;
   onOpenEvent(runID: string, sessionID: string, eventID: string): void;
   onSubmitLine(runID: string, sessionID: string, line: string): Promise<void>;
+  onTerminalInput?(runID: string, sessionID: string, data: string): Promise<void> | void;
+  onToggleInteractive?(runID: string, sessionID: string, active: boolean): Promise<void> | void;
 }
 
-export function AgentCard({ runID, agent, event, readOnly, onResize, onStop, onStart, onRestart, onOpenEvent, onSubmitLine }: AgentCardProps) {
+export function AgentCard({
+  runID,
+  agent,
+  event,
+  readOnly,
+  onResize,
+  onStop,
+  onStart,
+  onRestart,
+  onOpenEvent,
+  onSubmitLine,
+  onTerminalInput,
+  onToggleInteractive,
+}: AgentCardProps) {
   const waiting = Boolean(event) || agent.status === "waiting";
   const inputRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
-  const inputDisabled = Boolean(readOnly) || lineInputDisabled(agent, waiting, submitting);
+  const [localInteractive, setLocalInteractive] = useState(false);
+  const isInteractive = (localInteractive || agent.attached) && agent.running && !readOnly;
+  const inputDisabled = Boolean(readOnly) || isInteractive || lineInputDisabled(agent, waiting, submitting);
   const inputIdentity = `${runID}\u0000${agent.sessionID}`;
   const previousInputIdentity = useRef<string>();
+
+  const handleToggleInteractive = async () => {
+    const next = !isInteractive;
+    setLocalInteractive(next);
+    await onToggleInteractive?.(runID, agent.sessionID, next);
+  };
 
   // Clear before paint whenever this DOM node becomes unusable or is rebound
   // to another run/session. A draft can therefore never survive a prompt,
@@ -57,7 +80,7 @@ export function AgentCard({ runID, agent, event, readOnly, onResize, onStop, onS
   };
   return (
     <article
-      className={`agent-card${waiting ? " agent-card--waiting" : ""}${agent.simulated ? " agent-card--simulated" : ""}`}
+      className={`agent-card${waiting ? " agent-card--waiting" : ""}${agent.simulated ? " agent-card--simulated" : ""}${isInteractive ? " agent-card--interactive" : ""}`}
     >
       <header className="agent-card__header">
         <div className="agent-card__identity">
@@ -89,6 +112,23 @@ export function AgentCard({ runID, agent, event, readOnly, onResize, onStop, onS
         {typeof agent.exitCode === "number" && <span>exit {agent.exitCode}</span>}
       </div>
 
+      {isInteractive && (
+        <div className="agent-card__interactive-banner" role="status">
+          <span className="agent-card__interactive-pulse" aria-hidden="true" />
+          <span className="agent-card__interactive-text">
+            Session interactive (PTY direct) — Saisie directe au clavier, touches fléchées et Ctrl+C
+          </span>
+          <button
+            type="button"
+            className="button button--ghost button--tiny"
+            onClick={() => void handleToggleInteractive()}
+            title="Rendre la main et quitter la session interactive"
+          >
+            Rendre la main
+          </button>
+        </div>
+      )}
+
       <TerminalSnapshotView
         runID={runID}
         sessionID={agent.sessionID}
@@ -96,6 +136,8 @@ export function AgentCard({ runID, agent, event, readOnly, onResize, onStop, onS
         output={agent.output}
         revision={agent.revision}
         onResize={onResize}
+        interactive={isInteractive}
+        onTerminalInput={(data) => onTerminalInput?.(runID, agent.sessionID, data)}
       />
 
       <form className="agent-card__line-input" onSubmit={(event) => void submitLine(event)}>
@@ -109,7 +151,7 @@ export function AgentCard({ runID, agent, event, readOnly, onResize, onStop, onS
           autoComplete="off"
           spellCheck={false}
           disabled={inputDisabled}
-          placeholder={readOnly ? "Mode lecture seule (Viewer)" : waiting ? "Handle the pending request" : agent.inputFrozen ? "Session frozen" : "Text is never recorded"}
+          placeholder={readOnly ? "Mode lecture seule (Viewer)" : isInteractive ? "Terminal interactif actif (tapez directement ci-dessus)" : waiting ? "Handle the pending request" : agent.inputFrozen ? "Session frozen" : "Text is never recorded"}
           title="One UTF-8 line, 4096 bytes maximum, no control character"
           aria-label={`Line for ${agent.name}`}
         />
@@ -126,9 +168,11 @@ export function AgentCard({ runID, agent, event, readOnly, onResize, onStop, onS
               : "Session finished"
             : agent.simulated
               ? "Demo agent"
-              : agent.attached
-                ? "Session attached"
-                : "Supervision active"}
+              : isInteractive
+                ? "Session interactive directe"
+                : agent.attached
+                  ? "Session attached"
+                  : "Supervision active"}
         </span>
         <div className="agent-card__actions">
           {event && (
@@ -142,6 +186,15 @@ export function AgentCard({ runID, agent, event, readOnly, onResize, onStop, onS
           )}
           {!readOnly && agent.running && (
             <>
+              <button
+                className={`button button--small ${isInteractive ? "button--attention" : "button--ghost"}`}
+                type="button"
+                disabled={agent.status === "stopping"}
+                title={isInteractive ? "Rendre la main (quitter le contrôle direct PTY)" : "Prendre la main sur le terminal (contrôle direct PTY)"}
+                onClick={() => void handleToggleInteractive()}
+              >
+                {isInteractive ? "🔌 Rendre la main" : "⌨️ Prendre la main"}
+              </button>
               <button
                 className="button button--ghost button--small"
                 type="button"

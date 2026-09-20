@@ -472,6 +472,8 @@ export interface RelayerBridge {
   getTelemetrySnapshot(): Promise<TelemetrySnapshotView>;
   testNotification?(): Promise<{ ok: boolean }>;
   getUserInfo?(): Promise<UserInfo>;
+  sendTerminalInput?(runID: string, sessionID: string, data: string | Uint8Array): Promise<void>;
+  setInteractiveSession?(runID: string, sessionID: string, active: boolean): Promise<void>;
   on<K extends BridgeEventName>(event: K, listener: (payload: BridgeEventMap[K]) => void): () => void;
 }
 

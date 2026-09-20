@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -268,7 +269,10 @@ func (c *Controller) eventLoop(ctx context.Context, rt *app.DesktopRuntime) {
 func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, rawEvent session.Event) {
 	switch ev := rawEvent.(type) {
 	case session.OutputAvailable:
-		out, err := rt.Output(ev.SessionID)
+		out, err := rt.AnsiOutput(ev.SessionID)
+		if err != nil {
+			out, err = rt.Output(ev.SessionID)
+		}
 		if err != nil {
 			return
 		}
@@ -678,6 +682,77 @@ func (c *Controller) SubmitLineWithOperator(runID, sessionID, line, operator str
 	})
 
 	return err
+}
+
+// SendTerminalInput delivers raw terminal input bytes directly to the session backend.
+// Used by the web interactive terminal (full PTY mode) to stream keystrokes and signals.
+func (c *Controller) SendTerminalInput(runID, sessionID string, data []byte, operator string) error {
+	c.mu.RLock()
+	rt := c.runtime
+	c.mu.RUnlock()
+
+	if rt == nil {
+		return errors.New("supervisor runtime not ready")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	return rt.SendRaw(ctx, sessionID, data)
+}
+
+// SetInteractiveSession toggles an agent's interactive attachment state and logs audit tracking.
+func (c *Controller) SetInteractiveSession(runID, sessionID string, active bool, operator string) error {
+	c.mu.Lock()
+	rt := c.runtime
+	idx, hasAgent := c.agentIndex[strings.ToLower(sessionID)]
+	var agent AgentState
+	if hasAgent && idx < len(c.state.Agents) {
+		c.state.Agents[idx].Attached = active
+		agent = c.state.Agents[idx]
+	}
+	c.mu.Unlock()
+
+	if rt == nil {
+		return errors.New("supervisor runtime not ready")
+	}
+
+	if strings.TrimSpace(operator) == "" {
+		operator = "operator"
+	}
+
+	kind := audit.KindAttachStarted
+	outcome := "attached"
+	if !active {
+		kind = audit.KindAttachFinished
+		outcome = "detached"
+	}
+
+	_ = rt.RecordAudit(audit.Entry{
+		Kind:       kind,
+		SessionID:  strings.TrimSpace(sessionID),
+		AgentID:    strings.TrimSpace(agent.AgentID),
+		Backend:    strings.ToLower(strings.TrimSpace(agent.Backend)),
+		Adapter:    strings.ToLower(strings.TrimSpace(agent.Adapter)),
+		DecisionBy: audit.DecisionByHuman,
+		Operator:   operator,
+		Outcome:    audit.OutcomeApplied,
+		Reason:     "operator_interactive_" + outcome,
+		Metadata: map[string]string{
+			"operator": operator,
+			"role":     "operator",
+			"active":   strconv.FormatBool(active),
+		},
+	})
+
+	c.broadcast(eventStatus, StatusEvent{
+		RunID:     runID,
+		Scope:     "session",
+		SessionID: sessionID,
+		Status:    agent.Status,
+	})
+
+	return nil
 }
 
 func (c *Controller) ResizeSession(runID, sessionID string, columns, rows int) error {

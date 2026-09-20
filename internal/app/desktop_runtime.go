@@ -485,6 +485,15 @@ func (r *DesktopRuntime) SendLine(ctx context.Context, sessionID, line string) e
 	return r.router.SendLine(ctx, sessionID, line)
 }
 
+// SendRaw transmits raw terminal bytes (such as keystrokes, escape sequences, or control characters)
+// directly to the session backend for interactive terminal streaming.
+func (r *DesktopRuntime) SendRaw(ctx context.Context, sessionID string, data []byte) error {
+	if err := r.available(); err != nil {
+		return err
+	}
+	return r.router.SendRaw(ctx, sessionID, data)
+}
+
 func (r *DesktopRuntime) Evaluate(event adapters.Event) policy.Evaluation {
 	if r == nil || r.policyEngine == nil {
 		return policy.Evaluation{Action: policy.ActionAsk, ProposedAction: policy.ActionAsk, Reason: policy.ReasonNoEngine}

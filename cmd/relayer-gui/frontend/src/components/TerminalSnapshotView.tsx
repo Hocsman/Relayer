@@ -11,6 +11,8 @@ interface TerminalSnapshotViewProps {
   output: string;
   revision: number;
   onResize(runID: string, sessionID: string, columns: number, rows: number): Promise<void>;
+  interactive?: boolean;
+  onTerminalInput?(data: string): void;
 }
 
 const RELAYER_TERMINAL_THEME = {
@@ -44,6 +46,8 @@ export function TerminalSnapshotView({
   output,
   revision,
   onResize,
+  interactive = false,
+  onTerminalInput,
 }: TerminalSnapshotViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -52,6 +56,8 @@ export function TerminalSnapshotView({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const followRef = useRef(true);
   const resizeRef = useRef(onResize);
+  const inputRef = useRef(onTerminalInput);
+  const interactiveRef = useRef(interactive);
   const lastSizeRef = useRef({ columns: 0, rows: 0 });
   const lastOutputRef = useRef<string>("");
   const currentIdentityRef = useRef<string>("");
@@ -60,6 +66,8 @@ export function TerminalSnapshotView({
   const [searchQuery, setSearchQuery] = useState("");
 
   resizeRef.current = onResize;
+  inputRef.current = onTerminalInput;
+  interactiveRef.current = interactive;
 
   // Initialize xterm.js instance and attach to container DOM
   useEffect(() => {
@@ -67,7 +75,9 @@ export function TerminalSnapshotView({
     if (!container) return;
 
     const term = new Terminal({
-      cursorBlink: true,
+      cursorBlink: Boolean(interactive),
+      cursorStyle: interactive ? "block" : "bar",
+      disableStdin: !interactive,
       convertEol: true,
       fontSize: 12,
       fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace',
@@ -98,6 +108,23 @@ export function TerminalSnapshotView({
       const isBottom = term.buffer.active.viewportY >= term.buffer.active.baseY;
       followRef.current = isBottom;
       setFollowing(isBottom);
+    });
+
+    const dataDispose = term.onData((data) => {
+      if (interactiveRef.current) {
+        inputRef.current?.(data);
+      }
+    });
+
+    term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      // If user presses Ctrl+C while text is selected, let browser copy to clipboard
+      if (event.type === "keydown" && event.ctrlKey && event.code === "KeyC") {
+        if (term.hasSelection()) {
+          return false;
+        }
+        return true;
+      }
+      return true;
     });
 
     let resizeTimeout = 0;
@@ -131,6 +158,7 @@ export function TerminalSnapshotView({
       observer.disconnect();
       window.clearTimeout(resizeTimeout);
       scrollDispose.dispose();
+      dataDispose.dispose();
       searchAddon.dispose();
       term.dispose();
       termRef.current = null;
@@ -139,6 +167,18 @@ export function TerminalSnapshotView({
       lastOutputRef.current = "";
     };
   }, [runID, sessionID]);
+
+  // Update terminal interactive options dynamically
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.cursorBlink = Boolean(interactive);
+    term.options.disableStdin = !interactive;
+    term.options.cursorStyle = interactive ? "block" : "bar";
+    if (interactive) {
+      term.focus();
+    }
+  }, [interactive]);
 
   // Synchronize terminal output with incoming stream
   useEffect(() => {
@@ -236,12 +276,17 @@ export function TerminalSnapshotView({
     <div className="terminal-shell" onKeyDown={handleKeyDown}>
       <div
         ref={containerRef}
-        className="terminal-snapshot"
+        className={`terminal-snapshot${interactive ? " terminal-snapshot--interactive" : ""}`}
         role="log"
         tabIndex={0}
         aria-label={label}
         aria-live="off"
         data-revision={revision}
+        onClick={() => {
+          if (interactive) {
+            termRef.current?.focus();
+          }
+        }}
       >
         {!output && <p className="terminal-snapshot__empty">Waiting for output…</p>}
       </div>

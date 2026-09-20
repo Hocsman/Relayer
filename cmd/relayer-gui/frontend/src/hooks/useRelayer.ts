@@ -249,6 +249,24 @@ export function useRelayer(bridge: RelayerBridge) {
     }
   }, [bridge, refresh]);
 
+  const sendTerminalInput = useCallback(
+    async (runID: string, sessionID: string, data: string | Uint8Array) => {
+      if (bridge.sendTerminalInput) {
+        await bridge.sendTerminalInput(runID, sessionID, data);
+      }
+    },
+    [bridge],
+  );
+
+  const setInteractiveSession = useCallback(
+    async (runID: string, sessionID: string, active: boolean) => {
+      if (bridge.setInteractiveSession) {
+        await bridge.setInteractiveSession(runID, sessionID, active);
+      }
+    },
+    [bridge],
+  );
+
   return {
     state,
     refresh,
@@ -262,5 +280,7 @@ export function useRelayer(bridge: RelayerBridge) {
     saveAgentProfiles,
     saveAgentProfilesAndRestart,
     stopRun,
+    sendTerminalInput,
+    setInteractiveSession,
   };
 }

@@ -220,6 +220,25 @@ export function createWebBridge(options: WebBridgeOptions = {}): RelayerBridge {
       callRpc<{ ok: boolean }>("testNotification"),
     getUserInfo: () =>
       callRpc<UserInfo>("getUserInfo"),
+    sendTerminalInput: async (_runID, sessionID, data) => {
+      const encoder = new TextEncoder();
+      const sessBytes = encoder.encode(sessionID);
+      const inputBytes = typeof data === "string" ? encoder.encode(data) : data;
+
+      if (sessBytes.length <= 255 && ws && ws.readyState === WebSocket.OPEN) {
+        const payload = new Uint8Array(1 + sessBytes.length + inputBytes.length);
+        payload[0] = sessBytes.length;
+        payload.set(sessBytes, 1);
+        payload.set(inputBytes, 1 + sessBytes.length);
+        ws.send(payload);
+        return;
+      }
+
+      const dataStr = typeof data === "string" ? data : new TextDecoder().decode(data);
+      return callRpc<void>("sendTerminalInput", { runID: _runID, sessionID, data: dataStr });
+    },
+    setInteractiveSession: (runID, sessionID, active) =>
+      callRpc<void>("setInteractiveSession", { runID, sessionID, active }),
 
     on<K extends BridgeEventName>(
       event: K,

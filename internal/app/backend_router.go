@@ -131,6 +131,18 @@ func (r *backendRouter) Send(ctx context.Context, id string, data []byte) error 
 	return backend.Send(effectiveContext(ctx, r.ctx), id, append([]byte(nil), data...))
 }
 
+func (r *backendRouter) SendRaw(ctx context.Context, id string, data []byte) error {
+	backend, err := r.backendFor(id)
+	if err != nil {
+		return err
+	}
+	effectiveCtx := effectiveContext(ctx, r.ctx)
+	if sender, ok := backend.(terminal.RawSender); ok {
+		return sender.SendRaw(effectiveCtx, id, append([]byte(nil), data...))
+	}
+	return backend.Send(effectiveCtx, id, append([]byte(nil), data...))
+}
+
 // SendLine requires the concrete backend's atomic ordinary-input capability.
 // There is deliberately no fallback to raw Send, which cannot prove that a
 // prompt did not become pending concurrently.

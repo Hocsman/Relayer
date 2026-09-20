@@ -12,9 +12,24 @@ interface AgentGridProps {
   onRestart(runID: string, sessionID: string): Promise<void>;
   onOpenEvent(runID: string, sessionID: string, eventID: string): void;
   onSubmitLine(runID: string, sessionID: string, line: string): Promise<void>;
+  onTerminalInput?(runID: string, sessionID: string, data: string): Promise<void> | void;
+  onToggleInteractive?(runID: string, sessionID: string, active: boolean): Promise<void> | void;
 }
 
-export function AgentGrid({ runID, agents, events, readOnly, onResize, onStop, onStart, onRestart, onOpenEvent, onSubmitLine }: AgentGridProps) {
+export function AgentGrid({
+  runID,
+  agents,
+  events,
+  readOnly,
+  onResize,
+  onStop,
+  onStart,
+  onRestart,
+  onOpenEvent,
+  onSubmitLine,
+  onTerminalInput,
+  onToggleInteractive,
+}: AgentGridProps) {
   if (agents.length === 0) {
     return (
       <section className="empty-agents">
@@ -41,6 +56,8 @@ export function AgentGrid({ runID, agents, events, readOnly, onResize, onStop, o
           onRestart={onRestart}
           onOpenEvent={onOpenEvent}
           onSubmitLine={onSubmitLine}
+          onTerminalInput={onTerminalInput}
+          onToggleInteractive={onToggleInteractive}
         />
       ))}
     </section>

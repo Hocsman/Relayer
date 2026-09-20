@@ -174,4 +174,63 @@ describe("AgentCard simulated agents", () => {
     expect(markup).not.toContain(">Restart<");
     expect(markup).not.toContain(">Start<");
   });
+
+  it("renders 'Prendre la main' button when agent is running and operator is active", () => {
+    const markup = renderToStaticMarkup(
+      <AgentCard
+        runID="run-1"
+        agent={{ ...agent(), running: true, status: "running", attached: false }}
+        readOnly={false}
+        onResize={async () => {}}
+        onStop={async () => {}}
+        onStart={async () => {}}
+        onRestart={async () => {}}
+        onOpenEvent={() => {}}
+        onSubmitLine={async () => {}}
+      />,
+    );
+    expect(markup).toContain("Prendre la main");
+    expect(markup).not.toContain("Rendre la main");
+    expect(markup).not.toContain("agent-card__interactive-banner");
+  });
+
+  it("renders interactive banner and 'Rendre la main' button when agent is attached", () => {
+    const markup = renderToStaticMarkup(
+      <AgentCard
+        runID="run-1"
+        agent={{ ...agent(), running: true, status: "running", attached: true }}
+        readOnly={false}
+        onResize={async () => {}}
+        onStop={async () => {}}
+        onStart={async () => {}}
+        onRestart={async () => {}}
+        onOpenEvent={() => {}}
+        onSubmitLine={async () => {}}
+      />,
+    );
+    expect(markup).toContain("Rendre la main");
+    expect(markup).toContain("agent-card__interactive-banner");
+    expect(markup).toContain("Session interactive (PTY direct)");
+    expect(markup).toContain("agent-card--interactive");
+    expect(markup).toContain("Terminal interactif actif");
+  });
+
+  it("hides 'Prendre la main' button for viewer role", () => {
+    const markup = renderToStaticMarkup(
+      <AgentCard
+        runID="run-1"
+        agent={{ ...agent(), running: true, status: "running" }}
+        readOnly={true}
+        onResize={async () => {}}
+        onStop={async () => {}}
+        onStart={async () => {}}
+        onRestart={async () => {}}
+        onOpenEvent={() => {}}
+        onSubmitLine={async () => {}}
+      />,
+    );
+    expect(markup).not.toContain("Prendre la main");
+    expect(markup).not.toContain("Rendre la main");
+  });
 });
+

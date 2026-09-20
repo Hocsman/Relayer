@@ -830,6 +830,8 @@ func TestRBACAuthenticationAndPermissions(t *testing.T) {
 	}{
 		{"submitDecision", map[string]any{"runID": "test", "sessionID": "s", "eventID": "e", "value": "allow"}},
 		{"submitLine", map[string]any{"runID": "test", "sessionID": "s", "line": "echo 1"}},
+		{"sendTerminalInput", map[string]any{"runID": "test", "sessionID": "s", "data": "ls"}},
+		{"setInteractiveSession", map[string]any{"runID": "test", "sessionID": "s", "active": true}},
 		{"stopSession", map[string]any{"runID": "test", "sessionID": "s"}},
 		{"startSession", map[string]any{"runID": "test", "sessionID": "s"}},
 		{"restartSession", map[string]any{"runID": "test", "sessionID": "s"}},
@@ -941,4 +943,169 @@ func TestRBACOperatorAuditAttribution(t *testing.T) {
 		t.Error("Did not find audit entry attributed to operator 'alice'")
 	}
 }
+
+func TestInteractivePTYWebAndAudit(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("APPDATA", tempDir)
+	t.Setenv("HOME", tempDir)
+	t.Setenv("USERPROFILE", tempDir)
+	t.Setenv("XDG_CONFIG_HOME", tempDir)
+	configPath := filepath.Join(tempDir, "config.yaml")
+
+	if _, err := config.LoadOrCreate(configPath); err != nil {
+		t.Fatalf("LoadOrCreate: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	readyCh := make(chan string, 1)
+
+	opts := Options{
+		Bind:        "127.0.0.1",
+		Port:        0,
+		Token:       "alice:secretOpInteractive",
+		ViewerToken: "bob:secretViewInteractive",
+		ConfigPath:  configPath,
+		Diagnostics: io.Discard,
+		OnReady: func(serverURL, token string) {
+			readyCh <- serverURL
+		},
+	}
+
+	serverErrCh := make(chan error, 1)
+	go func() {
+		serverErrCh <- Serve(ctx, opts)
+	}()
+
+	var baseURL string
+	select {
+	case baseURL = <-readyCh:
+	case err := <-serverErrCh:
+		t.Fatalf("Serve failed: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Server startup timed out")
+	}
+
+	// Connect Operator WebSocket
+	wsOpURL := strings.Replace(baseURL, "http://", "ws://", 1) + "/api/ws?token=secretOpInteractive"
+	wsOp, _, err := websocket.DefaultDialer.Dial(wsOpURL, nil)
+	if err != nil {
+		t.Fatalf("Dial operator WebSocket: %v", err)
+	}
+	defer wsOp.Close()
+
+	// Connect Viewer WebSocket
+	wsViewURL := strings.Replace(baseURL, "http://", "ws://", 1) + "/api/ws?token=secretViewInteractive"
+	wsView, _, err := websocket.DefaultDialer.Dial(wsViewURL, nil)
+	if err != nil {
+		t.Fatalf("Dial viewer WebSocket: %v", err)
+	}
+	defer wsView.Close()
+
+	callOpRPC := func(method string, params any) (json.RawMessage, error) {
+		paramsRaw, _ := json.Marshal(params)
+		reqID := fmt.Sprintf("req-%d", time.Now().UnixNano())
+		if err := wsOp.WriteJSON(wsRequest{ID: reqID, Method: method, Params: paramsRaw}); err != nil {
+			return nil, err
+		}
+		for {
+			_, data, err := wsOp.ReadMessage()
+			if err != nil {
+				return nil, err
+			}
+			var resp wsResponse
+			if err := json.Unmarshal(data, &resp); err == nil && resp.ID == reqID {
+				if resp.Error != "" {
+					return nil, errors.New(resp.Error)
+				}
+				raw, _ := json.Marshal(resp.Result)
+				return raw, nil
+			}
+		}
+	}
+
+	// 1. Get state to find sessionID
+	stateRaw, err := callOpRPC("getState", map[string]any{})
+	if err != nil {
+		t.Fatalf("getState failed: %v", err)
+	}
+	var state AppState
+	if err := json.Unmarshal(stateRaw, &state); err != nil {
+		t.Fatalf("unmarshal state: %v", err)
+	}
+	if len(state.Agents) == 0 {
+		t.Fatal("expected at least one agent in state")
+	}
+	sessionID := state.Agents[0].SessionID
+
+	// 2. Operator attaches interactively: setInteractiveSession -> true
+	_, err = callOpRPC("setInteractiveSession", map[string]any{
+		"sessionID": sessionID,
+		"active":    true,
+	})
+	if err != nil {
+		t.Fatalf("setInteractiveSession true failed: %v", err)
+	}
+
+	// 3. Operator sends input via RPC
+	_, err = callOpRPC("sendTerminalInput", map[string]any{
+		"sessionID": sessionID,
+		"data":      "echo test\n",
+	})
+	if err != nil {
+		t.Fatalf("sendTerminalInput RPC failed: %v", err)
+	}
+
+	// 4. Operator sends binary terminal input over WebSocket
+	// Protocol: [1 byte: len(sessionID)][N bytes: sessionID][VT payload]
+	binaryPayload := make([]byte, 0, 1+len(sessionID)+4)
+	binaryPayload = append(binaryPayload, byte(len(sessionID)))
+	binaryPayload = append(binaryPayload, []byte(sessionID)...)
+	binaryPayload = append(binaryPayload, []byte("pwd\n")...)
+	if err := wsOp.WriteMessage(websocket.BinaryMessage, binaryPayload); err != nil {
+		t.Fatalf("write binary terminal input: %v", err)
+	}
+
+	// 5. Viewer attempts binary terminal input (must be silently ignored, not crash)
+	if err := wsView.WriteMessage(websocket.BinaryMessage, binaryPayload); err != nil {
+		t.Fatalf("viewer write binary terminal input: %v", err)
+	}
+
+	// 6. Operator detaches interactively: setInteractiveSession -> false
+	_, err = callOpRPC("setInteractiveSession", map[string]any{
+		"sessionID": sessionID,
+		"active":    false,
+	})
+	if err != nil {
+		t.Fatalf("setInteractiveSession false failed: %v", err)
+	}
+
+	// 7. Verify audit journal entries for attach_started and attach_finished
+	auditRaw, err := callOpRPC("getAuditEntries", AuditFilterInput{Limit: 20})
+	if err != nil {
+		t.Fatalf("getAuditEntries failed: %v", err)
+	}
+	var entries []AuditEntryView
+	if err := json.Unmarshal(auditRaw, &entries); err != nil {
+		t.Fatalf("unmarshal audit entries: %v", err)
+	}
+
+	var foundStarted, foundFinished bool
+	for _, e := range entries {
+		if e.Kind == "attach_started" && e.Operator == "alice" {
+			foundStarted = true
+		}
+		if e.Kind == "attach_finished" && e.Operator == "alice" {
+			foundFinished = true
+		}
+	}
+	if !foundStarted {
+		t.Error("expected audit entry for attach_started by alice")
+	}
+	if !foundFinished {
+		t.Error("expected audit entry for attach_finished by alice")
+	}
+}
+
 

@@ -433,9 +433,28 @@ func (gh *gatewayHandler) handleWebSocket(w http.ResponseWriter, r *http.Request
 	// Read pump & RPC dispatcher
 	conn.SetReadLimit(1024 * 1024)
 	for {
-		_, msg, err := conn.ReadMessage()
+		msgType, msg, err := conn.ReadMessage()
 		if err != nil {
 			break
+		}
+
+		if msgType == websocket.BinaryMessage {
+			if client.role == RoleViewer {
+				continue
+			}
+			if len(msg) < 1 {
+				continue
+			}
+			sessLen := int(msg[0])
+			if len(msg) < 1+sessLen {
+				continue
+			}
+			sessionID := string(msg[1 : 1+sessLen])
+			inputBytes := msg[1+sessLen:]
+			if len(inputBytes) > 0 {
+				_ = gh.ctrl.SendTerminalInput("", sessionID, inputBytes, client.identity)
+			}
+			continue
 		}
 
 		var req wsRequest
@@ -522,6 +541,28 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 			return nil, err
 		}
 		return nil, gh.ctrl.SubmitLineWithOperator(p.RunID, p.SessionID, p.Line, client.identity)
+
+	case "sendTerminalInput":
+		var p struct {
+			RunID     string `json:"runID"`
+			SessionID string `json:"sessionID"`
+			Data      string `json:"data"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		return nil, gh.ctrl.SendTerminalInput(p.RunID, p.SessionID, []byte(p.Data), client.identity)
+
+	case "setInteractiveSession":
+		var p struct {
+			RunID     string `json:"runID"`
+			SessionID string `json:"sessionID"`
+			Active    bool   `json:"active"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		return nil, gh.ctrl.SetInteractiveSession(p.RunID, p.SessionID, p.Active, client.identity)
 
 	case "resizeSession":
 		var p struct {
@@ -644,6 +685,8 @@ func isMutatingMethod(method string) bool {
 	case "submitDecision",
 		"submitAutomaticDecision",
 		"submitLine",
+		"sendTerminalInput",
+		"setInteractiveSession",
 		"resizeSession",
 		"stopSession",
 		"startSession",

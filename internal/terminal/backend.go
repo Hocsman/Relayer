@@ -133,6 +133,12 @@ type LineSender interface {
 	SendLine(context.Context, SessionID, string) error
 }
 
+// RawSender is an optional interface for backends supporting direct raw input streams
+// (interactive terminal emulation, control signals like Ctrl+C, cursor navigation).
+type RawSender interface {
+	SendRaw(context.Context, SessionID, []byte) error
+}
+
 // PendingEventProvider returns only cached semantic state. Implementations must
 // not query a process or spawn an external command; Bubble Tea uses this path
 // while reducing an already-delivered event.

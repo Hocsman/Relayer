@@ -134,6 +134,11 @@ export function createWailsBridge(): RelayerBridge {
       role: "operator",
       readOnly: false,
     }),
+    sendTerminalInput: async (runID, sessionID, data) => {
+      const text = typeof data === "string" ? data : new TextDecoder().decode(data);
+      return bindings.SubmitLine(runID, sessionID, text);
+    },
+    setInteractiveSession: async () => {},
     on<K extends BridgeEventName>(
       event: K,
       listener: (payload: BridgeEventMap[K]) => void,

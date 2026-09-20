@@ -792,6 +792,37 @@ export function createDemoBridge(): RelayerBridge {
       });
       return { ok: true };
     },
+    async sendTerminalInput(runID: string, sessionID: string, data: string | Uint8Array) {
+      requireRun(runID);
+      const text = typeof data === "string" ? data : new TextDecoder().decode(data);
+      const agent = state.agents.find((a) => a.sessionID === sessionID);
+      if (agent) {
+        agent.output += text;
+        agent.revision++;
+        emit("relayer:snapshot", {
+          runID,
+          sessionID,
+          output: agent.output,
+          revision: agent.revision,
+          status: agent.status,
+          running: agent.running,
+          attached: agent.attached,
+        });
+      }
+    },
+    async setInteractiveSession(runID: string, sessionID: string, active: boolean) {
+      requireRun(runID);
+      const agent = state.agents.find((a) => a.sessionID === sessionID);
+      if (agent) {
+        agent.attached = active;
+        emit("relayer:status", {
+          runID,
+          scope: "session",
+          sessionID,
+          status: agent.status,
+        });
+      }
+    },
     on<K extends BridgeEventName>(
       event: K,
       listener: (payload: BridgeEventMap[K]) => void,

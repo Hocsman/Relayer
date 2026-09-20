@@ -27,6 +27,8 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
     saveAgentProfiles,
     saveAgentProfilesAndRestart,
     stopRun,
+    sendTerminalInput,
+    setInteractiveSession,
   } = useRelayer(bridge);
   const {
     toasts,
@@ -198,6 +200,8 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
             onRestart={restartSession}
             onOpenEvent={openEvent}
             onSubmitLine={submitLine}
+            onTerminalInput={sendTerminalInput}
+            onToggleInteractive={setInteractiveSession}
           />
           <SupervisorPanel
             state={state.app}

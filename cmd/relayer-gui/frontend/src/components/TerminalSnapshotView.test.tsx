@@ -54,4 +54,20 @@ describe("TerminalSnapshotView", () => {
     expect(markup).toContain('class="terminal-search-trigger"');
     expect(markup).toContain('aria-label="Search terminal output"');
   });
+
+  it("applies interactive modifier class when interactive is true", () => {
+    const markup = renderToStaticMarkup(
+      <TerminalSnapshotView
+        runID="run-1"
+        sessionID="agent-1"
+        label="Output from Test Agent"
+        output="interactive test"
+        revision={1}
+        interactive={true}
+        onResize={async () => {}}
+      />
+    );
+
+    expect(markup).toContain('class="terminal-snapshot terminal-snapshot--interactive"');
+  });
 });

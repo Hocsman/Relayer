@@ -190,9 +190,9 @@ func allowedMetadataKey(kind Kind, value string) bool {
 		case "exit_code", "failed":
 			return true
 		}
-	case KindDecision, KindDelivery, KindOperatorInput:
+	case KindDecision, KindDelivery, KindOperatorInput, KindAttachStarted, KindAttachFinished:
 		switch compact {
-		case "operator", "role":
+		case "operator", "role", "active":
 			return true
 		}
 	}

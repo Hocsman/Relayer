@@ -740,6 +740,27 @@ func (m *Manager) SendLine(ctx context.Context, id, line string) error {
 	return err
 }
 
+// SendRaw writes raw terminal input bytes directly to the tmux pane without prompt serialization.
+func (m *Manager) SendRaw(ctx context.Context, id string, data []byte) error {
+	operationCtx, finishOperation, err := m.beginOperation(ctx)
+	if err != nil {
+		return err
+	}
+	defer finishOperation()
+	ctx = operationCtx
+
+	target, err := m.session(id)
+	if err != nil {
+		return err
+	}
+	if !target.isPresent() {
+		return fmt.Errorf("%w: %q", ErrSessionNotFound, id)
+	}
+	target.inputMu.Lock()
+	defer target.inputMu.Unlock()
+	return m.sendBytes(ctx, target, data)
+}
+
 // SendEvent serializes an exact event decision with terminal delivery. The
 // Processor clears the pending occurrence only after tmux accepted the bytes;
 // an empty eventID preserves the legacy raw Send contract.

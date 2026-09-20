@@ -101,6 +101,20 @@ func (m *Manager) SendLine(ctx context.Context, id terminal.SessionID, line stri
 	return nil
 }
 
+// SendRaw writes raw terminal input bytes directly to the PTY device for interactive streaming.
+func (m *Manager) SendRaw(ctx context.Context, id terminal.SessionID, data []byte) error {
+	if err := m.check(ctx, id); err != nil {
+		return err
+	}
+	if err := m.inner.SendRaw(id, data); err != nil {
+		if errors.Is(err, session.ErrClosed) {
+			err = terminal.ErrClosed
+		}
+		return &terminal.OperationError{Backend: m.Name(), Operation: "send_raw", SessionID: id, Err: err}
+	}
+	return nil
+}
+
 // SendEvent resolves one pending adapter event and transmits data exactly as
 // supplied. An empty eventID preserves the historical Send behavior.
 func (m *Manager) SendEvent(ctx context.Context, id terminal.SessionID, eventID string, data []byte) error {

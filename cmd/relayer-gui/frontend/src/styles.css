@@ -3895,3 +3895,58 @@ input:focus-visible {
   line-height: 1.4;
 }
 
+/* Interactive PTY Web Mode */
+.agent-card--interactive {
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
+  border-color: rgba(66, 217, 232, 0.45);
+  box-shadow: 0 0 0 1px rgba(66, 217, 232, 0.2), 0 0 24px rgba(66, 217, 232, 0.08), var(--shadow);
+}
+
+.agent-card--interactive::before {
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  opacity: 1;
+  height: 2px;
+}
+
+.agent-card__interactive-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 9px 6px;
+  padding: 5px 10px;
+  border: 1px solid rgba(66, 217, 232, 0.35);
+  border-radius: 8px;
+  background: rgba(66, 217, 232, 0.09);
+  color: var(--cyan);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.agent-card__interactive-pulse {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan);
+  animation: status-pulse 1s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.agent-card__interactive-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-snapshot--interactive {
+  cursor: text;
+}
+
+.terminal-snapshot--interactive .xterm {
+  outline: none;
+}
+
+
