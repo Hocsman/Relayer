@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-09-20
+
+Patch release closing every free-form field on the audit kinds that sit closest to raw terminal bytes. The recording, control and attach records now drop `Summary`, `EventID` and `Rule` by a rule in the sanitizer rather than by each emitter remembering to leave them empty.
+
 ### Fixed
 
 - **The recording, control and attach audit kinds could carry free-form text**: `SanitizeEntry` cleared `Summary` for a human decision but left it open for anything else, so the nine kinds added for session recording and multi-operator control would have carried an arbitrary caller-supplied summary the moment one was emitted by the system rather than by a person. The comment beside those constants already promised that no captured stream and no typed key is a field of `Entry`; `Summary` is such a field, and nothing enforced it.
@@ -729,7 +733,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.1...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.2...main
+[0.8.2]: https://github.com/Hocsman/Relayer/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/Hocsman/Relayer/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/Hocsman/Relayer/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/Hocsman/Relayer/compare/v0.7.0...v0.7.1
