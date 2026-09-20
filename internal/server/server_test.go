@@ -1107,5 +1107,3 @@ func TestInteractivePTYWebAndAudit(t *testing.T) {
 		t.Error("expected audit entry for attach_finished by alice")
 	}
 }
-
-

@@ -353,12 +353,11 @@ func TestSanitizeEntryOperatorFieldAndMetadata(t *testing.T) {
 
 	// Operator input kind also preserves Operator
 	opInput := SanitizeEntry(Entry{
-		Kind:       KindOperatorInput,
-		Operator:   "bob",
-		Reason:     "operator_input_applied",
+		Kind:     KindOperatorInput,
+		Operator: "bob",
+		Reason:   "operator_input_applied",
 	}, ModeMetadata)
 	if opInput.Operator != "bob" {
 		t.Fatalf("expected operator bob, got %q", opInput.Operator)
 	}
 }
-
