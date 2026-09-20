@@ -6,13 +6,18 @@ import {
   lineInputDisabled,
   submitUncontrolledLine,
 } from "../lib/lineInput";
-import type { AgentState, SupervisionEvent } from "../types/relayer";
+import { PresenceStrip } from "./PresenceStrip";
+import type { AgentState, HandView, PresenceView, SupervisionEvent } from "../types/relayer";
 
 interface AgentCardProps {
   runID: string;
   agent: AgentState;
   event?: SupervisionEvent;
   readOnly?: boolean;
+  selfConnID?: string;
+  presence?: PresenceView;
+  hand?: HandView;
+  onRequestControl?(runID: string, sessionID: string): Promise<boolean | void> | void;
   onResize(runID: string, sessionID: string, columns: number, rows: number): Promise<void>;
   onStop(runID: string, sessionID: string): Promise<void>;
   onStart(runID: string, sessionID: string): Promise<void>;
@@ -20,7 +25,7 @@ interface AgentCardProps {
   onOpenEvent(runID: string, sessionID: string, eventID: string): void;
   onSubmitLine(runID: string, sessionID: string, line: string): Promise<void>;
   onTerminalInput?(runID: string, sessionID: string, data: string): Promise<void> | void;
-  onToggleInteractive?(runID: string, sessionID: string, active: boolean): Promise<void> | void;
+  onToggleInteractive?(runID: string, sessionID: string, active: boolean): Promise<boolean | void> | void;
 }
 
 export function AgentCard({
@@ -28,6 +33,10 @@ export function AgentCard({
   agent,
   event,
   readOnly,
+  selfConnID,
+  presence,
+  hand,
+  onRequestControl,
   onResize,
   onStop,
   onStart,
@@ -42,16 +51,42 @@ export function AgentCard({
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const [localInteractive, setLocalInteractive] = useState(false);
-  const isInteractive = (localInteractive || agent.attached) && agent.running && !readOnly;
+
+  // The server owns the write lock. `localInteractive` is only an optimistic
+  // flag covering the round trip; once a hand snapshot exists for this session
+  // it is authoritative, including when it contradicts the optimistic guess.
+  const heldByMe = hand ? hand.state !== "free" && hand.holderConnID === selfConnID : undefined;
+  const heldBySomeoneElse = Boolean(hand && hand.state !== "free" && !heldByMe);
+  const isInteractive =
+    (heldByMe ?? (localInteractive || agent.attached)) && agent.running && !readOnly;
   const inputDisabled = Boolean(readOnly) || isInteractive || lineInputDisabled(agent, waiting, submitting);
   const inputIdentity = `${runID}\u0000${agent.sessionID}`;
   const previousInputIdentity = useRef<string>();
 
   const handleToggleInteractive = async () => {
+    // Asking for a terminal a colleague holds is a request, not a takeover.
+    if (heldBySomeoneElse) {
+      await onRequestControl?.(runID, agent.sessionID);
+      return;
+    }
     const next = !isInteractive;
     setLocalInteractive(next);
-    await onToggleInteractive?.(runID, agent.sessionID, next);
+    const accepted = await onToggleInteractive?.(runID, agent.sessionID, next);
+    if (accepted === false) {
+      setLocalInteractive(!next);
+    }
   };
+
+  const interactiveLabel = heldBySomeoneElse
+    ? "✋ Ask for the terminal"
+    : isInteractive
+      ? "🔌 Release the terminal"
+      : "⌨️ Take the terminal";
+  const interactiveTitle = heldBySomeoneElse
+    ? `${hand?.holderIdentity || "Another operator"} has this terminal — ask them to hand it over`
+    : isInteractive
+      ? "Release the terminal and leave direct PTY control"
+      : "Take the terminal for direct PTY control";
 
   // Clear before paint whenever this DOM node becomes unusable or is rebound
   // to another run/session. A draft can therefore never survive a prompt,
@@ -112,19 +147,21 @@ export function AgentCard({
         {typeof agent.exitCode === "number" && <span>exit {agent.exitCode}</span>}
       </div>
 
+      <PresenceStrip presence={presence} hand={hand} selfConnID={selfConnID} />
+
       {isInteractive && (
         <div className="agent-card__interactive-banner" role="status">
           <span className="agent-card__interactive-pulse" aria-hidden="true" />
           <span className="agent-card__interactive-text">
-            Session interactive (PTY direct) — Saisie directe au clavier, touches fléchées et Ctrl+C
+            Interactive session (direct PTY) — keystrokes, arrow keys and Ctrl+C go straight to the agent
           </span>
           <button
             type="button"
             className="button button--ghost button--tiny"
             onClick={() => void handleToggleInteractive()}
-            title="Rendre la main et quitter la session interactive"
+            title="Release the terminal and leave the interactive session"
           >
-            Rendre la main
+            Release
           </button>
         </div>
       )}
@@ -151,7 +188,7 @@ export function AgentCard({
           autoComplete="off"
           spellCheck={false}
           disabled={inputDisabled}
-          placeholder={readOnly ? "Mode lecture seule (Viewer)" : isInteractive ? "Terminal interactif actif (tapez directement ci-dessus)" : waiting ? "Handle the pending request" : agent.inputFrozen ? "Session frozen" : "Text is never recorded"}
+          placeholder={readOnly ? "Read-only (viewer)" : isInteractive ? "Interactive terminal active — type directly above" : heldBySomeoneElse ? `${hand?.holderIdentity || "Another operator"} has this terminal` : waiting ? "Handle the pending request" : agent.inputFrozen ? "Session frozen" : "Text is never recorded"}
           title="One UTF-8 line, 4096 bytes maximum, no control character"
           aria-label={`Line for ${agent.name}`}
         />
@@ -169,10 +206,12 @@ export function AgentCard({
             : agent.simulated
               ? "Demo agent"
               : isInteractive
-                ? "Session interactive directe"
-                : agent.attached
-                  ? "Session attached"
-                  : "Supervision active"}
+                ? "Direct interactive session"
+                : heldBySomeoneElse
+                  ? `Held by ${hand?.holderIdentity || "another operator"}`
+                  : agent.attached
+                    ? "Session attached"
+                    : "Supervision active"}
         </span>
         <div className="agent-card__actions">
           {event && (
@@ -190,10 +229,10 @@ export function AgentCard({
                 className={`button button--small ${isInteractive ? "button--attention" : "button--ghost"}`}
                 type="button"
                 disabled={agent.status === "stopping"}
-                title={isInteractive ? "Rendre la main (quitter le contrôle direct PTY)" : "Prendre la main sur le terminal (contrôle direct PTY)"}
+                title={interactiveTitle}
                 onClick={() => void handleToggleInteractive()}
               >
-                {isInteractive ? "🔌 Rendre la main" : "⌨️ Prendre la main"}
+                {interactiveLabel}
               </button>
               <button
                 className="button button--ghost button--small"

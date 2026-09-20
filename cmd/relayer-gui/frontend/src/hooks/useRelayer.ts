@@ -5,6 +5,7 @@ import {
   relayerReducer,
 } from "../state/relayerState";
 import type {
+  HandView,
   LifecycleResult,
   RelayerBridge,
   SafeErrorEvent,
@@ -45,6 +46,8 @@ export function useRelayer(bridge: RelayerBridge) {
       bridge.on("relayer:event", (event) => dispatch({ type: "event", event })),
       bridge.on("relayer:status", (status) => dispatch({ type: "status", status })),
       bridge.on("relayer:error", (error) => dispatch({ type: "error", error })),
+      bridge.on("relayer:presence", (presence) => dispatch({ type: "presence", presence })),
+      bridge.on("relayer:hand", (hand) => dispatch({ type: "hand", hand })),
     ];
     void refresh();
     return () => disposers.forEach((dispose) => dispose());
@@ -260,11 +263,113 @@ export function useRelayer(bridge: RelayerBridge) {
 
   const setInteractiveSession = useCallback(
     async (runID: string, sessionID: string, active: boolean) => {
-      if (bridge.setInteractiveSession) {
+      if (!bridge.setInteractiveSession) return true;
+      try {
         await bridge.setInteractiveSession(runID, sessionID, active);
+        return true;
+      } catch (error) {
+        // Taking a terminal another operator holds is refused, not queued. Say
+        // which colleague has it rather than leaving a button that does nothing.
+        dispatch({
+          type: "error",
+          error: localError(
+            runID,
+            active ? "control_take_failed" : "control_release_failed",
+            safeError(error, "The terminal could not be taken."),
+            sessionID,
+          ),
+        });
+        return false;
       }
     },
     [bridge],
+  );
+
+  const observeSession = useCallback(
+    async (sessionID: string, observing: boolean) => {
+      if (!bridge.observeSession) return;
+      try {
+        const presence = await bridge.observeSession(sessionID, observing);
+        dispatch({ type: "presence", presence });
+      } catch {
+        // Presence is an indicator, not a control. A roster that could not be
+        // joined must never block watching the terminal itself.
+      }
+    },
+    [bridge],
+  );
+
+  // The four control verbs share one shape: call, fold the returned snapshot
+  // into state, and surface a bounded error rather than a raw one.
+  const controlVerb = useCallback(
+    async (
+      runID: string,
+      sessionID: string,
+      code: string,
+      fallback: string,
+      call?: () => Promise<import("../types/relayer").HandView>,
+    ) => {
+      if (!call) return false;
+      try {
+        dispatch({ type: "hand", hand: await call() });
+        return true;
+      } catch (error) {
+        dispatch({
+          type: "error",
+          error: localError(runID, code, safeError(error, fallback), sessionID),
+        });
+        return false;
+      }
+    },
+    [],
+  );
+
+  const requestControl = useCallback(
+    (runID: string, sessionID: string) =>
+      controlVerb(
+        runID,
+        sessionID,
+        "control_request_failed",
+        "The request for the terminal could not be sent.",
+        bridge.requestControl && (() => bridge.requestControl!(sessionID)),
+      ),
+    [bridge, controlVerb],
+  );
+
+  const grantControl = useCallback(
+    (runID: string, sessionID: string, toConnID: string) =>
+      controlVerb(
+        runID,
+        sessionID,
+        "control_grant_failed",
+        "The terminal could not be handed over.",
+        bridge.grantControl && (() => bridge.grantControl!(sessionID, toConnID)),
+      ),
+    [bridge, controlVerb],
+  );
+
+  const declineControl = useCallback(
+    (runID: string, sessionID: string, toConnID: string) =>
+      controlVerb(
+        runID,
+        sessionID,
+        "control_decline_failed",
+        "The request could not be declined.",
+        bridge.declineControl && (() => bridge.declineControl!(sessionID, toConnID)),
+      ),
+    [bridge, controlVerb],
+  );
+
+  const releaseControl = useCallback(
+    (runID: string, sessionID: string) =>
+      controlVerb(
+        runID,
+        sessionID,
+        "control_release_failed",
+        "The terminal could not be released.",
+        bridge.releaseControl && (() => bridge.releaseControl!(sessionID)),
+      ),
+    [bridge, controlVerb],
   );
 
   return {
@@ -282,5 +387,10 @@ export function useRelayer(bridge: RelayerBridge) {
     stopRun,
     sendTerminalInput,
     setInteractiveSession,
+    observeSession,
+    requestControl,
+    grantControl,
+    declineControl,
+    releaseControl,
   };
 }

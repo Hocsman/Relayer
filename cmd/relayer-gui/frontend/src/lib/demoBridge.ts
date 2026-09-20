@@ -9,8 +9,15 @@ import type {
   AuditVerificationView,
   BridgeEventMap,
   BridgeEventName,
+  HandView,
   RelayerBridge,
   PreflightReport,
+  PresenceMember,
+  PresenceView,
+  RecordingChunk,
+  RecordingFilterInput,
+  RecordingFrameView,
+  RecordingView,
   SaveAgentProfilesRequest,
   SupervisionEvent,
   TelemetrySnapshotView,
@@ -229,6 +236,63 @@ export function createDemoBridge(): RelayerBridge {
     if (runID !== state.runID || (runningOnly && state.runStatus !== "running")) {
       throw new Error("The demo run is stale.");
     }
+  };
+
+  // A scripted colleague so the roster and the hand indicator are visible in
+  // the demo without a second browser. The demo never contends for the hand:
+  // it only has to render the states the real gateway produces.
+  const demoObservers = new Set<string>();
+  const demoHands = new Map<string, HandView>();
+  // The fixture list is static, so a demo deletion is remembered here rather
+  // than mutating a shared constant the next demo bridge would inherit.
+  const deletedRecordings = new Set<string>();
+
+  const demoPresence = (sessionID: string): PresenceView => {
+    const hand = demoHands.get(sessionID);
+    const members: PresenceMember[] = [
+      {
+        connID: "demo-self",
+        identity: "you",
+        role: "operator",
+        observing: demoObservers.has(sessionID),
+        holdsHand: hand?.holderConnID === "demo-self",
+        requestingHand: false,
+        since: new Date().toISOString(),
+      },
+      {
+        connID: "demo-peer",
+        identity: "sam",
+        role: "viewer",
+        observing: true,
+        holdsHand: false,
+        requestingHand: false,
+        since: new Date().toISOString(),
+      },
+    ];
+    return {
+      runID: state.runID,
+      sessionID,
+      members,
+      observerCount: members.filter((member) => member.observing).length,
+    };
+  };
+
+  const emitDemoHand = (sessionID: string, next: HandView["state"]): HandView => {
+    const view: HandView =
+      next === "free"
+        ? { runID: state.runID, sessionID, state: "free" }
+        : {
+            runID: state.runID,
+            sessionID,
+            state: "held",
+            holderConnID: "demo-self",
+            holderIdentity: "you",
+            since: new Date().toISOString(),
+          };
+    demoHands.set(sessionID, view);
+    emit("relayer:hand", view);
+    emit("relayer:presence", demoPresence(sessionID));
+    return view;
   };
 
   const saveProfiles = (request: SaveAgentProfilesRequest): AgentProfilesView => {
@@ -821,7 +885,109 @@ export function createDemoBridge(): RelayerBridge {
           sessionID,
           status: agent.status,
         });
+        emitDemoHand(sessionID, active ? "held" : "free");
       }
+    },
+    async listPresence(sessionID: string) {
+      return demoPresence(sessionID);
+    },
+    async observeSession(sessionID: string, observing: boolean) {
+      if (observing) {
+        demoObservers.add(sessionID);
+      } else {
+        demoObservers.delete(sessionID);
+      }
+      const view = demoPresence(sessionID);
+      emit("relayer:presence", view);
+      return view;
+    },
+    async requestControl(sessionID: string) {
+      return emitDemoHand(sessionID, "held");
+    },
+    async grantControl(sessionID: string) {
+      return emitDemoHand(sessionID, "held");
+    },
+    async declineControl(sessionID: string) {
+      return emitDemoHand(sessionID, "held");
+    },
+    async releaseControl(sessionID: string) {
+      return emitDemoHand(sessionID, "free");
+    },
+    async forceTakeControl(sessionID: string) {
+      return emitDemoHand(sessionID, "held");
+    },
+    async listRecordings(filter?: RecordingFilterInput) {
+      await delay(120);
+      let recordings = demoRecordings.filter((recording) => !deletedRecordings.has(recording.id));
+      if (filter?.runID) {
+        recordings = recordings.filter((recording) => recording.runID === filter.runID);
+      }
+      if (filter?.sessionID) {
+        recordings = recordings.filter((recording) => recording.sessionID === filter.sessionID);
+      }
+      if (filter?.agentID) {
+        recordings = recordings.filter((recording) => recording.agentID === filter.agentID);
+      }
+      if (filter?.limit && filter.limit > 0 && recordings.length > filter.limit) {
+        recordings = recordings.slice(0, filter.limit);
+      }
+      return structuredClone(recordings);
+    },
+    async getRecording(id: string) {
+      const recording = demoRecordings.find(
+        (candidate) => candidate.id === id && !deletedRecordings.has(candidate.id),
+      );
+      if (!recording) throw new Error("The demo recording was not found.");
+      return structuredClone(recording);
+    },
+    async readRecordingChunk(id: string, offset: number, limit: number): Promise<RecordingChunk> {
+      await delay(100);
+      const recording = demoRecordings.find(
+        (candidate) => candidate.id === id && !deletedRecordings.has(candidate.id),
+      );
+      if (!recording) throw new Error("The demo recording was not found.");
+      const frames = demoRecordingFrames(id);
+      const start = Math.max(0, offset);
+      const end = limit > 0 ? Math.min(frames.length, start + limit) : frames.length;
+      return {
+        id,
+        header: {
+          version: 2,
+          width: recording.width,
+          height: recording.height,
+          timestamp: Math.floor(new Date(recording.startedAt).getTime() / 1000),
+          title: recording.name,
+        },
+        frames: frames.slice(start, end),
+        offset: start,
+        nextOffset: end,
+        complete: end >= frames.length,
+      };
+    },
+    async exportRecording(id: string) {
+      await delay(100);
+      const recording = demoRecordings.find(
+        (candidate) => candidate.id === id && !deletedRecordings.has(candidate.id),
+      );
+      if (!recording) throw new Error("The demo recording was not found.");
+      const header = JSON.stringify({
+        version: 2,
+        width: recording.width,
+        height: recording.height,
+        timestamp: Math.floor(new Date(recording.startedAt).getTime() / 1000),
+        title: recording.name,
+      });
+      const lines = demoRecordingFrames(id).map((frame) =>
+        JSON.stringify([frame.time, frame.kind, frame.data]),
+      );
+      return [header, ...lines].join("\n");
+    },
+    async deleteRecording(id: string) {
+      const recording = demoRecordings.find((candidate) => candidate.id === id);
+      if (!recording) throw new Error("The demo recording was not found.");
+      if (recording.active) throw new Error("A recording still being written cannot be deleted.");
+      deletedRecordings.add(id);
+      emit("relayer:recording", { action: "deleted", recording: structuredClone(recording) });
     },
     on<K extends BridgeEventName>(
       event: K,
@@ -833,6 +999,69 @@ export function createDemoBridge(): RelayerBridge {
       return () => set.delete(listener as Listener);
     },
   };
+}
+
+// A finished recording and one still being written, so the panel shows both the
+// replayable case and the case the interface must refuse to delete.
+const demoRecordings: RecordingView[] = [
+  {
+    id: "demo-rec-1",
+    runID: "demo-run-1",
+    sessionID: "demo-sess-1",
+    agentID: "claude-code",
+    name: "Agent A · Claude",
+    backend: "pty",
+    adapter: "claude",
+    startedAt: "2026-09-19T09:14:02Z",
+    endedAt: "2026-09-19T09:16:35Z",
+    durationSeconds: 153,
+    width: 120,
+    height: 32,
+    bytes: 48213,
+    frames: 4,
+    truncated: false,
+    droppedFrames: 0,
+    inputRecorded: false,
+    redacted: true,
+    exitCode: 0,
+    active: false,
+  },
+  {
+    id: "demo-rec-2",
+    runID: "demo-run-1",
+    sessionID: "demo-sess-2",
+    agentID: "codex-cli",
+    name: "Agent B · Codex",
+    backend: "pty",
+    adapter: "codex",
+    startedAt: "2026-09-19T09:20:41Z",
+    durationSeconds: 62,
+    width: 100,
+    height: 30,
+    bytes: 1048576,
+    frames: 3,
+    truncated: true,
+    droppedFrames: 12,
+    inputRecorded: true,
+    redacted: true,
+    active: true,
+  },
+];
+
+function demoRecordingFrames(id: string): RecordingFrameView[] {
+  if (id === "demo-rec-2") {
+    return [
+      { time: 0, kind: "o", data: "codex — reviewing the working tree\r\n" },
+      { time: 1.4, kind: "o", data: "Allow command execution? [y/esc] " },
+      { time: 4.2, kind: "i", data: "y\r" },
+    ];
+  }
+  return [
+    { time: 0, kind: "o", data: "claude — session started\r\n" },
+    { time: 0.9, kind: "o", data: "Reading src/policy/engine.go\r\n" },
+    { time: 2.6, kind: "o", data: "Overwrite generated file? [Y/n] " },
+    { time: 5.1, kind: "o", data: "\r\nTask complete.\r\n" },
+  ];
 }
 
 function demoAuditEntries(): AuditEntryView[] {

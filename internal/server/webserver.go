@@ -99,8 +99,57 @@ type clientConnection struct {
 	send     chan []byte
 	identity string
 	role     UserRole
-	closed   atomic.Bool
-	mu       sync.Mutex
+	// connID addresses this socket. Identity is not unique: the same operator
+	// may hold several tabs, and the terminal write lock must distinguish them.
+	connID string
+	closed atomic.Bool
+	mu     sync.Mutex
+
+	handNoticeMu sync.Mutex
+	handNotice   map[string]struct{}
+}
+
+// newConnectionID mints an unguessable per-socket identifier. It never reaches
+// an audit field unredacted and is not a credential, but a predictable value
+// would let one client address another's hand in a request payload.
+func newConnectionID() string {
+	raw := make([]byte, 8)
+	if _, err := rand.Read(raw); err != nil {
+		// A connection that cannot be uniquely addressed must not silently
+		// share an identifier with another; the empty string is rejected by
+		// every presence entry point.
+		return ""
+	}
+	return hex.EncodeToString(raw)
+}
+
+// notifyHandOnce sends one hand correction per session to a client whose
+// keystrokes are being dropped, so a stale UI resynchronizes without the
+// socket being flooded by one rejection per character.
+func (c *clientConnection) notifyHandOnce(sessionID string, view HandView) {
+	c.handNoticeMu.Lock()
+	if c.handNotice == nil {
+		c.handNotice = make(map[string]struct{})
+	}
+	key := strings.ToLower(strings.TrimSpace(sessionID))
+	_, already := c.handNotice[key]
+	c.handNotice[key] = struct{}{}
+	c.handNoticeMu.Unlock()
+
+	if already {
+		return
+	}
+	if msg, err := json.Marshal(wsEventMessage{Event: eventHand, Payload: view}); err == nil {
+		c.safeSend(msg)
+	}
+}
+
+// clearHandNotice re-arms the correction for a session, so a client that
+// reacquires and later loses the hand is told again.
+func (c *clientConnection) clearHandNotice(sessionID string) {
+	c.handNoticeMu.Lock()
+	delete(c.handNotice, strings.ToLower(strings.TrimSpace(sessionID)))
+	c.handNoticeMu.Unlock()
 }
 
 func (c *clientConnection) safeSend(msg []byte) {
@@ -311,9 +360,17 @@ func newGatewayHandler(ctrl *Controller, tokens map[string]AuthIdentity, allowAn
 
 func (gh *gatewayHandler) closeClients() {
 	gh.clientsMu.Lock()
-	defer gh.clientsMu.Unlock()
+	released := make([]string, 0, len(gh.clients))
 	for client := range gh.clients {
+		released = append(released, client.connID)
 		client.close()
+	}
+	gh.clientsMu.Unlock()
+
+	// Outside clientsMu: ReleasePresence broadcasts, and the broadcast listener
+	// takes clientsMu for reading.
+	for _, connID := range released {
+		gh.ctrl.ReleasePresence(connID)
 	}
 }
 
@@ -407,17 +464,23 @@ func (gh *gatewayHandler) handleWebSocket(w http.ResponseWriter, r *http.Request
 		send:     make(chan []byte, 256),
 		identity: identity.Identity,
 		role:     identity.Role,
+		connID:   newConnectionID(),
 	}
 
 	gh.clientsMu.Lock()
 	gh.clients[client] = struct{}{}
 	gh.clientsMu.Unlock()
 
+	gh.ctrl.RegisterPresence(client.connID, client.identity, string(client.role))
+
 	defer func() {
 		gh.clientsMu.Lock()
 		delete(gh.clients, client)
 		gh.clientsMu.Unlock()
 		client.close()
+		// Released after the client lock, never under it: ReleasePresence
+		// broadcasts, and the broadcast listener takes clientsMu.
+		gh.ctrl.ReleasePresence(client.connID)
 	}()
 
 	// Write pump
@@ -452,7 +515,13 @@ func (gh *gatewayHandler) handleWebSocket(w http.ResponseWriter, r *http.Request
 			sessionID := string(msg[1 : 1+sessLen])
 			inputBytes := msg[1+sessLen:]
 			if len(inputBytes) > 0 {
-				_ = gh.ctrl.SendTerminalInput("", sessionID, inputBytes, client.identity)
+				err := gh.ctrl.SendTerminalInput("", sessionID, inputBytes, client.identity, client.connID)
+				// A connection that lost the hand keeps typing until its UI
+				// catches up. Answering every rejected keystroke would flood the
+				// socket, so correct the client once per session instead.
+				if errors.Is(err, ErrNotHolder) {
+					client.notifyHandOnce(sessionID, gh.ctrl.HandFor(sessionID))
+				}
 			}
 			continue
 		}
@@ -495,6 +564,7 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 	case "getUserInfo":
 		return UserInfo{
 			Identity: client.identity,
+			ConnID:   client.connID,
 			Role:     string(client.role),
 			ReadOnly: client.role == RoleViewer,
 		}, nil
@@ -551,7 +621,7 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
-		return nil, gh.ctrl.SendTerminalInput(p.RunID, p.SessionID, []byte(p.Data), client.identity)
+		return nil, gh.ctrl.SendTerminalInput(p.RunID, p.SessionID, []byte(p.Data), client.identity, client.connID)
 
 	case "setInteractiveSession":
 		var p struct {
@@ -562,7 +632,8 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
-		return nil, gh.ctrl.SetInteractiveSession(p.RunID, p.SessionID, p.Active, client.identity)
+		client.clearHandNotice(p.SessionID)
+		return nil, gh.ctrl.SetInteractiveSession(p.RunID, p.SessionID, p.Active, client.identity, client.connID)
 
 	case "resizeSession":
 		var p struct {
@@ -574,7 +645,75 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
-		return nil, gh.ctrl.ResizeSession(p.RunID, p.SessionID, p.Columns, p.Rows)
+		return nil, gh.ctrl.ResizeSession(p.RunID, p.SessionID, p.Columns, p.Rows, client.connID)
+
+	case "listPresence":
+		var p struct {
+			SessionID string `json:"sessionID"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		return gh.ctrl.ListPresence(p.SessionID)
+
+	case "observeSession":
+		var p struct {
+			SessionID string `json:"sessionID"`
+			Observing bool   `json:"observing"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		return gh.ctrl.ObserveSession(client.connID, p.SessionID, p.Observing)
+
+	case "requestControl":
+		var p struct {
+			SessionID string `json:"sessionID"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		client.clearHandNotice(p.SessionID)
+		return gh.ctrl.RequestControl(p.SessionID, client.connID, client.identity)
+
+	case "grantControl":
+		var p struct {
+			SessionID string `json:"sessionID"`
+			ToConnID  string `json:"toConnID"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		return gh.ctrl.GrantControl(p.SessionID, client.connID, client.identity, p.ToConnID)
+
+	case "declineControl":
+		var p struct {
+			SessionID string `json:"sessionID"`
+			ToConnID  string `json:"toConnID"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		return gh.ctrl.DeclineControl(p.SessionID, client.connID, client.identity, p.ToConnID)
+
+	case "releaseControl":
+		var p struct {
+			SessionID string `json:"sessionID"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		return gh.ctrl.ReleaseControl(p.SessionID, client.connID, client.identity)
+
+	case "forceTakeControl":
+		var p struct {
+			SessionID string `json:"sessionID"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		client.clearHandNotice(p.SessionID)
+		return gh.ctrl.ForceTakeControl(p.SessionID, client.connID, client.identity)
 
 	case "stopSession":
 		var p struct {
@@ -675,6 +814,49 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 	case "getTelemetrySnapshot":
 		return gh.ctrl.GetTelemetrySnapshot(), nil
 
+	case "listRecordings":
+		var filter RecordingFilterInput
+		_ = json.Unmarshal(params, &filter)
+		return gh.ctrl.ListRecordings(filter)
+
+	case "getRecording":
+		var p struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		return gh.ctrl.GetRecording(p.ID)
+
+	case "readRecordingChunk":
+		var p struct {
+			ID     string `json:"id"`
+			Offset int    `json:"offset"`
+			Limit  int    `json:"limit"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		return gh.ctrl.ReadRecordingChunk(p.ID, p.Offset, p.Limit)
+
+	case "exportRecording":
+		var p struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		return gh.ctrl.ExportRecording(p.ID, client.identity)
+
+	case "deleteRecording":
+		var p struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		return nil, gh.ctrl.DeleteRecording(p.ID, client.identity)
+
 	default:
 		return nil, fmt.Errorf("unknown method %q", method)
 	}
@@ -695,6 +877,12 @@ func isMutatingMethod(method string) bool {
 		"saveAgentProfilesAndRestart",
 		"saveFullSettings",
 		"testNotification",
+		"requestControl",
+		"grantControl",
+		"declineControl",
+		"releaseControl",
+		"forceTakeControl",
+		"deleteRecording",
 		"stopRun":
 		return true
 	default:

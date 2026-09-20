@@ -247,7 +247,7 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
               autoCorrect="off"
               spellCheck={false}
               data-1p-ignore
-              placeholder={readOnly ? "Mode lecture seule (Viewer)" : event.sensitive ? "••••••••" : "Type your answer…"}
+              placeholder={readOnly ? "Read-only (viewer)" : event.sensitive ? "••••••••" : "Type your answer…"}
               disabled={busy || indeterminateDelivery || readOnly}
             />
             <button

@@ -37,14 +37,19 @@ const (
 	eventStatus       = "relayer:status"
 	eventError        = "relayer:error"
 	eventNotification = "relayer:notification"
+	eventPresence     = "relayer:presence"
+	eventHand         = "relayer:hand"
+	eventRecording    = "relayer:recording"
 
 	minAgentProfiles = 1
 	maxAgentProfiles = 8
 )
 
 var (
-	profileIDRegex   = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
-	errStaleRevision = errors.New("configuration has changed, reload before saving")
+	profileIDRegex    = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+	errStaleRevision  = errors.New("configuration has changed, reload before saving")
+	errStaleRun       = errors.New("run has changed, reload before retrying")
+	errUnknownSession = errors.New("unknown session")
 )
 
 type pendingItem struct {
@@ -74,6 +79,11 @@ type Controller struct {
 
 	revisionHash  string
 	revisionToken string
+
+	presence           map[string]presenceEntry // connID -> live connection
+	hands              map[string]handState     // lowercase sessionID -> write lock
+	requestTimeout     time.Duration
+	allowForceTakeover bool
 
 	detector toolcatalog.Detector
 	notifier notify.Notifier
@@ -435,6 +445,7 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 			SessionID: ev.SessionID,
 			Status:    "stopped",
 		})
+		c.announceFinishedRecording(ev.SessionID)
 
 	case session.Error:
 		c.broadcast(eventError, SafeErrorEvent{
@@ -686,13 +697,25 @@ func (c *Controller) SubmitLineWithOperator(runID, sessionID, line, operator str
 
 // SendTerminalInput delivers raw terminal input bytes directly to the session backend.
 // Used by the web interactive terminal (full PTY mode) to stream keystrokes and signals.
-func (c *Controller) SendTerminalInput(runID, sessionID string, data []byte, operator string) error {
+//
+// The hand is checked before the write. The check and the write cannot share a
+// single lock acquisition without holding c.mu across five seconds of I/O, so
+// at most one already-in-flight keystroke may land just after a release. That
+// window is documented in docs/sharing.md rather than papered over.
+func (c *Controller) SendTerminalInput(runID, sessionID string, data []byte, operator, connID string) error {
 	c.mu.RLock()
 	rt := c.runtime
+	currentRun := c.runID
 	c.mu.RUnlock()
 
 	if rt == nil {
 		return errors.New("supervisor runtime not ready")
+	}
+	if trimmed := strings.TrimSpace(runID); trimmed != "" && trimmed != currentRun {
+		return errStaleRun
+	}
+	if !c.HoldsHand(sessionID, connID) {
+		return ErrNotHolder
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -701,20 +724,36 @@ func (c *Controller) SendTerminalInput(runID, sessionID string, data []byte, ope
 	return rt.SendRaw(ctx, sessionID, data)
 }
 
-// SetInteractiveSession toggles an agent's interactive attachment state and logs audit tracking.
-func (c *Controller) SetInteractiveSession(runID, sessionID string, active bool, operator string) error {
-	c.mu.Lock()
+// SetInteractiveSession acquires or releases the session's write lock. It is
+// the attach verb: taking the hand is what makes keystrokes routable.
+//
+// Taking a hand another operator holds is refused rather than silently stolen;
+// the caller is expected to request control instead.
+func (c *Controller) SetInteractiveSession(runID, sessionID string, active bool, operator, connID string) error {
+	c.mu.RLock()
 	rt := c.runtime
-	idx, hasAgent := c.agentIndex[strings.ToLower(sessionID)]
+	idx, hasAgent := c.agentIndex[strings.ToLower(strings.TrimSpace(sessionID))]
 	var agent AgentState
 	if hasAgent && idx < len(c.state.Agents) {
-		c.state.Agents[idx].Attached = active
 		agent = c.state.Agents[idx]
 	}
-	c.mu.Unlock()
+	c.mu.RUnlock()
 
 	if rt == nil {
 		return errors.New("supervisor runtime not ready")
+	}
+	if !hasAgent {
+		return errUnknownSession
+	}
+
+	var err error
+	if active {
+		_, err = c.TakeControl(sessionID, connID, operator)
+	} else {
+		_, err = c.ReleaseControl(sessionID, connID, operator)
+	}
+	if err != nil {
+		return err
 	}
 
 	if strings.TrimSpace(operator) == "" {
@@ -740,7 +779,8 @@ func (c *Controller) SetInteractiveSession(runID, sessionID string, active bool,
 		Reason:     "operator_interactive_" + outcome,
 		Metadata: map[string]string{
 			"operator": operator,
-			"role":     "operator",
+			"role":     c.roleFor(connID),
+			"conn_id":  strings.TrimSpace(connID),
 			"active":   strconv.FormatBool(active),
 		},
 	})
@@ -755,7 +795,11 @@ func (c *Controller) SetInteractiveSession(runID, sessionID string, active bool,
 	return nil
 }
 
-func (c *Controller) ResizeSession(runID, sessionID string, columns, rows int) error {
+// ResizeSession applies a terminal geometry change requested by the connection
+// holding the hand. A resize from anyone else is a silent no-op: two observers
+// with different window sizes must not fight over the PTY geometry and thrash
+// the agent's rendering.
+func (c *Controller) ResizeSession(runID, sessionID string, columns, rows int, connID string) error {
 	c.mu.RLock()
 	rt := c.runtime
 	c.mu.RUnlock()
@@ -763,11 +807,27 @@ func (c *Controller) ResizeSession(runID, sessionID string, columns, rows int) e
 	if rt == nil {
 		return errors.New("supervisor runtime not ready")
 	}
+	if !c.HoldsHand(sessionID, connID) {
+		return nil
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	return rt.Resize(ctx, sessionID, terminal.Size{Columns: columns, Rows: rows})
+}
+
+// roleFor reports the role recorded for a connection, defaulting to operator
+// for callers the registrar never saw (the desktop bridge has no connections).
+func (c *Controller) roleFor(connID string) string {
+	c.mu.RLock()
+	entry, found := c.presence[strings.TrimSpace(connID)]
+	c.mu.RUnlock()
+
+	if !found || entry.role == "" {
+		return string(RoleOperator)
+	}
+	return entry.role
 }
 
 func (c *Controller) StopSession(runID, sessionID string) error {

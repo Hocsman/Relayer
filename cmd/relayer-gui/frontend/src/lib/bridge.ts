@@ -131,6 +131,9 @@ export function createWailsBridge(): RelayerBridge {
     saveFullSettings: (runID, request) => bindings.SaveFullSettings(runID, request),
     getUserInfo: async () => ({
       identity: "local-operator",
+      // The desktop application is a single local operator with no gateway
+      // connection, so there is no socket to address and nobody to share with.
+      connID: "local",
       role: "operator",
       readOnly: false,
     }),

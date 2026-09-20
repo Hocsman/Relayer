@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
+import { RELAYER_TERMINAL_THEME } from "../lib/terminalTheme";
 
 interface TerminalSnapshotViewProps {
   runID: string;
@@ -14,30 +15,6 @@ interface TerminalSnapshotViewProps {
   interactive?: boolean;
   onTerminalInput?(data: string): void;
 }
-
-const RELAYER_TERMINAL_THEME = {
-  background: "#080b11",
-  foreground: "#bfcadb",
-  cursor: "#42d9e8",
-  cursorAccent: "#080b11",
-  selectionBackground: "rgba(66, 217, 232, 0.3)",
-  black: "#080b12",
-  red: "#ff5e73",
-  green: "#49d79a",
-  yellow: "#ff9f52",
-  blue: "#42d9e8",
-  magenta: "#9a8cff",
-  cyan: "#42d9e8",
-  white: "#e8edf7",
-  brightBlack: "#8792a4",
-  brightRed: "#ff7588",
-  brightGreen: "#5fe3a8",
-  brightYellow: "#ffb273",
-  brightBlue: "#5ce0ed",
-  brightMagenta: "#aba0ff",
-  brightCyan: "#67e5f2",
-  brightWhite: "#ffffff",
-};
 
 export function TerminalSnapshotView({
   runID,

@@ -7,6 +7,7 @@ interface TopBarProps {
   onOpenPreflight(): void;
   onOpenAudit(): void;
   onOpenObservability(): void;
+  onOpenRecordings(): void;
   onRequestStop(): void;
 }
 
@@ -21,7 +22,7 @@ const runLabels: Record<AppState["runStatus"], string> = {
   failed: "Error",
 };
 
-export function TopBar({ state, userInfo, onOpenAgents, onOpenPreflight, onOpenAudit, onOpenObservability, onRequestStop }: TopBarProps) {
+export function TopBar({ state, userInfo, onOpenAgents, onOpenPreflight, onOpenAudit, onOpenObservability, onOpenRecordings, onRequestStop }: TopBarProps) {
   const running = state.agents.filter((agent) => agent.running).length;
   const waiting = state.pendingEvents.length;
   const transitioning = ["starting", "restarting", "rollback", "stopping"].includes(
@@ -60,7 +61,7 @@ export function TopBar({ state, userInfo, onOpenAgents, onOpenPreflight, onOpenA
         {userInfo?.readOnly && (
           <span
             className="badge badge--viewer"
-            title={`Connecté en tant que ${userInfo.identity} (Lecture seule)`}
+            title={`Signed in as ${userInfo.identity} (read-only)`}
           >
             VIEWER (READ-ONLY)
           </span>
@@ -98,6 +99,14 @@ export function TopBar({ state, userInfo, onOpenAgents, onOpenPreflight, onOpenA
           disabled={transitioning}
         >
           <span aria-hidden="true">📊</span> Metrics
+        </button>
+        <button
+          className="button button--recordings"
+          type="button"
+          onClick={onOpenRecordings}
+          disabled={transitioning}
+        >
+          <span aria-hidden="true">⏺</span> Recordings
         </button>
         {state.runID && state.runStatus !== "idle" && !userInfo?.readOnly && (
           <button

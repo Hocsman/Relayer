@@ -3950,3 +3950,652 @@ input:focus-visible {
 }
 
 
+
+/* Referenced by AgentCard and ControlRequestToast. It existed only as a class
+   name until now, so those buttons silently rendered at full size. */
+.button--tiny {
+  min-height: 22px;
+  padding: 0 7px;
+  font-size: 9px;
+}
+
+/* Presence strip: who else is on this terminal, and who may type into it. */
+.presence-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 9px 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(146, 163, 194, 0.06);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.presence-strip__hand {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+  color: var(--cyan);
+  white-space: nowrap;
+}
+
+.presence-strip__hand--locked {
+  color: var(--orange);
+}
+
+.presence-strip__observers {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.presence-strip__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-elevated);
+  color: var(--faint);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.presence-strip__avatar--holder {
+  border-color: rgba(66, 217, 232, 0.55);
+  color: var(--cyan);
+}
+
+.presence-strip__avatar--requesting {
+  border-color: rgba(255, 159, 82, 0.55);
+  color: var(--orange);
+}
+
+.presence-strip__count {
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+/* Control requests are shown only to the operator who can answer them, so they
+   sit above the notification stack rather than inside it. */
+.control-toast-container {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 1.5rem;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.75rem;
+  max-width: 380px;
+  pointer-events: none;
+}
+
+.control-toast {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--border-strong);
+  border-left: 4px solid var(--orange);
+  border-radius: 8px;
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow);
+  animation: toast-slide-in 0.3s ease-out;
+}
+
+.control-toast__body {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.control-toast__icon {
+  font-size: 16px;
+  line-height: 1.2;
+  flex-shrink: 0;
+}
+
+.control-toast__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.control-toast__who {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.control-toast__what {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.control-toast__what code {
+  font-family: var(--mono);
+  color: var(--cyan);
+}
+
+.control-toast__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+@media (max-width: 620px) {
+  .presence-strip {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .presence-strip__count {
+    display: none;
+  }
+
+  .control-toast-container {
+    left: 0.75rem;
+    right: 0.75rem;
+    max-width: none;
+  }
+}
+
+/* Session recording & replay. Cloned from the audit panel's geometry and given
+   the violet accent so a recording is never mistaken for a journal record. */
+.button--recordings {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-color: rgba(154, 140, 255, 0.22);
+  color: #c9c1ff;
+  background: rgba(154, 140, 255, 0.07);
+}
+
+.button--recordings:hover:not(:disabled) {
+  border-color: rgba(154, 140, 255, 0.42);
+  background: rgba(154, 140, 255, 0.12);
+}
+
+.recordings-layer {
+  position: fixed;
+  z-index: 70;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(3, 5, 10, 0.82);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  animation: fade-in 150ms ease-out;
+}
+
+.recordings-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(1080px, 100%);
+  max-height: min(840px, 100%);
+  overflow: hidden;
+  border: 1px solid rgba(154, 140, 255, 0.22);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 85% -12%, rgba(154, 140, 255, 0.09), transparent 30%),
+    linear-gradient(145deg, rgba(20, 27, 39, 0.99), rgba(10, 14, 23, 0.99));
+  box-shadow: 0 30px 100px rgba(0, 0, 0, 0.62);
+  animation: modal-in 180ms ease-out;
+}
+
+.recordings-panel__header {
+  display: flex;
+  min-height: 88px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 17px 19px 16px 22px;
+  border-bottom: 1px solid var(--border);
+}
+
+.recordings-panel__header h1 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: -0.025em;
+}
+
+.recordings-panel__header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.recordings-panel__body {
+  min-height: 320px;
+  padding: 18px 22px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.recordings-panel__loading {
+  display: grid;
+  min-height: 300px;
+  align-content: center;
+  justify-items: center;
+  gap: 11px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.recordings-panel__failure {
+  display: flex;
+  max-width: 560px;
+  min-height: 220px;
+  align-items: center;
+  gap: 14px;
+  margin: 0 auto;
+}
+
+.recordings-panel__failure > span {
+  display: grid;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid rgba(255, 94, 115, 0.3);
+  border-radius: 12px;
+  color: var(--red);
+  background: rgba(255, 94, 115, 0.08);
+  font-weight: 750;
+}
+
+.recordings-panel__failure strong { font-size: 14px; }
+.recordings-panel__failure p { margin: 5px 0 0; color: var(--muted); font-size: 10px; line-height: 1.55; }
+
+.recordings-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.recordings-toolbar__count {
+  color: var(--faint);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.recordings-table-section {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.recordings-table-wrapper {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(7, 10, 17, 0.6);
+}
+
+.recordings-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.recordings-table th {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--faint);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 650;
+  background: rgba(255, 255, 255, 0.02);
+  white-space: nowrap;
+}
+
+.recordings-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(146, 163, 194, 0.08);
+  color: var(--muted);
+  vertical-align: middle;
+}
+
+.recordings-row:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.recordings-row--selected {
+  background: rgba(154, 140, 255, 0.06);
+}
+
+.recordings-cell--mono {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.recordings-row__select-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recordings-row__select-button:hover:not(:disabled) {
+  color: var(--violet);
+}
+
+.recordings-row__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.recordings-row__note {
+  color: var(--faint);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.recordings-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.recordings-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* A session still being written is the one state an operator must not read as
+   a finished artefact, so it is the only badge carrying the alert colour. */
+.recordings-badge--active {
+  border-color: rgba(255, 94, 115, 0.35);
+  color: var(--red);
+  background: rgba(255, 94, 115, 0.08);
+}
+
+.recordings-badge--truncated {
+  border-color: rgba(255, 159, 82, 0.35);
+  color: var(--orange);
+  background: rgba(255, 159, 82, 0.08);
+}
+
+.recordings-badge--dropped {
+  border-color: rgba(255, 159, 82, 0.25);
+  color: #ffdfba;
+  background: rgba(255, 159, 82, 0.06);
+}
+
+.recordings-badge--input {
+  border-color: rgba(66, 217, 232, 0.28);
+  color: var(--cyan);
+  background: rgba(66, 217, 232, 0.07);
+}
+
+.recordings-badge--redacted {
+  border-color: rgba(73, 215, 154, 0.28);
+  color: var(--green);
+  background: rgba(73, 215, 154, 0.07);
+}
+
+.recordings-table__empty {
+  padding: 28px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  color: var(--faint);
+  font-size: 13px;
+  text-align: center;
+}
+
+.recordings-table__empty p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.recordings-player {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 10px;
+}
+
+.recordings-player__empty {
+  display: grid;
+  min-height: 160px;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.recordings-player__empty p {
+  margin: 0;
+}
+
+.recordings-panel__footer {
+  display: flex;
+  min-height: 64px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px 10px 22px;
+  border-top: 1px solid var(--border);
+  background: rgba(7, 10, 17, 0.85);
+}
+
+.recordings-panel__footer p {
+  margin: 0;
+  color: var(--faint);
+  font-size: 8.5px;
+}
+
+/* Outranks `.recordings-panel__footer p`, which would otherwise keep this line
+   at the footer's 8.5px faint treatment and make a failure read as boilerplate. */
+.recordings-panel__footer .recordings-panel__action-error {
+  flex: 0 1 auto;
+  color: var(--orange);
+  font-size: 10px;
+}
+
+.recordings-panel__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Replay transport, shared with the cast player driving the xterm surface. */
+.cast-transport {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(7, 10, 17, 0.6);
+}
+
+.cast-transport__play {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(154, 140, 255, 0.3);
+  border-radius: 8px;
+  color: #c9c1ff;
+  background: rgba(154, 140, 255, 0.08);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cast-transport__play:hover:not(:disabled) {
+  border-color: rgba(154, 140, 255, 0.5);
+  background: rgba(154, 140, 255, 0.14);
+}
+
+.cast-transport__scrub {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--violet);
+  cursor: pointer;
+}
+
+.cast-transport__time {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.cast-transport__speed {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.03);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.cast-transport__speed:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.cast-transport__play:disabled,
+.cast-transport__scrub:disabled,
+.cast-transport__speed:disabled,
+.cast-transport__marker:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Where the operator answered a supervision request, so a reviewer can jump to
+   the moment a decision was taken instead of scrubbing for it. */
+.cast-transport__markers {
+  display: flex;
+  flex: 1 0 100%;
+  gap: 5px;
+  overflow-x: auto;
+  padding-top: 2px;
+}
+
+.cast-transport__marker {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 260px;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 159, 82, 0.3);
+  border-radius: 999px;
+  color: #ffdfba;
+  background: rgba(255, 159, 82, 0.07);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.cast-transport__marker:hover:not(:disabled) {
+  border-color: rgba(255, 159, 82, 0.5);
+  background: rgba(255, 159, 82, 0.12);
+}
+
+.cast-transport__marker-time {
+  font-family: var(--mono);
+  color: var(--orange);
+}
+
+/* The replay surface itself. xterm is mounted into the screen element, so it
+   owns its own metrics: everything here is the frame around it. */
+.cast-player {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 10px;
+}
+
+.cast-player__screen {
+  min-height: 220px;
+  max-height: 420px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #05070c;
+  overflow: hidden;
+}
+
+.cast-player__loading {
+  margin: 0;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.cast-player__notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 7px 11px;
+  border: 1px solid rgba(255, 159, 82, 0.28);
+  border-radius: 9px;
+  color: #ffdfba;
+  background: rgba(255, 159, 82, 0.07);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .recordings-layer { padding: 8px; }
+  .recordings-panel { border-radius: 14px; }
+}
+
+@media (max-width: 620px) {
+  .button--recordings span { display: none; }
+  .recordings-panel__header p, .recordings-panel__footer p { display: none; }
+  .recordings-toolbar { flex-direction: column; align-items: stretch; }
+  .recordings-row__actions { justify-content: flex-start; }
+  .cast-transport { flex-wrap: wrap; row-gap: 6px; }
+}

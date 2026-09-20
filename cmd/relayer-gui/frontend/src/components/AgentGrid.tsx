@@ -1,11 +1,21 @@
 import { AgentCard } from "./AgentCard";
-import type { AgentState, SupervisionEvent } from "../types/relayer";
+import type {
+  AgentState,
+  HandView,
+  PresenceView,
+  SupervisionEvent,
+} from "../types/relayer";
 
 interface AgentGridProps {
   runID: string;
   agents: AgentState[];
   events: SupervisionEvent[];
   readOnly?: boolean;
+  selfConnID?: string;
+  // Both maps are keyed by lowercase sessionID, as the reducer stores them.
+  presence?: Record<string, PresenceView>;
+  hand?: Record<string, HandView>;
+  onRequestControl?(runID: string, sessionID: string): Promise<boolean | void> | void;
   onResize(runID: string, sessionID: string, columns: number, rows: number): Promise<void>;
   onStop(runID: string, sessionID: string): Promise<void>;
   onStart(runID: string, sessionID: string): Promise<void>;
@@ -13,7 +23,7 @@ interface AgentGridProps {
   onOpenEvent(runID: string, sessionID: string, eventID: string): void;
   onSubmitLine(runID: string, sessionID: string, line: string): Promise<void>;
   onTerminalInput?(runID: string, sessionID: string, data: string): Promise<void> | void;
-  onToggleInteractive?(runID: string, sessionID: string, active: boolean): Promise<void> | void;
+  onToggleInteractive?(runID: string, sessionID: string, active: boolean): Promise<boolean | void> | void;
 }
 
 export function AgentGrid({
@@ -21,6 +31,10 @@ export function AgentGrid({
   agents,
   events,
   readOnly,
+  selfConnID,
+  presence,
+  hand,
+  onRequestControl,
   onResize,
   onStop,
   onStart,
@@ -50,6 +64,10 @@ export function AgentGrid({
             (event) => event.runID === runID && event.sessionID === agent.sessionID,
           )}
           readOnly={readOnly}
+          selfConnID={selfConnID}
+          presence={presence?.[agent.sessionID.toLocaleLowerCase()]}
+          hand={hand?.[agent.sessionID.toLocaleLowerCase()]}
+          onRequestControl={onRequestControl}
           onResize={onResize}
           onStop={onStop}
           onStart={onStart}

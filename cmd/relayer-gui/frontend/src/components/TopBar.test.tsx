@@ -26,6 +26,7 @@ describe("TopBar", () => {
   it("renders operator mode without viewer badge and shows stop run button", () => {
     const operatorInfo: UserInfo = {
       identity: "admin",
+      connID: "conn-admin",
       role: "operator",
       readOnly: false,
     };
@@ -37,6 +38,7 @@ describe("TopBar", () => {
         onOpenPreflight={() => {}}
         onOpenAudit={() => {}}
         onOpenObservability={() => {}}
+        onOpenRecordings={() => {}}
         onRequestStop={() => {}}
       />,
     );
@@ -48,6 +50,7 @@ describe("TopBar", () => {
   it("renders viewer badge and hides stop run button when readOnly", () => {
     const viewerInfo: UserInfo = {
       identity: "viewer-bob",
+      connID: "conn-bob",
       role: "viewer",
       readOnly: true,
     };
@@ -59,6 +62,7 @@ describe("TopBar", () => {
         onOpenPreflight={() => {}}
         onOpenAudit={() => {}}
         onOpenObservability={() => {}}
+        onOpenRecordings={() => {}}
         onRequestStop={() => {}}
       />,
     );

@@ -8,8 +8,12 @@ import type {
   BridgeEventMap,
   BridgeEventName,
   FullSettingsView,
+  HandView,
   LifecycleResult,
   PreflightReport,
+  PresenceView,
+  RecordingChunk,
+  RecordingView,
   RelayerBridge,
   SaveAgentProfilesRequest,
   SaveAgentProfilesAndRestartRequest,
@@ -239,6 +243,32 @@ export function createWebBridge(options: WebBridgeOptions = {}): RelayerBridge {
     },
     setInteractiveSession: (runID, sessionID, active) =>
       callRpc<void>("setInteractiveSession", { runID, sessionID, active }),
+
+    listPresence: (sessionID) =>
+      callRpc<PresenceView>("listPresence", { sessionID }),
+    observeSession: (sessionID, observing) =>
+      callRpc<PresenceView>("observeSession", { sessionID, observing }),
+    requestControl: (sessionID) =>
+      callRpc<HandView>("requestControl", { sessionID }),
+    grantControl: (sessionID, toConnID) =>
+      callRpc<HandView>("grantControl", { sessionID, toConnID }),
+    declineControl: (sessionID, toConnID) =>
+      callRpc<HandView>("declineControl", { sessionID, toConnID }),
+    releaseControl: (sessionID) =>
+      callRpc<HandView>("releaseControl", { sessionID }),
+    forceTakeControl: (sessionID) =>
+      callRpc<HandView>("forceTakeControl", { sessionID }),
+
+    listRecordings: (filter) =>
+      callRpc<RecordingView[]>("listRecordings", filter ?? {}),
+    getRecording: (id) =>
+      callRpc<RecordingView>("getRecording", { id }),
+    readRecordingChunk: (id, offset, limit) =>
+      callRpc<RecordingChunk>("readRecordingChunk", { id, offset, limit }),
+    exportRecording: (id) =>
+      callRpc<string>("exportRecording", { id }),
+    deleteRecording: (id) =>
+      callRpc<void>("deleteRecording", { id }),
 
     on<K extends BridgeEventName>(
       event: K,

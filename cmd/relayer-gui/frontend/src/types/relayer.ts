@@ -67,6 +67,8 @@ export interface AgentState {
   revision: number;
   running: boolean;
   attached: boolean;
+  observerCount?: number;
+  holderIdentity?: string;
   inputFrozen?: boolean;
   // True when the Go core substituted a scripted Bash agent for a real one.
   // Nothing else on screen distinguishes the two, and in a supervision tool an
@@ -129,6 +131,8 @@ export interface SnapshotEvent {
   status: SessionStatus;
   running: boolean;
   attached: boolean;
+  observerCount?: number;
+  holderIdentity?: string;
   inputFrozen?: boolean;
   exitCode?: number;
 }
@@ -297,6 +301,9 @@ export type BridgeEventMap = {
   "relayer:status": StatusEvent;
   "relayer:error": SafeErrorEvent;
   "relayer:notification": NotificationEvent;
+  "relayer:presence": PresenceView;
+  "relayer:hand": HandView;
+  "relayer:recording": RecordingEvent;
 };
 
 export interface AuditSummaryView {
@@ -354,8 +361,107 @@ export interface AuditEntryView {
 
 export interface UserInfo {
   identity: string;
+  // Addresses this socket. The same operator may hold several tabs, so the
+  // terminal write lock is keyed by connection rather than by identity.
+  connID: string;
   role: "operator" | "viewer";
   readOnly: boolean;
+}
+
+export interface PresenceMember {
+  connID: string;
+  identity: string;
+  role: "operator" | "viewer" | string;
+  observing: boolean;
+  holdsHand: boolean;
+  requestingHand: boolean;
+  since: string;
+}
+
+// A complete roster snapshot for one session, never a delta: a dropped frame
+// must be repaired by the next one rather than leaving the list wrong.
+export interface PresenceView {
+  runID: string;
+  sessionID: string;
+  members: PresenceMember[];
+  observerCount: number;
+}
+
+export type HandState = "free" | "held" | "requested";
+
+// A complete snapshot of one session's terminal write lock.
+export interface HandView {
+  runID: string;
+  sessionID: string;
+  state: HandState;
+  holderConnID?: string;
+  holderIdentity?: string;
+  requesterConnID?: string;
+  requesterIdentity?: string;
+  requestExpiresAt?: string;
+  since?: string;
+}
+
+// One recorded terminal session, described by its metadata only. The frames
+// themselves are paged in separately: a long session is far larger than
+// anything a list view should carry.
+export interface RecordingView {
+  id: string;
+  runID: string;
+  sessionID: string;
+  agentID?: string;
+  name?: string;
+  backend?: string;
+  adapter?: string;
+  startedAt: string;
+  endedAt?: string;
+  durationSeconds: number;
+  width: number;
+  height: number;
+  bytes: number;
+  frames: number;
+  truncated: boolean;
+  droppedFrames: number;
+  inputRecorded: boolean;
+  redacted: boolean;
+  exitCode?: number;
+  active: boolean;
+}
+
+// The asciicast v2 header line.
+export interface RecordingHeaderView {
+  version: number;
+  width: number;
+  height: number;
+  timestamp?: number;
+  title?: string;
+}
+
+export interface RecordingFrameView {
+  time: number;
+  kind: string;
+  data: string;
+}
+
+export interface RecordingChunk {
+  id: string;
+  header: RecordingHeaderView;
+  frames: RecordingFrameView[];
+  offset: number;
+  nextOffset: number;
+  complete: boolean;
+}
+
+export interface RecordingFilterInput {
+  runID?: string;
+  sessionID?: string;
+  agentID?: string;
+  limit?: number;
+}
+
+export interface RecordingEvent {
+  action: "started" | "finished" | "deleted";
+  recording: RecordingView;
 }
 
 export interface AuditFilterInput {
@@ -474,6 +580,22 @@ export interface RelayerBridge {
   getUserInfo?(): Promise<UserInfo>;
   sendTerminalInput?(runID: string, sessionID: string, data: string | Uint8Array): Promise<void>;
   setInteractiveSession?(runID: string, sessionID: string, active: boolean): Promise<void>;
+  // Session sharing. Optional throughout: the desktop bridge has a single local
+  // operator and no notion of a roster, so these are absent there by design.
+  listPresence?(sessionID: string): Promise<PresenceView>;
+  observeSession?(sessionID: string, observing: boolean): Promise<PresenceView>;
+  requestControl?(sessionID: string): Promise<HandView>;
+  grantControl?(sessionID: string, toConnID: string): Promise<HandView>;
+  declineControl?(sessionID: string, toConnID: string): Promise<HandView>;
+  releaseControl?(sessionID: string): Promise<HandView>;
+  forceTakeControl?(sessionID: string): Promise<HandView>;
+  // Session recording and replay. Optional throughout: the desktop bridge has
+  // no recording store, so a build without one simply has no panel content.
+  listRecordings?(filter?: RecordingFilterInput): Promise<RecordingView[]>;
+  getRecording?(id: string): Promise<RecordingView>;
+  readRecordingChunk?(id: string, offset: number, limit: number): Promise<RecordingChunk>;
+  exportRecording?(id: string): Promise<string>;
+  deleteRecording?(id: string): Promise<void>;
   on<K extends BridgeEventName>(event: K, listener: (payload: BridgeEventMap[K]) => void): () => void;
 }
 

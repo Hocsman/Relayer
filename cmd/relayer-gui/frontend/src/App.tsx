@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useDialogKeyboard } from "./hooks/useDialogKeyboard";
 import { AgentGrid } from "./components/AgentGrid";
 import { AgentSettingsPanel } from "./components/AgentSettingsPanel";
 import { AuditPanel } from "./components/AuditPanel";
+import { ControlRequestToast } from "./components/ControlRequestToast";
 import { DecisionModal } from "./components/DecisionModal";
 import { NotificationToast } from "./components/NotificationToast";
 import { ObservabilityPanel } from "./components/ObservabilityPanel";
 import { PreflightPanel } from "./components/PreflightPanel";
+import { RecordingsPanel } from "./components/RecordingsPanel";
 import { SupervisorPanel } from "./components/SupervisorPanel";
 import { TopBar } from "./components/TopBar";
 import { useNotifications } from "./hooks/useNotifications";
@@ -29,6 +31,10 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
     stopRun,
     sendTerminalInput,
     setInteractiveSession,
+    observeSession,
+    requestControl,
+    grantControl,
+    declineControl,
   } = useRelayer(bridge);
   const {
     toasts,
@@ -43,10 +49,39 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
   useEffect(() => {
     if (bridge.getUserInfo) {
       bridge.getUserInfo().then(setUserInfo).catch(() => {
-        setUserInfo({ identity: "local-operator", role: "operator", readOnly: false });
+        // Fail closed. The server rejects unauthorised calls either way, but a
+        // UI that assumes write authority it could not confirm offers controls
+        // that silently do nothing, which reads as the supervisor being broken.
+        setUserInfo({ identity: "unknown", connID: "", role: "viewer", readOnly: true });
       });
     }
   }, [bridge]);
+
+  // Joining a session's roster is what makes this client visible to the other
+  // operators watching it. It is a read-only act and never claims the terminal.
+  const runID = state.app?.runID ?? "";
+  // Session ids match ^[a-z][a-z0-9_-]{0,63}$, so a comma cannot occur in one.
+  const sessionIDs = state.app?.agents.map((agent) => agent.sessionID).join(",") ?? "";
+  useEffect(() => {
+    if (!sessionIDs) return;
+    const sessions = sessionIDs.split(",");
+    sessions.forEach((sessionID) => void observeSession(sessionID, true));
+    return () => {
+      sessions.forEach((sessionID) => void observeSession(sessionID, false));
+    };
+  }, [observeSession, sessionIDs]);
+
+  // Only the holder can answer a request, so only the holder is prompted.
+  const pendingControlRequests = useMemo(
+    () =>
+      Object.values(state.hand).filter(
+        (hand) =>
+          hand.state === "requested" &&
+          Boolean(userInfo?.connID) &&
+          hand.holderConnID === userInfo?.connID,
+      ),
+    [state.hand, userInfo?.connID],
+  );
 
   const [selectedEventKey, setSelectedEventKey] = useState<string>();
   const [modalOpen, setModalOpen] = useState(false);
@@ -54,6 +89,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
   const [preflightOpen, setPreflightOpen] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
   const [observabilityOpen, setObservabilityOpen] = useState(false);
+  const [recordingsOpen, setRecordingsOpen] = useState(false);
   const [stopConfirmation, setStopConfirmation] = useState(false);
   const seenEvents = useRef(new Set<string>());
 
@@ -66,7 +102,14 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
 
   useEffect(() => {
     const pending = state.app?.pendingEvents ?? [];
-    if (agentsOpen || preflightOpen || auditOpen || observabilityOpen || state.app?.runStatus !== "running") {
+    if (
+      agentsOpen ||
+      preflightOpen ||
+      auditOpen ||
+      observabilityOpen ||
+      recordingsOpen ||
+      state.app?.runStatus !== "running"
+    ) {
       setModalOpen(false);
       return;
     }
@@ -100,7 +143,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
       setSelectedEventKey(key);
       setModalOpen(true);
     }
-  }, [agentsOpen, preflightOpen, auditOpen, observabilityOpen, state.app?.pendingEvents, state.app?.runStatus, selectedEventKey]);
+  }, [agentsOpen, preflightOpen, auditOpen, observabilityOpen, recordingsOpen, state.app?.pendingEvents, state.app?.runStatus, selectedEventKey]);
 
   useEffect(() => {
     if (state.app?.runStatus !== "running") return;
@@ -165,25 +208,36 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
           setPreflightOpen(false);
           setAuditOpen(false);
           setObservabilityOpen(false);
+          setRecordingsOpen(false);
           setAgentsOpen(true);
         }}
         onOpenPreflight={() => {
           setAgentsOpen(false);
           setAuditOpen(false);
           setObservabilityOpen(false);
+          setRecordingsOpen(false);
           setPreflightOpen(true);
         }}
         onOpenAudit={() => {
           setAgentsOpen(false);
           setPreflightOpen(false);
           setObservabilityOpen(false);
+          setRecordingsOpen(false);
           setAuditOpen(true);
         }}
         onOpenObservability={() => {
           setAgentsOpen(false);
           setPreflightOpen(false);
           setAuditOpen(false);
+          setRecordingsOpen(false);
           setObservabilityOpen(true);
+        }}
+        onOpenRecordings={() => {
+          setAgentsOpen(false);
+          setPreflightOpen(false);
+          setAuditOpen(false);
+          setObservabilityOpen(false);
+          setRecordingsOpen(true);
         }}
         onRequestStop={() => setStopConfirmation(true)}
       />
@@ -202,6 +256,10 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
             onSubmitLine={submitLine}
             onTerminalInput={sendTerminalInput}
             onToggleInteractive={setInteractiveSession}
+            selfConnID={userInfo?.connID}
+            presence={state.presence}
+            hand={state.hand}
+            onRequestControl={requestControl}
           />
           <SupervisorPanel
             state={state.app}
@@ -219,7 +277,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
         />
       )}
       <DecisionModal
-        event={!agentsOpen && !preflightOpen && !auditOpen && !observabilityOpen && !transitioning && modalOpen ? selectedEvent : undefined}
+        event={!agentsOpen && !preflightOpen && !auditOpen && !observabilityOpen && !recordingsOpen && !transitioning && modalOpen ? selectedEvent : undefined}
         agent={selectedAgent}
         queueSize={state.app.pendingEvents.length}
         readOnly={userInfo?.readOnly}
@@ -252,6 +310,13 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
       {observabilityOpen && (
         <ObservabilityPanel bridge={bridge} onClose={() => setObservabilityOpen(false)} />
       )}
+      {recordingsOpen && (
+        <RecordingsPanel
+          bridge={bridge}
+          readOnly={userInfo?.readOnly}
+          onClose={() => setRecordingsOpen(false)}
+        />
+      )}
       {stopConfirmation && (
         <StopRunConfirmation
           state={state.app}
@@ -264,6 +329,11 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
         />
       )}
       <NotificationToast toasts={toasts} onDismiss={dismissToast} />
+      <ControlRequestToast
+        requests={pendingControlRequests}
+        onGrant={(sessionID, toConnID) => void grantControl(runID, sessionID, toConnID)}
+        onDecline={(sessionID, toConnID) => void declineControl(runID, sessionID, toConnID)}
+      />
     </div>
   );
 }

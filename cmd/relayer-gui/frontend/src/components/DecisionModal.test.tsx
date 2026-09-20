@@ -151,7 +151,7 @@ describe("DecisionModal readOnly mode (Viewer)", () => {
     );
     expect(markup).toContain("decision-modal__viewer-notice");
     expect(markup).toContain("Mode Lecture Seule");
-    expect(markup).toContain("Mode lecture seule (Viewer)");
+    expect(markup).toContain("Read-only (viewer)");
     // Both Allow and Deny buttons disabled
     const actions = markup.slice(markup.indexOf("decision-actions"));
     expect(actions.slice(0, actions.indexOf("</div>")).match(/disabled/g)?.length).toBe(2);

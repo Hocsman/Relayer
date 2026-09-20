@@ -168,14 +168,14 @@ describe("AgentCard simulated agents", () => {
         onSubmitLine={async () => {}}
       />,
     );
-    expect(markup).toContain('placeholder="Mode lecture seule (Viewer)"');
+    expect(markup).toContain('placeholder="Read-only (viewer)"');
     expect(markup).toContain('disabled=""');
     expect(markup).not.toContain(">Stop<");
     expect(markup).not.toContain(">Restart<");
     expect(markup).not.toContain(">Start<");
   });
 
-  it("renders 'Prendre la main' button when agent is running and operator is active", () => {
+  it("renders the take-terminal button when the agent is running and the operator is active", () => {
     const markup = renderToStaticMarkup(
       <AgentCard
         runID="run-1"
@@ -189,12 +189,12 @@ describe("AgentCard simulated agents", () => {
         onSubmitLine={async () => {}}
       />,
     );
-    expect(markup).toContain("Prendre la main");
-    expect(markup).not.toContain("Rendre la main");
+    expect(markup).toContain("Take the terminal");
+    expect(markup).not.toContain("Release the terminal");
     expect(markup).not.toContain("agent-card__interactive-banner");
   });
 
-  it("renders interactive banner and 'Rendre la main' button when agent is attached", () => {
+  it("renders the interactive banner and the release button when the agent is attached", () => {
     const markup = renderToStaticMarkup(
       <AgentCard
         runID="run-1"
@@ -208,14 +208,14 @@ describe("AgentCard simulated agents", () => {
         onSubmitLine={async () => {}}
       />,
     );
-    expect(markup).toContain("Rendre la main");
+    expect(markup).toContain("Release the terminal");
     expect(markup).toContain("agent-card__interactive-banner");
-    expect(markup).toContain("Session interactive (PTY direct)");
+    expect(markup).toContain("Interactive session (direct PTY)");
     expect(markup).toContain("agent-card--interactive");
-    expect(markup).toContain("Terminal interactif actif");
+    expect(markup).toContain("Interactive terminal active");
   });
 
-  it("hides 'Prendre la main' button for viewer role", () => {
+  it("hides the take-terminal button for the viewer role", () => {
     const markup = renderToStaticMarkup(
       <AgentCard
         runID="run-1"
@@ -229,8 +229,8 @@ describe("AgentCard simulated agents", () => {
         onSubmitLine={async () => {}}
       />,
     );
-    expect(markup).not.toContain("Prendre la main");
-    expect(markup).not.toContain("Rendre la main");
+    expect(markup).not.toContain("Take the terminal");
+    expect(markup).not.toContain("Release the terminal");
   });
 });
 

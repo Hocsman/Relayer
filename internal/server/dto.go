@@ -27,6 +27,8 @@ type AgentState struct {
 	Revision       uint64 `json:"revision"`
 	Running        bool   `json:"running"`
 	Attached       bool   `json:"attached"`
+	ObserverCount  int    `json:"observerCount"`
+	HolderIdentity string `json:"holderIdentity,omitempty"`
 	InputFrozen    bool   `json:"inputFrozen"`
 	Simulated      bool   `json:"simulated"`
 	ExitCode       *int   `json:"exitCode,omitempty"`
@@ -69,15 +71,17 @@ type AppState struct {
 }
 
 type SnapshotEvent struct {
-	RunID       string `json:"runID"`
-	SessionID   string `json:"sessionID"`
-	Revision    uint64 `json:"revision"`
-	Output      string `json:"output"`
-	Status      string `json:"status"`
-	Running     bool   `json:"running"`
-	Attached    bool   `json:"attached"`
-	InputFrozen bool   `json:"inputFrozen"`
-	ExitCode    *int   `json:"exitCode,omitempty"`
+	RunID          string `json:"runID"`
+	SessionID      string `json:"sessionID"`
+	Revision       uint64 `json:"revision"`
+	Output         string `json:"output"`
+	Status         string `json:"status"`
+	Running        bool   `json:"running"`
+	Attached       bool   `json:"attached"`
+	ObserverCount  int    `json:"observerCount"`
+	HolderIdentity string `json:"holderIdentity,omitempty"`
+	InputFrozen    bool   `json:"inputFrozen"`
+	ExitCode       *int   `json:"exitCode,omitempty"`
 }
 
 type StatusEvent struct {
@@ -329,6 +333,7 @@ type AuditEntryView struct {
 
 type UserInfo struct {
 	Identity string `json:"identity"`
+	ConnID   string `json:"connID"`
 	Role     string `json:"role"`
 	ReadOnly bool   `json:"readOnly"`
 }
@@ -374,4 +379,103 @@ type TelemetrySnapshotView struct {
 	GuardrailsBreakdown  map[string]int64    `json:"guardrailsBreakdown"`
 	AverageReactionTime  float64             `json:"averageReactionTime"`
 	DecisionDurations    []LatencyBucketView `json:"decisionDurations"`
+}
+
+// PresenceMember is one connected client as the other clients of a session see
+// it. Identity is not unique: the same operator may hold several connections,
+// so ConnID is the addressable key everywhere the hand is concerned.
+type PresenceMember struct {
+	ConnID         string `json:"connID"`
+	Identity       string `json:"identity"`
+	Role           string `json:"role"`
+	Observing      bool   `json:"observing"`
+	HoldsHand      bool   `json:"holdsHand"`
+	RequestingHand bool   `json:"requestingHand"`
+	Since          string `json:"since"`
+}
+
+// PresenceView is a complete roster snapshot for one session. It is never a
+// delta: a dropped broadcast must be self-healing at the next one.
+type PresenceView struct {
+	RunID         string           `json:"runID"`
+	SessionID     string           `json:"sessionID"`
+	Members       []PresenceMember `json:"members"`
+	ObserverCount int              `json:"observerCount"`
+}
+
+// HandView is a complete snapshot of one session's write lock.
+type HandView struct {
+	RunID             string `json:"runID"`
+	SessionID         string `json:"sessionID"`
+	State             string `json:"state"`
+	HolderConnID      string `json:"holderConnID,omitempty"`
+	HolderIdentity    string `json:"holderIdentity,omitempty"`
+	RequesterConnID   string `json:"requesterConnID,omitempty"`
+	RequesterIdentity string `json:"requesterIdentity,omitempty"`
+	RequestExpiresAt  string `json:"requestExpiresAt,omitempty"`
+	Since             string `json:"since,omitempty"`
+}
+
+// RecordingView is one session transcript as the web UI lists it. It carries
+// no filesystem path: the store is addressed by id, and a path would tell a
+// browser client where the supervising host keeps its files.
+type RecordingView struct {
+	ID              string  `json:"id"`
+	RunID           string  `json:"runID"`
+	SessionID       string  `json:"sessionID"`
+	AgentID         string  `json:"agentID,omitempty"`
+	Name            string  `json:"name,omitempty"`
+	Backend         string  `json:"backend,omitempty"`
+	Adapter         string  `json:"adapter,omitempty"`
+	StartedAt       string  `json:"startedAt"`
+	EndedAt         string  `json:"endedAt,omitempty"`
+	DurationSeconds float64 `json:"durationSeconds"`
+	Width           int     `json:"width"`
+	Height          int     `json:"height"`
+	Bytes           int64   `json:"bytes"`
+	Frames          int     `json:"frames"`
+	Truncated       bool    `json:"truncated"`
+	DroppedFrames   int     `json:"droppedFrames"`
+	InputRecorded   bool    `json:"inputRecorded"`
+	Redacted        bool    `json:"redacted"`
+	ExitCode        *int    `json:"exitCode,omitempty"`
+	Active          bool    `json:"active"`
+}
+
+type RecordingHeaderView struct {
+	Version   int    `json:"version"`
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
+	Timestamp int64  `json:"timestamp,omitempty"`
+	Title     string `json:"title,omitempty"`
+}
+
+type RecordingFrameView struct {
+	Time float64 `json:"time"`
+	Kind string  `json:"kind"`
+	Data string  `json:"data"`
+}
+
+// RecordingChunk is one page of a transcript. Transcripts are paged rather than
+// returned whole because a websocket frame large enough for a multi-megabyte
+// cast would be dropped by the send queue instead of delivered.
+type RecordingChunk struct {
+	ID         string               `json:"id"`
+	Header     RecordingHeaderView  `json:"header"`
+	Frames     []RecordingFrameView `json:"frames"`
+	Offset     int                  `json:"offset"`
+	NextOffset int                  `json:"nextOffset"`
+	Complete   bool                 `json:"complete"`
+}
+
+type RecordingFilterInput struct {
+	RunID     string `json:"runID,omitempty"`
+	SessionID string `json:"sessionID,omitempty"`
+	AgentID   string `json:"agentID,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+}
+
+type RecordingEvent struct {
+	Action    string        `json:"action"`
+	Recording RecordingView `json:"recording"`
 }

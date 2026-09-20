@@ -2,6 +2,8 @@ import { sanitizeErrorEvent } from "../lib/safety";
 import { supervisionEventKey } from "../lib/eventKey";
 import type {
   AppState,
+  HandView,
+  PresenceView,
   SafeErrorEvent,
   SnapshotEvent,
   StatusEvent,
@@ -11,11 +13,16 @@ import type {
 const MAX_OUTPUT_CHARS = 512 * 1024;
 const MAX_PENDING_EVENTS = 64;
 const MAX_ERRORS = 40;
+const MAX_SHARED_SESSIONS = 32;
 
 export interface RelayerUIState {
   connection: "loading" | "ready" | "failed";
   app: AppState | null;
   errors: SafeErrorEvent[];
+  // Both are complete snapshots keyed by lowercase sessionID: the gateway never
+  // sends a delta, so a replaced entry is always the whole truth.
+  presence: Record<string, PresenceView>;
+  hand: Record<string, HandView>;
   fatalError?: string;
 }
 
@@ -26,6 +33,8 @@ export type RelayerAction =
   | { type: "event"; event: SupervisionEvent }
   | { type: "status"; status: StatusEvent }
   | { type: "error"; error: SafeErrorEvent }
+  | { type: "presence"; presence: PresenceView }
+  | { type: "hand"; hand: HandView }
   | {
       type: "delivery";
       runID: string;
@@ -38,7 +47,28 @@ export const initialRelayerState: RelayerUIState = {
   connection: "loading",
   app: null,
   errors: [],
+  presence: {},
+  hand: {},
 };
+
+// Sharing snapshots are replaced wholesale rather than merged, and the map is
+// bounded like every other untrusted-growth surface in this reducer: a gateway
+// that names sessions this client has never seen must not grow it without end.
+function withSharedEntry<T>(
+  current: Record<string, T>,
+  sessionID: string,
+  value: T,
+): Record<string, T> {
+  const key = sessionID.toLocaleLowerCase();
+  const next = { ...current, [key]: value };
+  const keys = Object.keys(next);
+  if (keys.length <= MAX_SHARED_SESSIONS) return next;
+
+  for (const stale of keys.slice(0, keys.length - MAX_SHARED_SESSIONS)) {
+    if (stale !== key) delete next[stale];
+  }
+  return next;
+}
 
 function boundedOutput(output: string): string {
   return output.length <= MAX_OUTPUT_CHARS ? output : output.slice(-MAX_OUTPUT_CHARS);
@@ -86,6 +116,10 @@ export function relayerReducer(state: RelayerUIState, action: RelayerAction): Re
         errors: state.app && state.app.runID !== action.state.runID
           ? state.errors.filter((error) => error.runID === "" || error.runID === action.state.runID)
           : state.errors,
+        // A new run has new sessions: a roster or hand carried across would
+        // describe terminals that no longer exist.
+        presence: state.app && state.app.runID !== action.state.runID ? {} : state.presence,
+        hand: state.app && state.app.runID !== action.state.runID ? {} : state.hand,
       };
     case "loadFailed":
       return { ...state, connection: "failed", fatalError: action.message };
@@ -180,6 +214,44 @@ export function relayerReducer(state: RelayerUIState, action: RelayerAction): Re
               : agent,
           ),
         },
+      };
+    }
+    case "presence": {
+      if (state.app && action.presence.runID !== state.app.runID) return state;
+      return {
+        ...state,
+        presence: withSharedEntry(state.presence, action.presence.sessionID, action.presence),
+        app: state.app
+          ? {
+              ...state.app,
+              agents: state.app.agents.map((agent) =>
+                agent.sessionID.toLocaleLowerCase() === action.presence.sessionID.toLocaleLowerCase()
+                  ? { ...agent, observerCount: action.presence.observerCount }
+                  : agent,
+              ),
+            }
+          : state.app,
+      };
+    }
+    case "hand": {
+      if (state.app && action.hand.runID !== state.app.runID) return state;
+      return {
+        ...state,
+        hand: withSharedEntry(state.hand, action.hand.sessionID, action.hand),
+        app: state.app
+          ? {
+              ...state.app,
+              agents: state.app.agents.map((agent) =>
+                agent.sessionID.toLocaleLowerCase() === action.hand.sessionID.toLocaleLowerCase()
+                  ? {
+                      ...agent,
+                      attached: action.hand.state !== "free",
+                      holderIdentity: action.hand.holderIdentity,
+                    }
+                  : agent,
+              ),
+            }
+          : state.app,
       };
     }
     case "error":
