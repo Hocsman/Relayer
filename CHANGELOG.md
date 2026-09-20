@@ -4,6 +4,14 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-20
+
+Patch release re-cut so the released commit passes its own build. It contains **no product change**: the only difference from v0.7.0 is in test files, and the two releases behave identically.
+
+### Fixed
+
+- **The v0.7.0 commit failed the Windows build job**: `TestInteractivePTYWebAndAudit` cancelled the gateway's context without waiting for `Serve` to return. Cancelling only asks the server to stop; it closes the audit journal while `Serve` unwinds, and Windows cannot delete a file another handle still holds, so `t.TempDir`'s cleanup failed. Three sibling tests had already been fixed individually; all six gateway bootstraps now go through one `startServeForTest` helper that owns both the goroutine and the shutdown wait, so no call site can omit it again.
+
 ## [0.7.0] - 2026-09-20
 
 Minor release adding session recording to standard asciicast v2 files with in-browser replay, and multi-operator sessions where several people watch one interactive terminal while exactly one holds it. Also fixes an audit journal verification defect that made every journal the web gateway produced fail its own verifier.
@@ -674,7 +682,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.7.0...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.7.1...main
+[0.7.1]: https://github.com/Hocsman/Relayer/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/Hocsman/Relayer/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Hocsman/Relayer/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Hocsman/Relayer/compare/v0.4.0...v0.5.0
