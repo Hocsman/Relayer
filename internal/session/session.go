@@ -53,6 +53,13 @@ type processSession struct {
 	// tests without mutating package globals used by concurrent sessions.
 	killGroup   func(*exec.Cmd)
 	groupExists func(*exec.Cmd) bool
+
+	// recordInput and recordResize are nil unless a transcript is being
+	// written. They are set once, before the session is published, so no lock
+	// guards them. Both are called after the operation succeeded and outside
+	// fileMu, for the reason the resize comment below spells out.
+	recordInput  func(at time.Time, data []byte)
+	recordResize func(at time.Time, columns, rows int)
 }
 
 func (s *processSession) setResult(err error) {
@@ -87,6 +94,11 @@ func (s *processSession) write(input []byte) error {
 	// The device permits Close concurrently with Write. Do not retain fileMu while
 	// writing: a saturated PTY must be unblocked by Close during shutdown.
 	_, err := device.Write(input)
+	// Recorded only once the bytes reached the device, and on a copy: SendLine
+	// and Resolve both pass buffers they continue to own.
+	if err == nil && s.recordInput != nil {
+		s.recordInput(time.Now(), append([]byte(nil), input...))
+	}
 	return err
 }
 
@@ -107,12 +119,20 @@ func (s *processSession) resize(columns, rows int) error {
 	}
 
 	s.fileMu.RLock()
-	defer s.fileMu.RUnlock()
-	if s.device == nil {
+	device := s.device
+	s.fileMu.RUnlock()
+	if device == nil {
 		return ErrClosed
 	}
 
-	return s.device.Resize(columns, rows)
+	err := device.Resize(columns, rows)
+	// Outside fileMu for the same reason the comment above gives: the recorder
+	// is another subsystem with its own lock, and taking it under fileMu
+	// inverts the order closePTY's writer depends on.
+	if err == nil && s.recordResize != nil {
+		s.recordResize(time.Now(), columns, rows)
+	}
+	return err
 }
 
 func (s *processSession) closePTY() {

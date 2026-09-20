@@ -54,6 +54,12 @@ type Manager struct {
 	sessions map[string]*managedSession
 	wg       sync.WaitGroup
 
+	// recorder is nil unless session transcripts are being written. tmux sends
+	// go through `tmux send-keys` rather than one write choke point, so this
+	// backend records output and geometry but not input; a transcript from a
+	// tmux session is therefore marked as output-only.
+	recorder terminal.Recorder
+
 	lifecycleMu    sync.Mutex
 	closed         bool
 	activeOps      int
@@ -68,6 +74,7 @@ var _ terminal.EventSender = (*Manager)(nil)
 var _ terminal.LineSender = (*Manager)(nil)
 var _ terminal.PendingEventProvider = (*Manager)(nil)
 var _ terminal.SessionRemover = (*Manager)(nil)
+var _ terminal.RecorderAware = (*Manager)(nil)
 
 // NewManager verifies tmux before creating any session and allocates a private
 // 0700 runtime directory for specs and FIFO transports.
@@ -281,6 +288,10 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 	if m.ctx.Err() != nil {
 		return terminal.Info{}, ErrClosed
 	}
+	// Captured here, under the lock Start already holds, so the hooks below do
+	// not take m.mu again on the output path. sync.RWMutex is not reentrant and
+	// this function holds the write lock for its whole body.
+	recorder := m.recorder
 	for existingID := range m.sessions {
 		if strings.EqualFold(existingID, normalized.ID) {
 			return terminal.Info{}, fmt.Errorf("session %q already started", normalized.ID)
@@ -444,6 +455,11 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 			OnEventWithdrawn: func(event adapters.Event) {
 				m.emit(session.AdapterEventWithdrawn{Event: event.Clone()}, true)
 			},
+			OnRawChunk: func(at time.Time, data []byte) {
+				if recorder != nil {
+					recorder.RecordOutput(normalized.ID, at, data)
+				}
+			},
 		})
 	if err != nil {
 		sessionCancel()
@@ -482,6 +498,11 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 	}
 	cleanupFiles = false
 	created = false
+	// Opened only once the pane exists and its size has been applied, so the
+	// transcript header matches the geometry tmux actually gave the agent.
+	if recorder != nil {
+		recorder.StartSession(metadata, size, time.Now())
+	}
 	return metadata, nil
 }
 
@@ -612,6 +633,9 @@ func (m *Manager) handleMissingTarget(target *managedSession, cause error) {
 	snapshot := Snapshot{ID: target.info.ID, Status: StatusFailed}
 	target.updateProcessExitState(snapshot)
 	if target.finish() {
+		if recorder := m.currentRecorder(); recorder != nil {
+			recorder.FinishSession(target.info.ID, time.Now(), snapshot.ExitCode)
+		}
 		m.emit(session.Error{SessionID: target.info.ID, Err: failure}, true)
 		m.emit(session.AdapterEvent{Event: target.processExitEvent(snapshot)}, true)
 	}
@@ -640,6 +664,10 @@ func (m *Manager) finishSession(target *managedSession, snapshot Snapshot) {
 	target.updateProcessExitState(snapshot)
 	if !target.finish() {
 		return
+	}
+	// target.finish reports true exactly once, so the transcript is closed once.
+	if recorder := m.currentRecorder(); recorder != nil {
+		recorder.FinishSession(target.info.ID, time.Now(), snapshot.ExitCode)
 	}
 	m.emit(session.AdapterEvent{Event: target.processExitEvent(snapshot)}, true)
 	if m.cleanupOnSuccess && snapshot.ExitCode != nil && *snapshot.ExitCode == 0 {
@@ -891,8 +919,26 @@ func (m *Manager) resize(ctx context.Context, id string, size terminal.Size) err
 	)
 	if err == nil {
 		target.recordAppliedSize(size)
+		// After the de-duplication above, so a no-op resize emits no frame.
+		if recorder := m.currentRecorder(); recorder != nil {
+			recorder.RecordResize(id, time.Now(), size)
+		}
 	}
 	return err
+}
+
+// SetRecorder attaches a transcript recorder. Like the PTY backend, it must be
+// called before the first Start.
+func (m *Manager) SetRecorder(recorder terminal.Recorder) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recorder = recorder
+}
+
+func (m *Manager) currentRecorder() terminal.Recorder {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.recorder
 }
 
 func (m *Manager) Snapshot(ctx context.Context, id string) (terminal.Snapshot, error) {

@@ -19,6 +19,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/intercept"
 	"github.com/Hocsman/Relayer/internal/notify"
 	"github.com/Hocsman/Relayer/internal/policy"
+	"github.com/Hocsman/Relayer/internal/record"
 	"github.com/Hocsman/Relayer/internal/telemetry"
 	"gopkg.in/yaml.v3"
 	"time"
@@ -85,6 +86,7 @@ type Result struct {
 	Audit         audit.Config
 	Notifications notify.Config
 	Telemetry     telemetry.Config
+	Recording     record.Config
 	Created       bool
 }
 
@@ -138,6 +140,7 @@ type versionOneFile struct {
 	InterceptPatterns *[]ConfigPattern         `yaml:"intercept_patterns"`
 	Notifications     *configuredNotifications `yaml:"notifications,omitempty"`
 	Telemetry         *configuredTelemetry     `yaml:"telemetry,omitempty"`
+	Recording         *configuredRecording     `yaml:"recording,omitempty"`
 }
 
 type configuredTelemetry struct {
@@ -206,6 +209,17 @@ type configuredAudit struct {
 	MaxFiles      *int    `yaml:"max_files,omitempty"`
 }
 
+type configuredRecording struct {
+	Enabled        *bool   `yaml:"enabled,omitempty"`
+	Path           *string `yaml:"path,omitempty"`
+	RecordInput    *bool   `yaml:"record_input,omitempty"`
+	Redact         *bool   `yaml:"redact,omitempty"`
+	MaxFileSizeMB  *int    `yaml:"max_file_size_mb,omitempty"`
+	MaxRecordings  *int    `yaml:"max_recordings,omitempty"`
+	MaxTotalSizeMB *int    `yaml:"max_total_size_mb,omitempty"`
+	RetentionDays  *int    `yaml:"retention_days,omitempty"`
+}
+
 type configuredPolicyRule struct {
 	Name   *string                `yaml:"name"`
 	Match  *configuredPolicyMatch `yaml:"match"`
@@ -245,6 +259,7 @@ type decodedFile struct {
 	Audit         audit.Config
 	Notifications notify.Config
 	Telemetry     telemetry.Config
+	Recording     record.Config
 }
 
 // LoadOrCreate reads path before any PTY is started. It accepts both a direct
@@ -316,6 +331,9 @@ func decodeResult(path string, data []byte, created bool) (Result, error) {
 		if configured.Audit.Path != "" && !filepath.IsAbs(configured.Audit.Path) {
 			configured.Audit.Path = filepath.Join(baseDir, configured.Audit.Path)
 		}
+		if configured.Recording.Path != "" && !filepath.IsAbs(configured.Recording.Path) {
+			configured.Recording.Path = filepath.Join(baseDir, configured.Recording.Path)
+		}
 	}
 
 	return Result{
@@ -330,6 +348,7 @@ func decodeResult(path string, data []byte, created bool) (Result, error) {
 		Audit:         configured.Audit,
 		Notifications: configured.Notifications,
 		Telemetry:     configured.Telemetry,
+		Recording:     configured.Recording,
 		Created:       created,
 	}, nil
 }
@@ -763,6 +782,47 @@ func disabledAuditConfig() audit.Config {
 	return result
 }
 
+func decodeRecording(configured *configuredRecording) (record.Config, error) {
+	if configured == nil {
+		return disabledRecordingConfig(), nil
+	}
+	result := record.DefaultConfig()
+	if configured.Enabled != nil {
+		result.Enabled = *configured.Enabled
+	}
+	if configured.Path != nil {
+		result.Path = strings.TrimSpace(*configured.Path)
+	}
+	if configured.RecordInput != nil {
+		result.RecordInput = *configured.RecordInput
+	}
+	if configured.Redact != nil {
+		result.Redact = *configured.Redact
+	}
+	if configured.MaxFileSizeMB != nil {
+		result.MaxFileSizeMB = *configured.MaxFileSizeMB
+	}
+	if configured.MaxRecordings != nil {
+		result.MaxRecordings = *configured.MaxRecordings
+	}
+	if configured.MaxTotalSizeMB != nil {
+		result.MaxTotalSizeMB = *configured.MaxTotalSizeMB
+	}
+	if configured.RetentionDays != nil {
+		result.RetentionDays = *configured.RetentionDays
+	}
+	if err := record.Validate(result); err != nil {
+		return record.Config{}, fmt.Errorf("invalid recording: %w", err)
+	}
+	return result, nil
+}
+
+func disabledRecordingConfig() record.Config {
+	result := record.DefaultConfig()
+	result.Enabled = false
+	return result
+}
+
 func decodeTelemetry(configured *configuredTelemetry) (telemetry.Config, error) {
 	result := telemetry.DefaultConfig()
 	if configured == nil {
@@ -874,6 +934,7 @@ func decode(data []byte, configDir string) (decodedFile, error) {
 			Audit:         disabledAuditConfig(),
 			Notifications: notify.DefaultConfig(),
 			Telemetry:     telemetry.DefaultConfig(),
+			Recording:     disabledRecordingConfig(),
 		}, nil
 	case yaml.MappingNode:
 		if mappingHasKey(root, "version") {
@@ -897,6 +958,7 @@ func decode(data []byte, configDir string) (decodedFile, error) {
 			Audit:         disabledAuditConfig(),
 			Notifications: notify.DefaultConfig(),
 			Telemetry:     telemetry.DefaultConfig(),
+			Recording:     disabledRecordingConfig(),
 		}, nil
 	default:
 		return decodedFile{}, errors.New("YAML root must be a list or a configuration object")
@@ -971,6 +1033,10 @@ func decodeVersionOne(data []byte, root *yaml.Node, configDir string) (decodedFi
 	if err != nil {
 		return decodedFile{}, err
 	}
+	configuredRecording, err := decodeRecording(configured.Recording)
+	if err != nil {
+		return decodedFile{}, err
+	}
 
 	return decodedFile{
 		Version:       *configured.Version,
@@ -982,6 +1048,7 @@ func decodeVersionOne(data []byte, root *yaml.Node, configDir string) (decodedFi
 		Audit:         configuredAudit,
 		Notifications: configuredNotifications,
 		Telemetry:     configuredTelemetry,
+		Recording:     configuredRecording,
 	}, nil
 }
 
@@ -1066,6 +1133,10 @@ func validateVersionOneNode(root *yaml.Node) error {
 			}
 		case "telemetry":
 			if err := validateTelemetryNode(value); err != nil {
+				return err
+			}
+		case "recording":
+			if err := validateRecordingNode(value); err != nil {
 				return err
 			}
 		}
@@ -1183,6 +1254,31 @@ func validateAuditNode(node *yaml.Node) error {
 			}
 		case "max_file_size_mb", "max_files":
 			if err := requireScalar(value, "!!int", "audit."+name+" must be a YAML integer"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateRecordingNode(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return errors.New("recording must be a YAML object")
+	}
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		name := node.Content[index].Value
+		value := dereferenceAlias(node.Content[index+1])
+		switch name {
+		case "enabled", "record_input", "redact":
+			if err := requireScalar(value, "!!bool", "recording."+name+" must be a YAML boolean"); err != nil {
+				return err
+			}
+		case "path":
+			if err := requireScalar(value, "!!str", "recording.path must be a YAML string"); err != nil {
+				return err
+			}
+		case "max_file_size_mb", "max_recordings", "max_total_size_mb", "retention_days":
+			if err := requireScalar(value, "!!int", "recording."+name+" must be a YAML integer"); err != nil {
 				return err
 			}
 		}

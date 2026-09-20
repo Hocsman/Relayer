@@ -29,6 +29,13 @@ var _ terminal.EventSender = (*Manager)(nil)
 var _ terminal.LineSender = (*Manager)(nil)
 var _ terminal.PendingEventProvider = (*Manager)(nil)
 var _ terminal.SessionRemover = (*Manager)(nil)
+var _ terminal.RecorderAware = (*Manager)(nil)
+
+// SetRecorder forwards the transcript recorder to the owned session manager,
+// which is where the PTY bytes actually pass.
+func (m *Manager) SetRecorder(recorder terminal.Recorder) {
+	m.inner.SetRecorder(recorder)
+}
 
 func New(
 	parent context.Context,

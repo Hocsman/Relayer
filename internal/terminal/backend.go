@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"time"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
@@ -138,6 +139,20 @@ type LineSender interface {
 type RawSender interface {
 	SendRaw(context.Context, SessionID, []byte) error
 }
+
+// Recorder receives a session transcript. Every method is fire-and-forget:
+// an implementation must never block the caller, never return an error, and
+// never panic. The PTY read loop calls RecordOutput.
+type Recorder interface {
+	StartSession(info Info, size Size, at time.Time)
+	RecordOutput(id SessionID, at time.Time, data []byte)
+	RecordInput(id SessionID, at time.Time, data []byte)
+	RecordResize(id SessionID, at time.Time, size Size)
+	FinishSession(id SessionID, at time.Time, exitCode *int)
+}
+
+// RecorderAware is implemented by backends that can stream a transcript.
+type RecorderAware interface{ SetRecorder(Recorder) }
 
 // PendingEventProvider returns only cached semantic state. Implementations must
 // not query a process or spawn an external command; Bubble Tea uses this path

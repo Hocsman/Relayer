@@ -18,6 +18,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/notify"
 	"github.com/Hocsman/Relayer/internal/policy"
+	"github.com/Hocsman/Relayer/internal/record"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/telemetry"
 	"github.com/Hocsman/Relayer/internal/terminal"
@@ -105,6 +106,8 @@ type DesktopRuntime struct {
 	lifecycle     *agentLifecycle
 	auditor       *audit.Recorder
 	telemetry     *telemetry.Engine
+	recordings    *record.Store
+	recorder      *record.Multiplexer
 	configuration config.Result
 	configPath    string
 	sessions      []DesktopSession
@@ -272,6 +275,12 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 	}
 	runtime.router = router
 	runtime.events = events
+
+	// Attached before the first session starts, so a transcript never begins
+	// mid-stream. Deliberately non-fatal, unlike the audit journal above: a
+	// recording is observability, and a store that cannot be opened must not be
+	// able to stop an agent from running.
+	runtime.attachRecorder(plan.recordingConfig(), runID, plan.diagnostics)
 
 	// The resolver marks the agents it substituted with the built-in mock. The
 	// session carries that through so the interface can say so per agent
@@ -766,6 +775,11 @@ func (r *DesktopRuntime) Close(ctx context.Context) error {
 			}
 		}
 	}
+	// After the backends: every final output chunk is queued by then, so the
+	// transcripts close on the last bytes the agents actually emitted.
+	if err := r.closeRecorder(); err != nil {
+		result = errors.Join(result, fmt.Errorf("close the session recordings: %w", err))
+	}
 	outcome := audit.OutcomeSucceeded
 	if result != nil {
 		outcome = audit.OutcomeFailed
@@ -797,6 +811,10 @@ func (r *DesktopRuntime) abortInitialization() error {
 	if r.telemetry != nil {
 		_ = r.telemetry.Close()
 	}
+	// A failed start may already have opened transcripts for the sessions that
+	// did come up. Joining the writers here is what keeps their files closed and
+	// their sidecars finalized rather than left looking crash-truncated.
+	_ = r.closeRecorder()
 	if r.auditor != nil {
 		for _, info := range r.infos {
 			if err := r.auditor.Record(audit.Entry{
@@ -863,4 +881,84 @@ func (r *DesktopRuntime) abortInitialization() error {
 		}
 	}
 	return result
+}
+
+// recordingConfig reports the session-recording settings this plan was built
+// with. It is a method rather than a field read so the rest of the runtime does
+// not have to know where in the configuration the block lives.
+func (p *DesktopPlan) recordingConfig() record.Config {
+	if p == nil {
+		return record.Config{}
+	}
+	return p.configuration.Recording
+}
+
+// attachRecorder opens the transcript store and hands a recorder to every
+// backend that can stream one. Every failure is reported and swallowed: a
+// recording is an observability feature and must never prevent an agent from
+// starting. Contrast initializeAuditForRun, which is deliberately fail-closed.
+func (r *DesktopRuntime) attachRecorder(configuration record.Config, runID string, diagnostics io.Writer) {
+	if !configuration.Enabled {
+		return
+	}
+	if diagnostics == nil {
+		diagnostics = io.Discard
+	}
+
+	store, err := record.OpenStore(configuration)
+	if err != nil {
+		_, _ = fmt.Fprintf(diagnostics, "session recording disabled: %v\n", err)
+		return
+	}
+	// Pruning at startup rather than on a timer keeps the retention policy on a
+	// path an operator can observe, and keeps it away from the write path.
+	if removed, pruneErr := store.Prune(); pruneErr != nil {
+		_, _ = fmt.Fprintf(diagnostics, "session recording prune incomplete: %v\n", pruneErr)
+	} else if removed > 0 {
+		_, _ = fmt.Fprintf(diagnostics, "session recording pruned %d old transcript(s)\n", removed)
+	}
+
+	recorder := record.NewMultiplexer(record.MultiplexerOptions{
+		Store:       store,
+		Config:      configuration,
+		RunID:       runID,
+		Diagnostics: diagnostics,
+	})
+	if recorder == nil {
+		_ = store.Close()
+		return
+	}
+
+	r.recordings = store
+	r.recorder = recorder
+	r.router.SetRecorder(recorder)
+	_, _ = fmt.Fprintf(diagnostics, "Session recording active: %s\n", store.Dir())
+}
+
+// Recordings exposes the transcript store, or nil when recording is disabled.
+// Callers must tolerate nil rather than assume a store exists.
+func (r *DesktopRuntime) Recordings() *record.Store {
+	if r == nil {
+		return nil
+	}
+	return r.recordings
+}
+
+// closeRecorder joins the transcript writer goroutines and closes the store. It
+// runs after the backends are closed so every final chunk is already queued.
+func (r *DesktopRuntime) closeRecorder() error {
+	var errs []error
+	if r.recorder != nil {
+		if err := r.recorder.Close(); err != nil {
+			errs = append(errs, err)
+		}
+		r.recorder = nil
+	}
+	if r.recordings != nil {
+		if err := r.recordings.Close(); err != nil {
+			errs = append(errs, err)
+		}
+		r.recordings = nil
+	}
+	return errors.Join(errs...)
 }

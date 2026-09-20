@@ -33,6 +33,20 @@ type Manager struct {
 	ringCapacity int
 	wg           sync.WaitGroup
 	closeOnce    sync.Once
+
+	// recorder is nil unless session transcripts are being written. It is set
+	// before the first Start and never changed afterwards.
+	recorder terminal.Recorder
+}
+
+// SetRecorder attaches a transcript recorder. It must be called before Start;
+// sessions already running keep the recorder they were created with, because a
+// transcript that begins mid-session would carry a misleading header size and
+// a first offset the replay cannot explain.
+func (m *Manager) SetRecorder(recorder terminal.Recorder) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recorder = recorder
 }
 
 // NewManager validates every prompt pattern before any process can start.
@@ -166,6 +180,17 @@ func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 		done:     make(chan struct{}),
 		readDone: make(chan struct{}),
 	}
+	// Captured under the lock Start already holds, so the session keeps one
+	// recorder for its whole life even if SetRecorder is called concurrently.
+	recorder := m.recorder
+	if recorder != nil {
+		session.recordInput = func(at time.Time, data []byte) {
+			recorder.RecordInput(sessionID, at, data)
+		}
+		session.recordResize = func(at time.Time, columns, rows int) {
+			recorder.RecordResize(sessionID, at, terminal.Size{Columns: columns, Rows: rows})
+		}
+	}
 	processor, err := adapters.NewProcessor(
 		selectedAdapter,
 		adapters.NewDetectionState(sessionID, normalized.ID, descriptor.ID),
@@ -179,6 +204,11 @@ func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 			},
 			OnEventWithdrawn: func(event adapters.Event) {
 				m.emit(AdapterEventWithdrawn{Event: event.Clone()}, true)
+			},
+			OnRawChunk: func(at time.Time, data []byte) {
+				if recorder != nil {
+					recorder.RecordOutput(sessionID, at, data)
+				}
 			},
 		},
 	)
@@ -198,6 +228,12 @@ func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 	}
 	session.device = device
 	m.sessions[sessionID] = session
+
+	// Opened after the device exists so the transcript header carries the size
+	// the PTY actually applied rather than the size that was requested.
+	if recorder != nil {
+		recorder.StartSession(info, terminal.Size{Columns: columns, Rows: rows}, time.Now())
+	}
 
 	m.wg.Add(2)
 	// Capture the descriptor before publishing the reader. Close may set the
@@ -260,6 +296,15 @@ func (m *Manager) waitSession(session *processSession) {
 		<-session.readDone
 	}
 	close(session.done)
+	// Closed only after readDone, so every output chunk is already queued and
+	// the transcript cannot end before the bytes that produced the exit.
+	m.mu.RLock()
+	recorder := m.recorder
+	m.mu.RUnlock()
+	if recorder != nil {
+		_, exitCode, _ := session.result()
+		recorder.FinishSession(session.info.ID, time.Now(), exitCode)
+	}
 	// An actionable event detected before Wait must still reach its hook before
 	// process_exit. Waiting here cannot delay descendant termination or Done.
 	session.processor.WaitSemanticEvents()

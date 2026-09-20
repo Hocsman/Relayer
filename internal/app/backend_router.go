@@ -143,6 +143,24 @@ func (r *backendRouter) SendRaw(ctx context.Context, id string, data []byte) err
 	return backend.Send(effectiveCtx, id, append([]byte(nil), data...))
 }
 
+// SetRecorder hands the transcript recorder to every backend able to stream
+// one. A backend that cannot is left alone rather than refused: recording is an
+// observability feature and must never decide whether an agent can run.
+func (r *backendRouter) SetRecorder(recorder terminal.Recorder) {
+	r.mu.RLock()
+	backends := make([]terminal.Backend, 0, len(r.backends))
+	for _, backend := range r.backends {
+		backends = append(backends, backend)
+	}
+	r.mu.RUnlock()
+
+	for _, backend := range backends {
+		if aware, ok := backend.(terminal.RecorderAware); ok {
+			aware.SetRecorder(recorder)
+		}
+	}
+}
+
 // SendLine requires the concrete backend's atomic ordinary-input capability.
 // There is deliberately no fallback to raw Send, which cannot prove that a
 // prompt did not become pending concurrently.

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Hocsman/Relayer/internal/buffer"
 	"github.com/acarl005/stripansi"
@@ -44,6 +45,14 @@ type Hooks struct {
 	// leaves a card an operator can still click, and the click is refused with
 	// ErrEventMismatch rather than delivered.
 	OnEventWithdrawn func(Event)
+	// OnRawChunk reports the escape-sequence-aligned transport bytes, before
+	// this package throws the escapes away. It exists so a session transcript
+	// can be recorded verbatim; nothing in detection depends on it.
+	//
+	// It is called after the state lock is released, with a slice this package
+	// no longer references. The callee therefore owns the bytes, and must not
+	// block: the caller is the PTY read loop.
+	OnRawChunk func(at time.Time, data []byte)
 }
 
 // Processor separates raw transport bytes, normalized detection text and the
@@ -117,6 +126,9 @@ func NewProcessor(adapter Adapter, state *DetectionState, capacity int, hooks Ho
 	if hooks.OnEventWithdrawn == nil {
 		hooks.OnEventWithdrawn = func(Event) {}
 	}
+	if hooks.OnRawChunk == nil {
+		hooks.OnRawChunk = func(time.Time, []byte) {}
+	}
 	return &Processor{
 		adapter:    adapter,
 		state:      state,
@@ -169,6 +181,9 @@ func (p *Processor) Consume(chunk []byte) error {
 	if len(chunk) == 0 {
 		return nil
 	}
+	// Stamped before the lock so a transcript offset reflects when the bytes
+	// arrived rather than how long this call waited for the mutex.
+	arrivedAt := time.Now()
 	p.mu.Lock()
 	var (
 		withdrawn *Event
@@ -281,6 +296,13 @@ func (p *Processor) Consume(chunk []byte) error {
 		p.semanticHooks.Add(len(events))
 	}
 	p.mu.Unlock()
+	// Fired outside p.mu and before the error check: a transcript records what
+	// the terminal actually emitted, including the bytes that preceded a
+	// detection failure. `complete` is a fresh string built above from
+	// p.ansiCarry + chunk, so it does not alias Run's reused read buffer.
+	if complete != "" {
+		p.hooks.OnRawChunk(arrivedAt, []byte(complete))
+	}
 	if err != nil {
 		return err
 	}
