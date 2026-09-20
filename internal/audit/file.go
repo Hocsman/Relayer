@@ -415,6 +415,12 @@ var journalEntryPrefix = []byte(`{"schema_version":`)
 //
 // Recognition is deliberately narrow: the first line must decode as an Entry
 // carrying a known schema version and a kind from the closed vocabulary.
+//
+// That closed vocabulary is the one this binary knows, so a journal whose first
+// line uses a kind added after it was built is refused as a foreign file and
+// the sink declines to write. Adding a kind is therefore only safe while the
+// first entry of a journal stays a long-established one - in practice
+// run_started, which the recorder emits before anything else.
 func requireRelayerJournal(reader io.ReaderAt, size int64) error {
 	if size == 0 {
 		return nil

@@ -190,9 +190,46 @@ func allowedMetadataKey(kind Kind, value string) bool {
 		case "exit_code", "failed":
 			return true
 		}
-	case KindDecision, KindDelivery, KindOperatorInput, KindAttachStarted, KindAttachFinished:
+	case KindDecision, KindDelivery:
 		switch compact {
 		case "operator", "role", "active":
+			return true
+		}
+	case KindAttachStarted, KindAttachFinished:
+		// Attach records name the connection that took or dropped the terminal,
+		// the same identity the control kinds carry.
+		switch compact {
+		case "operator", "role", "conn_id", "active":
+			return true
+		}
+	case KindRecordingStarted, KindRecordingFinished, KindRecordingExported, KindRecordingDeleted:
+		// Recording metadata describes the artefact, never its content:
+		// frames and bytes are counts, input_recorded is a boolean marker.
+		switch compact {
+		case "operator", "role", "recording_id", "frames", "bytes", "truncated",
+			"redacted", "input_recorded":
+			return true
+		}
+	case KindControlRequested, KindControlGranted, KindControlDeclined, KindControlReleased, KindControlForced:
+		// No "reason" key here: Reason is a field of Entry bounded by safeCode,
+		// and a metadata value is only redacted and truncated. Accepting the
+		// name twice under two different rules would make the weaker one the
+		// one a reader believes.
+		switch compact {
+		case "operator", "role", "conn_id", "target_operator", "target_conn_id":
+			return true
+		}
+	}
+	return false
+}
+
+// hasUnlistedMetadata reports whether an already-written entry carries a
+// metadata key its kind is not allowed to carry. KindOperatorInput is absent
+// from allowedMetadataKey because SanitizeEntry returns before any metadata is
+// considered, so any metadata on such an entry did not come from the sanitizer.
+func hasUnlistedMetadata(entry Entry) bool {
+	for key := range entry.Metadata {
+		if !allowedMetadataKey(entry.Kind, key) {
 			return true
 		}
 	}
@@ -299,7 +336,9 @@ func safeKind(value Kind) Kind {
 	switch value {
 	case KindRunStarted, KindRunFinished, KindSessionStarted, KindSupervisionFinished, KindSessionFinished,
 		KindEventDetected, KindEventWithdrawn, KindPolicyEvaluated, KindDecision, KindDelivery,
-		KindOperatorInput, KindAttachStarted, KindAttachFinished, KindBackendError, KindSessionCleanup:
+		KindOperatorInput, KindAttachStarted, KindAttachFinished, KindBackendError, KindSessionCleanup,
+		KindRecordingStarted, KindRecordingFinished, KindRecordingExported, KindRecordingDeleted,
+		KindControlRequested, KindControlGranted, KindControlDeclined, KindControlReleased, KindControlForced:
 		return value
 	case "":
 		return ""

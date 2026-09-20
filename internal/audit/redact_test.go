@@ -311,6 +311,107 @@ func TestSanitizeEntryOffIsEmpty(t *testing.T) {
 	}
 }
 
+func TestSanitizeEntryPreservesRecordingAndControlKinds(t *testing.T) {
+	for _, kind := range []Kind{
+		KindRecordingStarted, KindRecordingFinished, KindRecordingExported, KindRecordingDeleted,
+		KindControlRequested, KindControlGranted, KindControlDeclined, KindControlReleased, KindControlForced,
+	} {
+		for _, mode := range []Mode{ModeMetadata, ModeDetailed} {
+			got := SanitizeEntry(Entry{Kind: kind, Outcome: OutcomeStarted, Operator: "alice"}, mode)
+			if got.Kind != kind {
+				t.Fatalf("SanitizeEntry(%q, %q) kind = %q", kind, mode, got.Kind)
+			}
+			if got.Operator != "alice" {
+				t.Fatalf("SanitizeEntry(%q, %q) operator = %q", kind, mode, got.Operator)
+			}
+		}
+	}
+}
+
+func TestSanitizeEntryRecordingAndControlMetadataAllowlist(t *testing.T) {
+	const secret = "recording-fixture-secret"
+	for _, test := range []struct {
+		name     string
+		kinds    []Kind
+		metadata map[string]string
+		want     map[string]string
+	}{
+		{
+			name: "recording",
+			kinds: []Kind{
+				KindRecordingStarted, KindRecordingFinished,
+				KindRecordingExported, KindRecordingDeleted,
+			},
+			metadata: map[string]string{
+				"operator": "alice", "role": "operator", "recording_id": "rec-1",
+				"frames": "128", "bytes": "4096", "truncated": "false",
+				"redacted": "true", "input_recorded": "false",
+				// Keys belonging to another branch or to no branch at all.
+				"conn_id": "conn-1", "stdout": secret, "terminal_input": secret, "API_KEY": secret,
+			},
+			want: map[string]string{
+				"operator": "alice", "role": "operator", "recording_id": "rec-1",
+				"frames": "128", "bytes": "4096", "truncated": "false",
+				"redacted": "true", "input_recorded": "false",
+			},
+		},
+		{
+			name: "control",
+			kinds: []Kind{
+				KindControlRequested, KindControlGranted, KindControlDeclined,
+				KindControlReleased, KindControlForced,
+			},
+			metadata: map[string]string{
+				"operator": "alice", "role": "operator", "conn_id": "conn-1",
+				"target_operator": "bob", "target_conn_id": "conn-2",
+				// "reason" duplicates a field safeCode bounds to a code, so it
+				// is dropped rather than admitted as free-form text.
+				"reason": "operator typed " + secret,
+				"frames": "128", "input": secret, "API_KEY": secret,
+			},
+			want: map[string]string{
+				"operator": "alice", "role": "operator", "conn_id": "conn-1",
+				"target_operator": "bob", "target_conn_id": "conn-2",
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, kind := range test.kinds {
+				entry := Entry{Kind: kind, Metadata: test.metadata}
+				if metadata := SanitizeEntry(entry, ModeMetadata); metadata.Metadata != nil {
+					t.Fatalf("kind %q retained metadata in metadata mode: %#v", kind, metadata.Metadata)
+				}
+				got := SanitizeEntry(entry, ModeDetailed)
+				if !reflect.DeepEqual(got.Metadata, test.want) {
+					t.Fatalf("kind %q metadata = %#v, want %#v", kind, got.Metadata, test.want)
+				}
+				if strings.Contains(fmt.Sprintf("%#v", got), secret) {
+					t.Fatalf("kind %q leaked a dropped value: %#v", kind, got)
+				}
+			}
+		})
+	}
+}
+
+func TestSanitizeEntryRedactsRecordingAndControlMetadataValues(t *testing.T) {
+	const secret = "control-metadata-fixture-secret"
+	for _, kind := range []Kind{KindRecordingStarted, KindControlGranted} {
+		got := SanitizeEntry(Entry{
+			Kind: kind,
+			Metadata: map[string]string{
+				"operator": "alice api_key=" + secret,
+				"role":     strings.Repeat("é", maxMetadataValueRunes+50),
+			},
+		}, ModeDetailed)
+		if strings.Contains(fmt.Sprintf("%#v", got), secret) {
+			t.Fatalf("kind %q kept a credential in metadata: %#v", kind, got.Metadata)
+		}
+		if len([]rune(got.Metadata["role"])) != maxMetadataValueRunes {
+			t.Fatalf("kind %q metadata value is unbounded: %d runes", kind, len([]rune(got.Metadata["role"])))
+		}
+	}
+}
+
 func TestSanitizeEntryOperatorFieldAndMetadata(t *testing.T) {
 	entry := Entry{
 		Kind:       KindDecision,

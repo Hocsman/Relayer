@@ -56,7 +56,21 @@ const (
 	KindAttachFinished Kind = "attach_finished"
 	KindBackendError   Kind = "backend_error"
 	KindSessionCleanup Kind = "session_cleanup"
-	KindUnknown        Kind = "unknown"
+	// Recording kinds describe the lifecycle of a stored terminal replay. They
+	// state that a recording exists and how large it is; the captured stream
+	// itself is never a field of Entry, and neither is any recorded keystroke.
+	KindRecordingStarted  Kind = "recording_started"
+	KindRecordingFinished Kind = "recording_finished"
+	KindRecordingExported Kind = "recording_exported"
+	KindRecordingDeleted  Kind = "recording_deleted"
+	// Control kinds record which operator held the interactive keyboard and how
+	// the hand-over happened. They never carry what was typed while holding it.
+	KindControlRequested Kind = "control_requested"
+	KindControlGranted   Kind = "control_granted"
+	KindControlDeclined  Kind = "control_declined"
+	KindControlReleased  Kind = "control_released"
+	KindControlForced    Kind = "control_forced"
+	KindUnknown          Kind = "unknown"
 )
 
 // DecisionBy identifies the actor without storing any submitted value.

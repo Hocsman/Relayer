@@ -310,24 +310,28 @@ func VerifyJournal(r io.Reader) (VerificationReport, error) {
 			lastTimeByRun[entry.RunID] = entry.Timestamp
 		}
 
-		// Security invariants: human decision entries must have empty summary & metadata
-		if entry.DecisionBy == DecisionByHuman {
-			if entry.Summary != "" {
-				report.Issues = append(report.Issues, VerificationIssue{
-					Line:    lineNumber,
-					EntryID: entry.EntryID,
-					Message: "security violation: human decision entry contains non-empty summary",
-				})
-				hasError = true
-			}
-			if len(entry.Metadata) > 0 {
-				report.Issues = append(report.Issues, VerificationIssue{
-					Line:    lineNumber,
-					EntryID: entry.EntryID,
-					Message: "security violation: human decision entry contains non-empty metadata",
-				})
-				hasError = true
-			}
+		// Security invariants: human decision entries must have empty summary,
+		// and every entry's metadata keys must belong to the closed allowlist of
+		// its kind. Verification shares allowedMetadataKey with the sanitizer so
+		// the two cannot disagree about what a kind is allowed to carry; a
+		// blanket rule here would instead reject the operator attribution the
+		// sanitizer deliberately keeps. The key itself is never quoted into the
+		// message: it comes from a file that may not be ours.
+		if entry.DecisionBy == DecisionByHuman && entry.Summary != "" {
+			report.Issues = append(report.Issues, VerificationIssue{
+				Line:    lineNumber,
+				EntryID: entry.EntryID,
+				Message: "security violation: human decision entry contains non-empty summary",
+			})
+			hasError = true
+		}
+		if hasUnlistedMetadata(entry) {
+			report.Issues = append(report.Issues, VerificationIssue{
+				Line:    lineNumber,
+				EntryID: entry.EntryID,
+				Message: "security violation: entry contains metadata outside the allowlist of its kind",
+			})
+			hasError = true
 		}
 
 		if !hasError {
