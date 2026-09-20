@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"encoding/csv"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1490,16 +1492,40 @@ func (c *Controller) ExportAuditReport(format string) (string, error) {
 
 	if format == "csv" {
 		var sb strings.Builder
-		sb.WriteString("sequence,timestamp,runID,sessionID,agentID,kind,eventType,decision,decisionBy,operator,outcome,reason\n")
+		// encoding/csv rather than a format string: an operator identity is
+		// free-form enough to contain a comma or a quote, and a hand-built row
+		// would silently shift every column after it.
+		writer := csv.NewWriter(&sb)
+		if err := writer.Write([]string{
+			"sequence", "timestamp", "runID", "sessionID", "agentID", "kind",
+			"eventType", "decision", "decisionBy", "operator", "outcome", "reason",
+		}); err != nil {
+			return "", err
+		}
 		for _, e := range entries {
-			sb.WriteString(fmt.Sprintf("%d,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%q\n",
-				e.Sequence, e.Timestamp, e.RunID, e.SessionID, e.AgentID, e.Kind, e.EventType, e.Decision, e.DecisionBy, e.Operator, e.Outcome, e.Reason))
+			if err := writer.Write([]string{
+				strconv.FormatUint(e.Sequence, 10), e.Timestamp, e.RunID, e.SessionID,
+				e.AgentID, e.Kind, e.EventType, e.Decision, e.DecisionBy, e.Operator,
+				e.Outcome, e.Reason,
+			}); err != nil {
+				return "", err
+			}
+		}
+		writer.Flush()
+		if err := writer.Error(); err != nil {
+			return "", err
 		}
 		return sb.String(), nil
 	}
 
-	// JSON format
-	return fmt.Sprintf("%v", entries), nil
+	// Real JSON. This used to be fmt.Sprintf("%v", entries), which renders Go
+	// struct syntax: the interface offered a .json download that no JSON parser
+	// could read.
+	encoded, err := json.MarshalIndent(entries, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 func (c *Controller) GetTelemetrySnapshot() TelemetrySnapshotView {

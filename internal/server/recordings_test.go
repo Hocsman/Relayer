@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"encoding/csv"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -314,5 +316,64 @@ func TestRecordingViewCarriesNoFilesystemPath(t *testing.T) {
 	encoded := strings.ToLower(view.ID + view.RunID + view.SessionID + view.Name + view.Backend + view.Adapter)
 	if strings.Contains(encoded, "secret") {
 		t.Fatalf("recording view leaked a filesystem path: %+v", view)
+	}
+}
+
+// TestExportAuditReportProducesParseableFormats pins that the interface's
+// download buttons produce what their file extensions claim. The JSON path used
+// to render Go struct syntax, which no JSON parser can read.
+func TestExportAuditReportProducesParseableFormats(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("APPDATA", tempDir)
+	t.Setenv("HOME", tempDir)
+	t.Setenv("USERPROFILE", tempDir)
+	t.Setenv("XDG_CONFIG_HOME", tempDir)
+
+	configPath := filepath.Join(tempDir, "config.yaml")
+	if _, err := config.LoadOrCreate(configPath); err != nil {
+		t.Fatalf("LoadOrCreate: %v", err)
+	}
+
+	ctrl, err := NewController(configPath, io.Discard)
+	if err != nil {
+		t.Fatalf("NewController: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := ctrl.Start(ctx); err != nil {
+		t.Fatalf("Start controller: %v", err)
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = ctrl.Close(shutdownCtx)
+	}()
+
+	exported, err := ctrl.ExportAuditReport("json")
+	if err != nil {
+		t.Fatalf("ExportAuditReport(json): %v", err)
+	}
+	var decoded []AuditEntryView
+	if err := json.Unmarshal([]byte(exported), &decoded); err != nil {
+		t.Fatalf("the json export is not JSON: %v\n%.200s", err, exported)
+	}
+
+	csvText, err := ctrl.ExportAuditReport("csv")
+	if err != nil {
+		t.Fatalf("ExportAuditReport(csv): %v", err)
+	}
+	rows, err := csv.NewReader(strings.NewReader(csvText)).ReadAll()
+	if err != nil {
+		t.Fatalf("the csv export is not CSV: %v", err)
+	}
+	if len(rows) == 0 || rows[0][0] != "sequence" {
+		t.Fatalf("csv export = %v, want a header row", rows)
+	}
+	// Every row must have the header's width: a field carrying a comma would
+	// otherwise shift every column after it.
+	for index, row := range rows {
+		if len(row) != len(rows[0]) {
+			t.Fatalf("csv row %d has %d fields, want %d", index, len(row), len(rows[0]))
+		}
 	}
 }
