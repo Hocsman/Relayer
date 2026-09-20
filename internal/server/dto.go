@@ -319,11 +319,18 @@ type AuditEntryView struct {
 	Rule       string            `json:"rule,omitempty"`
 	Decision   string            `json:"decision,omitempty"`
 	DecisionBy string            `json:"decisionBy,omitempty"`
+	Operator   string            `json:"operator,omitempty"`
 	Outcome    string            `json:"outcome,omitempty"`
 	Reason     string            `json:"reason,omitempty"`
 	Summary    string            `json:"summary,omitempty"`
 	Sensitive  bool              `json:"sensitive"`
 	Metadata   map[string]string `json:"metadata,omitempty"`
+}
+
+type UserInfo struct {
+	Identity string `json:"identity"`
+	Role     string `json:"role"`
+	ReadOnly bool   `json:"readOnly"`
 }
 
 type AuditFilterInput struct {

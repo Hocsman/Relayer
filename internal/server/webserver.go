@@ -22,11 +22,55 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// UserRole defines the privilege level of an authenticated client.
+type UserRole string
+
+const (
+	RoleOperator UserRole = "operator"
+	RoleViewer   UserRole = "viewer"
+)
+
+type AuthIdentity struct {
+	Identity string
+	Role     UserRole
+}
+
+func parseTokens(input string, role UserRole) map[string]AuthIdentity {
+	result := make(map[string]AuthIdentity)
+	if strings.TrimSpace(input) == "" {
+		return result
+	}
+	parts := strings.Split(input, ",")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if idx := strings.Index(part, ":"); idx > 0 {
+			username := strings.TrimSpace(part[:idx])
+			secret := strings.TrimSpace(part[idx+1:])
+			if secret != "" {
+				result[secret] = AuthIdentity{
+					Identity: username,
+					Role:     role,
+				}
+			}
+		} else {
+			result[part] = AuthIdentity{
+				Identity: string(role),
+				Role:     role,
+			}
+		}
+	}
+	return result
+}
+
 // Options configures the headless Relayer web server.
 type Options struct {
 	Bind        string
 	Port        int
 	Token       string
+	ViewerToken string
 	ConfigPath  string
 	StaticDir   string
 	Diagnostics io.Writer
@@ -51,10 +95,12 @@ type wsEventMessage struct {
 }
 
 type clientConnection struct {
-	ws     *websocket.Conn
-	send   chan []byte
-	closed atomic.Bool
-	mu     sync.Mutex
+	ws       *websocket.Conn
+	send     chan []byte
+	identity string
+	role     UserRole
+	closed   atomic.Bool
+	mu       sync.Mutex
 }
 
 func (c *clientConnection) safeSend(msg []byte) {
@@ -99,12 +145,49 @@ func Serve(ctx context.Context, opts Options) error {
 		opts.Diagnostics = os.Stderr
 	}
 
-	token := strings.TrimSpace(opts.Token)
-	if token == "" && opts.Bind != "127.0.0.1" && opts.Bind != "localhost" {
-		randomBytes := make([]byte, 16)
-		_, _ = rand.Read(randomBytes)
-		token = hex.EncodeToString(randomBytes)
-		_, _ = fmt.Fprintf(opts.Diagnostics, "Generated security token for %s: %s\n", opts.Bind, token)
+	opTokens := parseTokens(opts.Token, RoleOperator)
+	viewTokens := parseTokens(opts.ViewerToken, RoleViewer)
+
+	tokens := make(map[string]AuthIdentity)
+	for k, v := range opTokens {
+		tokens[k] = v
+	}
+	for k, v := range viewTokens {
+		tokens[k] = v
+	}
+
+	allowAnonymousLocal := false
+	var displayOpToken, displayViewToken string
+
+	for k, v := range opTokens {
+		if v.Role == RoleOperator {
+			displayOpToken = k
+			break
+		}
+	}
+	for k, v := range viewTokens {
+		if v.Role == RoleViewer {
+			displayViewToken = k
+			break
+		}
+	}
+
+	if len(tokens) == 0 {
+		if opts.Bind != "127.0.0.1" && opts.Bind != "localhost" {
+			randomBytesOp := make([]byte, 16)
+			_, _ = rand.Read(randomBytesOp)
+			displayOpToken = hex.EncodeToString(randomBytesOp)
+			tokens[displayOpToken] = AuthIdentity{Identity: "operator", Role: RoleOperator}
+
+			randomBytesView := make([]byte, 16)
+			_, _ = rand.Read(randomBytesView)
+			displayViewToken = hex.EncodeToString(randomBytesView)
+			tokens[displayViewToken] = AuthIdentity{Identity: "viewer", Role: RoleViewer}
+
+			_, _ = fmt.Fprintf(opts.Diagnostics, "Generated security tokens for %s (Operator & Viewer)\n", opts.Bind)
+		} else {
+			allowAnonymousLocal = true
+		}
 	}
 
 	ctrl, err := NewController(opts.ConfigPath, opts.Diagnostics)
@@ -132,7 +215,7 @@ func Serve(ctx context.Context, opts Options) error {
 		opts.Port = tcpAddr.Port
 	}
 
-	handler := newGatewayHandler(ctrl, token, opts.StaticDir, opts.Diagnostics)
+	handler := newGatewayHandler(ctrl, tokens, allowAnonymousLocal, opts.StaticDir, opts.Diagnostics)
 	httpServer := &http.Server{
 		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
@@ -148,11 +231,15 @@ func Serve(ctx context.Context, opts Options) error {
 	_, _ = fmt.Fprintln(opts.Diagnostics, "")
 	_, _ = fmt.Fprintln(opts.Diagnostics, "=======================================================")
 	_, _ = fmt.Fprintln(opts.Diagnostics, "  🚀 Relayer Web Gateway is active")
-	if token != "" {
-		_, _ = fmt.Fprintf(opts.Diagnostics, "  URL:   http://%s:%d/?token=%s\n", displayHost, opts.Port, token)
-		_, _ = fmt.Fprintf(opts.Diagnostics, "  Token: %s\n", token)
-	} else {
-		_, _ = fmt.Fprintf(opts.Diagnostics, "  URL:   http://%s:%d/\n", displayHost, opts.Port)
+	if displayOpToken != "" {
+		_, _ = fmt.Fprintf(opts.Diagnostics, "  Operator URL:   http://%s:%d/?token=%s\n", displayHost, opts.Port, displayOpToken)
+		_, _ = fmt.Fprintf(opts.Diagnostics, "  Operator Token: %s\n", displayOpToken)
+	} else if allowAnonymousLocal {
+		_, _ = fmt.Fprintf(opts.Diagnostics, "  Operator URL:   http://%s:%d/\n", displayHost, opts.Port)
+	}
+	if displayViewToken != "" {
+		_, _ = fmt.Fprintf(opts.Diagnostics, "  Viewer URL:     http://%s:%d/?token=%s\n", displayHost, opts.Port, displayViewToken)
+		_, _ = fmt.Fprintf(opts.Diagnostics, "  Viewer Token:   %s\n", displayViewToken)
 	}
 	_, _ = fmt.Fprintf(opts.Diagnostics, "  Config: %s\n", ctrl.configPath)
 	_, _ = fmt.Fprintln(opts.Diagnostics, "=======================================================")
@@ -160,7 +247,7 @@ func Serve(ctx context.Context, opts Options) error {
 
 	if opts.OnReady != nil {
 		serverURL := fmt.Sprintf("http://%s:%d", displayHost, opts.Port)
-		opts.OnReady(serverURL, token)
+		opts.OnReady(serverURL, displayOpToken)
 	}
 
 	serverErrChan := make(chan error, 1)
@@ -182,22 +269,24 @@ func Serve(ctx context.Context, opts Options) error {
 }
 
 type gatewayHandler struct {
-	ctrl        *Controller
-	token       string
-	staticDir   string
-	diagnostics io.Writer
+	ctrl                *Controller
+	tokens              map[string]AuthIdentity
+	allowAnonymousLocal bool
+	staticDir           string
+	diagnostics         io.Writer
 
 	clientsMu sync.RWMutex
 	clients   map[*clientConnection]struct{}
 }
 
-func newGatewayHandler(ctrl *Controller, token, staticDir string, diagnostics io.Writer) *gatewayHandler {
+func newGatewayHandler(ctrl *Controller, tokens map[string]AuthIdentity, allowAnonymousLocal bool, staticDir string, diagnostics io.Writer) *gatewayHandler {
 	gh := &gatewayHandler{
-		ctrl:        ctrl,
-		token:       token,
-		staticDir:   staticDir,
-		diagnostics: diagnostics,
-		clients:     make(map[*clientConnection]struct{}),
+		ctrl:                ctrl,
+		tokens:              tokens,
+		allowAnonymousLocal: allowAnonymousLocal,
+		staticDir:           staticDir,
+		diagnostics:         diagnostics,
+		clients:             make(map[*clientConnection]struct{}),
 	}
 
 	// Subscribe to controller events and broadcast to all connected WebSocket clients
@@ -249,11 +338,12 @@ func (gh *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// WebSocket endpoint
 	if r.URL.Path == "/api/ws" {
-		if !gh.isAuthorized(r) {
+		identity, ok := gh.authenticate(r)
+		if !ok {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		gh.handleWebSocket(w, r)
+		gh.handleWebSocket(w, r, identity)
 		return
 	}
 
@@ -266,31 +356,46 @@ func (gh *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	gh.serveStatic(w, r)
 }
 
-func (gh *gatewayHandler) isAuthorized(r *http.Request) bool {
-	if gh.token == "" {
-		return true
-	}
-
+func (gh *gatewayHandler) authenticate(r *http.Request) (AuthIdentity, bool) {
 	// 1. Check query parameter `?token=...`
 	if qToken := r.URL.Query().Get("token"); qToken != "" {
-		if subtle.ConstantTimeCompare([]byte(qToken), []byte(gh.token)) == 1 {
-			return true
+		for secret, id := range gh.tokens {
+			if subtle.ConstantTimeCompare([]byte(qToken), []byte(secret)) == 1 {
+				return id, true
+			}
 		}
+		return AuthIdentity{}, false
 	}
 
 	// 2. Check Authorization header `Bearer ...`
 	authHeader := r.Header.Get("Authorization")
 	if strings.HasPrefix(authHeader, "Bearer ") {
 		token := strings.TrimPrefix(authHeader, "Bearer ")
-		if subtle.ConstantTimeCompare([]byte(token), []byte(gh.token)) == 1 {
-			return true
+		for secret, id := range gh.tokens {
+			if subtle.ConstantTimeCompare([]byte(token), []byte(secret)) == 1 {
+				return id, true
+			}
 		}
+		return AuthIdentity{}, false
 	}
 
-	return false
+	// 3. Fallback for anonymous localhost if allowed
+	if gh.allowAnonymousLocal && len(gh.tokens) == 0 {
+		return AuthIdentity{
+			Identity: "local-operator",
+			Role:     RoleOperator,
+		}, true
+	}
+
+	return AuthIdentity{}, false
 }
 
-func (gh *gatewayHandler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+func (gh *gatewayHandler) isAuthorized(r *http.Request) bool {
+	_, ok := gh.authenticate(r)
+	return ok
+}
+
+func (gh *gatewayHandler) handleWebSocket(w http.ResponseWriter, r *http.Request, identity AuthIdentity) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		_, _ = fmt.Fprintf(gh.diagnostics, "websocket upgrade error: %v\n", err)
@@ -298,8 +403,10 @@ func (gh *gatewayHandler) handleWebSocket(w http.ResponseWriter, r *http.Request
 	}
 
 	client := &clientConnection{
-		ws:   conn,
-		send: make(chan []byte, 256),
+		ws:       conn,
+		send:     make(chan []byte, 256),
+		identity: identity.Identity,
+		role:     identity.Role,
 	}
 
 	gh.clientsMu.Lock()
@@ -341,7 +448,7 @@ func (gh *gatewayHandler) handleWebSocket(w http.ResponseWriter, r *http.Request
 }
 
 func (gh *gatewayHandler) dispatchRPC(client *clientConnection, req wsRequest) {
-	result, err := gh.executeMethod(req.Method, req.Params)
+	result, err := gh.executeMethod(client, req.Method, req.Params)
 
 	resp := wsResponse{ID: req.ID}
 	if err != nil {
@@ -356,8 +463,23 @@ func (gh *gatewayHandler) dispatchRPC(client *clientConnection, req wsRequest) {
 	}
 }
 
-func (gh *gatewayHandler) executeMethod(method string, params json.RawMessage) (any, error) {
+func (gh *gatewayHandler) executeMethod(client *clientConnection, method string, params json.RawMessage) (any, error) {
+	if client.role == RoleViewer && isMutatingMethod(method) {
+		if method == "resizeSession" {
+			// Silent no-op for viewer to avoid disruptive PTY resizes without UI errors
+			return nil, nil
+		}
+		return nil, errors.New("permission denied: viewer role is read-only")
+	}
+
 	switch method {
+	case "getUserInfo":
+		return UserInfo{
+			Identity: client.identity,
+			Role:     string(client.role),
+			ReadOnly: client.role == RoleViewer,
+		}, nil
+
 	case "getState":
 		return gh.ctrl.GetState(), nil
 
@@ -376,7 +498,7 @@ func (gh *gatewayHandler) executeMethod(method string, params json.RawMessage) (
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
-		return nil, gh.ctrl.SubmitDecision(p.RunID, p.SessionID, p.EventID, p.Value)
+		return nil, gh.ctrl.SubmitDecisionWithOperator(p.RunID, p.SessionID, p.EventID, p.Value, client.identity)
 
 	case "submitAutomaticDecision":
 		var p struct {
@@ -388,7 +510,7 @@ func (gh *gatewayHandler) executeMethod(method string, params json.RawMessage) (
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
-		return nil, gh.ctrl.SubmitAutomaticDecision(p.RunID, p.SessionID, p.EventID, p.Decision)
+		return nil, gh.ctrl.SubmitDecisionWithOperator(p.RunID, p.SessionID, p.EventID, p.Decision, client.identity)
 
 	case "submitLine":
 		var p struct {
@@ -399,7 +521,7 @@ func (gh *gatewayHandler) executeMethod(method string, params json.RawMessage) (
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
-		return nil, gh.ctrl.SubmitLine(p.RunID, p.SessionID, p.Line)
+		return nil, gh.ctrl.SubmitLineWithOperator(p.RunID, p.SessionID, p.Line, client.identity)
 
 	case "resizeSession":
 		var p struct {
@@ -514,6 +636,26 @@ func (gh *gatewayHandler) executeMethod(method string, params json.RawMessage) (
 
 	default:
 		return nil, fmt.Errorf("unknown method %q", method)
+	}
+}
+
+func isMutatingMethod(method string) bool {
+	switch method {
+	case "submitDecision",
+		"submitAutomaticDecision",
+		"submitLine",
+		"resizeSession",
+		"stopSession",
+		"startSession",
+		"restartSession",
+		"saveAgentProfiles",
+		"saveAgentProfilesAndRestart",
+		"saveFullSettings",
+		"testNotification",
+		"stopRun":
+		return true
+	default:
+		return false
 	}
 }
 

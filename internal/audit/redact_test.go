@@ -310,3 +310,55 @@ func TestSanitizeEntryOffIsEmpty(t *testing.T) {
 		t.Fatalf("off entry = %#v", got)
 	}
 }
+
+func TestSanitizeEntryOperatorFieldAndMetadata(t *testing.T) {
+	entry := Entry{
+		Kind:       KindDecision,
+		DecisionBy: DecisionByHuman,
+		Decision:   DecisionAllow,
+		Operator:   "alice-operator",
+		Metadata: map[string]string{
+			"operator": "alice-operator",
+			"role":     "operator",
+			"secret":   "leaked-value",
+		},
+	}
+
+	// ModeMetadata preserves Operator field, strips Metadata
+	meta := SanitizeEntry(entry, ModeMetadata)
+	if meta.Operator != "alice-operator" {
+		t.Fatalf("expected operator alice-operator, got %q", meta.Operator)
+	}
+	if meta.Metadata != nil {
+		t.Fatalf("expected nil metadata in ModeMetadata, got %#v", meta.Metadata)
+	}
+	if meta.Summary != "" {
+		t.Fatalf("expected empty summary for human decision, got %q", meta.Summary)
+	}
+
+	// ModeDetailed preserves Operator field and whitelisted metadata
+	detailed := SanitizeEntry(entry, ModeDetailed)
+	if detailed.Operator != "alice-operator" {
+		t.Fatalf("expected operator alice-operator, got %q", detailed.Operator)
+	}
+	if detailed.Metadata["operator"] != "alice-operator" || detailed.Metadata["role"] != "operator" {
+		t.Fatalf("expected operator and role in metadata, got %#v", detailed.Metadata)
+	}
+	if _, found := detailed.Metadata["secret"]; found {
+		t.Fatalf("unwhitelisted metadata key survived: %#v", detailed.Metadata)
+	}
+	if detailed.Summary != "" {
+		t.Fatalf("expected empty summary for human decision, got %q", detailed.Summary)
+	}
+
+	// Operator input kind also preserves Operator
+	opInput := SanitizeEntry(Entry{
+		Kind:       KindOperatorInput,
+		Operator:   "bob",
+		Reason:     "operator_input_applied",
+	}, ModeMetadata)
+	if opInput.Operator != "bob" {
+		t.Fatalf("expected operator bob, got %q", opInput.Operator)
+	}
+}
+

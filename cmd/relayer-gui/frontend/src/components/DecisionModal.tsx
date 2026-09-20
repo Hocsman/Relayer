@@ -8,6 +8,7 @@ interface DecisionModalProps {
   event?: SupervisionEvent;
   agent?: AgentState;
   queueSize: number;
+  readOnly?: boolean;
   onClose(): void;
   onSubmit(runID: string, sessionID: string, eventID: string, value: string): Promise<boolean>;
   onDecide(
@@ -28,7 +29,7 @@ const decisionShortcuts: Partial<Record<SemanticDecision, string>> = {
   deny: "Esc",
 };
 
-export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDecide }: DecisionModalProps) {
+export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSubmit, onDecide }: DecisionModalProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const transcriptRef = useRef<HTMLPreElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
@@ -69,7 +70,7 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
   );
 
   const decide = async (decision: SemanticDecision) => {
-    if (busy || indeterminateDelivery || !event) return;
+    if (busy || indeterminateDelivery || readOnly || !event) return;
     setBusy(true);
     try {
       const delivered = await onDecide(event.runID, event.sessionID, event.id, decision);
@@ -80,7 +81,7 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
   };
 
   const submitDirect = async (value: string) => {
-    if (!inputRef.current || value.length === 0 || busy || indeterminateDelivery || !event) return;
+    if (!inputRef.current || value.length === 0 || busy || indeterminateDelivery || readOnly || !event) return;
     inputRef.current.value = "";
     setBusy(true);
     try {
@@ -95,11 +96,15 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
   const submit = async (formEvent: FormEvent) => {
     formEvent.preventDefault();
     const input = inputRef.current;
-    if (!input || input.value.length === 0) return;
+    if (!input || input.value.length === 0 || readOnly) return;
     await submitDirect(input.value);
   };
 
   const handleEscape = () => {
+    if (readOnly) {
+      onClose();
+      return;
+    }
     if (offered.includes("deny")) {
       void decide("deny");
     } else {
@@ -115,7 +120,7 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
   });
 
   useEffect(() => {
-    if (!event || busy || indeterminateDelivery) return;
+    if (!event || busy || indeterminateDelivery || readOnly) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
@@ -132,7 +137,7 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [event, busy, indeterminateDelivery, offered]);
+  }, [event, busy, indeterminateDelivery, offered, readOnly]);
 
   if (!event) return null;
 
@@ -195,6 +200,12 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
           </p>
         )}
 
+        {readOnly && (
+          <p className="decision-modal__viewer-notice" role="alert">
+            Mode Lecture Seule — En attente d'un arbitrage par un opérateur.
+          </p>
+        )}
+
         {offered.length > 0 && (
           <div className="decision-actions">
             {offered.map((decision) => (
@@ -202,7 +213,7 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
                 key={decision}
                 type="button"
                 className={`button button--decision button--decision-${decision}`}
-                disabled={busy || indeterminateDelivery}
+                disabled={busy || indeterminateDelivery || readOnly}
                 onClick={() => void decide(decision)}
               >
                 <span>{decisionLabels[decision]}</span>
@@ -236,13 +247,13 @@ export function DecisionModal({ event, agent, queueSize, onClose, onSubmit, onDe
               autoCorrect="off"
               spellCheck={false}
               data-1p-ignore
-              placeholder={event.sensitive ? "••••••••" : "Type your answer…"}
-              disabled={busy || indeterminateDelivery}
+              placeholder={readOnly ? "Mode lecture seule (Viewer)" : event.sensitive ? "••••••••" : "Type your answer…"}
+              disabled={busy || indeterminateDelivery || readOnly}
             />
             <button
               className={`button button--${offered.length > 0 ? "ghost" : "primary"}`}
               type="submit"
-              disabled={busy || indeterminateDelivery}
+              disabled={busy || indeterminateDelivery || readOnly}
             >
               {busy ? "Submitting…" : "Submit"}
             </button>

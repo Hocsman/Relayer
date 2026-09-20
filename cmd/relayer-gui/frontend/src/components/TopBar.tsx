@@ -1,7 +1,8 @@
-import type { AppState } from "../types/relayer";
+import type { AppState, UserInfo } from "../types/relayer";
 
 interface TopBarProps {
   state: AppState;
+  userInfo?: UserInfo;
   onOpenAgents(): void;
   onOpenPreflight(): void;
   onOpenAudit(): void;
@@ -20,7 +21,7 @@ const runLabels: Record<AppState["runStatus"], string> = {
   failed: "Error",
 };
 
-export function TopBar({ state, onOpenAgents, onOpenPreflight, onOpenAudit, onOpenObservability, onRequestStop }: TopBarProps) {
+export function TopBar({ state, userInfo, onOpenAgents, onOpenPreflight, onOpenAudit, onOpenObservability, onRequestStop }: TopBarProps) {
   const running = state.agents.filter((agent) => agent.running).length;
   const waiting = state.pendingEvents.length;
   const transitioning = ["starting", "restarting", "rollback", "stopping"].includes(
@@ -56,6 +57,14 @@ export function TopBar({ state, onOpenAgents, onOpenPreflight, onOpenAudit, onOp
       </div>
 
       <div className="topbar__actions">
+        {userInfo?.readOnly && (
+          <span
+            className="badge badge--viewer"
+            title={`Connecté en tant que ${userInfo.identity} (Lecture seule)`}
+          >
+            VIEWER (READ-ONLY)
+          </span>
+        )}
         {state.policy.dryRun && <span className="mode-pill">DRY RUN</span>}
         <span className="mode-pill mode-pill--quiet">POLICY {state.policy.defaultAction.toUpperCase()}</span>
         <button
@@ -90,7 +99,7 @@ export function TopBar({ state, onOpenAgents, onOpenPreflight, onOpenAudit, onOp
         >
           <span aria-hidden="true">📊</span> Metrics
         </button>
-        {state.runID && state.runStatus !== "idle" && (
+        {state.runID && state.runStatus !== "idle" && !userInfo?.readOnly && (
           <button
             className="button button--ghost"
             type="button"

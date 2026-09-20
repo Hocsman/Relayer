@@ -700,3 +700,245 @@ func TestSaveFullSettingsNotificationsAndBroadcast(t *testing.T) {
 		t.Fatal("Serve graceful shutdown timed out")
 	}
 }
+
+func TestRBACAuthenticationAndPermissions(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.yaml")
+	if _, err := config.LoadOrCreate(configPath); err != nil {
+		t.Fatalf("LoadOrCreate: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	readyCh := make(chan string, 1)
+	opts := Options{
+		Bind:        "127.0.0.1",
+		Port:        0,
+		Token:       "alice:secretOp123",
+		ViewerToken: "bob:secretView456",
+		ConfigPath:  configPath,
+		Diagnostics: io.Discard,
+		OnReady: func(serverURL, token string) {
+			readyCh <- serverURL
+		},
+	}
+
+	serverErrCh := make(chan error, 1)
+	go func() {
+		serverErrCh <- Serve(ctx, opts)
+	}()
+
+	var baseURL string
+	select {
+	case baseURL = <-readyCh:
+	case err := <-serverErrCh:
+		t.Fatalf("Serve: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Server startup timeout")
+	}
+
+	// 1. Check unauthorized requests
+	respNoAuth, err := http.Get(baseURL + "/api/state")
+	if err != nil {
+		t.Fatalf("GET /api/state: %v", err)
+	}
+	defer respNoAuth.Body.Close()
+	if respNoAuth.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("GET /api/state without token returned %d, want 401", respNoAuth.StatusCode)
+	}
+
+	respBadToken, err := http.Get(baseURL + "/api/state?token=wrongsecret")
+	if err != nil {
+		t.Fatalf("GET /api/state: %v", err)
+	}
+	defer respBadToken.Body.Close()
+	if respBadToken.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("GET /api/state with bad token returned %d, want 401", respBadToken.StatusCode)
+	}
+
+	// 2. Viewer access
+	respViewer, err := http.Get(baseURL + "/api/state?token=secretView456")
+	if err != nil {
+		t.Fatalf("GET /api/state with viewer token: %v", err)
+	}
+	defer respViewer.Body.Close()
+	if respViewer.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/state with viewer token returned %d, want 200", respViewer.StatusCode)
+	}
+
+	// 3. Viewer WebSocket RPCs
+	wsViewerURL := strings.Replace(baseURL, "http://", "ws://", 1) + "/api/ws?token=secretView456"
+	wsViewer, _, err := websocket.DefaultDialer.Dial(wsViewerURL, nil)
+	if err != nil {
+		t.Fatalf("Dial viewer WebSocket: %v", err)
+	}
+	defer wsViewer.Close()
+
+	callViewerRPC := func(method string, params any) (json.RawMessage, error) {
+		paramsRaw, _ := json.Marshal(params)
+		reqID := fmt.Sprintf("req-%d", time.Now().UnixNano())
+		if err := wsViewer.WriteJSON(wsRequest{ID: reqID, Method: method, Params: paramsRaw}); err != nil {
+			return nil, err
+		}
+		for {
+			_, data, err := wsViewer.ReadMessage()
+			if err != nil {
+				return nil, err
+			}
+			var resp wsResponse
+			if err := json.Unmarshal(data, &resp); err == nil && resp.ID == reqID {
+				if resp.Error != "" {
+					return nil, errors.New(resp.Error)
+				}
+				raw, _ := json.Marshal(resp.Result)
+				return raw, nil
+			}
+		}
+	}
+
+	// 3a. getUserInfo for Viewer
+	userRaw, err := callViewerRPC("getUserInfo", map[string]any{})
+	if err != nil {
+		t.Fatalf("getUserInfo failed: %v", err)
+	}
+	var userInfo UserInfo
+	if err := json.Unmarshal(userRaw, &userInfo); err != nil {
+		t.Fatalf("unmarshal userInfo: %v", err)
+	}
+	if userInfo.Identity != "bob" || userInfo.Role != "viewer" || !userInfo.ReadOnly {
+		t.Fatalf("unexpected viewer userInfo: %+v", userInfo)
+	}
+
+	// 3b. Read-only methods allowed for Viewer
+	if _, err := callViewerRPC("getState", map[string]any{}); err != nil {
+		t.Fatalf("Viewer getState failed: %v", err)
+	}
+	if _, err := callViewerRPC("getTelemetrySnapshot", map[string]any{}); err != nil {
+		t.Fatalf("Viewer getTelemetrySnapshot failed: %v", err)
+	}
+
+	// 3c. resizeSession is a silent no-op for Viewer (err == nil)
+	if _, err := callViewerRPC("resizeSession", map[string]any{"columns": 100, "rows": 40}); err != nil {
+		t.Fatalf("Viewer resizeSession returned error, want silent no-op: %v", err)
+	}
+
+	// 3d. Mutating methods rejected with permission denied for Viewer
+	mutatingTests := []struct {
+		method string
+		params map[string]any
+	}{
+		{"submitDecision", map[string]any{"runID": "test", "sessionID": "s", "eventID": "e", "value": "allow"}},
+		{"submitLine", map[string]any{"runID": "test", "sessionID": "s", "line": "echo 1"}},
+		{"stopSession", map[string]any{"runID": "test", "sessionID": "s"}},
+		{"startSession", map[string]any{"runID": "test", "sessionID": "s"}},
+		{"restartSession", map[string]any{"runID": "test", "sessionID": "s"}},
+		{"saveFullSettings", map[string]any{"runID": "test"}},
+		{"testNotification", map[string]any{}},
+		{"stopRun", map[string]any{"runID": "test"}},
+	}
+
+	for _, tt := range mutatingTests {
+		_, err := callViewerRPC(tt.method, tt.params)
+		if err == nil {
+			t.Errorf("Viewer calling mutating method %s succeeded, want permission denied", tt.method)
+		} else if !strings.Contains(err.Error(), "permission denied") {
+			t.Errorf("Viewer calling %s error = %v, want 'permission denied'", tt.method, err)
+		}
+	}
+
+	// 4. Operator WebSocket RPCs
+	wsOpURL := strings.Replace(baseURL, "http://", "ws://", 1) + "/api/ws?token=secretOp123"
+	wsOp, _, err := websocket.DefaultDialer.Dial(wsOpURL, nil)
+	if err != nil {
+		t.Fatalf("Dial operator WebSocket: %v", err)
+	}
+	defer wsOp.Close()
+
+	callOpRPC := func(method string, params any) (json.RawMessage, error) {
+		paramsRaw, _ := json.Marshal(params)
+		reqID := fmt.Sprintf("req-%d", time.Now().UnixNano())
+		if err := wsOp.WriteJSON(wsRequest{ID: reqID, Method: method, Params: paramsRaw}); err != nil {
+			return nil, err
+		}
+		for {
+			_, data, err := wsOp.ReadMessage()
+			if err != nil {
+				return nil, err
+			}
+			var resp wsResponse
+			if err := json.Unmarshal(data, &resp); err == nil && resp.ID == reqID {
+				if resp.Error != "" {
+					return nil, errors.New(resp.Error)
+				}
+				raw, _ := json.Marshal(resp.Result)
+				return raw, nil
+			}
+		}
+	}
+
+	userOpRaw, err := callOpRPC("getUserInfo", map[string]any{})
+	if err != nil {
+		t.Fatalf("Operator getUserInfo failed: %v", err)
+	}
+	var userOpInfo UserInfo
+	if err := json.Unmarshal(userOpRaw, &userOpInfo); err != nil {
+		t.Fatalf("unmarshal userOpInfo: %v", err)
+	}
+	if userOpInfo.Identity != "alice" || userOpInfo.Role != "operator" || userOpInfo.ReadOnly {
+		t.Fatalf("unexpected operator userInfo: %+v", userOpInfo)
+	}
+}
+
+func TestRBACOperatorAuditAttribution(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("APPDATA", tempDir)
+	t.Setenv("HOME", tempDir)
+	t.Setenv("USERPROFILE", tempDir)
+	t.Setenv("XDG_CONFIG_HOME", tempDir)
+	configPath := filepath.Join(tempDir, "config.yaml")
+
+	if _, err := config.LoadOrCreate(configPath); err != nil {
+		t.Fatalf("LoadOrCreate: %v", err)
+	}
+
+	ctrl, err := NewController(configPath, io.Discard)
+	if err != nil {
+		t.Fatalf("NewController: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := ctrl.Start(ctx); err != nil {
+		t.Fatalf("Start controller: %v", err)
+	}
+	defer func() {
+		shutdownCtx, sCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer sCancel()
+		_ = ctrl.Close(shutdownCtx)
+	}()
+
+	state := ctrl.GetState()
+	if len(state.Agents) > 0 {
+		agent := state.Agents[0]
+		_ = ctrl.SubmitLineWithOperator(state.RunID, agent.SessionID, "echo hello", "alice")
+	}
+
+	entries, err := ctrl.GetAuditEntries(AuditFilterInput{Limit: 10})
+	if err != nil {
+		t.Fatalf("GetAuditEntries: %v", err)
+	}
+
+	foundAlice := false
+	for _, e := range entries {
+		if e.Operator == "alice" {
+			foundAlice = true
+			break
+		}
+	}
+	if !foundAlice {
+		t.Error("Did not find audit entry attributed to operator 'alice'")
+	}
+}
+

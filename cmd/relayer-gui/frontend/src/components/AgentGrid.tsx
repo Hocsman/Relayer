@@ -5,6 +5,7 @@ interface AgentGridProps {
   runID: string;
   agents: AgentState[];
   events: SupervisionEvent[];
+  readOnly?: boolean;
   onResize(runID: string, sessionID: string, columns: number, rows: number): Promise<void>;
   onStop(runID: string, sessionID: string): Promise<void>;
   onStart(runID: string, sessionID: string): Promise<void>;
@@ -13,7 +14,7 @@ interface AgentGridProps {
   onSubmitLine(runID: string, sessionID: string, line: string): Promise<void>;
 }
 
-export function AgentGrid({ runID, agents, events, onResize, onStop, onStart, onRestart, onOpenEvent, onSubmitLine }: AgentGridProps) {
+export function AgentGrid({ runID, agents, events, readOnly, onResize, onStop, onStart, onRestart, onOpenEvent, onSubmitLine }: AgentGridProps) {
   if (agents.length === 0) {
     return (
       <section className="empty-agents">
@@ -33,6 +34,7 @@ export function AgentGrid({ runID, agents, events, onResize, onStop, onStart, on
           event={events.find(
             (event) => event.runID === runID && event.sessionID === agent.sessionID,
           )}
+          readOnly={readOnly}
           onResize={onResize}
           onStop={onStop}
           onStart={onStart}

@@ -12,6 +12,7 @@ interface AgentCardProps {
   runID: string;
   agent: AgentState;
   event?: SupervisionEvent;
+  readOnly?: boolean;
   onResize(runID: string, sessionID: string, columns: number, rows: number): Promise<void>;
   onStop(runID: string, sessionID: string): Promise<void>;
   onStart(runID: string, sessionID: string): Promise<void>;
@@ -20,12 +21,12 @@ interface AgentCardProps {
   onSubmitLine(runID: string, sessionID: string, line: string): Promise<void>;
 }
 
-export function AgentCard({ runID, agent, event, onResize, onStop, onStart, onRestart, onOpenEvent, onSubmitLine }: AgentCardProps) {
+export function AgentCard({ runID, agent, event, readOnly, onResize, onStop, onStart, onRestart, onOpenEvent, onSubmitLine }: AgentCardProps) {
   const waiting = Boolean(event) || agent.status === "waiting";
   const inputRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
-  const inputDisabled = lineInputDisabled(agent, waiting, submitting);
+  const inputDisabled = Boolean(readOnly) || lineInputDisabled(agent, waiting, submitting);
   const inputIdentity = `${runID}\u0000${agent.sessionID}`;
   const previousInputIdentity = useRef<string>();
 
@@ -41,7 +42,7 @@ export function AgentCard({ runID, agent, event, onResize, onStop, onStart, onRe
   const submitLine = async (formEvent: FormEvent<HTMLFormElement>) => {
     formEvent.preventDefault();
     const input = inputRef.current;
-    if (!input || inputDisabled || submittingRef.current) return;
+    if (!input || inputDisabled || submittingRef.current || readOnly) return;
     submittingRef.current = true;
     setSubmitting(true);
     try {
@@ -108,7 +109,7 @@ export function AgentCard({ runID, agent, event, onResize, onStop, onStart, onRe
           autoComplete="off"
           spellCheck={false}
           disabled={inputDisabled}
-          placeholder={waiting ? "Handle the pending request" : agent.inputFrozen ? "Session frozen" : "Text is never recorded"}
+          placeholder={readOnly ? "Mode lecture seule (Viewer)" : waiting ? "Handle the pending request" : agent.inputFrozen ? "Session frozen" : "Text is never recorded"}
           title="One UTF-8 line, 4096 bytes maximum, no control character"
           aria-label={`Line for ${agent.name}`}
         />
@@ -139,7 +140,7 @@ export function AgentCard({ runID, agent, event, onResize, onStop, onStart, onRe
               Review
             </button>
           )}
-          {agent.running && (
+          {!readOnly && agent.running && (
             <>
               <button
                 className="button button--ghost button--small"
@@ -161,7 +162,7 @@ export function AgentCard({ runID, agent, event, onResize, onStop, onStart, onRe
               </button>
             </>
           )}
-          {!agent.running && agent.status !== "stopping" && agent.status !== "starting" && (
+          {!readOnly && !agent.running && agent.status !== "stopping" && agent.status !== "starting" && (
             <button
               className="button button--ghost button--small"
               type="button"

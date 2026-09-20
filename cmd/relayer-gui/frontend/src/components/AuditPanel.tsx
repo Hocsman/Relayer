@@ -461,6 +461,7 @@ function EntryRow({
             className={`audit-badge audit-badge--actor-${entry.decisionBy || "unknown"}`}
           >
             {entry.decisionBy || "-"}
+            {entry.operator && ` (${entry.operator})`}
           </span>
         </td>
         <td>
@@ -504,6 +505,12 @@ function EntryRow({
                   <dt>Run ID</dt>
                   <dd><code>{entry.runID}</code></dd>
                 </div>
+                {entry.operator && (
+                  <div>
+                    <dt>Operator</dt>
+                    <dd><code>{entry.operator}</code></dd>
+                  </div>
+                )}
                 {entry.sessionID && (
                   <div>
                     <dt>Session ID</dt>

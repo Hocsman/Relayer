@@ -28,6 +28,7 @@ interface AgentSettingsPanelProps {
   runID: string;
   runStatus: RunStatus;
   pendingEvents: SupervisionEvent[];
+  readOnly?: boolean;
   onSave(runID: string, request: SaveAgentProfilesRequest): Promise<AgentProfilesView>;
   onSaveAndRestart(request: SaveAgentProfilesAndRestartRequest): Promise<LifecycleResult>;
   onClose(): void;
@@ -45,6 +46,7 @@ export function AgentSettingsPanel({
   runID,
   runStatus,
   pendingEvents,
+  readOnly,
   onSave,
   onSaveAndRestart,
   onClose,
@@ -162,6 +164,7 @@ export function AgentSettingsPanel({
   const busy = saving || activating || transitioning;
 
   const updateProfile = (index: number, next: AgentProfile) => {
+    if (readOnly) return;
     setDraft((current) => current.map((profile, profileIndex) =>
       profileIndex === index ? next : profile,
     ));
@@ -171,7 +174,7 @@ export function AgentSettingsPanel({
   };
 
   const addProfile = (entry: AgentCatalogEntry) => {
-    if (!view?.editable || draft.length >= Math.min(8, view.maxProfiles)) return;
+    if (readOnly || !view?.editable || draft.length >= Math.min(8, view.maxProfiles)) return;
     const argv = entry.defaultArgv.length > 0 ? [...entry.defaultArgv] : [""];
     setDraft((current) => [
       ...current,
@@ -190,6 +193,7 @@ export function AgentSettingsPanel({
   };
 
   const moveProfile = (index: number, direction: -1 | 1) => {
+    if (readOnly) return;
     const destination = index + direction;
     if (destination < 0 || destination >= draft.length) return;
     setDraft((current) => {
@@ -200,7 +204,7 @@ export function AgentSettingsPanel({
   };
 
   const removeProfile = (index: number) => {
-    if (!view || draft.length <= Math.max(1, view.minProfiles)) return;
+    if (readOnly || !view || draft.length <= Math.max(1, view.minProfiles)) return;
     setDraft((current) => current.filter((_, profileIndex) => profileIndex !== index));
     setNotice(undefined);
   };
@@ -219,7 +223,7 @@ export function AgentSettingsPanel({
   useDialogKeyboard(dialogRef, { onClose: requestClose });
 
   const save = async () => {
-    if (!view || !dirty || !validation.valid || busy) return;
+    if (readOnly || !view || !dirty || !validation.valid || busy) return;
     setSaving(true);
     setError(undefined);
     setNotice(undefined);
@@ -287,7 +291,7 @@ export function AgentSettingsPanel({
   };
 
   const saveAndRestart = async () => {
-    if (!view || !validation.valid || !view.editable || !canActivate || busy) return;
+    if (readOnly || !view || !validation.valid || !view.editable || !canActivate || busy) return;
     setActivating(true);
     setRestartConfirmation(false);
     setCloseConfirmation(false);
@@ -333,6 +337,7 @@ export function AgentSettingsPanel({
   };
 
   const requestSaveAndRestart = () => {
+    if (readOnly) return;
     if (runStatus === "running") {
       setRestartConfirmation(true);
       return;
@@ -402,13 +407,19 @@ export function AgentSettingsPanel({
               </button>
             </nav>
 
+            {readOnly && (
+              <div className="settings-readonly-banner" role="alert">
+                🛡️ <strong>Mode Lecture Seule (Viewer)</strong> — Les modifications de configuration et le redémarrage sont réservés aux opérateurs.
+              </div>
+            )}
+
             {activeTab === "agents" && (
-              <fieldset className="agent-settings__content" disabled={busy} aria-busy={busy}>
+              <fieldset className="agent-settings__content" disabled={busy || Boolean(readOnly)} aria-busy={busy}>
                 <Catalog
                   entries={view.catalog}
                   count={draft.length}
                   maximum={Math.min(8, view.maxProfiles)}
-                  editable={view.editable}
+                  editable={view.editable && !readOnly}
                   onAdd={addProfile}
                 />
                 <section className="profile-editor" aria-label="Configured profiles">
@@ -458,7 +469,7 @@ export function AgentSettingsPanel({
                   setNotice(undefined);
                   setError(undefined);
                 }}
-                disabled={busy}
+                disabled={busy || Boolean(readOnly)}
               />
             )}
 
@@ -470,7 +481,7 @@ export function AgentSettingsPanel({
                   setNotice(undefined);
                   setError(undefined);
                 }}
-                disabled={busy}
+                disabled={busy || Boolean(readOnly)}
                 browserNotifPermission={browserNotifPermission}
                 onRequestBrowserPermission={onRequestBrowserPermission}
                 soundEnabled={soundEnabled}
@@ -516,7 +527,7 @@ export function AgentSettingsPanel({
                 <button
                   className="button button--ghost"
                   type="button"
-                  disabled={!view.editable || !dirty || !validation.valid || busy}
+                  disabled={!view.editable || !dirty || !validation.valid || busy || Boolean(readOnly)}
                   onClick={() => {
                     setCloseConfirmation(false);
                     void save();
@@ -527,7 +538,7 @@ export function AgentSettingsPanel({
                 <button
                   className="button button--primary"
                   type="button"
-                  disabled={!view.editable || !validation.valid || !canActivate || busy}
+                  disabled={!view.editable || !validation.valid || !canActivate || busy || Boolean(readOnly)}
                   onClick={requestSaveAndRestart}
                 >
                   {activationLabel}

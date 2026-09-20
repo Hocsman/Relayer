@@ -153,4 +153,25 @@ describe("AgentCard simulated agents", () => {
     expect(markup).toContain(">Restart<");
     expect(markup).toContain("disabled");
   });
+
+  it("disables composer and hides lifecycle action buttons when readOnly", () => {
+    const markup = renderToStaticMarkup(
+      <AgentCard
+        runID="run-1"
+        agent={{ ...agent(), running: true, status: "running" }}
+        readOnly={true}
+        onResize={async () => {}}
+        onStop={async () => {}}
+        onStart={async () => {}}
+        onRestart={async () => {}}
+        onOpenEvent={() => {}}
+        onSubmitLine={async () => {}}
+      />,
+    );
+    expect(markup).toContain('placeholder="Mode lecture seule (Viewer)"');
+    expect(markup).toContain('disabled=""');
+    expect(markup).not.toContain(">Stop<");
+    expect(markup).not.toContain(">Restart<");
+    expect(markup).not.toContain(">Start<");
+  });
 });

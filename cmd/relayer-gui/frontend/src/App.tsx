@@ -12,7 +12,7 @@ import { TopBar } from "./components/TopBar";
 import { useNotifications } from "./hooks/useNotifications";
 import { useRelayer } from "./hooks/useRelayer";
 import { supervisionEventKey } from "./lib/eventKey";
-import type { AppState, RelayerBridge, RunStatus } from "./types/relayer";
+import type { AppState, RelayerBridge, RunStatus, UserInfo } from "./types/relayer";
 
 export function App({ bridge }: { bridge: RelayerBridge }) {
   const {
@@ -36,6 +36,16 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
     soundEnabled,
     setSoundEnabled,
   } = useNotifications(bridge);
+  const [userInfo, setUserInfo] = useState<UserInfo>();
+
+  useEffect(() => {
+    if (bridge.getUserInfo) {
+      bridge.getUserInfo().then(setUserInfo).catch(() => {
+        setUserInfo({ identity: "local-operator", role: "operator", readOnly: false });
+      });
+    }
+  }, [bridge]);
+
   const [selectedEventKey, setSelectedEventKey] = useState<string>();
   const [modalOpen, setModalOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(false);
@@ -148,6 +158,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
     <div className="application-shell">
       <TopBar
         state={state.app}
+        userInfo={userInfo}
         onOpenAgents={() => {
           setPreflightOpen(false);
           setAuditOpen(false);
@@ -180,6 +191,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
             runID={state.app.runID}
             agents={state.app.agents}
             events={state.app.pendingEvents}
+            readOnly={userInfo?.readOnly}
             onResize={resizeSession}
             onStop={stopSession}
             onStart={startSession}
@@ -206,6 +218,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
         event={!agentsOpen && !preflightOpen && !auditOpen && !observabilityOpen && !transitioning && modalOpen ? selectedEvent : undefined}
         agent={selectedAgent}
         queueSize={state.app.pendingEvents.length}
+        readOnly={userInfo?.readOnly}
         onClose={() => setModalOpen(false)}
         onSubmit={submitDecision}
         onDecide={submitAutomaticDecision}
@@ -216,6 +229,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
           runID={state.app.runID}
           runStatus={state.app.runStatus}
           pendingEvents={state.app.pendingEvents}
+          readOnly={userInfo?.readOnly}
           onSave={saveAgentProfiles}
           onSaveAndRestart={saveAgentProfilesAndRestart}
           onClose={() => setAgentsOpen(false)}

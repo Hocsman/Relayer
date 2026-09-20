@@ -494,6 +494,10 @@ func (c *Controller) RunPreflight(ctx context.Context) (PreflightReport, error) 
 }
 
 func (c *Controller) SubmitDecision(runID, sessionID, eventID, value string) error {
+	return c.SubmitDecisionWithOperator(runID, sessionID, eventID, value, "operator")
+}
+
+func (c *Controller) SubmitDecisionWithOperator(runID, sessionID, eventID, value, operator string) error {
 	c.mu.Lock()
 	if c.runID != runID && runID != "" {
 		c.mu.Unlock()
@@ -509,8 +513,10 @@ func (c *Controller) SubmitDecision(runID, sessionID, eventID, value string) err
 
 	rt := c.runtime
 	delete(c.pending, key)
+	backend := ""
 	if idx, ok := c.agentIndex[strings.ToLower(sessionID)]; ok {
 		c.state.Agents[idx].Status = "running"
+		backend = c.state.Agents[idx].Backend
 	}
 	c.rebuildPendingEventsLocked()
 	c.mu.Unlock()
@@ -518,11 +524,97 @@ func (c *Controller) SubmitDecision(runID, sessionID, eventID, value string) err
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	decision := adapters.Decision(value)
-	err := rt.ApplyDecision(ctx, sessionID, item.event, decision, "human operator")
+	if strings.TrimSpace(operator) == "" {
+		operator = "operator"
+	}
+
+	var (
+		decision      adapters.Decision
+		manualInput   string
+		auditDecision audit.Decision
+	)
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "allow", "yes", "y":
+		decision = adapters.DecisionAllow
+		auditDecision = audit.DecisionAllow
+	case "deny", "no", "n":
+		decision = adapters.DecisionDeny
+		auditDecision = audit.DecisionDeny
+	default:
+		decision = adapters.DecisionManual
+		manualInput = strings.TrimRight(value, "\r\n")
+		auditDecision = audit.DecisionAllow
+	}
+
+	ruleName := item.view.Evaluation.RuleName
+
+	// 1. Record decision audit entry with operator attribution
+	_ = rt.RecordAudit(audit.Entry{
+		Kind:       audit.KindDecision,
+		SessionID:  strings.TrimSpace(sessionID),
+		AgentID:    strings.TrimSpace(item.event.AgentID),
+		Backend:    strings.ToLower(strings.TrimSpace(backend)),
+		Adapter:    strings.ToLower(strings.TrimSpace(item.event.Adapter)),
+		EventID:    strings.TrimSpace(eventID),
+		EventType:  item.event.Type,
+		Risk:       item.event.Risk,
+		Rule:       ruleName,
+		Decision:   auditDecision,
+		DecisionBy: audit.DecisionByHuman,
+		Operator:   operator,
+		Outcome:    audit.OutcomeInFlight,
+		Reason:     "decision_selected",
+		Metadata: map[string]string{
+			"operator": operator,
+			"role":     "operator",
+		},
+	})
+
+	err := rt.ApplyDecision(ctx, sessionID, item.event, decision, manualInput)
 	if err != nil {
+		_ = rt.RecordAudit(audit.Entry{
+			Kind:       audit.KindDelivery,
+			SessionID:  strings.TrimSpace(sessionID),
+			AgentID:    strings.TrimSpace(item.event.AgentID),
+			Backend:    strings.ToLower(strings.TrimSpace(backend)),
+			Adapter:    strings.ToLower(strings.TrimSpace(item.event.Adapter)),
+			EventID:    strings.TrimSpace(eventID),
+			EventType:  item.event.Type,
+			Risk:       item.event.Risk,
+			Rule:       ruleName,
+			Decision:   auditDecision,
+			DecisionBy: audit.DecisionByHuman,
+			Operator:   operator,
+			Outcome:    audit.OutcomeFailed,
+			Reason:     "delivery_failed",
+			Metadata: map[string]string{
+				"operator": operator,
+				"role":     "operator",
+			},
+		})
 		return err
 	}
+
+	_ = rt.RecordAudit(audit.Entry{
+		Kind:       audit.KindDelivery,
+		SessionID:  strings.TrimSpace(sessionID),
+		AgentID:    strings.TrimSpace(item.event.AgentID),
+		Backend:    strings.ToLower(strings.TrimSpace(backend)),
+		Adapter:    strings.ToLower(strings.TrimSpace(item.event.Adapter)),
+		EventID:    strings.TrimSpace(eventID),
+		EventType:  item.event.Type,
+		Risk:       item.event.Risk,
+		Rule:       ruleName,
+		Decision:   auditDecision,
+		DecisionBy: audit.DecisionByHuman,
+		Operator:   operator,
+		Outcome:    audit.OutcomeApplied,
+		Reason:     "delivery_applied",
+		Metadata: map[string]string{
+			"operator": operator,
+			"role":     "operator",
+		},
+	})
 
 	item.view.DeliveryStatus = "delivered"
 	c.broadcast(eventSemantic, item.view)
@@ -541,18 +633,51 @@ func (c *Controller) SubmitAutomaticDecision(runID, sessionID, eventID, decision
 }
 
 func (c *Controller) SubmitLine(runID, sessionID, line string) error {
+	return c.SubmitLineWithOperator(runID, sessionID, line, "operator")
+}
+
+func (c *Controller) SubmitLineWithOperator(runID, sessionID, line, operator string) error {
 	c.mu.RLock()
 	rt := c.runtime
+	idx, hasAgent := c.agentIndex[strings.ToLower(sessionID)]
+	var agent AgentState
+	if hasAgent && idx < len(c.state.Agents) {
+		agent = c.state.Agents[idx]
+	}
 	c.mu.RUnlock()
 
 	if rt == nil {
 		return errors.New("supervisor runtime not ready")
 	}
 
+	if strings.TrimSpace(operator) == "" {
+		operator = "operator"
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	return rt.SendLine(ctx, sessionID, line)
+	err := rt.SendLine(ctx, sessionID, line)
+	outcome := audit.OutcomeApplied
+	reason := "operator_input_applied"
+	if err != nil {
+		outcome = audit.OutcomeFailed
+		reason = "operator_input_invalid"
+	}
+
+	_ = rt.RecordAudit(audit.Entry{
+		Kind:       audit.KindOperatorInput,
+		SessionID:  strings.TrimSpace(sessionID),
+		AgentID:    strings.TrimSpace(agent.AgentID),
+		Backend:    strings.ToLower(strings.TrimSpace(agent.Backend)),
+		Adapter:    strings.ToLower(strings.TrimSpace(agent.Adapter)),
+		DecisionBy: audit.DecisionByHuman,
+		Operator:   operator,
+		Outcome:    outcome,
+		Reason:     reason,
+	})
+
+	return err
 }
 
 func (c *Controller) ResizeSession(runID, sessionID string, columns, rows int) error {
@@ -1165,6 +1290,7 @@ func (c *Controller) GetAuditEntries(filter AuditFilterInput) ([]AuditEntryView,
 			Rule:       e.Rule,
 			Decision:   string(e.Decision),
 			DecisionBy: string(e.DecisionBy),
+			Operator:   e.Operator,
 			Outcome:    string(e.Outcome),
 			Reason:     e.Reason,
 			Summary:    e.Summary,
@@ -1229,10 +1355,10 @@ func (c *Controller) ExportAuditReport(format string) (string, error) {
 
 	if format == "csv" {
 		var sb strings.Builder
-		sb.WriteString("sequence,timestamp,runID,sessionID,agentID,kind,eventType,decision,decisionBy,outcome,reason\n")
+		sb.WriteString("sequence,timestamp,runID,sessionID,agentID,kind,eventType,decision,decisionBy,operator,outcome,reason\n")
 		for _, e := range entries {
-			sb.WriteString(fmt.Sprintf("%d,%s,%s,%s,%s,%s,%s,%s,%s,%s,%q\n",
-				e.Sequence, e.Timestamp, e.RunID, e.SessionID, e.AgentID, e.Kind, e.EventType, e.Decision, e.DecisionBy, e.Outcome, e.Reason))
+			sb.WriteString(fmt.Sprintf("%d,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%q\n",
+				e.Sequence, e.Timestamp, e.RunID, e.SessionID, e.AgentID, e.Kind, e.EventType, e.Decision, e.DecisionBy, e.Operator, e.Outcome, e.Reason))
 		}
 		return sb.String(), nil
 	}

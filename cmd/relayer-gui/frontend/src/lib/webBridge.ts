@@ -16,6 +16,7 @@ import type {
   SaveFullSettingsRequest,
   SemanticDecision,
   TelemetrySnapshotView,
+  UserInfo,
 } from "../types/relayer";
 
 interface PendingRpc {
@@ -217,6 +218,8 @@ export function createWebBridge(options: WebBridgeOptions = {}): RelayerBridge {
       callRpc<TelemetrySnapshotView>("getTelemetrySnapshot"),
     testNotification: () =>
       callRpc<{ ok: boolean }>("testNotification"),
+    getUserInfo: () =>
+      callRpc<UserInfo>("getUserInfo"),
 
     on<K extends BridgeEventName>(
       event: K,

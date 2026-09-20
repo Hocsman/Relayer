@@ -167,6 +167,7 @@ type Entry struct {
 	Rule          string             `json:"rule,omitempty"`
 	Decision      Decision           `json:"decision,omitempty"`
 	DecisionBy    DecisionBy         `json:"decision_by,omitempty"`
+	Operator      string             `json:"operator,omitempty"`
 	Outcome       Outcome            `json:"outcome,omitempty"`
 	Reason        string             `json:"reason,omitempty"`
 	Summary       string             `json:"summary,omitempty"`

@@ -129,6 +129,11 @@ export function createWailsBridge(): RelayerBridge {
     getTelemetrySnapshot: () => bindings.GetTelemetrySnapshot(),
     getFullSettings: () => bindings.GetFullSettings(),
     saveFullSettings: (runID, request) => bindings.SaveFullSettings(runID, request),
+    getUserInfo: async () => ({
+      identity: "local-operator",
+      role: "operator",
+      readOnly: false,
+    }),
     on<K extends BridgeEventName>(
       event: K,
       listener: (payload: BridgeEventMap[K]) => void,

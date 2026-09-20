@@ -344,11 +344,18 @@ export interface AuditEntryView {
   rule?: string;
   decision?: string;
   decisionBy?: string;
+  operator?: string;
   outcome?: string;
   reason?: string;
   summary?: string;
   sensitive: boolean;
   metadata?: Record<string, string>;
+}
+
+export interface UserInfo {
+  identity: string;
+  role: "operator" | "viewer";
+  readOnly: boolean;
 }
 
 export interface AuditFilterInput {
@@ -464,6 +471,7 @@ export interface RelayerBridge {
   exportAuditReport(format: "json" | "csv"): Promise<string>;
   getTelemetrySnapshot(): Promise<TelemetrySnapshotView>;
   testNotification?(): Promise<{ ok: boolean }>;
+  getUserInfo?(): Promise<UserInfo>;
   on<K extends BridgeEventName>(event: K, listener: (payload: BridgeEventMap[K]) => void): () => void;
 }
 

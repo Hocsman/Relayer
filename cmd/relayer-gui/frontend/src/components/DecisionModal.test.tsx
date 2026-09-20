@@ -135,3 +135,27 @@ describe("DecisionModal answer weighting", () => {
     expect(markup).toContain('class="button__shortcut"');
   });
 });
+
+describe("DecisionModal readOnly mode (Viewer)", () => {
+  it("renders viewer notice and disables all arbitration controls when readOnly", () => {
+    const markup = renderToStaticMarkup(
+      <DecisionModal
+        event={event({ decisions: ["allow", "deny"] })}
+        agent={agent()}
+        queueSize={1}
+        readOnly={true}
+        onClose={() => {}}
+        onSubmit={async () => true}
+        onDecide={async () => true}
+      />,
+    );
+    expect(markup).toContain("decision-modal__viewer-notice");
+    expect(markup).toContain("Mode Lecture Seule");
+    expect(markup).toContain("Mode lecture seule (Viewer)");
+    // Both Allow and Deny buttons disabled
+    const actions = markup.slice(markup.indexOf("decision-actions"));
+    expect(actions.slice(0, actions.indexOf("</div>")).match(/disabled/g)?.length).toBe(2);
+    // Submit button disabled
+    expect(markup).toContain('type="submit" disabled');
+  });
+});

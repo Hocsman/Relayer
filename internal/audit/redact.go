@@ -73,6 +73,7 @@ func SanitizeEntry(entry Entry, mode Mode) Entry {
 	result.DecisionBy = safeDecisionBy(entry.DecisionBy)
 	result.Outcome = safeOutcome(entry.Outcome)
 	result.Reason = safeCode(entry.Reason)
+	result.Operator = safeOperator(entry.Operator)
 	result.Sensitive = entry.Sensitive || entry.EventType == adapters.EventCredential || entry.Risk == adapters.RiskHigh
 	if result.Sensitive {
 		// Generic adapter occurrence IDs are derived from a fingerprint which
@@ -93,6 +94,7 @@ func SanitizeEntry(entry Entry, mode Mode) Entry {
 		result.Decision = ""
 		result.Sensitive = false
 		result.Reason = safeOperatorInputReason(result.Reason)
+		result.Operator = safeOperator(entry.Operator)
 		return result
 	}
 
@@ -108,11 +110,12 @@ func SanitizeEntry(entry Entry, mode Mode) Entry {
 		return result
 	}
 	if result.DecisionBy == DecisionByHuman {
-		// Human decision records deliberately carry no free-form field that a
+		// Human decision records deliberately carry no free-form summary that a
 		// caller could accidentally populate with terminal input.
-		return result
+		result.Summary = ""
+	} else {
+		result.Summary = truncateRunes(sanitizeText(entry.Summary), maxSummaryRunes)
 	}
-	result.Summary = truncateRunes(sanitizeText(entry.Summary), maxSummaryRunes)
 	if entry.Metadata != nil {
 		keys := make([]string, 0, len(entry.Metadata))
 		for key := range entry.Metadata {
@@ -169,6 +172,11 @@ func sanitizeText(value string) string {
 	return Redact(value)
 }
 
+func safeOperator(value string) string {
+	clean := sanitizeText(value)
+	return truncateRunes(clean, 64)
+}
+
 func allowedMetadataKey(kind Kind, value string) bool {
 	compact := strings.ToLower(strings.TrimSpace(value))
 	switch kind {
@@ -180,6 +188,11 @@ func allowedMetadataKey(kind Kind, value string) bool {
 	case KindEventDetected:
 		switch compact {
 		case "exit_code", "failed":
+			return true
+		}
+	case KindDecision, KindDelivery, KindOperatorInput:
+		switch compact {
+		case "operator", "role":
 			return true
 		}
 	}

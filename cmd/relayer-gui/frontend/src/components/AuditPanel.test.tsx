@@ -233,6 +233,33 @@ describe("AuditContentView", () => {
     expect(markup).toContain("mode");
     expect(markup).toContain("enforce");
   });
+
+  it("renders operator identity in the actor column and expanded details when present", () => {
+    const entriesWithOperator: AuditEntryView[] = [
+      {
+        ...sampleEntries()[1],
+        operator: "alice",
+      },
+    ];
+    const markup = renderToStaticMarkup(
+      <AuditContentView
+        summary={sampleSummary()}
+        verification={sampleVerification(true)}
+        entries={entriesWithOperator}
+        selectedAgent=""
+        selectedKind=""
+        limit={50}
+        expandedEntryKey="ent-2"
+        onSelectAgent={() => {}}
+        onSelectKind={() => {}}
+        onSelectLimit={() => {}}
+        onToggleExpand={() => {}}
+        onRefresh={() => {}}
+      />,
+    );
+    expect(markup).toContain("human (alice)");
+    expect(markup).toContain("<dt>Operator</dt><dd><code>alice</code></dd>");
+  });
 });
 
 describe("AuditPanel", () => {
