@@ -4,6 +4,45 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+### Added
+
+- **Session Recording & Replay (asciicast v2)**:
+  - Added `internal/record`, writing each supervised session's terminal stream to a standard asciicast v2 `.cast` file so it can be replayed later for audit or training. Any asciicast player reads the result, `asciinema play` included.
+  - Tapped the stream at the three points every byte already funnels through: `adapters.Processor.Consume` for output, `processSession.write` for input, and `processSession.resize` for geometry. The new `Hooks.OnRawChunk` fires after the processor releases its state lock, on the escape-aligned prefix detection otherwise discards, so a transcript keeps the colours and cursor motion the detector throws away.
+  - Added the `recording:` configuration block (`enabled`, `path`, `record_input`, `redact`, `max_file_size_mb`, `max_recordings`, `max_total_size_mb`, `retention_days`), off by default, YAML-only and deliberately absent from the visual settings editor.
+  - Transcript storage mirrors the audit journal's hardening: 0700 directories, 0600 files, symlink and non-regular rejection, Unix ownership checks, plus a per-transcript JSON sidecar so a crashed run is reported as truncated on the next start instead of silently looking complete. Retention is enforced at startup against count, total size and age, oldest first, and never touches a transcript being written.
+  - Added a **Recordings** panel to the web interface with an xterm replay surface: play, pause, scrubbing, and 0.5x–8x speed. Replay is strictly read-only — the player holds no bridge and cannot resize, interrupt, or type into a live session. Long transcripts are paged and a partially loaded one says so rather than ending early and looking like a session that finished there.
+  - Added the `listRecordings`, `getRecording`, `readRecordingChunk`, `exportRecording` and `deleteRecording` RPCs plus the `relayer:recording` event. Export and delete are operator-only and audited with the acting operator; a transcript still being written cannot be deleted.
+  - Added the `recording_started`, `recording_finished`, `recording_exported` and `recording_deleted` audit kinds, carrying a transcript's identity and shape but never its content.
+
+- **Multi-Operator Sessions & Live Session Sharing**:
+  - Several operators and viewers can now watch the same interactive session at once, with exactly one connection holding the terminal at a time.
+  - Taking a terminal another operator holds is refused rather than silently stolen: the caller requests it, the holder is prompted, and the terminal moves only on a grant. An unanswered request expires, and a holder who disconnects frees it. Force takeover exists but is off unless a deployment opts in, since an operator mid-command can be interrupted by it.
+  - The write lock is keyed by **connection**, never by identity: a second browser tab does not inherit the first tab's terminal, and releasing in one tab does not revoke the other.
+  - Added a per-agent presence strip naming who is watching, who holds the terminal and who is asking for it, plus a grant/decline prompt shown only to the operator who can answer.
+  - Added the `listPresence`, `observeSession`, `requestControl`, `grantControl`, `declineControl`, `releaseControl` and `forceTakeControl` RPCs, and the `relayer:presence` and `relayer:hand` events. Both events are complete snapshots rather than deltas, because the client send queue drops frames it cannot deliver and a lost delta would leave a roster permanently wrong.
+  - `sendTerminalInput` and `resizeSession` now check the write lock. A resize from a non-holder is a silent no-op so two observers with different window sizes cannot thrash the agent's rendering. The one-keystroke race between the check and the write is documented in [docs/sharing.md](docs/sharing.md) rather than hidden.
+  - Added the `control_requested`, `control_granted`, `control_declined`, `control_released` and `control_forced` audit kinds with the acting operator, their role, and the connection involved. Keystrokes remain unjournaled.
+  - `sendTerminalInput` now validates `runID` against the active run; it was accepted and ignored.
+
+- **Documentation**:
+  - Added [docs/web-gateway.md](docs/web-gateway.md) covering `relayer serve`, its flags, the role matrix, named tokens, and the plaintext-transport boundary. `internal/server` had no prose documentation at all.
+  - Added [docs/recording.md](docs/recording.md) and [docs/sharing.md](docs/sharing.md).
+
+### Fixed
+
+- **Audit journal verification rejected its own output**: `VerifyJournal` treated any metadata on a human decision entry as a security violation, while `SanitizeEntry` deliberately keeps the allowlisted operator attribution on exactly those entries. Since v0.6.0 began writing `operator` and `role` metadata on human decisions, every journal the web gateway produced failed its own verifier — `relayer audit verify` exited non-zero and the verification panel reported the journal as tampered. Verification now shares `allowedMetadataKey` with the sanitizer, so the two can no longer disagree about what a kind may carry.
+- **`conn_id` was dropped from attach records**: the controller wrote it on `attach_started` and `attach_finished` but the metadata allowlist did not permit it there, so sanitization silently discarded the connection identity on exactly the interactive attach entries.
+- **Removed the free-form `reason` metadata key from control entries**: `Entry.Reason` is bounded to a short code while a metadata value is only truncated, so the same name under two rules meant the weaker one was what a reader saw.
+- **`getUserInfo` failed open to operator**: a failed or timed-out identity lookup left the interface assuming write authority it could not confirm, offering controls the server then silently rejected. It now fails closed to read-only.
+- **Restored gofmt compliance** in the audit and server tests, which had been failing the build workflow's format gate on `main`.
+
+### Changed
+
+- Unified the interface language: the French strings introduced with the RBAC and interactive-PTY work are now English, matching the rest of the interface.
+- Defined `.button--tiny`, referenced by the agent card and the new control prompt but never declared.
+
+
 ## [0.6.0] - 2026-09-20
 
 Minor release hardening the Web Gateway for team use: role-based access control with per-operator attribution in the cryptographic audit trail, and a fully bidirectional interactive terminal (full PTY) streamed over WebSocket binary frames.

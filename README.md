@@ -50,6 +50,14 @@ go run github.com/Hocsman/Relayer/cmd/relayer@latest
 - Headless web gateway (`relayer serve`) with role-based access control: `--token` grants
   read-write operator authority, `--viewer-token` grants read-only observation. Named
   tokens (`alice:secret`) attribute every decision to a human in the audit trail.
+  See the [web gateway guide](docs/web-gateway.md).
+- Several operators can watch one interactive session at once, with exactly one
+  holding the terminal. Asking for a terminal a colleague holds is a request they
+  answer, not a takeover. See [multi-operator sessions](docs/sharing.md).
+- Optional session recording to standard asciicast v2 `.cast` files, replayable in
+  the browser for audit or training. Off by default; it captures terminal output
+  verbatim, which the audit journal deliberately never stores. See
+  [session recording](docs/recording.md).
 - Fully bidirectional interactive browser terminal: attach to an agent and type
   directly into its PTY, including arrow keys, VT escape sequences and `Ctrl+C`,
   streamed over WebSocket binary frames. Attach and detach are audited; keystrokes are not.
