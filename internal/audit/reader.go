@@ -311,17 +311,27 @@ func VerifyJournal(r io.Reader) (VerificationReport, error) {
 		}
 
 		// Security invariants: human decision entries must have empty summary,
+		// the recording and control kinds must carry no free-form text at all,
 		// and every entry's metadata keys must belong to the closed allowlist of
-		// its kind. Verification shares allowedMetadataKey with the sanitizer so
-		// the two cannot disagree about what a kind is allowed to carry; a
-		// blanket rule here would instead reject the operator attribution the
-		// sanitizer deliberately keeps. The key itself is never quoted into the
-		// message: it comes from a file that may not be ours.
+		// its kind. Verification shares closedFreeFormKind and allowedMetadataKey
+		// with the sanitizer so the two cannot disagree about what a kind is
+		// allowed to carry; a blanket rule here would instead reject the operator
+		// attribution the sanitizer deliberately keeps. Neither the key nor the
+		// text is quoted into the message: both come from a file that may not
+		// be ours.
 		if entry.DecisionBy == DecisionByHuman && entry.Summary != "" {
 			report.Issues = append(report.Issues, VerificationIssue{
 				Line:    lineNumber,
 				EntryID: entry.EntryID,
 				Message: "security violation: human decision entry contains non-empty summary",
+			})
+			hasError = true
+		}
+		if closedFreeFormKind(entry.Kind) && (entry.Summary != "" || entry.EventID != "" || entry.Rule != "") {
+			report.Issues = append(report.Issues, VerificationIssue{
+				Line:    lineNumber,
+				EntryID: entry.EntryID,
+				Message: "security violation: recording or control entry contains free-form text",
 			})
 			hasError = true
 		}

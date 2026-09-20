@@ -4,6 +4,16 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+### Fixed
+
+- **The recording and control audit kinds could carry free-form text**: `SanitizeEntry` cleared `Summary` for a human decision but left it open for anything else, so the nine kinds added for session recording and multi-operator control would have carried an arbitrary caller-supplied summary the moment one was emitted by the system rather than by a person. The comment beside those constants already promised that no captured stream and no typed key is a field of `Entry`; `Summary` is such a field, and nothing enforced it.
+  - Closed by a `closedFreeFormKind` predicate rather than by asking every future emitter to remember. `recording_started` and `recording_finished` are naturally system-emitted, so the first caller to wire them would otherwise have opened the field by default.
+  - `EventID` and `Rule` were the same hole and worse: they reach the journal through `sanitizeText` alone, which redacts credential shapes but keeps ordinary prose, `Rule` is not length-bounded, and unlike `Summary` both survive `ModeMetadata`. They are now cleared for those kinds before the mode is even consulted.
+  - `safeCode` bounded a reason's *shape* but never its *content*: an API token is a single lowercase word of allowed characters, so `sk-…` and `ghp_…` were journaled verbatim where the same string in a metadata value would have been redacted. A reason is a closed vocabulary, so anything a credential pattern recognises is no longer accepted as one. Verified against all 41 reason codes the product emits; none changed.
+  - `VerifyJournal` mirrors the rule. It already shared the metadata allowlist with the sanitizer so the two could not disagree; it now shares this rule too, and reports a line carrying free-form text on a closed kind — a shape the sanitizer cannot produce.
+  - Latent, not a live leak: the only two of the nine kinds with emitters today both record a human decision and were already cleared.
+
+
 ## [0.8.1] - 2026-09-20
 
 Patch release fixing spurious file-replacement failures on Windows. A configuration save, and an audit journal rotation, could report a failure for an operation that a transient hold on the file would have allowed a moment later.

@@ -59,12 +59,15 @@ const (
 	// Recording kinds describe the lifecycle of a stored terminal replay. They
 	// state that a recording exists and how large it is; the captured stream
 	// itself is never a field of Entry, and neither is any recorded keystroke.
+	// SanitizeEntry drops Summary for them, so a caller has no free-form field
+	// left to put one in.
 	KindRecordingStarted  Kind = "recording_started"
 	KindRecordingFinished Kind = "recording_finished"
 	KindRecordingExported Kind = "recording_exported"
 	KindRecordingDeleted  Kind = "recording_deleted"
 	// Control kinds record which operator held the interactive keyboard and how
-	// the hand-over happened. They never carry what was typed while holding it.
+	// the hand-over happened. They never carry what was typed while holding it:
+	// SanitizeEntry drops Summary for them as it does for the recording kinds.
 	KindControlRequested Kind = "control_requested"
 	KindControlGranted   Kind = "control_granted"
 	KindControlDeclined  Kind = "control_declined"

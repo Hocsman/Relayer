@@ -528,3 +528,161 @@ func TestSanitizeEntryDropsToolCallArgumentValues(t *testing.T) {
 		}
 	}
 }
+
+// TestSanitizeEntryClosesSummaryForRecordingAndControlKinds pins the free-form
+// field shut for the kinds closest to raw terminal bytes. A system-emitted
+// record must not open Summary merely by not being a human decision: no mode
+// and no actor may carry caller text on these kinds.
+func TestSanitizeEntryClosesSummaryForRecordingAndControlKinds(t *testing.T) {
+	const secret = "recording-summary-fixture-secret"
+	for _, kind := range []Kind{
+		KindRecordingStarted, KindRecordingFinished, KindRecordingExported, KindRecordingDeleted,
+		KindControlRequested, KindControlGranted, KindControlDeclined, KindControlReleased, KindControlForced,
+	} {
+		for _, mode := range []Mode{ModeOff, ModeMetadata, ModeDetailed} {
+			for _, actor := range []DecisionBy{DecisionBySystem, DecisionByHuman} {
+				entry := Entry{
+					Kind:       kind,
+					DecisionBy: actor,
+					Outcome:    OutcomeStarted,
+					Operator:   "alice",
+					Summary:    "operator typed " + secret,
+					Metadata:   map[string]string{"operator": "alice", "role": "operator"},
+				}
+				got := SanitizeEntry(entry, mode)
+				if got.Summary != "" {
+					t.Fatalf("kind %q mode %q actor %q summary = %q", kind, mode, actor, got.Summary)
+				}
+				if strings.Contains(fmt.Sprintf("%#v", got), secret) {
+					t.Fatalf("kind %q mode %q actor %q leaked caller text: %#v", kind, mode, actor, got)
+				}
+				if mode != ModeDetailed {
+					continue
+				}
+				// The fix must close the free-form field only: the allowlisted
+				// identity an auditor reads has to survive it.
+				if got.Kind != kind || got.Outcome != OutcomeStarted || got.Operator != "alice" ||
+					got.Metadata["operator"] != "alice" || got.Metadata["role"] != "operator" {
+					t.Fatalf("kind %q actor %q lost auditable fields: %#v", kind, actor, got)
+				}
+			}
+		}
+	}
+}
+
+// TestSanitizeEntryKeepsSummaryForSystemNarratedKinds guards the other side of
+// the same boundary: the kinds that legitimately narrate a detection still do.
+func TestSanitizeEntryKeepsSummaryForSystemNarratedKinds(t *testing.T) {
+	for _, kind := range []Kind{KindEventDetected, KindPolicyEvaluated} {
+		got := SanitizeEntry(Entry{
+			Kind:       kind,
+			DecisionBy: DecisionBySystem,
+			Outcome:    OutcomeDetected,
+			Summary:    "confirmation prompt detected",
+		}, ModeDetailed)
+		if got.Summary != "confirmation prompt detected" {
+			t.Fatalf("kind %q summary = %q, want the narration preserved", kind, got.Summary)
+		}
+	}
+}
+
+// TestSanitizeEntryForcesFixedSummaries pins the two summaries the sanitizer
+// substitutes rather than drops, which the closed-kind branch must not shadow.
+func TestSanitizeEntryForcesFixedSummaries(t *testing.T) {
+	const secret = "fixed-summary-fixture-secret"
+	backend := SanitizeEntry(Entry{
+		Kind:       KindBackendError,
+		DecisionBy: DecisionBySystem,
+		Summary:    secret,
+	}, ModeDetailed)
+	if backend.Summary != "backend_error" {
+		t.Fatalf("backend error summary = %q", backend.Summary)
+	}
+
+	for _, kind := range []Kind{KindEventDetected, KindRecordingStarted, KindControlGranted} {
+		got := SanitizeEntry(Entry{
+			Kind:       kind,
+			DecisionBy: DecisionBySystem,
+			Risk:       adapters.RiskHigh,
+			Summary:    secret,
+		}, ModeDetailed)
+		if !got.Sensitive || got.Summary != "sensitive_event" {
+			t.Fatalf("kind %q sensitive summary = %#v", kind, got)
+		}
+	}
+}
+
+// TestSanitizeEntryClosesNeighbourFieldsForRecordingAndControlKinds checks the
+// fields beside Summary. EventID and Rule reach the journal through
+// sanitizeText alone, which redacts credential shapes but keeps ordinary prose,
+// and they survive ModeMetadata where Summary never appears at all.
+func TestSanitizeEntryClosesNeighbourFieldsForRecordingAndControlKinds(t *testing.T) {
+	const secret = "operator typed rm -rf /home/alice/wallet.dat"
+	for _, kind := range []Kind{
+		KindRecordingStarted, KindRecordingFinished, KindRecordingExported, KindRecordingDeleted,
+		KindControlRequested, KindControlGranted, KindControlDeclined, KindControlReleased, KindControlForced,
+	} {
+		for _, mode := range []Mode{ModeMetadata, ModeDetailed} {
+			got := SanitizeEntry(Entry{
+				Kind:       kind,
+				DecisionBy: DecisionBySystem,
+				Outcome:    OutcomeApplied,
+				EventID:    secret,
+				Rule:       secret,
+				Operator:   "alice",
+			}, mode)
+			if got.EventID != "" || got.Rule != "" {
+				t.Fatalf("kind %q mode %q kept free-form fields: %#v", kind, mode, got)
+			}
+			if strings.Contains(fmt.Sprintf("%#v", got), "wallet.dat") {
+				t.Fatalf("kind %q mode %q leaked caller text: %#v", kind, mode, got)
+			}
+		}
+	}
+}
+
+// TestSanitizeEntryBoundsReasonAndMetadataOnClosedKinds feeds a secret through
+// the two bounds the closed kinds still rely on: Reason through safeCode and a
+// metadata key through allowedMetadataKey. It also pins what an auditor reads,
+// so closing the free-form fields cannot quietly take the record with them.
+func TestSanitizeEntryBoundsReasonAndMetadataOnClosedKinds(t *testing.T) {
+	for _, reason := range []string{
+		"sk-abcdefghijklmnop",
+		"ghp_ABCdefGHIjklMNOpqrstuvwx",
+		"recording password is hunter2",
+	} {
+		got := SanitizeEntry(Entry{
+			Kind:       KindRecordingExported,
+			DecisionBy: DecisionBySystem,
+			Reason:     reason,
+		}, ModeDetailed)
+		if got.Reason != "unknown" {
+			t.Fatalf("reason %q survived safeCode as %q", reason, got.Reason)
+		}
+	}
+
+	got := SanitizeEntry(Entry{
+		Kind:       KindControlGranted,
+		DecisionBy: DecisionBySystem,
+		Outcome:    OutcomeApplied,
+		Operator:   "alice",
+		Reason:     "control_granted",
+		Metadata: map[string]string{
+			"operator": "alice",
+			"role":     "operator",
+			"conn_id":  "conn-7",
+			"summary":  "operator typed hunter2",
+			"typed":    "hunter2",
+		},
+	}, ModeDetailed)
+	if strings.Contains(fmt.Sprintf("%#v", got), "hunter2") {
+		t.Fatalf("a metadata key outside the allowlist reached the entry: %#v", got)
+	}
+	// The record still has to say who did what, why, and on which connection.
+	if got.Kind != KindControlGranted || got.Outcome != OutcomeApplied || got.Operator != "alice" ||
+		got.Reason != "control_granted" || len(got.Metadata) != 3 ||
+		got.Metadata["operator"] != "alice" || got.Metadata["role"] != "operator" ||
+		got.Metadata["conn_id"] != "conn-7" {
+		t.Fatalf("closing the free-form fields removed auditable content: %#v", got)
+	}
+}

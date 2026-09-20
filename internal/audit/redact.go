@@ -97,6 +97,16 @@ func SanitizeEntry(entry Entry, mode Mode) Entry {
 		result.Operator = safeOperator(entry.Operator)
 		return result
 	}
+	if closedFreeFormKind(result.Kind) {
+		// EventID and Rule are the other two fields that reach the journal
+		// through sanitizeText alone, which redacts credential shapes but keeps
+		// ordinary prose. Neither describes a recording or a keyboard hand-over,
+		// so closing Summary while leaving them open would only move the hole.
+		// They are cleared before the mode check because, unlike Summary, they
+		// survive ModeMetadata.
+		result.EventID = ""
+		result.Rule = ""
+	}
 
 	if mode != ModeDetailed {
 		return result
@@ -109,9 +119,10 @@ func SanitizeEntry(entry Entry, mode Mode) Entry {
 		result.Summary = "backend_error"
 		return result
 	}
-	if result.DecisionBy == DecisionByHuman {
+	if result.DecisionBy == DecisionByHuman || closedFreeFormKind(result.Kind) {
 		// Human decision records deliberately carry no free-form summary that a
-		// caller could accidentally populate with terminal input.
+		// caller could accidentally populate with terminal input, and neither do
+		// the kinds closedFreeFormKind names.
 		result.Summary = ""
 	} else {
 		result.Summary = truncateRunes(sanitizeText(entry.Summary), maxSummaryRunes)
@@ -175,6 +186,30 @@ func sanitizeText(value string) string {
 func safeOperator(value string) string {
 	clean := sanitizeText(value)
 	return truncateRunes(clean, 64)
+}
+
+// closedFreeFormKind reports a kind whose record carries no free-form text at
+// all, whatever the mode, the caller, or the actor named by DecisionBy.
+//
+// These are the recording and control kinds, which sit closer to raw terminal
+// bytes than any other record: they describe a captured replay or the keyboard
+// hand-over that produced one. The comment beside their constants promises that
+// no captured stream and no typed key is a field of Entry, and Summary, EventID
+// and Rule are such fields. A promise kept only by every future emitter
+// remembering to leave them empty is not kept; keeping it here means a
+// system-emitted record cannot open them by simply not being a human decision.
+//
+// Only the free-form fields go. A recording or control record legitimately
+// carries its identity, its outcome, its reason code and its allowlisted
+// metadata, which an auditor needs, so this is deliberately not
+// KindOperatorInput's closed shape.
+func closedFreeFormKind(kind Kind) bool {
+	switch kind {
+	case KindRecordingStarted, KindRecordingFinished, KindRecordingExported, KindRecordingDeleted,
+		KindControlRequested, KindControlGranted, KindControlDeclined, KindControlReleased, KindControlForced:
+		return true
+	}
+	return false
 }
 
 func allowedMetadataKey(kind Kind, value string) bool {
@@ -431,6 +466,14 @@ func safeCode(value string) string {
 		return ""
 	}
 	if !safeCodePattern.MatchString(value) {
+		return "unknown"
+	}
+	if Redact(value) != value {
+		// The code shape alone does not separate a reason from a credential:
+		// an API token is a single lowercase word of allowed characters and
+		// would otherwise be journaled verbatim, while the same string in a
+		// metadata value is redacted. A reason code is a closed vocabulary, so
+		// anything a credential pattern recognizes is not one.
 		return "unknown"
 	}
 	return value

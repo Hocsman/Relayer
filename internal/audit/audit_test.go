@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -213,3 +215,143 @@ func (s *bufferSink) WriteLine(line []byte) error {
 }
 
 func (s *bufferSink) Close() error { return nil }
+
+// A journal the recorder wrote to a real file must stay readable now that the
+// recording and control kinds lose their free-form field. Dropping Summary is a
+// removal, not a change of shape: the gate that recognizes a Relayer journal
+// has to keep recognizing it, the verifier has to keep passing it, and an entry
+// whose Summary was dropped has to be indistinguishable from one whose caller
+// never supplied a Summary at all.
+func TestJournalOfClosedSummaryKindsStaysReadable(t *testing.T) {
+	const secret = "journal-summary-fixture-secret"
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "audit.jsonl")
+
+	config := Config{Enabled: true, Mode: ModeDetailed, Path: path, MaxFileSizeMB: 10, MaxFiles: 5}
+	recorder, err := Open(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// run_started stays the first line: the gate recognizes a journal by the
+	// kind it opens on, and only a long-established kind is safe there.
+	written := []Entry{{Kind: KindRunStarted, Outcome: OutcomeStarted}}
+	for _, kind := range recordingAndControlKinds {
+		for _, actor := range []DecisionBy{DecisionBySystem, DecisionByHuman} {
+			for _, summary := range []string{"", "operator typed " + secret} {
+				written = append(written, Entry{
+					Kind: kind, DecisionBy: actor, Operator: "alice",
+					Outcome: OutcomeApplied, Reason: string(kind), Summary: summary,
+					Metadata: map[string]string{"operator": "alice", "role": "operator"},
+				})
+			}
+		}
+	}
+	for _, entry := range written {
+		if err := recorder.Record(entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := recorder.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte(secret)) {
+		t.Fatal("the journal retained caller summary text")
+	}
+	if err := VerifyJournalFile(path); err != nil {
+		t.Fatalf("VerifyJournalFile = %v, want nil", err)
+	}
+	// Reopening is what a running Relayer does next, and it is the only path
+	// that puts requireRelayerJournal in front of a real handle.
+	reopened, err := Open(config)
+	if err != nil {
+		t.Fatalf("reopen = %v, want nil", err)
+	}
+	if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := VerifyJournal(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Passed || report.TotalLines != len(written) || report.ValidLines != len(written) {
+		t.Fatalf("VerifyJournal = %#v", report)
+	}
+
+	stored, err := ReadEntriesFromFile(path, Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != len(written) {
+		t.Fatalf("read %d entries, want %d", len(stored), len(written))
+	}
+	// Entries were recorded in pairs that differ only by the caller's Summary,
+	// so each pair must reach disk as the same record once identity is set
+	// aside. A dropped field that left any other trace would show up here.
+	for index := 1; index < len(stored); index += 2 {
+		without := forgetJournalIdentity(stored[index])
+		with := forgetJournalIdentity(stored[index+1])
+		if without.Summary != "" {
+			t.Fatalf("kind %q kept a summary: %q", without.Kind, without.Summary)
+		}
+		if !reflect.DeepEqual(without, with) {
+			t.Fatalf("kind %q differs by the caller's summary:\n%#v\n%#v", without.Kind, without, with)
+		}
+	}
+}
+
+// forgetJournalIdentity clears the fields the recorder assigns per entry, so
+// two records can be compared on the shape their caller and the sanitizer gave
+// them.
+func forgetJournalIdentity(entry Entry) Entry {
+	entry.Sequence = 0
+	entry.Timestamp = time.Time{}
+	entry.EntryID = ""
+	return entry
+}
+
+// The sanitizer can no longer produce a recording or control entry carrying
+// free-form text, so a journal line that does was not written through it. The
+// verifier reads files the sanitizer did not necessarily touch - an older
+// generation, a tampered one - and shares closedFreeFormKind with it so neither
+// can describe these kinds differently from the other.
+func TestVerifyJournalRejectsFreeFormTextOnClosedKinds(t *testing.T) {
+	const secret = "verify-free-form-fixture-secret"
+	for _, kind := range recordingAndControlKinds {
+		for _, field := range []string{"summary", "event_id", "rule"} {
+			t.Run(string(kind)+"/"+field, func(t *testing.T) {
+				entry := makeTestEntry("run-1", 1, time.Now().UTC())
+				entry.Kind = kind
+				entry.DecisionBy = DecisionBySystem
+				entry.EventID = ""
+				switch field {
+				case "summary":
+					entry.Summary = "operator typed " + secret
+				case "event_id":
+					entry.EventID = secret
+				case "rule":
+					entry.Rule = secret
+				}
+				report, err := VerifyJournal(bytes.NewReader(entriesToJSONL(t, []Entry{entry})))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if report.Passed || len(report.Issues) != 1 ||
+					!strings.Contains(report.Issues[0].Message, "contains free-form text") {
+					t.Fatalf("VerifyJournal = %#v", report)
+				}
+				if strings.Contains(report.Issues[0].Message, secret) {
+					t.Fatalf("issue message quotes journal content: %q", report.Issues[0].Message)
+				}
+			})
+		}
+	}
+}
