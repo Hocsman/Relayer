@@ -4,6 +4,15 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+### Fixed
+
+- **Publishing a configuration failed spuriously on Windows**: `ReplaceAgents` and the full-configuration save retried the atomic rename five times ten milliseconds apart, a fifty-millisecond budget that is shorter than a transient hold on the file lasts. The caller then reported `could not atomically publish configuration` for a save that would have succeeded a moment later, which in the Desktop GUI and the web settings panel is a save that appears to have failed. `publishConfigurationBytes`, the rollback path, had no retry at all.
+  - All three rename sites now share one helper with a two-second budget and exponential backoff, matching the configuration lock's own timeout.
+  - Retrying is confined to the platform conditions that clear on their own, confirmed against this platform rather than assumed: an exclusive handle on the destination reports `ERROR_ACCESS_DENIED`, one on the source reports `ERROR_SHARING_VIOLATION`. A missing source or directory is returned immediately, because waiting does not create a file. Away from Windows nothing is retried: `rename(2)` does not fail because another process holds the file open, so every error it reports is a real one.
+  - The trigger is broader than antivirus. Go does not pass `FILE_SHARE_DELETE` when it opens a file, so **any** concurrent reader of the configuration is enough for Windows to refuse the publish.
+  - This was also the cause of the intermittent `internal/config` and `cmd/relayer-gui` test failures on Windows, including the lifecycle tests that reported `restart did not reach strict old-run stop` — a symptom downstream of the failed save. Both suites now run clean where they previously failed roughly one run in three.
+
+
 ## [0.8.0] - 2026-09-20
 
 Minor release adding structured MCP tool-call badges beside the arbitration prompt, git interactions for the Aider adapter, and a correction to an adapter inventory that had been two releases out of date.
