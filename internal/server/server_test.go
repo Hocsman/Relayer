@@ -27,6 +27,35 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// startServeForTest runs the gateway until the test ends, and waits for it to
+// finish unwinding before the test's temporary directory is removed.
+//
+// Cancelling the context only asks the server to stop. It closes the audit
+// journal while Serve returns, and Windows cannot delete a file another handle
+// still holds, so t.TempDir's cleanup fails on a test that merely cancels.
+// Every gateway test starts here so no call site can forget the wait.
+func startServeForTest(t *testing.T, ctx context.Context, cancel context.CancelFunc, opts Options) <-chan error {
+	t.Helper()
+
+	serverErrCh := make(chan error, 1)
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		serverErrCh <- Serve(ctx, opts)
+	}()
+
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-served:
+		case <-time.After(10 * time.Second):
+			t.Error("the gateway did not shut down within 10s")
+		}
+	})
+
+	return serverErrCh
+}
+
 func TestServerLifecycleAndAgentAddition(t *testing.T) {
 	// Create temporary configuration directory and file
 	tempDir := t.TempDir()
@@ -62,10 +91,7 @@ func TestServerLifecycleAndAgentAddition(t *testing.T) {
 		},
 	}
 
-	serverErrCh := make(chan error, 1)
-	go func() {
-		serverErrCh <- Serve(ctx, opts)
-	}()
+	serverErrCh := startServeForTest(t, ctx, cancel, opts)
 
 	var readyInfo struct {
 		serverURL string
@@ -344,22 +370,7 @@ func TestServerRPCMethods(t *testing.T) {
 		},
 	}
 
-	served := make(chan struct{})
-	go func() {
-		defer close(served)
-		_ = Serve(ctx, opts)
-	}()
-	// Cancelling only asks the server to stop; the audit journal is closed while
-	// Serve unwinds. Waiting for that before t.TempDir removes the directory is
-	// what keeps Windows from failing the cleanup on a file still open.
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case <-served:
-		case <-time.After(10 * time.Second):
-			t.Error("the server did not shut down within 10s")
-		}
-	})
+	_ = startServeForTest(t, ctx, cancel, opts)
 
 	var baseURL string
 	select {
@@ -531,10 +542,7 @@ func TestSaveFullSettingsNotificationsAndBroadcast(t *testing.T) {
 		},
 	}
 
-	serverErrCh := make(chan error, 1)
-	go func() {
-		serverErrCh <- Serve(ctx, opts)
-	}()
+	serverErrCh := startServeForTest(t, ctx, cancel, opts)
 
 	var baseURL string
 	select {
@@ -736,10 +744,7 @@ func TestRBACAuthenticationAndPermissions(t *testing.T) {
 		},
 	}
 
-	serverErrCh := make(chan error, 1)
-	go func() {
-		serverErrCh <- Serve(ctx, opts)
-	}()
+	serverErrCh := startServeForTest(t, ctx, cancel, opts)
 
 	var baseURL string
 	select {
@@ -1015,10 +1020,7 @@ func TestInteractivePTYWebAndAudit(t *testing.T) {
 		},
 	}
 
-	serverErrCh := make(chan error, 1)
-	go func() {
-		serverErrCh <- Serve(ctx, opts)
-	}()
+	serverErrCh := startServeForTest(t, ctx, cancel, opts)
 
 	var baseURL string
 	select {

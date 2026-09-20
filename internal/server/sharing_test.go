@@ -168,32 +168,15 @@ func startSharingGateway(t *testing.T) string {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	readyCh := make(chan string, 1)
-	serverErrCh := make(chan error, 1)
-	served := make(chan struct{})
-	// Cancelling only asks the server to stop; it closes the audit journal while
-	// Serve unwinds, and t.TempDir cannot remove a file still open on Windows.
-	// A separate channel rather than serverErrCh, which the startup path below
-	// may already have consumed.
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case <-served:
-		case <-time.After(10 * time.Second):
-			t.Error("the server did not shut down within 10s")
-		}
+	serverErrCh := startServeForTest(t, ctx, cancel, Options{
+		Bind:        "127.0.0.1",
+		Port:        0,
+		Token:       "alice:opAlice,carol:opCarol",
+		ViewerToken: "dave:viewDave",
+		ConfigPath:  configPath,
+		Diagnostics: io.Discard,
+		OnReady:     func(serverURL, _ string) { readyCh <- serverURL },
 	})
-	go func() {
-		defer close(served)
-		serverErrCh <- Serve(ctx, Options{
-			Bind:        "127.0.0.1",
-			Port:        0,
-			Token:       "alice:opAlice,carol:opCarol",
-			ViewerToken: "dave:viewDave",
-			ConfigPath:  configPath,
-			Diagnostics: io.Discard,
-			OnReady:     func(serverURL, _ string) { readyCh <- serverURL },
-		})
-	}()
 
 	select {
 	case baseURL := <-readyCh:
