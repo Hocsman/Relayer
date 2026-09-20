@@ -4,10 +4,12 @@ import { AgentGrid } from "./components/AgentGrid";
 import { AgentSettingsPanel } from "./components/AgentSettingsPanel";
 import { AuditPanel } from "./components/AuditPanel";
 import { DecisionModal } from "./components/DecisionModal";
+import { NotificationToast } from "./components/NotificationToast";
 import { ObservabilityPanel } from "./components/ObservabilityPanel";
 import { PreflightPanel } from "./components/PreflightPanel";
 import { SupervisorPanel } from "./components/SupervisorPanel";
 import { TopBar } from "./components/TopBar";
+import { useNotifications } from "./hooks/useNotifications";
 import { useRelayer } from "./hooks/useRelayer";
 import { supervisionEventKey } from "./lib/eventKey";
 import type { AppState, RelayerBridge, RunStatus } from "./types/relayer";
@@ -26,6 +28,14 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
     saveAgentProfilesAndRestart,
     stopRun,
   } = useRelayer(bridge);
+  const {
+    toasts,
+    dismissToast,
+    permissionState,
+    requestPermission,
+    soundEnabled,
+    setSoundEnabled,
+  } = useNotifications(bridge);
   const [selectedEventKey, setSelectedEventKey] = useState<string>();
   const [modalOpen, setModalOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(false);
@@ -209,6 +219,10 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
           onSave={saveAgentProfiles}
           onSaveAndRestart={saveAgentProfilesAndRestart}
           onClose={() => setAgentsOpen(false)}
+          browserNotifPermission={permissionState}
+          onRequestBrowserPermission={requestPermission}
+          soundEnabled={soundEnabled}
+          onSoundEnabledChange={setSoundEnabled}
         />
       )}
       {preflightOpen && (
@@ -231,6 +245,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
           }}
         />
       )}
+      <NotificationToast toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

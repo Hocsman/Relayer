@@ -215,6 +215,8 @@ export function createWebBridge(options: WebBridgeOptions = {}): RelayerBridge {
       callRpc<string>("exportAuditReport", { format }),
     getTelemetrySnapshot: () =>
       callRpc<TelemetrySnapshotView>("getTelemetrySnapshot"),
+    testNotification: () =>
+      callRpc<{ ok: boolean }>("testNotification"),
 
     on<K extends BridgeEventName>(
       event: K,

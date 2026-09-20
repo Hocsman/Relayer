@@ -206,6 +206,19 @@ type SaveFullSettingsRequest struct {
 	Notifications    *NotificationSettings `json:"notifications,omitempty"`
 }
 
+// NotificationEvent is broadcast to WebSocket clients when an operator alert fires.
+type NotificationEvent struct {
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	AgentName string `json:"agentName,omitempty"`
+	SessionID string `json:"sessionID,omitempty"`
+	EventID   string `json:"eventID,omitempty"`
+	Kind      string `json:"kind"`
+	Severity  string `json:"severity"`
+	Reason    string `json:"reason,omitempty"`
+	Timestamp string `json:"timestamp"`
+}
+
 type PreflightPlatform struct {
 	OS        string `json:"os"`
 	Arch      string `json:"arch"`

@@ -476,6 +476,9 @@ func (gh *gatewayHandler) executeMethod(method string, params json.RawMessage) (
 		}
 		return gh.ctrl.SaveFullSettings(p.RunID, p.Request)
 
+	case "testNotification":
+		return map[string]any{"ok": true}, gh.ctrl.TestNotification()
+
 	case "stopRun":
 		var p struct {
 			RunID string `json:"runID"`

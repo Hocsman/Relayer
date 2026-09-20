@@ -31,6 +31,10 @@ interface AgentSettingsPanelProps {
   onSave(runID: string, request: SaveAgentProfilesRequest): Promise<AgentProfilesView>;
   onSaveAndRestart(request: SaveAgentProfilesAndRestartRequest): Promise<LifecycleResult>;
   onClose(): void;
+  browserNotifPermission?: NotificationPermission;
+  onRequestBrowserPermission?: () => void;
+  soundEnabled?: boolean;
+  onSoundEnabledChange?: (enabled: boolean) => void;
 }
 
 type Notice = { tone: "success" | "warning"; text: string };
@@ -44,6 +48,10 @@ export function AgentSettingsPanel({
   onSave,
   onSaveAndRestart,
   onClose,
+  browserNotifPermission,
+  onRequestBrowserPermission,
+  soundEnabled,
+  onSoundEnabledChange,
 }: AgentSettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>("agents");
   const [view, setView] = useState<AgentProfilesView>();
@@ -75,6 +83,22 @@ export function AgentSettingsPanel({
   const [restartConfirmation, setRestartConfirmation] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<Notice>();
+  const [testFeedback, setTestFeedback] = useState<string>("");
+
+  const handleTestNotification = async () => {
+    try {
+      if (bridge.testNotification) {
+        await bridge.testNotification();
+        setTestFeedback("✓ Notification de test envoyée !");
+      } else {
+        setTestFeedback("✓ Test simulé");
+      }
+      setTimeout(() => setTestFeedback(""), 3500);
+    } catch {
+      setTestFeedback("⚠ Échec de l'envoi du test.");
+      setTimeout(() => setTestFeedback(""), 3500);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -447,6 +471,12 @@ export function AgentSettingsPanel({
                   setError(undefined);
                 }}
                 disabled={busy}
+                browserNotifPermission={browserNotifPermission}
+                onRequestBrowserPermission={onRequestBrowserPermission}
+                soundEnabled={soundEnabled}
+                onSoundEnabledChange={onSoundEnabledChange}
+                onTestNotification={handleTestNotification}
+                testStatus={testFeedback}
               />
             )}
 
@@ -1041,10 +1071,22 @@ function NotificationSettingsTab({
   settings,
   onChange,
   disabled,
+  browserNotifPermission,
+  onRequestBrowserPermission,
+  soundEnabled,
+  onSoundEnabledChange,
+  onTestNotification,
+  testStatus,
 }: {
   settings: NotificationSettings;
   onChange(settings: NotificationSettings): void;
   disabled: boolean;
+  browserNotifPermission?: NotificationPermission;
+  onRequestBrowserPermission?: () => void;
+  soundEnabled?: boolean;
+  onSoundEnabledChange?: (enabled: boolean) => void;
+  onTestNotification?: () => void;
+  testStatus?: string;
 }) {
   const [webhookName, setWebhookName] = useState("");
   const [webhookUrl, setWebhookUrl] = useState("");
@@ -1074,6 +1116,64 @@ function NotificationSettingsTab({
 
   return (
     <div className="settings-section" aria-label="Notification settings">
+      <div className="settings-group">
+        <h3>🌐 Web & Browser Push Alerts</h3>
+        <p>Real-time notifications and acoustic chimes in the browser when agents request human decisions.</p>
+
+        <div className="settings-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <strong>Browser Push Notifications</strong>
+            <div style={{ color: "var(--text-muted)", fontSize: "12px", marginTop: "2px" }}>
+              {browserNotifPermission === "granted" && "✓ Push notifications authorized (alerts appear even in background tabs)"}
+              {browserNotifPermission === "denied" && "⚠ Notifications blocked in browser. Re-enable in site permissions."}
+              {(!browserNotifPermission || browserNotifPermission === "default") && "Permission not granted yet"}
+            </div>
+          </div>
+          {(!browserNotifPermission || browserNotifPermission === "default") && onRequestBrowserPermission && (
+            <button
+              type="button"
+              className="button button--primary button--small"
+              onClick={onRequestBrowserPermission}
+              disabled={disabled}
+            >
+              Autoriser dans le navigateur
+            </button>
+          )}
+        </div>
+
+        {onSoundEnabledChange !== undefined && (
+          <div className="settings-row">
+            <label className="settings-toggle">
+              <input
+                type="checkbox"
+                checked={soundEnabled ?? true}
+                onChange={(e) => onSoundEnabledChange(e.target.checked)}
+                disabled={disabled}
+              />
+              <span>Son d'alerte audio (synthétiseur Web Audio en cas d'arbitrage ou d'incident)</span>
+            </label>
+          </div>
+        )}
+
+        {onTestNotification && (
+          <div className="settings-row" style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "8px" }}>
+            <button
+              type="button"
+              className="button button--ghost button--small"
+              onClick={onTestNotification}
+              disabled={disabled}
+            >
+              🔔 Tester les notifications (Push, Son & Webhooks)
+            </button>
+            {testStatus && (
+              <span style={{ color: "#10b981", fontSize: "12px", fontWeight: 600 }}>
+                {testStatus}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
       <div className="settings-group">
         <h3>Dispatch Channels</h3>
         <p>Choose where and how arbitration alerts and guardrail intercepts are sent.</p>

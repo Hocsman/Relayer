@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -322,6 +323,9 @@ func TestServerLifecycleAndAgentAddition(t *testing.T) {
 
 func TestServerRPCMethods(t *testing.T) {
 	tempDir := t.TempDir()
+	t.Setenv("APPDATA", tempDir)
+	t.Setenv("HOME", tempDir)
+	t.Setenv("XDG_CONFIG_HOME", tempDir)
 	configPath := filepath.Join(tempDir, "config.yaml")
 	if _, err := config.LoadOrCreate(configPath); err != nil {
 		t.Fatalf("LoadOrCreate: %v", err)
@@ -488,5 +492,211 @@ func TestCLIServeParsing(t *testing.T) {
 	err = RunServe([]string{"--nonexistent-flag"}, io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("Expected error for unknown flag to relayer serve")
+	}
+}
+
+func TestSaveFullSettingsNotificationsAndBroadcast(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("APPDATA", tempDir)
+	t.Setenv("HOME", tempDir)
+	t.Setenv("XDG_CONFIG_HOME", tempDir)
+	configPath := filepath.Join(tempDir, "config.yaml")
+	if _, err := config.LoadOrCreate(configPath); err != nil {
+		t.Fatalf("LoadOrCreate: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	readyCh := make(chan string, 1)
+	opts := Options{
+		Bind:        "127.0.0.1",
+		Port:        0,
+		ConfigPath:  configPath,
+		Diagnostics: io.Discard,
+		OnReady: func(serverURL string, _ string) {
+			readyCh <- serverURL
+		},
+	}
+
+	serverErrCh := make(chan error, 1)
+	go func() {
+		serverErrCh <- Serve(ctx, opts)
+	}()
+
+	var baseURL string
+	select {
+	case baseURL = <-readyCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Server startup timed out")
+	}
+
+	wsURL := strings.Replace(baseURL, "http://", "ws://", 1) + "/api/ws"
+	wsConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Dial WebSocket: %v", err)
+	}
+
+	broadcastCh := make(chan wsEventMessage, 20)
+	rpcRespCh := make(chan wsResponse, 20)
+
+	// Reader pump to split broadcast events and RPC responses
+	go func() {
+		for {
+			_, data, err := wsConn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var ev wsEventMessage
+			if err := json.Unmarshal(data, &ev); err == nil && ev.Event != "" {
+				broadcastCh <- ev
+				continue
+			}
+			var resp wsResponse
+			if err := json.Unmarshal(data, &resp); err == nil && resp.ID != "" {
+				rpcRespCh <- resp
+				continue
+			}
+		}
+	}()
+
+	callRPC := func(method string, params any) (json.RawMessage, error) {
+		paramsRaw, err := json.Marshal(params)
+		if err != nil {
+			return nil, err
+		}
+		reqID := fmt.Sprintf("rpc-%d", time.Now().UnixNano())
+		reqMsg := wsRequest{
+			ID:     reqID,
+			Method: method,
+			Params: paramsRaw,
+		}
+		if err := wsConn.WriteJSON(reqMsg); err != nil {
+			return nil, err
+		}
+
+		timeout := time.After(5 * time.Second)
+		for {
+			select {
+			case resp := <-rpcRespCh:
+				if resp.ID == reqID {
+					if resp.Error != "" {
+						return nil, fmt.Errorf("RPC error: %s", resp.Error)
+					}
+					return json.Marshal(resp.Result)
+				}
+			case <-timeout:
+				return nil, errors.New("RPC timeout")
+			}
+		}
+	}
+
+	// 1. Get initial full settings
+	rawSettings, err := callRPC("getFullSettings", map[string]any{})
+	if err != nil {
+		t.Fatalf("getFullSettings failed: %v", err)
+	}
+	var fullSettings FullSettingsView
+	if err := json.Unmarshal(rawSettings, &fullSettings); err != nil {
+		t.Fatalf("Unmarshal FullSettingsView: %v", err)
+	}
+
+	// 2. Save new notification settings
+	newNotifSettings := NotificationSettings{
+		Enabled:     true,
+		Bell:        false,
+		Desktop:     true,
+		MinSeverity: "warning",
+		Webhooks: []NotificationWebhookSetting{
+			{
+				Name:        "team-slack",
+				URL:         "https://hooks.slack.com/services/T00/B00/XXXX",
+				Format:      "slack",
+				MinSeverity: "warning",
+				Timeout:     "5s",
+			},
+		},
+	}
+
+	saveReq := SaveFullSettingsRequest{
+		ExpectedRevision: fullSettings.Revision,
+		Notifications:    &newNotifSettings,
+	}
+
+	rawUpdated, err := callRPC("saveFullSettings", map[string]any{"request": saveReq})
+	if err != nil {
+		t.Fatalf("saveFullSettings failed: %v", err)
+	}
+	var updatedSettings FullSettingsView
+	if err := json.Unmarshal(rawUpdated, &updatedSettings); err != nil {
+		t.Fatalf("Unmarshal updated FullSettingsView: %v", err)
+	}
+
+	if updatedSettings.Notifications.Bell != false {
+		t.Errorf("Expected Bell to be false, got %v", updatedSettings.Notifications.Bell)
+	}
+	if len(updatedSettings.Notifications.Webhooks) != 1 || updatedSettings.Notifications.Webhooks[0].Name != "team-slack" {
+		t.Fatalf("Expected 1 webhook 'team-slack', got %+v", updatedSettings.Notifications.Webhooks)
+	}
+
+	// 3. Verify disk persistence
+	diskCfg, err := config.LoadExisting(configPath)
+	if err != nil {
+		t.Fatalf("LoadExisting from disk: %v", err)
+	}
+	if diskCfg.Notifications.Bell != false {
+		t.Errorf("Disk YAML Bell = true, want false")
+	}
+	if len(diskCfg.Notifications.Webhooks) != 1 || diskCfg.Notifications.Webhooks[0].Name != "team-slack" {
+		t.Fatalf("Disk YAML webhooks mismatch: %+v", diskCfg.Notifications.Webhooks)
+	}
+
+	// 4. Test Notification RPC
+	rawTest, err := callRPC("testNotification", map[string]any{})
+	if err != nil {
+		t.Fatalf("testNotification RPC failed: %v", err)
+	}
+	var testResult map[string]any
+	if err := json.Unmarshal(rawTest, &testResult); err != nil || testResult["ok"] != true {
+		t.Fatalf("testNotification result mismatch: %s", rawTest)
+	}
+
+	// 5. Verify broadcast event was received over WebSocket
+	var notifEvent NotificationEvent
+	found := false
+	timeout := time.After(5 * time.Second)
+	for !found {
+		select {
+		case ev := <-broadcastCh:
+			if ev.Event == "relayer:notification" {
+				payloadBytes, _ := json.Marshal(ev.Payload)
+				if err := json.Unmarshal(payloadBytes, &notifEvent); err != nil {
+					t.Fatalf("Unmarshal NotificationEvent: %v", err)
+				}
+				found = true
+			}
+		case <-timeout:
+			t.Fatal("Timeout waiting for relayer:notification broadcast event")
+		}
+	}
+
+	if notifEvent.Title != "Relayer Test Notification" {
+		t.Errorf("Unexpected notification title: %s", notifEvent.Title)
+	}
+	if notifEvent.Severity != "info" {
+		t.Errorf("Unexpected notification severity: %s", notifEvent.Severity)
+	}
+
+	// 6. Graceful shutdown
+	_ = wsConn.Close()
+	http.DefaultClient.CloseIdleConnections()
+	cancel()
+	select {
+	case err := <-serverErrCh:
+		if err != nil && !strings.Contains(err.Error(), "context canceled") {
+			t.Fatalf("Serve returned error on shutdown: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Serve graceful shutdown timed out")
 	}
 }

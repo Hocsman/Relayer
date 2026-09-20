@@ -779,6 +779,19 @@ export function createDemoBridge(): RelayerBridge {
         ],
       };
     },
+    async testNotification() {
+      emit("relayer:notification", {
+        title: "Relayer Demo Notification",
+        body: "This is a simulated notification from the demo bridge.",
+        agentName: "demo-agent",
+        eventID: `demo-test-${Date.now()}`,
+        kind: "session_state",
+        severity: "info",
+        reason: "Demo test initiated",
+        timestamp: new Date().toISOString(),
+      });
+      return { ok: true };
+    },
     on<K extends BridgeEventName>(
       event: K,
       listener: (payload: BridgeEventMap[K]) => void,

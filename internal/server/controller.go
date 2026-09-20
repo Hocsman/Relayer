@@ -22,6 +22,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/notify"
+	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/preflight"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/telemetry"
@@ -30,10 +31,11 @@ import (
 )
 
 const (
-	eventSnapshot = "relayer:snapshot"
-	eventSemantic = "relayer:event"
-	eventStatus   = "relayer:status"
-	eventError    = "relayer:error"
+	eventSnapshot     = "relayer:snapshot"
+	eventSemantic     = "relayer:event"
+	eventStatus       = "relayer:status"
+	eventError        = "relayer:error"
+	eventNotification = "relayer:notification"
 
 	minAgentProfiles = 1
 	maxAgentProfiles = 8
@@ -369,18 +371,32 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 		})
 
 		// Notification
-		if c.notifier != nil {
-			c.notifier.Notify(notify.Notification{
-				Title:     "Relayer Arbitration Required",
-				AgentName: adapterEv.AgentID,
-				SessionID: adapterEv.SessionID,
-				Reason:    evaluation.Reason,
-				EventID:   adapterEv.ID,
-				Kind:      notify.KindPendingDecision,
-				Severity:  notify.SeverityWarning,
-				Details:   adapterEv.Summary,
-			})
+		notif := notify.Notification{
+			Title:     "Relayer Arbitration Required",
+			AgentName: adapterEv.AgentID,
+			SessionID: adapterEv.SessionID,
+			Reason:    evaluation.Reason,
+			EventID:   adapterEv.ID,
+			Kind:      notify.KindPendingDecision,
+			Severity:  notify.SeverityWarning,
+			Details:   adapterEv.Summary,
+			Timestamp: time.Now().UTC(),
 		}
+		if c.notifier != nil {
+			c.notifier.Notify(notif)
+		}
+
+		c.broadcast(eventNotification, NotificationEvent{
+			Title:     notif.Title,
+			Body:      adapterEv.Summary,
+			AgentName: adapterEv.AgentID,
+			SessionID: adapterEv.SessionID,
+			EventID:   adapterEv.ID,
+			Kind:      notif.Kind,
+			Severity:  notif.Severity,
+			Reason:    evaluation.Reason,
+			Timestamp: notif.Timestamp.Format(time.RFC3339),
+		})
 
 	case session.AdapterEventWithdrawn:
 		adapterEv := ev.Event
@@ -900,17 +916,130 @@ func (c *Controller) GetFullSettings() (FullSettingsView, error) {
 }
 
 func (c *Controller) SaveFullSettings(runID string, req SaveFullSettingsRequest) (FullSettingsView, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	cfg, err := config.LoadExisting(c.configPath)
+	if err != nil {
+		return FullSettingsView{}, err
+	}
+
+	if req.ExpectedRevision != "" && req.ExpectedRevision != c.revisionToken {
+		return FullSettingsView{}, errStaleRevision
+	}
+
+	var update config.FullConfigurationUpdate
+
 	if len(req.Profiles) > 0 {
-		_, err := c.SaveAgentProfiles(runID, SaveAgentProfilesRequest{
-			ExpectedRevision: req.ExpectedRevision,
-			Profiles:         req.Profiles,
-		})
+		specs, err := c.validateAndBuildSpecsLocked(req.Profiles)
 		if err != nil {
 			return FullSettingsView{}, err
 		}
+		update.Agents = specs
+		update.UpdateAgents = true
 	}
 
-	return c.GetFullSettings()
+	if req.Notifications != nil {
+		update.Notifications = convertNotificationSettings(req.Notifications)
+	}
+
+	if req.Security != nil {
+		policies := cfg.Policies
+		if req.Security.DefaultAction != "" {
+			policies.DefaultAction = policy.Action(strings.ToLower(req.Security.DefaultAction))
+		}
+		policies.DryRun = req.Security.DryRun
+		if req.Security.RateLimitPerMinute > 0 {
+			policies.RateLimitPerMinute = req.Security.RateLimitPerMinute
+		}
+		if req.Security.MaxConsecutiveAutoDecisions > 0 {
+			policies.MaxConsecutiveAutoDecisions = req.Security.MaxConsecutiveAutoDecisions
+		}
+		update.Policies = &policies
+	}
+
+	res, newRev, err := config.UpdateFullConfiguration(c.configPath, cfg.Revision, update)
+	if err != nil {
+		return FullSettingsView{}, err
+	}
+
+	c.revisionHash = newRev
+	tokenBytes := make([]byte, 16)
+	_, _ = rand.Read(tokenBytes)
+	c.revisionToken = hex.EncodeToString(tokenBytes)
+
+	// Live reload notifier if notifications were updated
+	if update.Notifications != nil {
+		c.notifier = notify.New(res.Notifications, c.diagnostics)
+	}
+
+	profilesView, err := c.loadAgentProfilesLocked()
+	if err != nil {
+		return FullSettingsView{}, err
+	}
+
+	return FullSettingsView{
+		AgentProfilesView: profilesView,
+		Security:          extractSecuritySettings(res),
+		Notifications:     extractNotificationSettings(res.Notifications),
+	}, nil
+}
+
+func (c *Controller) TestNotification() error {
+	c.mu.RLock()
+	notifier := c.notifier
+	c.mu.RUnlock()
+
+	notif := notify.Notification{
+		Title:     "Relayer Test Notification",
+		Body:      "This is a test notification from Relayer Supervisor to verify alert channels.",
+		AgentName: "supervisor",
+		EventID:   fmt.Sprintf("test-%d", time.Now().UnixNano()),
+		Kind:      notify.KindSessionState,
+		Severity:  notify.SeverityInfo,
+		Reason:    "Operator initiated test",
+		Timestamp: time.Now().UTC(),
+	}
+
+	if notifier != nil {
+		notifier.Notify(notif)
+	}
+
+	c.broadcast(eventNotification, NotificationEvent{
+		Title:     notif.Title,
+		Body:      notif.Body,
+		AgentName: notif.AgentName,
+		EventID:   notif.EventID,
+		Kind:      notif.Kind,
+		Severity:  notif.Severity,
+		Reason:    notif.Reason,
+		Timestamp: notif.Timestamp.Format(time.RFC3339),
+	})
+
+	return nil
+}
+
+func convertNotificationSettings(ns *NotificationSettings) *notify.Config {
+	if ns == nil {
+		return nil
+	}
+	webhooks := make([]notify.WebhookConfig, 0, len(ns.Webhooks))
+	for _, w := range ns.Webhooks {
+		webhooks = append(webhooks, notify.WebhookConfig{
+			Name:        w.Name,
+			URL:         w.URL,
+			Format:      w.Format,
+			MinSeverity: w.MinSeverity,
+			Timeout:     w.Timeout,
+		})
+	}
+	return &notify.Config{
+		Enabled:     ns.Enabled,
+		Bell:        ns.Bell,
+		Desktop:     ns.Desktop,
+		MinSeverity: ns.MinSeverity,
+		Webhooks:    webhooks,
+	}
 }
 
 // -------------------------------------------------------------

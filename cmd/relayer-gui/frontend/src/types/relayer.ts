@@ -279,11 +279,24 @@ export interface AgentProfileInput {
   preserve: boolean;
 }
 
+export interface NotificationEvent {
+  title: string;
+  body: string;
+  agentName?: string;
+  sessionID?: string;
+  eventID?: string;
+  kind: string;
+  severity: string;
+  reason?: string;
+  timestamp: string;
+}
+
 export type BridgeEventMap = {
   "relayer:snapshot": SnapshotEvent;
   "relayer:event": SupervisionEvent;
   "relayer:status": StatusEvent;
   "relayer:error": SafeErrorEvent;
+  "relayer:notification": NotificationEvent;
 };
 
 export interface AuditSummaryView {
@@ -450,6 +463,7 @@ export interface RelayerBridge {
   verifyAuditJournal(): Promise<AuditVerificationView>;
   exportAuditReport(format: "json" | "csv"): Promise<string>;
   getTelemetrySnapshot(): Promise<TelemetrySnapshotView>;
+  testNotification?(): Promise<{ ok: boolean }>;
   on<K extends BridgeEventName>(event: K, listener: (payload: BridgeEventMap[K]) => void): () => void;
 }
 
