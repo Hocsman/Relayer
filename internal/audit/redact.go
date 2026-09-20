@@ -191,22 +191,30 @@ func safeOperator(value string) string {
 // closedFreeFormKind reports a kind whose record carries no free-form text at
 // all, whatever the mode, the caller, or the actor named by DecisionBy.
 //
-// These are the recording and control kinds, which sit closer to raw terminal
-// bytes than any other record: they describe a captured replay or the keyboard
-// hand-over that produced one. The comment beside their constants promises that
-// no captured stream and no typed key is a field of Entry, and Summary, EventID
-// and Rule are such fields. A promise kept only by every future emitter
-// remembering to leave them empty is not kept; keeping it here means a
-// system-emitted record cannot open them by simply not being a human decision.
+// These are the recording, control and attach kinds, which sit closer to raw
+// terminal bytes than any other record: they describe a captured replay, the
+// keyboard hand-over that produced one, or a terminal somebody is typing into
+// directly. The comment beside their constants promises that no captured stream
+// and no typed key is a field of Entry, and Summary, EventID and Rule are such
+// fields. A promise kept only by every future emitter remembering to leave them
+// empty is not kept; keeping it here means a system-emitted record cannot open
+// them by simply not being a human decision.
 //
-// Only the free-form fields go. A recording or control record legitimately
-// carries its identity, its outcome, its reason code and its allowlisted
-// metadata, which an auditor needs, so this is deliberately not
-// KindOperatorInput's closed shape.
+// The attach kinds are in this set for that reason rather than for a defect.
+// Their two emitters, in internal/server and internal/tui, both happen to pass
+// DecisionByHuman and to populate neither field, so nothing changes for them
+// today and no journal already written can contain what this now refuses --
+// which is what makes widening the rule safe for VerifyJournal as well. Resting
+// on that coincidence was the thing worth fixing.
+//
+// Only the free-form fields go. Such a record legitimately carries its
+// identity, its outcome, its reason code and its allowlisted metadata, which an
+// auditor needs, so this is deliberately not KindOperatorInput's closed shape.
 func closedFreeFormKind(kind Kind) bool {
 	switch kind {
 	case KindRecordingStarted, KindRecordingFinished, KindRecordingExported, KindRecordingDeleted,
-		KindControlRequested, KindControlGranted, KindControlDeclined, KindControlReleased, KindControlForced:
+		KindControlRequested, KindControlGranted, KindControlDeclined, KindControlReleased, KindControlForced,
+		KindAttachStarted, KindAttachFinished:
 		return true
 	}
 	return false

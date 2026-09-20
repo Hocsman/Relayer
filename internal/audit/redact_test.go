@@ -312,10 +312,7 @@ func TestSanitizeEntryOffIsEmpty(t *testing.T) {
 }
 
 func TestSanitizeEntryPreservesRecordingAndControlKinds(t *testing.T) {
-	for _, kind := range []Kind{
-		KindRecordingStarted, KindRecordingFinished, KindRecordingExported, KindRecordingDeleted,
-		KindControlRequested, KindControlGranted, KindControlDeclined, KindControlReleased, KindControlForced,
-	} {
+	for _, kind := range closedFreeFormKinds {
 		for _, mode := range []Mode{ModeMetadata, ModeDetailed} {
 			got := SanitizeEntry(Entry{Kind: kind, Outcome: OutcomeStarted, Operator: "alice"}, mode)
 			if got.Kind != kind {
@@ -535,10 +532,7 @@ func TestSanitizeEntryDropsToolCallArgumentValues(t *testing.T) {
 // and no actor may carry caller text on these kinds.
 func TestSanitizeEntryClosesSummaryForRecordingAndControlKinds(t *testing.T) {
 	const secret = "recording-summary-fixture-secret"
-	for _, kind := range []Kind{
-		KindRecordingStarted, KindRecordingFinished, KindRecordingExported, KindRecordingDeleted,
-		KindControlRequested, KindControlGranted, KindControlDeclined, KindControlReleased, KindControlForced,
-	} {
+	for _, kind := range closedFreeFormKinds {
 		for _, mode := range []Mode{ModeOff, ModeMetadata, ModeDetailed} {
 			for _, actor := range []DecisionBy{DecisionBySystem, DecisionByHuman} {
 				entry := Entry{
@@ -618,10 +612,7 @@ func TestSanitizeEntryForcesFixedSummaries(t *testing.T) {
 // and they survive ModeMetadata where Summary never appears at all.
 func TestSanitizeEntryClosesNeighbourFieldsForRecordingAndControlKinds(t *testing.T) {
 	const secret = "operator typed rm -rf /home/alice/wallet.dat"
-	for _, kind := range []Kind{
-		KindRecordingStarted, KindRecordingFinished, KindRecordingExported, KindRecordingDeleted,
-		KindControlRequested, KindControlGranted, KindControlDeclined, KindControlReleased, KindControlForced,
-	} {
+	for _, kind := range closedFreeFormKinds {
 		for _, mode := range []Mode{ModeMetadata, ModeDetailed} {
 			got := SanitizeEntry(Entry{
 				Kind:       kind,

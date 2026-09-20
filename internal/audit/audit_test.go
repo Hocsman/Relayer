@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,80 @@ import (
 // recordingAndControlKinds is the vocabulary added for session recording and
 // multi-operator control.
 var recordingAndControlKinds = []Kind{
+	KindRecordingStarted, KindRecordingFinished, KindRecordingExported, KindRecordingDeleted,
+	KindControlRequested, KindControlGranted, KindControlDeclined, KindControlReleased, KindControlForced,
+}
+
+// closedFreeFormKinds mirrors the production closedFreeFormKind predicate. It
+// is wider than recordingAndControlKinds because the attach kinds are closed
+// for the same reason without being part of that vocabulary.
+//
+// Every test about the closure rule reads this one list, so a kind added to the
+// predicate and forgotten here fails TestClosedFreeFormKindMatchesItsTestList
+// rather than silently going untested.
+var closedFreeFormKinds = append(
+	append([]Kind(nil), recordingAndControlKinds...),
+	KindAttachStarted, KindAttachFinished,
+)
+
+// openFreeFormKinds are kinds that legitimately narrate. They exist here so
+// over-closing is caught as loudly as under-closing: a record an auditor reads
+// for its summary must keep it.
+var openFreeFormKinds = []Kind{
+	KindRunStarted, KindRunFinished, KindSessionStarted, KindSessionFinished,
+	KindSupervisionFinished, KindEventDetected, KindEventWithdrawn,
+	KindPolicyEvaluated, KindDecision, KindDelivery, KindSessionCleanup,
+	KindBackendError, KindOperatorInput,
+}
+
+func TestClosedFreeFormKindMatchesItsTestList(t *testing.T) {
+	for _, kind := range closedFreeFormKinds {
+		if !closedFreeFormKind(kind) {
+			t.Errorf("closedFreeFormKind(%q) = false, but the tests treat it as closed", kind)
+		}
+	}
+	for _, kind := range openFreeFormKinds {
+		if closedFreeFormKind(kind) {
+			t.Errorf("closedFreeFormKind(%q) = true, but the tests treat it as open", kind)
+		}
+	}
+	// Every kind in the vocabulary must appear in exactly one of the two lists.
+	// Without this, a kind added later is simply untested by both: it would not
+	// be closed, and nothing would say so.
+	grouped := make(map[Kind]int, len(allAuditKinds))
+	for _, kind := range closedFreeFormKinds {
+		grouped[kind]++
+	}
+	for _, kind := range openFreeFormKinds {
+		grouped[kind]++
+	}
+	for _, kind := range allAuditKinds {
+		switch grouped[kind] {
+		case 1:
+		case 0:
+			t.Errorf("kind %q is in neither the closed nor the open list", kind)
+		default:
+			t.Errorf("kind %q is in both lists", kind)
+		}
+	}
+	for kind := range grouped {
+		if !slices.Contains(allAuditKinds, kind) {
+			t.Errorf("kind %q is listed but is not part of the vocabulary", kind)
+		}
+	}
+}
+
+// allAuditKinds is the vocabulary as audit.go declares it, written out
+// independently of the two groupings above so it can check them. KindUnknown is
+// excluded: it is what safeKind returns for something it does not recognize,
+// never a kind a caller records.
+var allAuditKinds = []Kind{
+	KindRunStarted, KindRunFinished,
+	KindSessionStarted, KindSessionFinished, KindSupervisionFinished,
+	KindEventDetected, KindEventWithdrawn,
+	KindPolicyEvaluated, KindDecision, KindDelivery, KindOperatorInput,
+	KindAttachStarted, KindAttachFinished,
+	KindBackendError, KindSessionCleanup,
 	KindRecordingStarted, KindRecordingFinished, KindRecordingExported, KindRecordingDeleted,
 	KindControlRequested, KindControlGranted, KindControlDeclined, KindControlReleased, KindControlForced,
 }
@@ -238,7 +313,7 @@ func TestJournalOfClosedSummaryKindsStaysReadable(t *testing.T) {
 	// run_started stays the first line: the gate recognizes a journal by the
 	// kind it opens on, and only a long-established kind is safe there.
 	written := []Entry{{Kind: KindRunStarted, Outcome: OutcomeStarted}}
-	for _, kind := range recordingAndControlKinds {
+	for _, kind := range closedFreeFormKinds {
 		for _, actor := range []DecisionBy{DecisionBySystem, DecisionByHuman} {
 			for _, summary := range []string{"", "operator typed " + secret} {
 				written = append(written, Entry{
@@ -325,7 +400,7 @@ func forgetJournalIdentity(entry Entry) Entry {
 // can describe these kinds differently from the other.
 func TestVerifyJournalRejectsFreeFormTextOnClosedKinds(t *testing.T) {
 	const secret = "verify-free-form-fixture-secret"
-	for _, kind := range recordingAndControlKinds {
+	for _, kind := range closedFreeFormKinds {
 		for _, field := range []string{"summary", "event_id", "rule"} {
 			t.Run(string(kind)+"/"+field, func(t *testing.T) {
 				entry := makeTestEntry("run-1", 1, time.Now().UTC())

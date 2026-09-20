@@ -51,7 +51,11 @@ const (
 	// KindOperatorInput records only the lifecycle of a direct, human line
 	// submission. Entry intentionally has no field for the submitted text,
 	// its length, or the encoded terminal bytes.
-	KindOperatorInput  Kind = "operator_input"
+	KindOperatorInput Kind = "operator_input"
+	// KindAttachStarted and KindAttachFinished record that a human took or
+	// dropped direct control of a terminal. They never carry what was typed
+	// while holding it: SanitizeEntry drops Summary, EventID and Rule for them
+	// as it does for the recording and control kinds.
 	KindAttachStarted  Kind = "attach_started"
 	KindAttachFinished Kind = "attach_finished"
 	KindBackendError   Kind = "backend_error"
@@ -59,15 +63,16 @@ const (
 	// Recording kinds describe the lifecycle of a stored terminal replay. They
 	// state that a recording exists and how large it is; the captured stream
 	// itself is never a field of Entry, and neither is any recorded keystroke.
-	// SanitizeEntry drops Summary for them, so a caller has no free-form field
-	// left to put one in.
+	// SanitizeEntry drops Summary, EventID and Rule for them, so a caller has
+	// no free-form field left to put one in.
 	KindRecordingStarted  Kind = "recording_started"
 	KindRecordingFinished Kind = "recording_finished"
 	KindRecordingExported Kind = "recording_exported"
 	KindRecordingDeleted  Kind = "recording_deleted"
 	// Control kinds record which operator held the interactive keyboard and how
 	// the hand-over happened. They never carry what was typed while holding it:
-	// SanitizeEntry drops Summary for them as it does for the recording kinds.
+	// SanitizeEntry drops Summary, EventID and Rule for them as it does for the
+	// recording kinds.
 	KindControlRequested Kind = "control_requested"
 	KindControlGranted   Kind = "control_granted"
 	KindControlDeclined  Kind = "control_declined"
