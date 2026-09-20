@@ -838,6 +838,18 @@ func TestRBACAuthenticationAndPermissions(t *testing.T) {
 		{"saveFullSettings", map[string]any{"runID": "test"}},
 		{"testNotification", map[string]any{}},
 		{"stopRun", map[string]any{"runID": "test"}},
+		// Present in isMutatingMethod from the start but never asserted here.
+		{"submitAutomaticDecision", map[string]any{"runID": "test", "sessionID": "s", "eventID": "e", "decision": "allow"}},
+		{"saveAgentProfiles", map[string]any{"runID": "test"}},
+		{"saveAgentProfilesAndRestart", map[string]any{"expectedRunID": "test"}},
+		// Session sharing: a viewer may watch a terminal and may never hold it.
+		{"requestControl", map[string]any{"sessionID": "s"}},
+		{"grantControl", map[string]any{"sessionID": "s", "toConnID": "c"}},
+		{"declineControl", map[string]any{"sessionID": "s", "toConnID": "c"}},
+		{"releaseControl", map[string]any{"sessionID": "s"}},
+		{"forceTakeControl", map[string]any{"sessionID": "s"}},
+		// Session recording: a viewer may list and replay, never destroy.
+		{"deleteRecording", map[string]any{"id": "r"}},
 	}
 
 	for _, tt := range mutatingTests {
@@ -846,6 +858,24 @@ func TestRBACAuthenticationAndPermissions(t *testing.T) {
 			t.Errorf("Viewer calling mutating method %s succeeded, want permission denied", tt.method)
 		} else if !strings.Contains(err.Error(), "permission denied") {
 			t.Errorf("Viewer calling %s error = %v, want 'permission denied'", tt.method, err)
+		}
+	}
+
+	// Reading a roster and reading recordings are not mutations: observing is
+	// the whole point of the viewer role, so refusing them would make the role
+	// useless rather than safe.
+	readableTests := []struct {
+		method string
+		params map[string]any
+	}{
+		{"listPresence", map[string]any{"sessionID": "s"}},
+		{"observeSession", map[string]any{"sessionID": "s", "observing": true}},
+		{"listRecordings", map[string]any{}},
+	}
+	for _, tt := range readableTests {
+		if _, err := callViewerRPC(tt.method, tt.params); err != nil &&
+			strings.Contains(err.Error(), "permission denied") {
+			t.Errorf("Viewer calling read-only method %s was denied", tt.method)
 		}
 	}
 
