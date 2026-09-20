@@ -35,6 +35,7 @@ All notable user-visible changes are documented here. This file follows the stru
 - **`conn_id` was dropped from attach records**: the controller wrote it on `attach_started` and `attach_finished` but the metadata allowlist did not permit it there, so sanitization silently discarded the connection identity on exactly the interactive attach entries.
 - **Removed the free-form `reason` metadata key from control entries**: `Entry.Reason` is bounded to a short code while a metadata value is only truncated, so the same name under two rules meant the weaker one was what a reader saw.
 - **`getUserInfo` failed open to operator**: a failed or timed-out identity lookup left the interface assuming write authority it could not confirm, offering controls the server then silently rejected. It now fails closed to read-only.
+- **The audit report exported as JSON was not JSON**: the download rendered Go struct syntax rather than a parseable document. The CSV path now quotes every field through `encoding/csv`, since an operator identity comes from token configuration and can contain a comma.
 - **Restored gofmt compliance** in the audit and server tests, which had been failing the build workflow's format gate on `main`.
 
 ### Changed
