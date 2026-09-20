@@ -2,6 +2,7 @@ package record
 
 import (
 	"bytes"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -127,7 +128,7 @@ func TestMultiplexerRecordsAWholeSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read transcript: %v", err)
 	}
-	if header.Width != 100 || header.Height != 30 || header.Title != "claude --chat" {
+	if header.Width != 100 || header.Height != 30 || header.Title != "agent" {
 		t.Fatalf("header = %+v", header)
 	}
 	if frames[len(frames)-1].Kind != KindResize || frames[len(frames)-1].Data != "120x40" {
@@ -482,5 +483,59 @@ func TestMultiplexerLeavesNoGoroutineBehind(t *testing.T) {
 	}
 	if after > before {
 		t.Fatalf("goroutines = %d after close, want at most %d", after, before)
+	}
+}
+
+// TestStartSessionKeepsTheCommandOutOfTheHeader pins that a transcript header
+// never carries the agent's argument vector. Every asciicast player displays
+// the title, and the file is meant to be shareable for review; the command can
+// hold a whole shell script, which the audit model excludes from a record for
+// the same reason.
+func TestStartSessionKeepsTheCommandOutOfTheHeader(t *testing.T) {
+	store := openTestStore(t, testConfig(t))
+	multiplexer := NewMultiplexer(MultiplexerOptions{
+		Store:  store,
+		Config: testConfig(t),
+		RunID:  "run-title",
+	})
+	t.Cleanup(func() { _ = multiplexer.Close() })
+
+	const secret = "SUPER_SECRET_TOKEN_IN_ARGV"
+	multiplexer.StartSession(terminal.Info{
+		ID:             "alpha",
+		Name:           "Agent Alpha",
+		DisplayCommand: `"bash" "-c" "curl -H 'Authorization: ` + secret + `'"`,
+		Backend:        "pty",
+		Adapter:        "generic",
+	}, terminal.Size{Columns: 80, Rows: 24}, time.Unix(1700000000, 0))
+	multiplexer.RecordOutput("alpha", time.Unix(1700000001, 0), []byte("hello"))
+	multiplexer.FinishSession("alpha", time.Unix(1700000002, 0), nil)
+
+	if err := multiplexer.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	entries, err := store.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("recordings = %d, want 1", len(entries))
+	}
+
+	content, err := os.ReadFile(entries[0].Path)
+	if err != nil {
+		t.Fatalf("read transcript: %v", err)
+	}
+	if strings.Contains(string(content), secret) {
+		t.Fatal("the transcript carries the agent's command line")
+	}
+
+	header, err := ReadHeader(bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("ReadHeader: %v", err)
+	}
+	if header.Title != "Agent Alpha" {
+		t.Fatalf("header title = %q, want the agent name", header.Title)
 	}
 }

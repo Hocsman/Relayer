@@ -36,6 +36,7 @@ All notable user-visible changes are documented here. This file follows the stru
 - **Removed the free-form `reason` metadata key from control entries**: `Entry.Reason` is bounded to a short code while a metadata value is only truncated, so the same name under two rules meant the weaker one was what a reader saw.
 - **`getUserInfo` failed open to operator**: a failed or timed-out identity lookup left the interface assuming write authority it could not confirm, offering controls the server then silently rejected. It now fails closed to read-only.
 - **The audit report exported as JSON was not JSON**: the download rendered Go struct syntax rather than a parseable document. The CSV path now quotes every field through `encoding/csv`, since an operator identity comes from token configuration and can contain a comma.
+- **A transcript header carried the agent's whole command line**: the asciicast title used the display command, which for a shell agent is the entire script. Every player shows the title and the file is meant to be shareable for review, so it now carries the agent name, matching the audit model's exclusion of argv from a record.
 - **Restored gofmt compliance** in the audit and server tests, which had been failing the build workflow's format gate on `main`.
 
 ### Changed

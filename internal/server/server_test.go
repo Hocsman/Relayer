@@ -332,7 +332,6 @@ func TestServerRPCMethods(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	readyCh := make(chan string, 1)
 	opts := Options{
@@ -345,9 +344,22 @@ func TestServerRPCMethods(t *testing.T) {
 		},
 	}
 
+	served := make(chan struct{})
 	go func() {
+		defer close(served)
 		_ = Serve(ctx, opts)
 	}()
+	// Cancelling only asks the server to stop; the audit journal is closed while
+	// Serve unwinds. Waiting for that before t.TempDir removes the directory is
+	// what keeps Windows from failing the cleanup on a file still open.
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-served:
+		case <-time.After(10 * time.Second):
+			t.Error("the server did not shut down within 10s")
+		}
+	})
 
 	var baseURL string
 	select {

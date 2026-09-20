@@ -109,7 +109,12 @@ func (m *Multiplexer) StartSession(info terminal.Info, size terminal.Size, at ti
 			Name:      info.Name,
 			Backend:   info.Backend,
 			Adapter:   info.Adapter,
-			Title:     info.DisplayCommand,
+			// The agent's name, never its DisplayCommand. The command carries
+			// the full argument vector -- for a shell agent, the whole script --
+			// and the audit model excludes argv from a record on purpose. A
+			// transcript header is shown by every asciicast player and travels
+			// with the file, so it is the last place that belongs.
+			Title:     info.Name,
 			Width:     normalized.Columns,
 			Height:    normalized.Rows,
 			StartedAt: at,

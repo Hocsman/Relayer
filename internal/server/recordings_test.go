@@ -73,10 +73,11 @@ func startRecordingController(t *testing.T, mutate func(*config.Result)) (*Contr
 	return ctrl, recordingDir
 }
 
-// waitForRecording polls until at least one transcript exists, or the deadline
-// passes. Recording is asynchronous by design: the PTY read loop hands bytes to
-// a queue rather than to a file.
-func waitForRecording(t *testing.T, ctrl *Controller, deadline time.Duration) []RecordingView {
+// waitForRecordings polls until at least `want` transcripts exist, or the
+// deadline passes. Recording is asynchronous by design: each session opens its
+// own transcript from its own goroutine, so they do not all appear at once and
+// a test that counts them after the first one is racing the others.
+func waitForRecordings(t *testing.T, ctrl *Controller, want int, deadline time.Duration) []RecordingView {
 	t.Helper()
 
 	until := time.Now().Add(deadline)
@@ -85,11 +86,11 @@ func waitForRecording(t *testing.T, ctrl *Controller, deadline time.Duration) []
 		if err != nil {
 			t.Fatalf("ListRecordings: %v", err)
 		}
-		if len(views) > 0 {
+		if len(views) >= want {
 			return views
 		}
 		if time.Now().After(until) {
-			t.Fatalf("no recording appeared within %s", deadline)
+			t.Fatalf("saw %d recording(s) within %s, want %d", len(views), deadline, want)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -103,10 +104,9 @@ func TestRecordingCapturesAgentOutput(t *testing.T) {
 		t.Skip("the default configuration started no agent on this platform")
 	}
 
-	views := waitForRecording(t, ctrl, 10*time.Second)
-	if len(views) != len(state.Agents) {
-		t.Errorf("recordings = %d, want one per agent (%d)", len(views), len(state.Agents))
-	}
+	// One transcript per session, waited for rather than counted on arrival:
+	// each session opens its own from its own goroutine.
+	views := waitForRecordings(t, ctrl, len(state.Agents), 15*time.Second)
 
 	view := views[0]
 	if view.RunID != state.RunID {
@@ -170,7 +170,7 @@ func TestRecordingChunkPagesForward(t *testing.T) {
 		t.Skip("the default configuration started no agent on this platform")
 	}
 
-	views := waitForRecording(t, ctrl, 10*time.Second)
+	views := waitForRecordings(t, ctrl, 1, 15*time.Second)
 	first, err := ctrl.ReadRecordingChunk(views[0].ID, 0, 1)
 	if err != nil {
 		t.Fatalf("ReadRecordingChunk: %v", err)
@@ -247,7 +247,7 @@ func TestRecordingDeleteIsAuditedAndBroadcast(t *testing.T) {
 		t.Skip("the default configuration started no agent on this platform")
 	}
 
-	views := waitForRecording(t, ctrl, 10*time.Second)
+	views := waitForRecordings(t, ctrl, 1, 15*time.Second)
 
 	broadcasts := make(chan RecordingEvent, 4)
 	unsubscribe := ctrl.Subscribe(func(event string, payload any) {
