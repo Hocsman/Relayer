@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-20
+
+Patch release fixing spurious file-replacement failures on Windows. A configuration save, and an audit journal rotation, could report a failure for an operation that a transient hold on the file would have allowed a moment later.
+
 ### Fixed
 
 - **Publishing a configuration failed spuriously on Windows**: `ReplaceAgents` and the full-configuration save retried the atomic rename five times ten milliseconds apart, a fifty-millisecond budget that is shorter than a transient hold on the file lasts. The caller then reported `could not atomically publish configuration` for a save that would have succeeded a moment later, which in the Desktop GUI and the web settings panel is a save that appears to have failed. `publishConfigurationBytes`, the rollback path, had no retry at all.
@@ -714,7 +718,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.0...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.1...main
+[0.8.1]: https://github.com/Hocsman/Relayer/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/Hocsman/Relayer/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/Hocsman/Relayer/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/Hocsman/Relayer/compare/v0.6.0...v0.7.0
