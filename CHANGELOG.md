@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-20
+
+Minor release adding session recording to standard asciicast v2 files with in-browser replay, and multi-operator sessions where several people watch one interactive terminal while exactly one holds it. Also fixes an audit journal verification defect that made every journal the web gateway produced fail its own verifier.
+
 ### Added
 
 - **Session Recording & Replay (asciicast v2)**:
@@ -670,7 +674,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.6.0...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.7.0...main
+[0.7.0]: https://github.com/Hocsman/Relayer/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Hocsman/Relayer/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Hocsman/Relayer/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Hocsman/Relayer/compare/v0.3.1...v0.4.0
