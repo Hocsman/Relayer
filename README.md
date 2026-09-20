@@ -30,9 +30,9 @@ go run github.com/Hocsman/Relayer/cmd/relayer@latest
 ```
 
 > [!NOTE]
-> **Relayer v0.4.0 is General Availability (GA)**. It provides production-ready
-> supervision, enterprise telemetry, system alerts, visual configuration, and
-> granular per-agent process lifecycle management.
+> **Relayer v0.5.0 is General Availability (GA)**. It provides production-ready
+> supervision, a headless web gateway (`relayer serve`), real-time Web Push alerts,
+> enterprise telemetry, system alerts, and visual configuration.
 > Prompt detection is heuristic: it assists human operators rather than replacing
 > security boundaries. Always review proposed actions and maintain independent
 > backups. See the [security model](docs/security-model.md).
@@ -199,7 +199,7 @@ Select a published `OS` (`linux` or `darwin`) and `ARCH` (`amd64` or `arm64`),
 then download and verify the matching archive:
 
 ```bash
-VERSION=0.4.0
+VERSION=0.5.0
 OS=linux
 ARCH=amd64
 ARCHIVE="relayer_${VERSION}_${OS}_${ARCH}.tar.gz"

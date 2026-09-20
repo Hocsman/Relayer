@@ -4,6 +4,31 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-20
+
+Minor release introducing the headless Web Gateway (`relayer serve`), real-time Web Push and acoustic browser notifications, and full settings persistence across webhooks and security policies.
+
+### Added
+
+- **Headless Web Gateway (`relayer serve`)**:
+  - Added the `relayer serve` subcommand with `--bind`, `--port`, and `--token` authentication flags, enabling remote multi-agent supervision in cloud devboxes, EC2/GCP instances, and Docker containers without local GUI installations.
+  - Implemented an embedded HTTP and WebSocket server (`internal/server`) serving the production React UI and multiplexing terminal snapshots, semantic arbitration events, process lifecycle changes, and error reporting in real time.
+  - Implemented `webBridge.ts` client adapter translating JSON-RPC requests and WebSocket push messages directly to the existing frontend application.
+
+- **Web Push Notifications & Browser Audio Alerts**:
+  - Implemented the `useNotifications` React hook integrating the HTML5 Notification API to deliver native OS notifications when the browser tab is hidden or running in the background.
+  - Added an integrated Web Audio synthesizer (`AudioContext`) providing acoustic warning chimes (880Hz / 587Hz) for human arbitration requests and security blocks without external media dependencies.
+  - Created a responsive in-app toast notification stack (`NotificationToast.tsx`) with severity-based coloring, auto-dismiss, and deduplication by event ID.
+  - Added a dedicated "🌐 Web & Browser Push Alerts" section in the settings panel with permission request controls, audio toggle, and a test trigger button.
+  - Added the `testNotification` RPC endpoint to verify alert channels end-to-end (browser push, audio, and remote Slack/Discord webhooks).
+
+### Fixed
+
+- **Full Settings Persistence & Notifier Live Reload**:
+  - Fixed `SaveFullSettings` to atomically persist webhook configurations, notification thresholds, and security policies to the YAML configuration file on disk via `config.UpdateFullConfiguration`.
+  - Added instant live reloading of `notify.Notifier` in memory upon saving without requiring a server restart.
+  - Enhanced concurrency safety in the WebSocket server with atomic send guards and state cloning to prevent data races during graceful shutdowns.
+
 ## [0.4.0] - 2026-09-12
 
 Minor release introducing granular per-agent process lifecycle controls, a comprehensive typography and UI visual overhaul, and cross-platform CI hardening.
@@ -570,7 +595,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.4.0...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.5.0...main
+[0.5.0]: https://github.com/Hocsman/Relayer/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Hocsman/Relayer/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/Hocsman/Relayer/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Hocsman/Relayer/releases/tag/v0.3.0
