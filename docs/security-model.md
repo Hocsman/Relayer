@@ -4,7 +4,7 @@ Relayer's goal is to improve human visibility and provide an approval handoff
 for interactive CLI prompts. It does not make an agent safe, constrain what it
 can do, or prove that a displayed prompt is authentic.
 
-This document describes the threat model and residual risk for Relayer v0.5.0 GA. For
+This document describes the threat model and residual risk for Relayer v0.6.0 GA. For
 private vulnerability reporting, see [SECURITY.md](../SECURITY.md).
 
 ## Assets
@@ -73,6 +73,35 @@ only bounded printable UTF-8, never records the value or its length, and checks
 atomically that no detected event is pending before writing. This does not
 cover a prompt the target emitted but Relayer has not read yet, and it does not
 turn ordinary input into a policy-controlled action.
+
+### Web gateway and remote operators
+
+`relayer serve` exposes supervision over HTTP and WebSocket. The gateway is an
+authentication boundary, not a sandbox: a holder of an operator token has the
+same authority over the supervised agents as a human sitting at the local
+Desktop GUI.
+
+Two roles are resolved from the presented token. `operator` may arbitrate,
+deliver lines, attach interactively, and change lifecycle and configuration.
+`viewer` may only observe. The distinction is enforced server-side in the RPC
+dispatcher and on inbound binary terminal frames, so a viewer who replays a
+mutating call by hand is rejected rather than merely lacking a button. Named
+tokens (`alice:secret`) bind an identity to each secret and attribute the
+resulting audit entries; the binding is only as strong as the secret's
+distribution, and Relayer does not authenticate a person behind a token.
+
+Tokens travel in a query parameter or an `Authorization` header. The gateway
+serves plain HTTP and performs no origin check on the WebSocket upgrade.
+Binding outside `127.0.0.1` therefore requires an external TLS terminator and
+network restriction; treat a gateway URL, including its token, as a
+credential equivalent to shell access on the supervising host.
+
+Interactive attach over the web has the same property as native tmux attach:
+input goes directly to the pseudo-terminal and does not pass through the
+adapter, policy, manual-delivery, or audit decision path. Attach and detach are
+recorded with the acting operator, and the keystrokes themselves deliberately
+are not. Interactive attach is operator-only and should be treated as
+equivalent to sitting at the agent's terminal.
 
 ### tmux server
 

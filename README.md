@@ -30,8 +30,9 @@ go run github.com/Hocsman/Relayer/cmd/relayer@latest
 ```
 
 > [!NOTE]
-> **Relayer v0.5.0 is General Availability (GA)**. It provides production-ready
-> supervision, a headless web gateway (`relayer serve`), real-time Web Push alerts,
+> **Relayer v0.6.0 is General Availability (GA)**. It provides production-ready
+> supervision, a headless web gateway (`relayer serve`) with operator/viewer roles
+> and a fully interactive browser terminal, real-time Web Push alerts,
 > enterprise telemetry, system alerts, and visual configuration.
 > Prompt detection is heuristic: it assists human operators rather than replacing
 > security boundaries. Always review proposed actions and maintain independent
@@ -46,6 +47,12 @@ go run github.com/Hocsman/Relayer/cmd/relayer@latest
   (`/bin/sh -c` on Unix, `cmd.exe /c` on Windows).
 - PTY, tmux, automatic tmux-to-PTY selection, and mixed concrete backends.
 - Native Windows Pseudo Console (ConPTY) support for full native Windows execution.
+- Headless web gateway (`relayer serve`) with role-based access control: `--token` grants
+  read-write operator authority, `--viewer-token` grants read-only observation. Named
+  tokens (`alice:secret`) attribute every decision to a human in the audit trail.
+- Fully bidirectional interactive browser terminal: attach to an agent and type
+  directly into its PTY, including arrow keys, VT escape sequences and `Ctrl+C`,
+  streamed over WebSocket binary frames. Attach and detach are audited; keystrokes are not.
 - Visual configuration editor in Desktop GUI with hot-reload (Policies, Guardrails, Webhooks) without agent restart.
 - Interactive terminal text search (`Ctrl+F`) with circular navigation and highlighting via `@xterm/addon-search`.
 - Operator arbitration shortcuts: `Alt+1..8` (agent focus/modal), `Ctrl+Enter` (Allow), `Esc` (Deny).

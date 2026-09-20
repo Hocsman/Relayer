@@ -4,6 +4,40 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-20
+
+Minor release hardening the Web Gateway for team use: role-based access control with per-operator attribution in the cryptographic audit trail, and a fully bidirectional interactive terminal (full PTY) streamed over WebSocket binary frames.
+
+### Added
+
+- **Role-Based Access Control (RBAC) for the Web Gateway**:
+  - Introduced two distinct privilege levels, `operator` (read-write) and `viewer` (read-only), resolved at authentication time from the presented token and carried on every WebSocket connection.
+  - Added the `--viewer-token` flag to `relayer serve` alongside the existing `--token` / `--operator-token` pair, so a supervision session can be shared for observation without granting arbitration or lifecycle authority.
+  - Added named-token syntax (`--token alice:s3cret,bob:hunter2`) binding a human identity to each secret, and comma-separated lists so several operators and viewers can hold distinct credentials on a single gateway.
+  - When binding outside localhost without explicit tokens, the gateway now auto-generates *two* independent secrets (operator and viewer) and prints both URLs, instead of a single shared credential.
+  - Enforced authorization server-side in the RPC dispatcher: every mutating method (`submitDecision`, `submitLine`, `sendTerminalInput`, `setInteractiveSession`, `stopSession`, `startSession`, `restartSession`, `saveAgentProfiles`, `saveFullSettings`, `stopRun`, ...) is rejected for the viewer role, and inbound binary terminal frames from a viewer are dropped before reaching the PTY. `resizeSession` is a silent no-op for viewers so a passive observer's window size never perturbs the owning terminal.
+  - Added the `getUserInfo` RPC returning the connected identity, role, and read-only flag, wired through `bridge.ts`, `webBridge.ts`, and `demoBridge.ts`.
+  - Added read-only affordances across the React UI: a `VIEWER (READ-ONLY)` badge in the top bar, plus disabled arbitration buttons, decision modal controls, line input, lifecycle actions, and settings forms when the session is read-only. The server remains the authority; the UI only reflects it.
+
+- **Per-Operator Attribution in the Audit Trail**:
+  - Added an `Operator` field to `audit.Entry`, propagated through `SubmitDecisionWithOperator`, `SubmitLineWithOperator`, and `SetInteractiveSession`, so every human arbitration, manual line, and interactive attachment records *which* operator acted rather than only that a human did.
+  - Extended `audit.SanitizeEntry` to sanitize and bound the operator field (redaction pass, 64-rune cap) under every redaction mode, including the operator-input path where free-form content is otherwise stripped.
+  - Allowed the `operator` and `role` metadata keys on `KindDecision`, `KindDelivery`, and `KindOperatorInput` entries; the metadata allow-list remains closed for every other key.
+  - Surfaced the operator column in the Audit Trail panel and in `AuditEntryView` (`operator` JSON field).
+
+- **Bidirectional Interactive Web Terminal (Full PTY)**:
+  - Added a raw input path from the browser to the pseudo-terminal: `terminal.RawSender` (optional backend capability), `ptybackend.Manager.SendRaw`, `tmuxbackend.Manager.SendRaw`, `session.Manager.SendRaw`, and `backendRouter.SendRaw` with graceful fallback to ordinary `Send` for backends that do not implement it.
+  - Added the `sendTerminalInput` and `setInteractiveSession` RPCs plus a compact WebSocket **binary frame** protocol (`[session-id length][session-id][raw bytes]`) that streams keystrokes without per-character JSON overhead.
+  - Interactive mode forwards VT escape sequences, arrow keys, and control characters (`Ctrl+C`, `Ctrl+D`, `Ctrl+Z`), making it possible to drive an agent's own TUI from the browser rather than only answering detected prompts.
+  - Terminal output now prefers `AnsiOutput` over the plain-text snapshot when the backend can provide it, preserving colors, cursor positioning, and redraws in the web viewport; the plain-text path remains the fallback.
+  - Added an explicit per-agent **Attach / Detach** toggle in the web UI backed by a live `Attached` field on `AgentState`, so keystrokes are only routed to an agent an operator has deliberately taken control of.
+  - Every attach and detach is written to the audit trail as `attach_started` / `attach_finished` with the acting operator and role. Raw keystrokes themselves are deliberately **not** recorded: the audit log still has no field for terminal input.
+
+### Security
+
+- Viewer tokens are enforced at the transport boundary, not merely hidden in the UI: an observer replaying a mutating RPC or hand-crafting a raw binary frame is rejected server-side.
+- Interactive attachment bypasses semantic prompt arbitration by design, since an attached operator types directly into the agent process. Attachment is therefore operator-only, audited at both ends, and should be treated as equivalent to sitting at the agent's terminal. See [docs/security-model.md](docs/security-model.md).
+
 ## [0.5.0] - 2026-09-20
 
 Minor release introducing the headless Web Gateway (`relayer serve`), real-time Web Push and acoustic browser notifications, and full settings persistence across webhooks and security policies.
@@ -595,7 +629,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.5.0...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.6.0...main
+[0.6.0]: https://github.com/Hocsman/Relayer/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Hocsman/Relayer/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Hocsman/Relayer/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/Hocsman/Relayer/compare/v0.3.0...v0.3.1
