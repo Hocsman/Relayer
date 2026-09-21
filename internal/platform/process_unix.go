@@ -23,7 +23,7 @@ func NewShellCommand(ctx context.Context, script string) (*exec.Cmd, error) {
 // creack/pty starts commands in a new session on Unix, so the command PID is
 // also the process-group ID.
 func TerminateProcessGroup(command *exec.Cmd) {
-	if command == nil || command.Process == nil || command.ProcessState != nil {
+	if command == nil || command.Process == nil {
 		return
 	}
 	_ = signalProcessGroup(command.Process.Pid, syscall.SIGTERM)
@@ -32,7 +32,7 @@ func TerminateProcessGroup(command *exec.Cmd) {
 // KillProcessGroup forcefully stops the process group and then kills the
 // leader as a fallback in case group signalling failed.
 func KillProcessGroup(command *exec.Cmd) {
-	if command == nil || command.Process == nil || command.ProcessState != nil {
+	if command == nil || command.Process == nil {
 		return
 	}
 	_ = signalProcessGroup(command.Process.Pid, syscall.SIGKILL)
@@ -41,7 +41,7 @@ func KillProcessGroup(command *exec.Cmd) {
 
 // ProcessGroupExists reports whether the command's process group still exists.
 func ProcessGroupExists(command *exec.Cmd) bool {
-	if command == nil || command.Process == nil || command.ProcessState != nil {
+	if command == nil || command.Process == nil {
 		return false
 	}
 	err := signalProcessGroup(command.Process.Pid, syscall.Signal(0))

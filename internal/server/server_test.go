@@ -1343,4 +1343,3 @@ func TestAnonymousLocalRejectsCrossOrigin(t *testing.T) {
 		t.Errorf("Anonymous /api/state with same origin status = %d, want %d", respLocal.StatusCode, http.StatusOK)
 	}
 }
-

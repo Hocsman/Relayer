@@ -80,4 +80,3 @@ func TestProcessGroupTerminatedNoop(t *testing.T) {
 	TerminateProcessGroup(cmd)
 	KillProcessGroup(cmd)
 }
-

@@ -270,25 +270,21 @@ func (m *Manager) waitSession(session *processSession) {
 	exitEvent := markProcessExitEvent(session, err)
 	session.setResult(err)
 
-	// If the command is not yet reaped (e.g. mock tests), attempt to terminate descendants.
-	// When ProcessState is non-nil, waitCommand has already finished and the PID must
-	// never be targeted again to prevent killing an unrelated recycled process.
-	if session.cmd != nil && session.cmd.ProcessState == nil {
-		platform.TerminateProcessGroup(session.cmd)
-		if platform.ProcessGroupExists(session.cmd) {
-			timer := time.NewTimer(descendantGraceTime)
-			select {
-			case <-timer.C:
-			case <-m.ctx.Done():
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
+	// The shell may exit while descendants still own the slave PTY.
+	platform.TerminateProcessGroup(session.cmd)
+	if platform.ProcessGroupExists(session.cmd) {
+		timer := time.NewTimer(descendantGraceTime)
+		select {
+		case <-timer.C:
+		case <-m.ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
 				}
 			}
-			platform.KillProcessGroup(session.cmd)
 		}
+		platform.KillProcessGroup(session.cmd)
 	}
 
 	// cmd.Wait may win before the PTY reader has consumed the final kernel
