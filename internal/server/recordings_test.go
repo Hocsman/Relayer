@@ -377,3 +377,59 @@ func TestExportAuditReportProducesParseableFormats(t *testing.T) {
 		}
 	}
 }
+
+// TestRecordingLifecycleIsJournaled covers the two recording kinds nothing
+// emitted until the multiplexer reported its lifecycle. docs/recording.md has
+// listed recording_started and recording_finished as journaled since v0.7.0.
+func TestRecordingLifecycleIsJournaled(t *testing.T) {
+	ctrl, _ := startRecordingController(t, nil)
+	state := ctrl.GetState()
+	if len(state.Agents) == 0 {
+		t.Skip("the default configuration started no agent on this platform")
+	}
+	sessions := len(state.Agents)
+	waitForRecordings(t, ctrl, sessions, 15*time.Second)
+
+	count := func(kind, outcome string) int {
+		entries, err := ctrl.GetAuditEntries(AuditFilterInput{RunID: state.RunID, Kind: kind})
+		if err != nil {
+			t.Fatalf("GetAuditEntries: %v", err)
+		}
+		matched := 0
+		for _, entry := range entries {
+			if entry.Outcome == outcome && entry.DecisionBy == "system" && entry.Summary == "" {
+				matched++
+			}
+		}
+		return matched
+	}
+
+	// The opening is journaled from the session's own goroutine, so it may
+	// land a moment after the sidecar the wait above observed.
+	until := time.Now().Add(5 * time.Second)
+	for count("recording_started", "started") < sessions && time.Now().Before(until) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := count("recording_started", "started"); got != sessions {
+		t.Fatalf("recording_started entries = %d, want one per session (%d)", got, sessions)
+	}
+
+	// Closing the run finalizes every transcript before the journal closes,
+	// so each closing is on disk once Close returns.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := ctrl.Close(shutdownCtx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := count("recording_finished", "finished"); got != sessions {
+		t.Fatalf("recording_finished entries = %d, want one per session (%d)", got, sessions)
+	}
+
+	report, err := ctrl.VerifyAuditJournal()
+	if err != nil {
+		t.Fatalf("VerifyAuditJournal: %v", err)
+	}
+	if !report.Passed {
+		t.Fatalf("the journal no longer verifies: %+v", report.Issues)
+	}
+}

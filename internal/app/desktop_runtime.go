@@ -923,6 +923,7 @@ func (r *DesktopRuntime) attachRecorder(configuration record.Config, runID strin
 		Config:      configuration,
 		RunID:       runID,
 		Diagnostics: diagnostics,
+		Lifecycle:   r.auditRecordingLifecycle,
 	})
 	if recorder == nil {
 		_ = store.Close()

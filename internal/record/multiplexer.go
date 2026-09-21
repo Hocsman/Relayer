@@ -24,6 +24,24 @@ type MultiplexerOptions struct {
 	RunID       string
 	Diagnostics io.Writer
 	QueueSize   int
+	// Lifecycle, when set, is told each time a transcript opens or closes, so
+	// the run can journal it. It is called on the session's own goroutine and
+	// never under a lock a PTY read loop can wait on. Close returns only after
+	// the last call has.
+	Lifecycle func(LifecycleEvent)
+}
+
+// LifecycleEvent reports one transcript opening or closing. It carries
+// Metadata, which describes a transcript's identity and shape and has no field
+// for a frame of its content.
+type LifecycleEvent struct {
+	// Finished is false when the transcript opened and true when it closed.
+	Finished bool
+	// Metadata is the store's description of the transcript. When Err is set
+	// it may hold no more than the session the transcript was opened for.
+	Metadata Metadata
+	// Err is set when the store could not open or finalize the transcript.
+	Err error
 }
 
 // Multiplexer implements terminal.Recorder by owning one goroutine and one
@@ -34,6 +52,7 @@ type Multiplexer struct {
 	config        Config
 	runID         string
 	queueSize     int
+	lifecycle     func(LifecycleEvent)
 	diagnostics   io.Writer
 	diagnosticsMu sync.Mutex
 	mu            sync.Mutex
@@ -84,6 +103,7 @@ func NewMultiplexer(options MultiplexerOptions) *Multiplexer {
 		config:      options.Config,
 		runID:       options.RunID,
 		queueSize:   queueSize,
+		lifecycle:   options.Lifecycle,
 		diagnostics: options.Diagnostics,
 		sessions:    make(map[terminal.SessionID]*recordingSession),
 	}
@@ -105,10 +125,13 @@ func (m *Multiplexer) StartSession(info terminal.Info, size terminal.Size, at ti
 		options: CreateOptions{
 			RunID:     m.runID,
 			SessionID: info.ID,
-			AgentID:   info.Name,
-			Name:      info.Name,
-			Backend:   info.Backend,
-			Adapter:   info.Adapter,
+			// The agent's identifier, as every audit record names it, so a
+			// journal filtered by agent finds this transcript's records too.
+			// The display name has its own field.
+			AgentID: info.ID,
+			Name:    info.Name,
+			Backend: info.Backend,
+			Adapter: info.Adapter,
 			// The agent's name, never its DisplayCommand. The command carries
 			// the full argument vector -- for a shell agent, the whole script --
 			// and the audit model excludes argv from a record on purpose. A
@@ -230,6 +253,9 @@ func (m *Multiplexer) run(session *recordingSession) {
 	metadata, writer, err := m.store.Create(session.options)
 	if err != nil {
 		m.report("cannot open the transcript for session " + slug(session.options.SessionID))
+		m.notify(LifecycleEvent{Metadata: session.identity(), Err: err})
+	} else {
+		m.notify(LifecycleEvent{Metadata: metadata})
 	}
 	for event := range session.events {
 		m.apply(writer, event)
@@ -243,9 +269,23 @@ func (m *Multiplexer) run(session *recordingSession) {
 	if writer == nil {
 		return
 	}
-	if _, err := m.store.Finish(metadata.ID, endedAt, exitCode); err != nil {
+	final, err := m.store.Finish(metadata.ID, endedAt, exitCode)
+	if err != nil {
 		_ = writer.Close()
 		m.report("cannot finalize the transcript for session " + slug(session.options.SessionID))
+		if final.ID == "" {
+			final = metadata
+		}
+		m.notify(LifecycleEvent{Finished: true, Metadata: final, Err: err})
+		return
+	}
+	m.notify(LifecycleEvent{Finished: true, Metadata: final})
+}
+
+// notify hands one lifecycle event to the configured observer, if any.
+func (m *Multiplexer) notify(event LifecycleEvent) {
+	if m.lifecycle != nil {
+		m.lifecycle(event)
 	}
 }
 
@@ -314,6 +354,20 @@ func (s *recordingSession) finish(at time.Time, exitCode *int) {
 	s.endedAt = at
 	s.exitCode = exitCode
 	close(s.events)
+}
+
+// identity is what is known about a transcript the store never opened: the
+// session it was for, and nothing that would imply a file exists.
+func (s *recordingSession) identity() Metadata {
+	return Metadata{
+		RunID:     s.options.RunID,
+		SessionID: s.options.SessionID,
+		AgentID:   s.options.AgentID,
+		Name:      s.options.Name,
+		Backend:   s.options.Backend,
+		Adapter:   s.options.Adapter,
+		StartedAt: s.options.StartedAt,
+	}
 }
 
 func (s *recordingSession) outcome() (time.Time, *int) {

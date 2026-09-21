@@ -138,16 +138,33 @@ still being written cannot be deleted.
 
 ## Audit trail
 
-Recording actions are journaled with the acting operator:
+A transcript's lifecycle is journaled by the system, and what an operator does
+with it is journaled with that operator:
 
-| Kind | When |
-| --- | --- |
-| `recording_started` | A transcript was opened for a session. |
-| `recording_finished` | A transcript was closed. |
-| `recording_exported` | A transcript was downloaded from the gateway. |
-| `recording_deleted` | A transcript was permanently removed. |
+| Kind | By | When |
+| --- | --- | --- |
+| `recording_started` | system | A transcript was opened for a session. |
+| `recording_finished` | system | A transcript was closed, with its final size. |
+| `recording_exported` | operator | A transcript was downloaded from the gateway. |
+| `recording_deleted` | operator | A transcript was permanently removed. |
 
-Entries carry the recording's identity and shape, never its content.
+Entries carry the recording's identity and shape, never its content: the
+`recording_id`, whether input was recorded and redacted, and on
+`recording_finished` the byte and frame counts and whether the size cap
+truncated it. As with all metadata, those fields survive only in the `detailed`
+audit mode.
+
+A transcript the store could not open is journaled as `recording_started` with
+outcome `failed` and reason `recording_open_failed`, so a session that went
+unrecorded says so in the journal as well as in the startup diagnostics. One
+that could not be finalized is `recording_finished` · `failed` ·
+`recording_finalize_failed`. A failed record carries no counts, since the file
+it would describe is missing or unreliable.
+
+Each record names the agent by its identifier, like every other audit record.
+Transcripts written by earlier releases stored the agent's display name as its
+identifier instead, so their export and delete records do not match a filter on
+the agent.
 
 Export and delete require the operator role; a viewer may list and replay.
 

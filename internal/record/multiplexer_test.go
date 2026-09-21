@@ -539,3 +539,113 @@ func TestStartSessionKeepsTheCommandOutOfTheHeader(t *testing.T) {
 		t.Fatalf("header title = %q, want the agent name", header.Title)
 	}
 }
+
+// lifecycleLog collects every LifecycleEvent a multiplexer reports.
+type lifecycleLog struct {
+	mu     sync.Mutex
+	events []LifecycleEvent
+}
+
+func (l *lifecycleLog) observe(event LifecycleEvent) {
+	l.mu.Lock()
+	l.events = append(l.events, event)
+	l.mu.Unlock()
+}
+
+func (l *lifecycleLog) snapshot() []LifecycleEvent {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]LifecycleEvent(nil), l.events...)
+}
+
+// TestMultiplexerReportsEveryTranscriptOpeningAndClosing is what the
+// recording_started and recording_finished audit records rest on: until the
+// multiplexer reported its lifecycle, nothing emitted either kind.
+func TestMultiplexerReportsEveryTranscriptOpeningAndClosing(t *testing.T) {
+	config := testConfig(t)
+	store := openTestStore(t, config)
+	var log lifecycleLog
+	multiplexer := NewMultiplexer(MultiplexerOptions{
+		Store:     store,
+		Config:    config,
+		RunID:     "run-lifecycle",
+		Lifecycle: log.observe,
+	})
+	t.Cleanup(func() { _ = multiplexer.Close() })
+
+	info := testInfo("session-a")
+	info.Name = "Agent A"
+	multiplexer.StartSession(info, terminal.Size{Columns: 80, Rows: 24}, testBase)
+	multiplexer.RecordOutput("session-a", testBase.Add(time.Millisecond), []byte("hello\r\n"))
+	multiplexer.FinishSession("session-a", testBase.Add(time.Second), intPointer(0))
+
+	// Close joins the session goroutine, so every report is in by now. The run
+	// relies on that to journal the last one before its audit journal closes.
+	if err := multiplexer.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	events := log.snapshot()
+	if len(events) != 2 {
+		t.Fatalf("lifecycle events = %d (%+v), want an opening and a closing", len(events), events)
+	}
+	opened, closed := events[0], events[1]
+	if opened.Finished || opened.Err != nil {
+		t.Fatalf("first event = %+v, want a successful opening", opened)
+	}
+	if !closed.Finished || closed.Err != nil {
+		t.Fatalf("second event = %+v, want a successful closing", closed)
+	}
+	if opened.Metadata.ID == "" || opened.Metadata.ID != closed.Metadata.ID {
+		t.Fatalf("recording ids = %q then %q, want one transcript", opened.Metadata.ID, closed.Metadata.ID)
+	}
+	if closed.Metadata.Frames != 1 || closed.Metadata.Bytes == 0 || closed.Metadata.Active {
+		t.Fatalf("closing metadata = %+v, want the final counters", closed.Metadata)
+	}
+
+	// Every other audit record names an agent by its identifier. The display
+	// name used to land in AgentID, so a journal filtered by agent missed the
+	// transcript's records.
+	if opened.Metadata.AgentID != "session-a" || opened.Metadata.Name != "Agent A" {
+		t.Fatalf("agent id = %q, name = %q, want the identifier and the display name",
+			opened.Metadata.AgentID, opened.Metadata.Name)
+	}
+	if stored := onlyRecording(t, store); stored.AgentID != "session-a" {
+		t.Fatalf("stored agent id = %q, want the identifier", stored.AgentID)
+	}
+}
+
+func TestMultiplexerReportsATranscriptThatNeverOpened(t *testing.T) {
+	config := testConfig(t)
+	store := openTestStore(t, config)
+	var log lifecycleLog
+	multiplexer := NewMultiplexer(MultiplexerOptions{
+		Store:     store,
+		Config:    config,
+		RunID:     "run-refused",
+		Lifecycle: log.observe,
+	})
+	t.Cleanup(func() { _ = multiplexer.Close() })
+
+	// A closed store refuses to create anything.
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+	multiplexer.StartSession(testInfo("session-b"), terminal.Size{Columns: 80, Rows: 24}, testBase)
+	multiplexer.FinishSession("session-b", testBase.Add(time.Second), nil)
+	if err := multiplexer.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	events := log.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("lifecycle events = %+v, want exactly the refused opening", events)
+	}
+	if events[0].Finished || events[0].Err == nil {
+		t.Fatalf("event = %+v, want a failed opening", events[0])
+	}
+	// No file exists, so nothing may read as though one does.
+	if events[0].Metadata.SessionID != "session-b" || events[0].Metadata.ID != "" {
+		t.Fatalf("metadata = %+v, want the session identity and no recording id", events[0].Metadata)
+	}
+}
