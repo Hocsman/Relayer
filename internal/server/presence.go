@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/Hocsman/Relayer/internal/audit"
 )
 
 // Presence and the terminal write lock ("the hand") live in the Controller
@@ -142,6 +144,10 @@ func (c *Controller) RegisterPresence(connID, identity, role string) {
 // ReleasePresence removes a disconnected connection and frees any hand it held.
 // The gateway must call this after releasing its own client lock: broadcasting
 // while the gateway holds that lock deadlocks against the broadcast listener.
+//
+// A hand freed this way is journaled as control_released by the system, so a
+// journal never shows somebody taking a terminal and then simply stops. A
+// withdrawn or expired request moves no terminal and is not journaled.
 func (c *Controller) ReleasePresence(connID string) {
 	connID = strings.TrimSpace(connID)
 	if connID == "" {
@@ -161,9 +167,17 @@ func (c *Controller) ReleasePresence(connID string) {
 	for key := range entry.observing {
 		touched[key] = struct{}{}
 	}
+	var dropped []handTransition
 	for key, hand := range c.hands {
 		changed := false
 		if hand.holderConnID == connID {
+			if idx, known := c.agentIndex[key]; known && idx < len(c.state.Agents) {
+				dropped = append(dropped, handTransition{
+					actor:  entry,
+					agent:  c.state.Agents[idx],
+					before: hand,
+				})
+			}
 			hand = handState{}
 			changed = true
 		}
@@ -192,6 +206,14 @@ func (c *Controller) ReleasePresence(connID string) {
 	c.mu.Unlock()
 
 	c.broadcastSnapshots(views)
+	for _, change := range dropped {
+		c.recordControlAudit(change, controlRecord{
+			kind:    audit.KindControlReleased,
+			by:      audit.DecisionBySystem,
+			outcome: audit.OutcomeApplied,
+			reason:  "control_released_disconnect",
+		})
+	}
 }
 
 // ObserveSession adds a connection to one session's roster. Observing is a
@@ -245,8 +267,11 @@ func (c *Controller) ListPresence(sessionID string) (PresenceView, error) {
 
 // TakeControl acquires a free hand. It deliberately refuses to steal a held
 // one: the caller is told to request control instead.
+//
+// It journals nothing itself: its only caller is the attach verb, which
+// records attach_started, so one action never produces two records.
 func (c *Controller) TakeControl(sessionID, connID, operator string) (HandView, error) {
-	return c.mutateHand(sessionID, connID, func(hand handState, entry presenceEntry, now time.Time) (handState, error) {
+	view, _, err := c.mutateHand(sessionID, connID, func(hand handState, entry presenceEntry, now time.Time) (handState, error) {
 		if entry.role == string(RoleViewer) {
 			return hand, ErrViewerRole
 		}
@@ -260,10 +285,28 @@ func (c *Controller) TakeControl(sessionID, connID, operator string) (HandView, 
 		}
 		return hand, nil
 	})
+	return view, err
 }
 
-// ReleaseControl frees a hand held by this connection.
+// ReleaseControl frees a hand held by this connection and journals it as
+// control_released. Releasing a hand nobody holds changes nothing and is not
+// journaled.
 func (c *Controller) ReleaseControl(sessionID, connID, operator string) (HandView, error) {
+	view, change, err := c.releaseHand(sessionID, connID)
+	if err == nil && change.known() && change.before.held() {
+		c.recordControlAudit(change, controlRecord{
+			kind:    audit.KindControlReleased,
+			by:      audit.DecisionByHuman,
+			outcome: audit.OutcomeApplied,
+			reason:  "control_released",
+		})
+	}
+	return view, err
+}
+
+// releaseHand is ReleaseControl without the journal entry. The attach verb
+// releases through it and records attach_finished instead.
+func (c *Controller) releaseHand(sessionID, connID string) (HandView, handTransition, error) {
 	return c.mutateHand(sessionID, connID, func(hand handState, entry presenceEntry, _ time.Time) (handState, error) {
 		if !hand.held() {
 			return handState{}, nil
@@ -277,9 +320,9 @@ func (c *Controller) ReleaseControl(sessionID, connID, operator string) (HandVie
 
 // RequestControl asks the current holder to hand over. A second request from
 // the same connection refreshes the deadline rather than erroring, so a UI that
-// retries is not punished.
+// retries is not punished, and is not journaled a second time either.
 func (c *Controller) RequestControl(sessionID, connID, operator string) (HandView, error) {
-	return c.mutateHand(sessionID, connID, func(hand handState, entry presenceEntry, now time.Time) (handState, error) {
+	view, change, err := c.mutateHand(sessionID, connID, func(hand handState, entry presenceEntry, now time.Time) (handState, error) {
 		if entry.role == string(RoleViewer) {
 			return hand, ErrViewerRole
 		}
@@ -302,13 +345,39 @@ func (c *Controller) RequestControl(sessionID, connID, operator string) (HandVie
 		hand.requestedAt = now
 		return hand, nil
 	})
+	if err != nil || !change.known() {
+		return view, err
+	}
+
+	actor := change.actor.connID
+	switch {
+	case !change.before.held() && change.after.holderConnID == actor:
+		// The hand was free and the request took it at once. The record says
+		// so rather than posing as a request somebody could still answer.
+		c.recordControlAudit(change, controlRecord{
+			kind:    audit.KindControlRequested,
+			by:      audit.DecisionByHuman,
+			outcome: audit.OutcomeApplied,
+			reason:  "control_taken_free",
+		})
+	case change.before.held() && change.before.requesterConnID != actor && change.after.requesterConnID == actor:
+		c.recordControlAudit(change, controlRecord{
+			kind:           audit.KindControlRequested,
+			by:             audit.DecisionByHuman,
+			outcome:        audit.OutcomePending,
+			reason:         "control_requested",
+			targetConnID:   change.before.holderConnID,
+			targetIdentity: change.before.holderIdentity,
+		})
+	}
+	return view, nil
 }
 
 // GrantControl transfers the hand to a pending requester. Only the current
 // holder may grant.
 func (c *Controller) GrantControl(sessionID, connID, operator, toConnID string) (HandView, error) {
 	toConnID = strings.TrimSpace(toConnID)
-	return c.mutateHand(sessionID, connID, func(hand handState, entry presenceEntry, now time.Time) (handState, error) {
+	view, change, err := c.mutateHand(sessionID, connID, func(hand handState, entry presenceEntry, now time.Time) (handState, error) {
 		if !hand.held() || hand.holderConnID != entry.connID {
 			return hand, ErrNotHolder
 		}
@@ -334,12 +403,23 @@ func (c *Controller) GrantControl(sessionID, connID, operator, toConnID string) 
 			since:          now,
 		}, nil
 	})
+	if err == nil && change.known() {
+		c.recordControlAudit(change, controlRecord{
+			kind:           audit.KindControlGranted,
+			by:             audit.DecisionByHuman,
+			outcome:        audit.OutcomeApplied,
+			reason:         "control_granted",
+			targetConnID:   change.after.holderConnID,
+			targetIdentity: change.after.holderIdentity,
+		})
+	}
+	return view, err
 }
 
 // DeclineControl refuses a pending request and leaves the hand where it is.
 func (c *Controller) DeclineControl(sessionID, connID, operator, toConnID string) (HandView, error) {
 	toConnID = strings.TrimSpace(toConnID)
-	return c.mutateHand(sessionID, connID, func(hand handState, entry presenceEntry, _ time.Time) (handState, error) {
+	view, change, err := c.mutateHand(sessionID, connID, func(hand handState, entry presenceEntry, _ time.Time) (handState, error) {
 		if !hand.held() || hand.holderConnID != entry.connID {
 			return hand, ErrNotHolder
 		}
@@ -354,13 +434,28 @@ func (c *Controller) DeclineControl(sessionID, connID, operator, toConnID string
 		hand.requestedAt = time.Time{}
 		return hand, nil
 	})
+	if err == nil && change.known() {
+		c.recordControlAudit(change, controlRecord{
+			kind:           audit.KindControlDeclined,
+			by:             audit.DecisionByHuman,
+			outcome:        audit.OutcomeApplied,
+			reason:         "control_declined",
+			targetConnID:   change.before.requesterConnID,
+			targetIdentity: change.before.requesterIdentity,
+		})
+	}
+	return view, err
 }
 
 // ForceTakeControl seizes a held hand without the holder's consent. It is off
 // by default: an operator typing into an agent's terminal can be interrupted
 // mid-command, so the deployment must opt in.
+//
+// Every attempt by a known connection is journaled as control_forced, refused
+// ones included: trying to seize a colleague's terminal is the event worth
+// finding later, whether or not the deployment allowed it.
 func (c *Controller) ForceTakeControl(sessionID, connID, operator string) (HandView, error) {
-	return c.mutateHand(sessionID, connID, func(hand handState, entry presenceEntry, now time.Time) (handState, error) {
+	view, change, err := c.mutateHand(sessionID, connID, func(hand handState, entry presenceEntry, now time.Time) (handState, error) {
 		if entry.role == string(RoleViewer) {
 			return hand, ErrViewerRole
 		}
@@ -373,6 +468,31 @@ func (c *Controller) ForceTakeControl(sessionID, connID, operator string) (HandV
 			since:          now,
 		}, nil
 	})
+	if !change.known() {
+		return view, err
+	}
+
+	forced := controlRecord{
+		kind:    audit.KindControlForced,
+		by:      audit.DecisionByHuman,
+		outcome: audit.OutcomeApplied,
+		reason:  "control_forced",
+	}
+	switch {
+	case errors.Is(err, ErrForceDisabled):
+		forced.outcome, forced.reason = audit.OutcomeFailed, "control_force_disabled"
+	case errors.Is(err, ErrViewerRole):
+		forced.outcome, forced.reason = audit.OutcomeFailed, "control_force_viewer_denied"
+	case err != nil:
+		forced.outcome, forced.reason = audit.OutcomeFailed, "control_force_failed"
+	}
+	// The displaced holder, not the operator's own earlier hold.
+	if change.before.held() && change.before.holderConnID != change.actor.connID {
+		forced.targetConnID = change.before.holderConnID
+		forced.targetIdentity = change.before.holderIdentity
+	}
+	c.recordControlAudit(change, forced)
+	return view, err
 }
 
 // HoldsHand reports whether a connection may currently write to a session. A
@@ -405,39 +525,72 @@ func (c *Controller) HandFor(sessionID string) HandView {
 	return view
 }
 
+// handTransition is what one verb found and left, captured under the same lock
+// acquisition as the change itself, so a journal entry describes the state the
+// verb actually acted on rather than a later re-read of it.
+type handTransition struct {
+	actor  presenceEntry
+	agent  AgentState
+	before handState
+	after  handState
+}
+
+// known reports whether the verb reached a real session through a registered
+// connection. Anything short of that changed nothing and names nothing worth
+// journaling.
+func (t handTransition) known() bool {
+	return t.actor.connID != ""
+}
+
 // mutateHand applies one transition under a single lock acquisition, then
 // broadcasts outside it. Every exported verb funnels through here so the
 // lock-then-broadcast ordering is stated once rather than repeated.
+//
+// A session the run never started is refused, as the attach verb already
+// refused it: holding a terminal that does not exist means nothing, and an
+// unchecked session ID would let a client grow the hand table without bound.
 func (c *Controller) mutateHand(
 	sessionID, connID string,
 	apply func(handState, presenceEntry, time.Time) (handState, error),
-) (HandView, error) {
+) (HandView, handTransition, error) {
 	key := sessionKey(sessionID)
 	if key == "" {
-		return HandView{}, errors.New("session id is empty")
+		return HandView{}, handTransition{}, errors.New("session id is empty")
 	}
 	connID = strings.TrimSpace(connID)
 
 	c.mu.Lock()
 	if atomic.LoadInt32(&c.stopped) != 0 {
 		c.mu.Unlock()
-		return HandView{}, errors.New("supervisor runtime not ready")
+		return HandView{}, handTransition{}, errors.New("supervisor runtime not ready")
 	}
 	entry, found := c.presence[connID]
 	if !found {
 		c.mu.Unlock()
-		return HandView{}, ErrUnknownConnection
+		return HandView{}, handTransition{}, ErrUnknownConnection
+	}
+	idx, known := c.agentIndex[key]
+	if !known || idx >= len(c.state.Agents) {
+		c.mu.Unlock()
+		return HandView{}, handTransition{}, errUnknownSession
 	}
 
 	now := time.Now().UTC()
 	c.expireRequestLocked(key, now)
 
-	next, err := apply(c.hands[key], entry, now)
+	change := handTransition{
+		actor:  entry,
+		agent:  c.state.Agents[idx],
+		before: c.hands[key],
+	}
+	next, err := apply(change.before, entry, now)
 	if err != nil {
+		change.after = change.before
 		view := c.handViewLocked(key)
 		c.mu.Unlock()
-		return view, err
+		return view, change, err
 	}
+	change.after = next
 
 	if c.hands == nil {
 		c.hands = make(map[string]handState)
@@ -455,7 +608,71 @@ func (c *Controller) mutateHand(
 
 	c.broadcast(eventHand, handView)
 	c.broadcast(eventPresence, presenceView)
-	return handView, nil
+	return handView, change, nil
+}
+
+// controlRecord is one journaled hand transition. The target is the other
+// party to it: the holder asked, the operator granted to or declined, or the
+// holder displaced.
+type controlRecord struct {
+	kind           audit.Kind
+	by             audit.DecisionBy
+	outcome        audit.Outcome
+	reason         string
+	targetConnID   string
+	targetIdentity string
+}
+
+// recordControlAudit journals a transition after the lock is released and the
+// snapshots are out: an audit write is synchronous file I/O, and nothing that
+// holds c.mu may wait on a disk.
+//
+// A write failure is not reported to the operator, matching the attach and
+// recording records. The hand has already moved by then, and refusing the
+// answer would leave the interface disagreeing with the server about who
+// holds the terminal.
+func (c *Controller) recordControlAudit(change handTransition, rec controlRecord) {
+	c.mu.RLock()
+	rt := c.runtime
+	c.mu.RUnlock()
+	if rt == nil {
+		return
+	}
+
+	operator := change.actor.identity
+	if operator == "" {
+		operator = "operator"
+	}
+	role := change.actor.role
+	if role == "" {
+		role = string(RoleOperator)
+	}
+	metadata := map[string]string{
+		"operator": operator,
+		"role":     role,
+		"conn_id":  change.actor.connID,
+	}
+	if rec.targetConnID != "" {
+		target := rec.targetIdentity
+		if target == "" {
+			target = "operator"
+		}
+		metadata["target_operator"] = target
+		metadata["target_conn_id"] = rec.targetConnID
+	}
+
+	_ = rt.RecordAudit(audit.Entry{
+		Kind:       rec.kind,
+		SessionID:  change.agent.SessionID,
+		AgentID:    change.agent.AgentID,
+		Backend:    strings.ToLower(strings.TrimSpace(change.agent.Backend)),
+		Adapter:    strings.ToLower(strings.TrimSpace(change.agent.Adapter)),
+		DecisionBy: rec.by,
+		Operator:   operator,
+		Outcome:    rec.outcome,
+		Reason:     rec.reason,
+		Metadata:   metadata,
+	})
 }
 
 // setAttachedLocked keeps AgentState.Attached meaning "somebody holds this

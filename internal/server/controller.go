@@ -749,11 +749,13 @@ func (c *Controller) SetInteractiveSession(runID, sessionID string, active bool,
 		return errUnknownSession
 	}
 
+	// The unjournaled forms: this verb writes its own attach record below, and
+	// one action must not appear in the journal twice.
 	var err error
 	if active {
 		_, err = c.TakeControl(sessionID, connID, operator)
 	} else {
-		_, err = c.ReleaseControl(sessionID, connID, operator)
+		_, _, err = c.releaseHand(sessionID, connID)
 	}
 	if err != nil {
 		return err

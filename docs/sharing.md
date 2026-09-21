@@ -34,7 +34,7 @@ never uses sharing therefore behaves exactly as it did before.
 | X is prompted | no answer | — | request expires after 30s, still held by X |
 | held by X | Release | X | free |
 | held by X | X disconnects | — | free |
-| held by X | Force takeover | operator Y | held by Y, **only if enabled** |
+| held by X | Force takeover | operator Y | refused; still held by X (see below) |
 
 Taking a terminal someone else holds is **refused, not queued and not stolen**.
 An operator typing into an agent can be interrupted mid-command by a takeover,
@@ -43,8 +43,11 @@ so the transfer is explicit: Y asks, X answers.
 A request that nobody answers expires rather than stranding the requester.
 Expiry is evaluated when the state is next read, so no timer outlives the run.
 
-Force takeover seizes a held terminal without consent. It is disabled unless a
-deployment opts in, and every use is journaled as `control_forced`.
+Force takeover seizes a held terminal without consent. It is disabled: this
+release has no setting that enables it, so the gateway refuses every attempt.
+Every attempt is still journaled as `control_forced`, with outcome `failed`
+while the verb stays disabled — trying to seize a colleague's terminal is the
+event worth finding later, whether or not it worked.
 
 ## The hand is keyed by connection, not by identity
 
@@ -104,16 +107,30 @@ reaches the pseudo-terminal.
 ## Audit trail
 
 Every transfer is journaled with the acting operator, their role, and the
-connection involved:
+connection involved. Where a transfer has another party — the holder asked, the
+operator handed to or refused, the holder displaced — the record names them as
+`target_operator` and `target_conn_id`. Like all metadata, those two survive
+only in the `detailed` audit mode; `metadata` mode keeps the operator, outcome
+and reason.
 
-| Kind | When |
-| --- | --- |
-| `control_requested` | An operator asked for a terminal someone else held. |
-| `control_granted` | A holder handed it over. |
-| `control_declined` | A holder refused. |
-| `control_released` | A holder released it. |
-| `control_forced` | An operator seized it without consent. |
-| `attach_started` / `attach_finished` | A terminal was taken or released. |
+| Kind | Outcome · reason | When |
+| --- | --- | --- |
+| `control_requested` | `pending` · `control_requested` | An operator asked for a terminal someone else held. |
+| `control_requested` | `applied` · `control_taken_free` | The terminal was free, so asking took it at once. |
+| `control_granted` | `applied` · `control_granted` | A holder handed it over. |
+| `control_declined` | `applied` · `control_declined` | A holder refused. |
+| `control_released` | `applied` · `control_released` | A holder released it. |
+| `control_released` | `applied` · `control_released_disconnect` | A holder disconnected; recorded by the system. |
+| `control_forced` | `applied` · `control_forced` | An operator seized it without consent. |
+| `control_forced` | `failed` · `control_force_disabled` | An operator tried to, and the gateway refused. |
+| `attach_started` / `attach_finished` | `applied` | A terminal was taken or released through the attach control. |
+
+One action writes one record. Releasing through the attach control writes
+`attach_finished`, not `control_released` as well, and asking again for a
+terminal you are already waiting on refreshes the request without journaling
+it twice. A request that expires or is withdrawn moves no terminal and is not
+journaled. Neither is an action on a session the run never started: the gateway
+refuses it.
 
 Keystrokes themselves are never journaled. The audit model has no field for
 terminal input, and sharing does not add one. To record what happened inside a
