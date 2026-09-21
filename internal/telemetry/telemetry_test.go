@@ -315,3 +315,58 @@ func TestTelemetryEngineLifecycle(t *testing.T) {
 		t.Fatalf("close engine: %v", err)
 	}
 }
+
+// TestHandoverAndRecordingEventsAreCounted covers the eleven kinds the registry
+// used to fall through: a forced takeover or a failed recording reached the
+// journal but never a dashboard.
+func TestHandoverAndRecordingEventsAreCounted(t *testing.T) {
+	reg := NewRegistry()
+	observe := func(kind audit.Kind, outcome audit.Outcome) {
+		reg.Observe(audit.Entry{Kind: kind, AgentID: "claude-code", Outcome: outcome, Timestamp: time.Now().UTC()})
+	}
+
+	observe(audit.KindAttachStarted, audit.OutcomeApplied)
+	observe(audit.KindControlRequested, audit.OutcomePending)
+	observe(audit.KindControlGranted, audit.OutcomeApplied)
+	observe(audit.KindControlDeclined, audit.OutcomeApplied)
+	observe(audit.KindControlReleased, audit.OutcomeApplied)
+	observe(audit.KindControlForced, audit.OutcomeFailed)
+	observe(audit.KindControlForced, audit.OutcomeFailed)
+	observe(audit.KindAttachFinished, audit.OutcomeApplied)
+	observe(audit.KindRecordingStarted, audit.OutcomeStarted)
+	observe(audit.KindRecordingFinished, audit.OutcomeFinished)
+	observe(audit.KindRecordingExported, audit.OutcomeApplied)
+	observe(audit.KindRecordingDeleted, audit.OutcomeApplied)
+	observe(audit.KindRecordingStarted, audit.OutcomeFailed)
+
+	snap := reg.Snapshot()
+	promText := string(RenderPrometheus(snap))
+	for _, marker := range []string{
+		`relayer_control_events_total{action="attached",agent_id="claude-code",outcome="applied"} 1`,
+		`relayer_control_events_total{action="requested",agent_id="claude-code",outcome="pending"} 1`,
+		`relayer_control_events_total{action="granted",agent_id="claude-code",outcome="applied"} 1`,
+		`relayer_control_events_total{action="declined",agent_id="claude-code",outcome="applied"} 1`,
+		`relayer_control_events_total{action="released",agent_id="claude-code",outcome="applied"} 1`,
+		`relayer_control_events_total{action="forced",agent_id="claude-code",outcome="failed"} 2`,
+		`relayer_control_events_total{action="detached",agent_id="claude-code",outcome="applied"} 1`,
+		`relayer_recording_events_total{action="started",agent_id="claude-code",outcome="started"} 1`,
+		`relayer_recording_events_total{action="started",agent_id="claude-code",outcome="failed"} 1`,
+		`relayer_recording_events_total{action="finished",agent_id="claude-code",outcome="finished"} 1`,
+		`relayer_recording_events_total{action="exported",agent_id="claude-code",outcome="applied"} 1`,
+		`relayer_recording_events_total{action="deleted",agent_id="claude-code",outcome="applied"} 1`,
+	} {
+		if !strings.Contains(promText, marker) {
+			t.Errorf("rendered Prometheus text missing %q:\n%s", marker, promText)
+		}
+	}
+
+	payload, err := BuildOTLPPayload(snap, "relayer-test", "test")
+	if err != nil {
+		t.Fatalf("build otlp payload: %v", err)
+	}
+	for _, name := range []string{"relayer.control.events.total", "relayer.recording.events.total"} {
+		if !strings.Contains(string(payload), name) {
+			t.Errorf("OTLP payload missing %q", name)
+		}
+	}
+}

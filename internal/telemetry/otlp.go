@@ -95,6 +95,16 @@ func BuildOTLPPayload(snap Snapshot, serviceName, environment string) ([]byte, e
 		metrics = append(metrics, buildSumMetric("relayer.operator.inputs.total", "Total number of manual line inputs submitted", snap.OperatorInputsTotal, timeUnixNano))
 	}
 
+	// 8b. Control Events Total (Sum)
+	if len(snap.ControlEventsTotal) > 0 {
+		metrics = append(metrics, buildSumMetric("relayer.control.events.total", "Total number of terminal hand-overs between operators", snap.ControlEventsTotal, timeUnixNano))
+	}
+
+	// 8c. Recording Events Total (Sum)
+	if len(snap.RecordingEventsTotal) > 0 {
+		metrics = append(metrics, buildSumMetric("relayer.recording.events.total", "Total number of session recording lifecycle events", snap.RecordingEventsTotal, timeUnixNano))
+	}
+
 	// 9. Decision Duration (Histogram)
 	if len(snap.DecisionDurations) > 0 {
 		dataPoints := make([]map[string]any, 0, len(snap.DecisionDurations))

@@ -89,6 +89,8 @@ func TestGrafanaDashboardJSONValidity(t *testing.T) {
 		"relayer_events_withdrawn_total",
 		"relayer_decisions_total",
 		"relayer_operator_inputs_total",
+		"relayer_control_events_total",
+		"relayer_recording_events_total",
 		"relayer_guardrail_violations_total",
 		"relayer_decision_duration_seconds",
 	}

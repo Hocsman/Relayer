@@ -89,6 +89,13 @@ The dashboard visualizes the following standard Prometheus metrics exported by R
 | `relayer_decision_duration_seconds` | Histogram | `agent_id`, `action`, `le` | Human arbitration reaction time | `histogram_quantile(0.95, sum(rate(relayer_decision_duration_seconds_bucket[5m])) by (le))` |
 | `relayer_events_detected_total` | Counter | `agent_id`, `adapter`, `event_type`, `risk` | Cumulative sensitive events intercepted | `sum(rate(relayer_events_detected_total[1m])) * 60` |
 | `relayer_operator_inputs_total` | Counter | `agent_id` | Manual lines sent to agent terminals | `sum(rate(relayer_operator_inputs_total[1m])) * 60` |
+| `relayer_control_events_total` | Counter | `agent_id`, `action`, `outcome` | Terminal hand-overs between operators: `requested`, `granted`, `declined`, `released`, `forced`, `attached`, `detached` | `sum by (outcome) (increase(relayer_control_events_total{action="forced"}[1h]))` |
+| `relayer_recording_events_total` | Counter | `agent_id`, `action`, `outcome` | Session recording lifecycle: `started`, `finished`, `exported`, `deleted` | `sum(increase(relayer_recording_events_total{outcome="failed"}[1h]))` |
+
+The last two are not on the bundled dashboard; their queries are suggestions. A
+forced takeover and a recording that failed to open are the two signals most
+worth an alert: the first is somebody seizing a colleague's terminal, the second
+is a session that was meant to be recorded and was not.
 
 ---
 

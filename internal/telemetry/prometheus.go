@@ -75,6 +75,22 @@ func RenderPrometheus(snap Snapshot) []byte {
 	}
 	buf.WriteByte('\n')
 
+	// 7b. Control events total (counter)
+	buf.WriteString("# HELP relayer_control_events_total Total number of terminal hand-overs between operators, by action and outcome.\n")
+	buf.WriteString("# TYPE relayer_control_events_total counter\n")
+	for _, s := range snap.ControlEventsTotal {
+		writeMetricLine(&buf, "relayer_control_events_total", s.Labels, s.Value)
+	}
+	buf.WriteByte('\n')
+
+	// 7c. Recording events total (counter)
+	buf.WriteString("# HELP relayer_recording_events_total Total number of session recording lifecycle events, by action and outcome.\n")
+	buf.WriteString("# TYPE relayer_recording_events_total counter\n")
+	for _, s := range snap.RecordingEventsTotal {
+		writeMetricLine(&buf, "relayer_recording_events_total", s.Labels, s.Value)
+	}
+	buf.WriteByte('\n')
+
 	// 8. Guardrail violations total (counter)
 	buf.WriteString("# HELP relayer_guardrail_violations_total Total number of guardrail policy violations blocked.\n")
 	buf.WriteString("# TYPE relayer_guardrail_violations_total counter\n")

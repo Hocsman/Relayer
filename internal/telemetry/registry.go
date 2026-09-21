@@ -37,6 +37,8 @@ type Snapshot struct {
 	EventsWithdrawnTotal []MetricSample    `json:"events_withdrawn_total"`
 	DecisionsTotal       []MetricSample    `json:"decisions_total"`
 	OperatorInputsTotal  []MetricSample    `json:"operator_inputs_total"`
+	ControlEventsTotal   []MetricSample    `json:"control_events_total"`
+	RecordingEventsTotal []MetricSample    `json:"recording_events_total"`
 	GuardrailsViolations []MetricSample    `json:"guardrails_violations"`
 	DecisionDurations    []HistogramSample `json:"decision_durations"`
 }
@@ -50,6 +52,8 @@ type Registry struct {
 	eventsWithdrawnTotal map[string]int64
 	decisionsTotal       map[string]int64
 	operatorInputsTotal  map[string]int64
+	controlEventsTotal   map[string]int64
+	recordingEventsTotal map[string]int64
 	guardrailViolations  map[string]int64
 	decisionDurations    map[string]*histogramSeries
 	pendingEvents        map[string]time.Time
@@ -72,6 +76,8 @@ func NewRegistry() *Registry {
 		eventsWithdrawnTotal: make(map[string]int64),
 		decisionsTotal:       make(map[string]int64),
 		operatorInputsTotal:  make(map[string]int64),
+		controlEventsTotal:   make(map[string]int64),
+		recordingEventsTotal: make(map[string]int64),
 		guardrailViolations:  make(map[string]int64),
 		decisionDurations:    make(map[string]*histogramSeries),
 		pendingEvents:        make(map[string]time.Time),
@@ -179,7 +185,40 @@ func (r *Registry) Observe(entry audit.Entry) {
 
 	case audit.KindOperatorInput:
 		r.operatorInputsTotal[agentID]++
+
+	case audit.KindControlRequested, audit.KindControlGranted, audit.KindControlDeclined,
+		audit.KindControlReleased, audit.KindControlForced,
+		audit.KindAttachStarted, audit.KindAttachFinished:
+		key := fmt.Sprintf("action=%s,agent_id=%s,outcome=%s",
+			controlAction(entry.Kind), agentID, outcomeLabel(entry.Outcome))
+		r.controlEventsTotal[key]++
+
+	case audit.KindRecordingStarted, audit.KindRecordingFinished,
+		audit.KindRecordingExported, audit.KindRecordingDeleted:
+		key := fmt.Sprintf("action=%s,agent_id=%s,outcome=%s",
+			strings.TrimPrefix(string(entry.Kind), "recording_"), agentID, outcomeLabel(entry.Outcome))
+		r.recordingEventsTotal[key]++
 	}
+}
+
+// controlAction names a hand-over for the action label. The two attach kinds
+// move the same terminal as the control kinds, through the attach verb, so
+// they share one metric rather than splitting a question across two.
+func controlAction(kind audit.Kind) string {
+	switch kind {
+	case audit.KindAttachStarted:
+		return "attached"
+	case audit.KindAttachFinished:
+		return "detached"
+	}
+	return strings.TrimPrefix(string(kind), "control_")
+}
+
+func outcomeLabel(outcome audit.Outcome) string {
+	if outcome == "" {
+		return "unknown"
+	}
+	return string(outcome)
 }
 
 func (r *Registry) recordDurationLocked(agentID, adapter, decisionBy string, seconds float64) {
@@ -221,6 +260,8 @@ func (r *Registry) Snapshot() Snapshot {
 		EventsWithdrawnTotal: parsedMapToSamples(r.eventsWithdrawnTotal),
 		DecisionsTotal:       parsedMapToSamples(r.decisionsTotal),
 		OperatorInputsTotal:  mapToSamples(r.operatorInputsTotal, "agent_id"),
+		ControlEventsTotal:   parsedMapToSamples(r.controlEventsTotal),
+		RecordingEventsTotal: parsedMapToSamples(r.recordingEventsTotal),
 		GuardrailsViolations: parsedMapToSamples(r.guardrailViolations),
 	}
 
