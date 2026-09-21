@@ -298,17 +298,21 @@ export function AgentSettingsPanel({
     setError(undefined);
     setNotice(undefined);
     try {
+      let expectedRevision = view.revision;
       if (typeof bridge.saveFullSettings === "function" && (securityDirty || notificationsDirty)) {
-        await bridge.saveFullSettings(runID, {
+        const fullResult = await bridge.saveFullSettings(runID, {
           expectedRevision: view.revision,
           profiles: profilesForSave(draft),
           security: securityDraft,
           notifications: notificationDraft,
         });
+        if (fullResult?.revision) {
+          expectedRevision = fullResult.revision;
+        }
       }
       const result = await onSaveAndRestart({
         expectedRunID: runID,
-        expectedRevision: view.revision,
+        expectedRevision: expectedRevision,
         profiles: profilesForSave(draft),
       });
       setView(result.profiles);

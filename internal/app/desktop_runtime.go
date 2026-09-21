@@ -594,6 +594,13 @@ func (r *DesktopRuntime) RestartAgent(ctx context.Context, agentID string) error
 	return err
 }
 
+// MarkProcessExited records that an agent process terminated on its own.
+func (r *DesktopRuntime) MarkProcessExited(agentID string) {
+	if r != nil && r.lifecycle != nil {
+		r.lifecycle.MarkProcessExited(agentID)
+	}
+}
+
 // RecordAudit is a synchronous, fail-closed persistence boundary for desktop
 // decisions. Callers must not perform a backend write when it returns an error.
 func (r *DesktopRuntime) RecordAudit(entry audit.Entry) error {

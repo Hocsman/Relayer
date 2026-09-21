@@ -80,6 +80,7 @@ type desktopEngine interface {
 	StartAgent(context.Context, string) error
 	StopAgent(context.Context, string) error
 	RestartAgent(context.Context, string) error
+	MarkProcessExited(string)
 	RecordAudit(audit.Entry) error
 	BeginShutdown(context.Context) error
 	BeginRestart(context.Context) error
@@ -242,9 +243,7 @@ func (a *App) activateRun(run *runGeneration) {
 	}
 	engine := run.engine
 	metadata := engine.Metadata()
-	if metadata.Notifications.Enabled {
-		a.notifier = notify.New(metadata.Notifications, nil)
-	}
+	a.notifier = notify.New(metadata.Notifications, nil)
 	sessions := engine.Sessions()
 	agents := make([]AgentState, 0, len(sessions))
 	index := make(map[string]int, len(sessions))
@@ -650,6 +649,9 @@ func eventDetectedEntry(event adapters.Event, backend string) audit.Entry {
 }
 
 func (a *App) handleProcessExit(run *runGeneration, event adapters.Event, backend string) {
+	if run != nil && run.engine != nil {
+		run.engine.MarkProcessExited(event.SessionID)
+	}
 	key := makeEventKey(event.SessionID, event.ID)
 	// Lifecycle state still has to converge even when audit has failed, so the
 	// result is deliberately ignored rather than short-circuiting the exit.

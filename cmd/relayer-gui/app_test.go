@@ -313,6 +313,8 @@ func (f *fakeDesktopEngine) RestartAgent(_ context.Context, sessionID string) er
 	return err
 }
 
+func (f *fakeDesktopEngine) MarkProcessExited(_ string) {}
+
 func (f *fakeDesktopEngine) RecordAudit(entry audit.Entry) error {
 	f.mu.Lock()
 	shouldBlock := f.auditBlockKind != "" && entry.Kind == f.auditBlockKind

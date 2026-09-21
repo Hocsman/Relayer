@@ -205,6 +205,10 @@ func (a *App) saveFullSettingsLocked(request SaveFullSettingsRequest) (FullSetti
 		a.mu.Unlock()
 	}
 
+	if update.Notifications != nil {
+		a.notifier = notify.New(updated.Notifications, nil)
+	}
+
 	if !specsChanged && a.activeConfigRevision != "" {
 		a.activeConfigRevision = updated.Revision
 	}

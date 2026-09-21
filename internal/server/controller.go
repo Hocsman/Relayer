@@ -79,17 +79,19 @@ type Controller struct {
 	subscribers map[uint64]func(event string, payload any)
 	nextSubID   uint64
 
-	revisionHash  string
-	revisionToken string
+	revisionHash         string
+	revisionToken        string
+	activeConfigRevision string
 
 	presence           map[string]presenceEntry // connID -> live connection
 	hands              map[string]handState     // lowercase sessionID -> write lock
 	requestTimeout     time.Duration
 	allowForceTakeover bool
 
-	detector toolcatalog.Detector
-	notifier notify.Notifier
-	stopped  int32
+	detector           toolcatalog.Detector
+	notifier           notify.Notifier
+	notificationConfig notify.Config
+	stopped            int32
 }
 
 // DefaultConfigPath resolves the default config file location.
@@ -118,13 +120,14 @@ func NewController(configPath string, diagnostics io.Writer) (*Controller, error
 	}
 
 	return &Controller{
-		configPath:  configPath,
-		diagnostics: diagnostics,
-		agentIndex:  make(map[string]int),
-		pending:     make(map[string]pendingItem),
-		subscribers: make(map[uint64]func(event string, payload any)),
-		detector:    toolcatalog.DefaultDetector(),
-		notifier:    notify.New(notify.DefaultConfig(), diagnostics),
+		configPath:         configPath,
+		diagnostics:        diagnostics,
+		agentIndex:         make(map[string]int),
+		pending:            make(map[string]pendingItem),
+		subscribers:        make(map[uint64]func(event string, payload any)),
+		detector:           toolcatalog.DefaultDetector(),
+		notificationConfig: notify.DefaultConfig(),
+		notifier:           notify.New(notify.DefaultConfig(), diagnostics),
 	}, nil
 }
 
@@ -167,9 +170,9 @@ func (c *Controller) startLocked(ctx context.Context) error {
 	c.runID = runID
 
 	metadata := rt.Metadata()
-	if metadata.Notifications.Enabled {
-		c.notifier = notify.New(metadata.Notifications, c.diagnostics)
-	}
+	c.activeConfigRevision = metadata.ConfigRevision
+	c.notificationConfig = metadata.Notifications
+	c.notifier = notify.New(metadata.Notifications, c.diagnostics)
 
 	sessions := rt.Sessions()
 	agents := make([]AgentState, 0, len(sessions))
@@ -314,6 +317,7 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 	case session.AdapterEvent:
 		adapterEv := ev.Event
 		if adapterEv.Type == adapters.EventProcessExit {
+			rt.MarkProcessExited(adapterEv.SessionID)
 			c.mu.Lock()
 			idx, found := c.agentIndex[strings.ToLower(adapterEv.SessionID)]
 			if found {
@@ -403,17 +407,23 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 			c.notifier.Notify(notif)
 		}
 
-		c.broadcast(eventNotification, NotificationEvent{
-			Title:     notif.Title,
-			Body:      adapterEv.Summary,
-			AgentName: adapterEv.AgentID,
-			SessionID: adapterEv.SessionID,
-			EventID:   adapterEv.ID,
-			Kind:      notif.Kind,
-			Severity:  notif.Severity,
-			Reason:    evaluation.Reason,
-			Timestamp: notif.Timestamp.Format(time.RFC3339),
-		})
+		c.mu.RLock()
+		notifConfig := c.notificationConfig
+		c.mu.RUnlock()
+
+		if notifConfig.Enabled && notify.SeverityMeetsThreshold(notif.Severity, notifConfig.MinSeverity) {
+			c.broadcast(eventNotification, NotificationEvent{
+				Title:     notif.Title,
+				Body:      adapterEv.Summary,
+				AgentName: adapterEv.AgentID,
+				SessionID: adapterEv.SessionID,
+				EventID:   adapterEv.ID,
+				Kind:      notif.Kind,
+				Severity:  notif.Severity,
+				Reason:    evaluation.Reason,
+				Timestamp: notif.Timestamp.Format(time.RFC3339),
+			})
+		}
 
 	case session.AdapterEventWithdrawn:
 		adapterEv := ev.Event
@@ -925,7 +935,7 @@ func (c *Controller) loadAgentProfilesLocked() (AgentProfilesView, error) {
 		Profiles:        profiles,
 		MinProfiles:     minAgentProfiles,
 		MaxProfiles:     maxAgentProfiles,
-		RestartRequired: c.plan == nil || cfg.Revision != c.revisionHash,
+		RestartRequired: c.activeConfigRevision == "" || cfg.Revision != c.activeConfigRevision,
 		Editable:        !cfg.Legacy,
 	}, nil
 }
@@ -1175,7 +1185,7 @@ func (c *Controller) GetFullSettings() (FullSettingsView, error) {
 
 	return FullSettingsView{
 		AgentProfilesView: profilesView,
-		Security:          extractSecuritySettings(cfg),
+		Security:          extractSecuritySettings(cfg.Policies),
 		Notifications:     extractNotificationSettings(cfg.Notifications),
 	}, nil
 }
@@ -1209,18 +1219,11 @@ func (c *Controller) SaveFullSettings(runID string, req SaveFullSettingsRequest)
 	}
 
 	if req.Security != nil {
-		policies := cfg.Policies
-		if req.Security.DefaultAction != "" {
-			policies.DefaultAction = policy.Action(strings.ToLower(req.Security.DefaultAction))
+		pol, err := buildPolicyConfig(*req.Security, cfg.Policies, filepath.Dir(c.configPath))
+		if err != nil {
+			return FullSettingsView{}, fmt.Errorf("building policy config: %w", err)
 		}
-		policies.DryRun = req.Security.DryRun
-		if req.Security.RateLimitPerMinute > 0 {
-			policies.RateLimitPerMinute = req.Security.RateLimitPerMinute
-		}
-		if req.Security.MaxConsecutiveAutoDecisions > 0 {
-			policies.MaxConsecutiveAutoDecisions = req.Security.MaxConsecutiveAutoDecisions
-		}
-		update.Policies = &policies
+		update.Policies = &pol
 	}
 
 	res, newRev, err := config.UpdateFullConfiguration(c.configPath, cfg.Revision, update)
@@ -1235,6 +1238,7 @@ func (c *Controller) SaveFullSettings(runID string, req SaveFullSettingsRequest)
 
 	// Live reload notifier if notifications were updated
 	if update.Notifications != nil {
+		c.notificationConfig = res.Notifications
 		c.notifier = notify.New(res.Notifications, c.diagnostics)
 	}
 
@@ -1245,7 +1249,7 @@ func (c *Controller) SaveFullSettings(runID string, req SaveFullSettingsRequest)
 
 	return FullSettingsView{
 		AgentProfilesView: profilesView,
-		Security:          extractSecuritySettings(res),
+		Security:          extractSecuritySettings(res.Policies),
 		Notifications:     extractNotificationSettings(res.Notifications),
 	}, nil
 }
@@ -1717,18 +1721,60 @@ func profileFromSpec(spec agent.Spec) AgentProfile {
 	}
 }
 
-func extractSecuritySettings(cfg config.Result) SecuritySettings {
-	return SecuritySettings{
-		Profile:                     "default",
-		DefaultAction:               string(cfg.Policies.DefaultAction),
-		DryRun:                      cfg.Policies.DryRun,
-		BlockDestructive:            true,
-		BlockExfiltration:           true,
-		BlockSensitivePaths:         true,
-		BlockOutsideWorkspace:       false,
-		RateLimitPerMinute:          60,
-		MaxConsecutiveAutoDecisions: 5,
+func extractSecuritySettings(cfg policy.Config) SecuritySettings {
+	profileName := "custom"
+	// Detect known profile
+	if len(cfg.Rules) == 0 && cfg.DefaultAction == policy.ActionAsk {
+		profileName = "strict"
+	} else if len(cfg.Rules) >= 3 && cfg.Rules[0].Name == "dev-friendly-git-readonly" {
+		profileName = "developer-friendly"
 	}
+
+	return SecuritySettings{
+		Profile:                     profileName,
+		DefaultAction:               string(cfg.DefaultAction),
+		DryRun:                      cfg.DryRun,
+		BlockDestructive:            cfg.Guardrails.BlockDestructive,
+		BlockExfiltration:           cfg.Guardrails.BlockExfiltration,
+		BlockSensitivePaths:         cfg.Guardrails.BlockSensitivePaths,
+		BlockOutsideWorkspace:       cfg.Guardrails.BlockOutsideWorkspace,
+		WorkspaceRoot:               cfg.Guardrails.WorkspaceRoot,
+		RateLimitPerMinute:          cfg.RateLimitPerMinute,
+		MaxConsecutiveAutoDecisions: cfg.MaxConsecutiveAutoDecisions,
+	}
+}
+
+func buildPolicyConfig(sec SecuritySettings, existing policy.Config, baseDir string) (policy.Config, error) {
+	ws := strings.TrimSpace(sec.WorkspaceRoot)
+	if ws == "" {
+		ws = baseDir
+	}
+
+	parsedProfile, _ := policy.ParseProfile(sec.Profile)
+	var base policy.Config
+	if parsedProfile != "" && parsedProfile != policy.ProfileCustom {
+		base = policy.ProfileConfig(parsedProfile, ws)
+	} else {
+		base = existing
+	}
+
+	if sec.DefaultAction != "" {
+		base.DefaultAction = policy.Action(strings.ToLower(strings.TrimSpace(sec.DefaultAction)))
+	}
+	base.DryRun = sec.DryRun
+	base.Guardrails.BlockDestructive = sec.BlockDestructive
+	base.Guardrails.BlockExfiltration = sec.BlockExfiltration
+	base.Guardrails.BlockSensitivePaths = sec.BlockSensitivePaths
+	base.Guardrails.BlockOutsideWorkspace = sec.BlockOutsideWorkspace
+	base.Guardrails.WorkspaceRoot = ws
+	if sec.RateLimitPerMinute > 0 {
+		base.RateLimitPerMinute = sec.RateLimitPerMinute
+	}
+	if sec.MaxConsecutiveAutoDecisions > 0 {
+		base.MaxConsecutiveAutoDecisions = sec.MaxConsecutiveAutoDecisions
+	}
+
+	return base, nil
 }
 
 func extractNotificationSettings(cfg notify.Config) NotificationSettings {

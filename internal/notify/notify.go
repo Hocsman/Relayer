@@ -98,6 +98,11 @@ func severityMeetsThreshold(actual, minimum string) bool {
 	return severityRank(actual) >= severityRank(minimum)
 }
 
+// SeverityMeetsThreshold reports whether the actual severity meets or exceeds the minimum threshold.
+func SeverityMeetsThreshold(actual, minimum string) bool {
+	return severityMeetsThreshold(actual, minimum)
+}
+
 func (c *compositeNotifier) Notify(n Notification) {
 	if n.Severity == "" {
 		n.Severity = SeverityInfo

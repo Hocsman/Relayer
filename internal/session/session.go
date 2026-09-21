@@ -164,8 +164,6 @@ func (s *processSession) requestStop() {
 		}
 
 		platform.TerminateProcessGroup(s.cmd)
-		s.cancel()
-		s.closePTY()
 	})
 }
 
@@ -175,9 +173,17 @@ func (s *processSession) waitForStop() error {
 
 func (s *processSession) waitForStopWithin(gracefulTimeout, forcedTimeout time.Duration) error {
 	if waitForSignal(s.done, gracefulTimeout) {
+		if s.cancel != nil {
+			s.cancel()
+		}
+		s.closePTY()
 		return s.confirmProcessGroupStopped(forcedTimeout)
 	}
 
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.closePTY()
 	s.killProcessGroup()
 	if !waitForSignal(s.done, forcedTimeout) {
 		return ErrStopUncertain

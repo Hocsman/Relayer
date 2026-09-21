@@ -337,3 +337,37 @@ func TestAgentLifecycleRestartIsTransactionalStopThenStart(t *testing.T) {
 		t.Fatalf("restart starts = %d, want 2", starts)
 	}
 }
+
+func TestAgentLifecycleStartAndRestartSelfExitedAgent(t *testing.T) {
+	backend := newLifecycleFakeBackend()
+	router, err := newBackendRouter(context.Background(), backend)
+	if err != nil {
+		t.Fatalf("newBackendRouter: %v", err)
+	}
+	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	spec := lifecycleTestSpec(t, "self-exit")
+	if _, err := router.Start(context.Background(), spec, terminal.Size{Columns: 80, Rows: 24}); err != nil {
+		t.Fatalf("initial start: %v", err)
+	}
+	recorder := lifecycleTestRecorder(t)
+	lifecycle := newAgentLifecycle(router, recorder, []agent.Spec{spec}, terminal.Size{Columns: 80, Rows: 24}, nil)
+
+	ctx := context.Background()
+
+	// 1. Mark process exited on its own, then StartAgent should succeed
+	lifecycle.MarkProcessExited("self-exit")
+	if _, err := lifecycle.StartAgent(ctx, "self-exit", "operator_start"); err != nil {
+		t.Fatalf("StartAgent after MarkProcessExited failed: %v", err)
+	}
+
+	// 2. Process exits on its own without MarkProcessExited being called (router Remove succeeds)
+	// StartAgent should detect that the previous process is gone and restart it cleanly
+	if _, err := lifecycle.StartAgent(ctx, "self-exit", "operator_start"); err != nil {
+		t.Fatalf("StartAgent for self-exited agent failed: %v", err)
+	}
+
+	// 3. RestartAgent should also succeed cleanly
+	if _, err := lifecycle.RestartAgent(ctx, "self-exit"); err != nil {
+		t.Fatalf("RestartAgent for self-exited agent failed: %v", err)
+	}
+}

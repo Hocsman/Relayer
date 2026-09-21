@@ -4,6 +4,31 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-09-21
+
+Patch release entitled "réglages honnêtes" ("honest settings"), resolving settings fidelity, configuration lifecycle transitions, notification enforcement, and process termination handling.
+
+### Fixed
+
+- **Security Settings Saved and Reloaded Without Loss**:
+  - The Web Gateway previously returned hardcoded fictitious values (`Profile: "default"`, `BlockDestructive: true`, etc.) in `extractSecuritySettings`, ignoring `cfg.Policies.Guardrails`. When saving via `SaveFullSettings`, security guardrails (`BlockDestructive`, `BlockExfiltration`, `BlockSensitivePaths`, `BlockOutsideWorkspace`, `WorkspaceRoot`), profiles, and rate limits were discarded.
+  - Aligned `internal/server/controller.go` with `settings_panel.go`: `extractSecuritySettings` faithfully extracts active guardrails and detects profiles (`strict`, `developer-friendly`, `custom`), and `SaveFullSettings` applies `buildPolicyConfig` to persist all security fields to disk.
+
+- **Truthful "Restart Required" Status and Functional "Save and Restart"**:
+  - `loadAgentProfilesLocked` previously called `getOrGenerateToken` which updated `c.revisionHash` before evaluating `RestartRequired`, causing it to always evaluate to `false` even after settings changed on disk.
+  - `Controller` now tracks `activeConfigRevision`, displaying `RestartRequired: true` whenever configuration on disk differs from the active running engine's revision.
+  - In `AgentSettingsPanel.tsx`, `saveAndRestart` now captures the fresh revision returned by `saveFullSettings` (`expectedRevision = fullResult.revision`) before calling `onSaveAndRestart`, resolving the stale revision rejection error (`errStaleRevision`).
+
+- **Enforced Notification Disabling**:
+  - When notifications were disabled in configuration (`notifications.enabled: false`), the supervisor runtime previously kept its default active notifier instance, continuing to process alerts. Furthermore, `relayer:notification` WebSocket events were broadcast unconditionally.
+  - `controller.go` and `cmd/relayer-gui/app.go` now unconditionally initialize notifiers via `notify.New(metadata.Notifications, ...)`, which returns a `noopNotifier` when disabled.
+  - WebSocket `eventNotification` broadcasts are gated by `notificationConfig.Enabled` and minimum severity thresholds, silencing browser toasts and chimes when notifications are disabled.
+
+- **Clean Agent Process Group Termination under Unix & Restart of Self-Exited Agents**:
+  - `session.requestStop` previously canceled the command context and closed the master PTY immediately, forcing an instant SIGKILL via Go's `os/exec` context handler before the process could handle SIGTERM. It now issues `TerminateProcessGroup` (SIGTERM) first, allowing child processes a 1.5s graceful timeout to exit cleanly before fallback kill and PTY closure.
+  - `internal/platform/process_unix.go` guards against `command.Process.Pid <= 0` to prevent unintended signaling of the supervisor's own process group (PID 0).
+  - `agentLifecycle` and `DesktopRuntime` now expose `MarkProcessExited`, transitioning self-exited processes from `agentStateRunning` to `agentStateStopped`. Additionally, `StartAgent` validates route availability with `router.Remove`, allowing agents that exited naturally to be restarted cleanly without `errAgentRunning` errors.
+
 ## [0.8.4] - 2026-09-21
 
 Patch release addressing three critical security and process-lifecycle vulnerabilities across the Relayer Web Gateway, the session supervisor, and role-based access control.

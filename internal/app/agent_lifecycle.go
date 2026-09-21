@@ -166,6 +166,12 @@ func (l *agentLifecycle) StartAgent(ctx context.Context, agentID, reason string)
 		l.mu.Unlock()
 		return terminal.Info{}, errAgentBusy
 	case l.states[key] == agentStateRunning:
+		// Check whether the process actually exited on its own without an explicit operator stop.
+		// If Remove succeeds, the backend has authoritatively proven the previous process is gone.
+		if err := l.router.Remove(ctx, spec.ID); err == nil || errors.Is(err, terminal.ErrSessionNotFound) {
+			l.states[key] = agentStateStopped
+			break
+		}
 		l.mu.Unlock()
 		return terminal.Info{}, errAgentRunning
 	case l.states[key] == agentStateStopUncertain:
@@ -277,4 +283,19 @@ func (l *agentLifecycle) recordLifecycle(entry audit.Entry) error {
 		return nil
 	}
 	return l.auditor.Record(entry)
+}
+
+// MarkProcessExited records that an agent process terminated on its own,
+// transitioning it from running to stopped so that subsequent operator start or
+// restart attempts can safely launch a new process under the same identity.
+func (l *agentLifecycle) MarkProcessExited(agentID string) {
+	if l == nil {
+		return
+	}
+	key := lifecycleKey(agentID)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.states[key] == agentStateRunning {
+		l.states[key] = agentStateStopped
+	}
 }
