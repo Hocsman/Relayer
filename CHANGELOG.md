@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-09-21
+
+Patch release making the audit journal record what the documentation said it recorded. Hand-overs of a terminal between operators, forced takeover attempts, and each session recording's opening and closing are now journaled; until now none of them were. Recording and hand-over events also reach telemetry, and the Audit panel can filter on every kind the journal holds.
+
 ### Fixed
 
 - **Seven of the nine recording and control audit kinds were never written**: v0.7.0 declared `control_requested`, `control_granted`, `control_declined`, `control_released`, `control_forced`, `recording_started` and `recording_finished`, and `docs/sharing.md` and `docs/recording.md` described each as journaled — "every use is journaled as `control_forced`" — but nothing emitted any of them. A hand-over between operators, and a forced takeover attempt, left no trace in the journal. Only `recording_exported` and `recording_deleted` were real.
@@ -747,7 +751,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.2...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.3...main
+[0.8.3]: https://github.com/Hocsman/Relayer/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/Hocsman/Relayer/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/Hocsman/Relayer/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/Hocsman/Relayer/compare/v0.7.1...v0.8.0
