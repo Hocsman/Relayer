@@ -867,18 +867,23 @@ func TestRBACAuthenticationAndPermissions(t *testing.T) {
 		{"forceTakeControl", map[string]any{"sessionID": "s"}},
 		// Session recording: a viewer may list and replay, never destroy.
 		{"deleteRecording", map[string]any{"id": "r"}},
+		// Explicit viewer allowlist: exporting raw recordings and full settings (webhooks) are forbidden
+		{"exportRecording", map[string]any{"id": "r"}},
+		{"getFullSettings", map[string]any{}},
+		// Any unlisted or unknown method is denied by default for viewer
+		{"nonExistentOrUnlistedMethod", map[string]any{}},
 	}
 
 	for _, tt := range mutatingTests {
 		_, err := callViewerRPC(tt.method, tt.params)
 		if err == nil {
-			t.Errorf("Viewer calling mutating method %s succeeded, want permission denied", tt.method)
+			t.Errorf("Viewer calling mutating/restricted method %s succeeded, want permission denied", tt.method)
 		} else if !strings.Contains(err.Error(), "permission denied") {
 			t.Errorf("Viewer calling %s error = %v, want 'permission denied'", tt.method, err)
 		}
 	}
 
-	// Reading a roster and reading recordings are not mutations: observing is
+	// Reading a roster, reading recordings, and inspecting agent profiles are allowed: observing is
 	// the whole point of the viewer role, so refusing them would make the role
 	// useless rather than safe.
 	readableTests := []struct {
@@ -888,6 +893,7 @@ func TestRBACAuthenticationAndPermissions(t *testing.T) {
 		{"listPresence", map[string]any{"sessionID": "s"}},
 		{"observeSession", map[string]any{"sessionID": "s", "observing": true}},
 		{"listRecordings", map[string]any{}},
+		{"getAgentProfiles", map[string]any{}},
 	}
 	for _, tt := range readableTests {
 		if _, err := callViewerRPC(tt.method, tt.params); err != nil &&
@@ -1151,3 +1157,190 @@ func TestInteractivePTYWebAndAudit(t *testing.T) {
 		t.Error("expected audit entry for attach_finished by alice")
 	}
 }
+
+func TestGatewayOriginAndLoopbackProtection(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.yaml")
+	if _, err := config.LoadOrCreate(configPath); err != nil {
+		t.Fatalf("LoadOrCreate: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	readyCh := make(chan struct {
+		serverURL string
+		token     string
+	}, 1)
+
+	opts := Options{
+		Bind:        "127.0.0.1",
+		Port:        0,
+		Token:       "op-secret-123",
+		ConfigPath:  configPath,
+		Diagnostics: io.Discard,
+		OnReady: func(serverURL string, token string) {
+			readyCh <- struct {
+				serverURL string
+				token     string
+			}{serverURL: serverURL, token: token}
+		},
+	}
+
+	_ = startServeForTest(t, ctx, cancel, opts)
+
+	var readyInfo struct {
+		serverURL string
+		token     string
+	}
+	select {
+	case readyInfo = <-readyCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for server to become ready")
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+
+	// 1. /api/state with evil Origin must be rejected with 403 Forbidden
+	reqEvil, _ := http.NewRequest("GET", readyInfo.serverURL+"/api/state", nil)
+	reqEvil.Header.Set("Origin", "http://evil.com")
+	reqEvil.Header.Set("Authorization", "Bearer op-secret-123")
+	respEvil, err := client.Do(reqEvil)
+	if err != nil {
+		t.Fatalf("GET /api/state with evil origin: %v", err)
+	}
+	_ = respEvil.Body.Close()
+	if respEvil.StatusCode != http.StatusForbidden {
+		t.Errorf("GET /api/state with evil origin status = %d, want %d", respEvil.StatusCode, http.StatusForbidden)
+	}
+
+	// 2. /api/state without Origin (CLI / non-browser) succeeds
+	reqCLI, _ := http.NewRequest("GET", readyInfo.serverURL+"/api/state", nil)
+	reqCLI.Header.Set("Authorization", "Bearer op-secret-123")
+	respCLI, err := client.Do(reqCLI)
+	if err != nil {
+		t.Fatalf("GET /api/state without origin: %v", err)
+	}
+	_ = respCLI.Body.Close()
+	if respCLI.StatusCode != http.StatusOK {
+		t.Errorf("GET /api/state without origin status = %d, want %d", respCLI.StatusCode, http.StatusOK)
+	}
+
+	// 3. /api/state with loopback Origin succeeds
+	reqLocal, _ := http.NewRequest("GET", readyInfo.serverURL+"/api/state", nil)
+	reqLocal.Header.Set("Origin", "http://localhost:3000")
+	reqLocal.Header.Set("Authorization", "Bearer op-secret-123")
+	respLocal, err := client.Do(reqLocal)
+	if err != nil {
+		t.Fatalf("GET /api/state with local origin: %v", err)
+	}
+	_ = respLocal.Body.Close()
+	if respLocal.StatusCode != http.StatusOK {
+		t.Errorf("GET /api/state with local origin status = %d, want %d", respLocal.StatusCode, http.StatusOK)
+	}
+
+	// 4. WebSocket dial with evil Origin must be rejected (403 Forbidden)
+	wsURL := strings.Replace(readyInfo.serverURL, "http://", "ws://", 1) + "/api/ws?token=op-secret-123"
+	evilDialer := websocket.Dialer{
+		Proxy:            http.ProxyFromEnvironment,
+		HandshakeTimeout: 3 * time.Second,
+	}
+	evilHeader := make(http.Header)
+	evilHeader.Set("Origin", "http://evil.com")
+	_, wsResp, err := evilDialer.Dial(wsURL, evilHeader)
+	if err == nil {
+		t.Error("WebSocket dial with evil origin succeeded, want failure")
+	}
+	if wsResp != nil && wsResp.StatusCode != http.StatusForbidden {
+		t.Errorf("WebSocket dial with evil origin returned status = %d, want %d", wsResp.StatusCode, http.StatusForbidden)
+	}
+
+	// 5. WebSocket dial without Origin succeeds
+	normalDialer := websocket.Dialer{
+		Proxy:            http.ProxyFromEnvironment,
+		HandshakeTimeout: 3 * time.Second,
+	}
+	wsConn, _, err := normalDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("WebSocket dial without origin failed: %v", err)
+	}
+	_ = wsConn.Close()
+
+	// 6. WebSocket dial with loopback Origin succeeds
+	localHeader := make(http.Header)
+	localHeader.Set("Origin", "http://localhost:5173")
+	wsLocalConn, _, err := normalDialer.Dial(wsURL, localHeader)
+	if err != nil {
+		t.Fatalf("WebSocket dial with local origin failed: %v", err)
+	}
+	_ = wsLocalConn.Close()
+}
+
+func TestAnonymousLocalRejectsCrossOrigin(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.yaml")
+	if _, err := config.LoadOrCreate(configPath); err != nil {
+		t.Fatalf("LoadOrCreate: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	readyCh := make(chan struct {
+		serverURL string
+		token     string
+	}, 1)
+
+	// No tokens specified -> allowAnonymousLocal is active on loopback
+	opts := Options{
+		Bind:        "127.0.0.1",
+		Port:        0,
+		ConfigPath:  configPath,
+		Diagnostics: io.Discard,
+		OnReady: func(serverURL string, token string) {
+			readyCh <- struct {
+				serverURL string
+				token     string
+			}{serverURL: serverURL, token: token}
+		},
+	}
+
+	_ = startServeForTest(t, ctx, cancel, opts)
+
+	var readyInfo struct {
+		serverURL string
+		token     string
+	}
+	select {
+	case readyInfo = <-readyCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for server to become ready")
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+
+	// Malicious webpage on evil.com tries to query local /api/state anonymously
+	reqEvil, _ := http.NewRequest("GET", readyInfo.serverURL+"/api/state", nil)
+	reqEvil.Header.Set("Origin", "http://evil.com")
+	respEvil, err := client.Do(reqEvil)
+	if err != nil {
+		t.Fatalf("GET /api/state with evil origin: %v", err)
+	}
+	_ = respEvil.Body.Close()
+	if respEvil.StatusCode != http.StatusForbidden {
+		t.Errorf("Anonymous /api/state with evil origin status = %d, want %d", respEvil.StatusCode, http.StatusForbidden)
+	}
+
+	// Normal local browser with loopback Origin succeeds
+	reqLocal, _ := http.NewRequest("GET", readyInfo.serverURL+"/api/state", nil)
+	reqLocal.Header.Set("Origin", readyInfo.serverURL)
+	respLocal, err := client.Do(reqLocal)
+	if err != nil {
+		t.Fatalf("GET /api/state with same origin: %v", err)
+	}
+	_ = respLocal.Body.Close()
+	if respLocal.StatusCode != http.StatusOK {
+		t.Errorf("Anonymous /api/state with same origin status = %d, want %d", respLocal.StatusCode, http.StatusOK)
+	}
+}
+

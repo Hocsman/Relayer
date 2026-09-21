@@ -18,7 +18,7 @@ func NewShellCommand(ctx context.Context, script string) (*exec.Cmd, error) {
 
 // TerminateProcessGroup attempts to stop the process tree rooted at command.
 func TerminateProcessGroup(command *exec.Cmd) {
-	if command == nil || command.Process == nil {
+	if command == nil || command.Process == nil || command.ProcessState != nil {
 		return
 	}
 	_ = exec.Command("taskkill", "/T", "/PID", strconv.Itoa(command.Process.Pid)).Run()
@@ -26,7 +26,7 @@ func TerminateProcessGroup(command *exec.Cmd) {
 
 // KillProcessGroup forcefully stops the process tree rooted at command.
 func KillProcessGroup(command *exec.Cmd) {
-	if command == nil || command.Process == nil {
+	if command == nil || command.Process == nil || command.ProcessState != nil {
 		return
 	}
 	_ = exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(command.Process.Pid)).Run()
@@ -35,7 +35,7 @@ func KillProcessGroup(command *exec.Cmd) {
 
 // ProcessGroupExists reports whether the command process is still active.
 func ProcessGroupExists(command *exec.Cmd) bool {
-	if command == nil || command.Process == nil {
+	if command == nil || command.Process == nil || command.ProcessState != nil {
 		return false
 	}
 	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(command.Process.Pid))

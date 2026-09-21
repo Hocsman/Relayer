@@ -294,4 +294,43 @@ describe("RecordingsPanel", () => {
     expect(markup).toContain("Recorded Sessions");
     expect(markup).toContain("Download .cast");
   });
+
+  it("disables download action and hides delete action when readOnly is true", () => {
+    const dummyBridge: RelayerBridge = {
+      getState: async () => ({} as never),
+      runPreflight: async () => ({} as never),
+      submitDecision: async () => {},
+      submitAutomaticDecision: async () => {},
+      submitLine: async () => {},
+      resizeSession: async () => {},
+      stopSession: async () => {},
+      startSession: async () => {},
+      restartSession: async () => {},
+      getAgentProfiles: async () => ({} as never),
+      saveAgentProfiles: async () => ({} as never),
+      saveAgentProfilesAndRestart: async () => ({} as never),
+      getFullSettings: async () => ({} as never),
+      saveFullSettings: async () => ({} as never),
+      stopRun: async () => ({} as never),
+      getAuditSummary: async () => ({} as never),
+      getAuditEntries: async () => [],
+      verifyAuditJournal: async () => ({} as never),
+      exportAuditReport: async () => "[]",
+      getTelemetrySnapshot: async () => ({} as never),
+      listRecordings: async () => sampleRecordings(),
+      getRecording: async () => sampleRecordings()[0],
+      readRecordingChunk: async () => ({} as never),
+      exportRecording: async () => "",
+      deleteRecording: async () => {},
+      on: () => () => {},
+    };
+
+    const markup = renderToStaticMarkup(
+      <RecordingsPanel bridge={dummyBridge} readOnly={true} onClose={() => {}} />,
+    );
+
+    expect(markup).toContain('disabled=""');
+    expect(markup).toContain("Download .cast");
+  });
 });
+

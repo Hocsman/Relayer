@@ -4,6 +4,29 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-09-21
+
+Patch release addressing three critical security and process-lifecycle vulnerabilities across the Relayer Web Gateway, the session supervisor, and role-based access control.
+
+### Security
+
+- **Cross-Site WebSocket Hijacking and Rogue Cross-Origin Gateway Access**:
+  - The Web Gateway previously accepted WebSocket connections from any `Origin` unconditionally (`upgrader.CheckOrigin` returned `true`), and granted unauthenticated operator privileges to local requests without validating request origin. A malicious webpage visited in an operator's browser could silently open a WebSocket or send requests to `localhost:8080` to seize control of running agent sessions (CSWSH).
+  - All incoming browser connections to `/api/ws` and `/api/state` now strictly validate the `Origin` header (`checkSameOriginOrLocal`), requiring it to match the host or originate from a loopback address. Cross-origin requests from external domains are rejected immediately with HTTP 403 Forbidden.
+  - Anonymous local operator access (`allowAnonymousLocal`) is restricted to verified loopback remotes with matching or loopback origins.
+  - Non-browser clients (CLI, curl, native GUI) without an `Origin` header continue to operate normally.
+
+- **Windows PID Reuse Hazard during Process Group Termination**:
+  - Stopping or reaping an agent process previously issued `taskkill` and queried OS process handles using the command's PID even after Go's `cmd.Wait()` had reaped the process. Under Windows, PIDs are recycled quickly, meaning Relayer could inadvertently kill or signal an unrelated operating system or user process that was assigned the recycled PID.
+  - `platform.TerminateProcessGroup`, `platform.KillProcessGroup`, and `platform.ProcessGroupExists` now verify `command.ProcessState == nil` before targeting any PID. If the process has already terminated and been reaped, process manipulation functions return immediately as safe no-ops.
+  - `session.requestStop`, `session.waitForStopWithin`, `session.confirmProcessGroupStopped`, and `manager.waitSession` no longer target process groups after process exit.
+
+- **Explicit Viewer Role Allowlist**:
+  - Replaced the mutating-method blacklist with an explicit, strict allowlist (`isViewerAllowed`) defining the exact read-only operations permitted for the Viewer role.
+  - Formally blocks session recording export (`exportRecording`), preventing read-only viewers from dumping raw `.cast` terminal transcripts. The frontend Recordings panel disables the download action accordingly.
+  - Blocks sensitive configuration retrieval (`getFullSettings`), preventing viewers from viewing notification webhooks and secret tokens. The web settings panel automatically falls back to `getAgentProfiles` in read-only mode to display agent configurations without exposing secrets.
+  - Any unlisted or future method is denied by default with `permission denied: viewer role is read-only`.
+
 ## [0.8.3] - 2026-09-21
 
 Patch release making the audit journal record what the documentation said it recorded. Hand-overs of a terminal between operators, forced takeover attempts, and each session recording's opening and closing are now journaled; until now none of them were. Recording and hand-over events also reach telemetry, and the Audit panel can filter on every kind the journal holds.
@@ -751,7 +774,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.3...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.4...main
+[0.8.4]: https://github.com/Hocsman/Relayer/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/Hocsman/Relayer/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/Hocsman/Relayer/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/Hocsman/Relayer/compare/v0.8.0...v0.8.1

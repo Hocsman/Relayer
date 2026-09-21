@@ -63,3 +63,21 @@ func TestProcessGroupExistsAndKill(t *testing.T) {
 		t.Fatal("expected process to be reported as terminated")
 	}
 }
+
+func TestProcessGroupTerminatedNoop(t *testing.T) {
+	cmd := exec.Command("cmd.exe", "/c", "echo done")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("failed to run short process: %v", err)
+	}
+	if cmd.ProcessState == nil {
+		t.Fatal("expected ProcessState to be non-nil after cmd.Run()")
+	}
+
+	// When ProcessState is non-nil, these functions must immediately return without targeting the PID.
+	if ProcessGroupExists(cmd) {
+		t.Fatal("ProcessGroupExists returned true for reaped command")
+	}
+	TerminateProcessGroup(cmd)
+	KillProcessGroup(cmd)
+}
+

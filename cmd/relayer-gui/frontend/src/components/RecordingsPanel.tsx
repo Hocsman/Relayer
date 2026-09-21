@@ -249,7 +249,7 @@ export function RecordingsPanel({ bridge, readOnly, onClose }: RecordingsPanelPr
             <button
               className="button button--ghost"
               type="button"
-              disabled={!selected || downloading || !bridge.exportRecording}
+              disabled={!selected || downloading || !bridge.exportRecording || readOnly}
               onClick={() => {
                 if (selected) void handleDownload(selected);
               }}

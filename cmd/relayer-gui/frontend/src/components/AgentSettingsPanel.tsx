@@ -104,13 +104,13 @@ export function AgentSettingsPanel({
 
   useEffect(() => {
     let active = true;
-    const loader = typeof bridge.getFullSettings === "function"
-      ? bridge.getFullSettings()
-      : bridge.getAgentProfiles().then((loaded) => ({
+    const loader = (readOnly || typeof bridge.getFullSettings !== "function")
+      ? bridge.getAgentProfiles().then((loaded) => ({
           ...loaded,
           security: securityDraft,
           notifications: notificationDraft,
-        }));
+        }))
+      : bridge.getFullSettings();
 
     void loader.then(
       (loaded) => {
@@ -140,7 +140,7 @@ export function AgentSettingsPanel({
     return () => {
       active = false;
     };
-  }, [bridge]);
+  }, [bridge, readOnly]);
 
   const validation = useMemo(
     () =>

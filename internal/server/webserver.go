@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -174,9 +175,56 @@ func (c *clientConnection) close() {
 	close(c.send)
 }
 
+func isLoopbackHost(hostPort string) bool {
+	h := hostPort
+	if host, _, err := net.SplitHostPort(hostPort); err == nil {
+		h = host
+	}
+	h = strings.TrimPrefix(strings.TrimSuffix(h, "]"), "[")
+	if strings.EqualFold(h, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
+}
+
+func isLoopbackRemote(remoteAddr string) bool {
+	host := remoteAddr
+	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		host = h
+	}
+	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func checkSameOriginOrLocal(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		// Non-browser clients (CLI, curl, native GUI) do not send Origin header.
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	// Direct same-origin match (same host and port)
+	if strings.EqualFold(u.Host, r.Host) {
+		return true
+	}
+	// Localhost cross-port access (e.g. Vite dev server on localhost:5173 connecting to gateway on localhost:8080)
+	if isLoopbackHost(u.Host) && isLoopbackHost(r.Host) {
+		return true
+	}
+	return false
+}
+
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allowed for headless gateway
+		return checkSameOriginOrLocal(r)
 	},
 	ReadBufferSize:  1024 * 64,
 	WriteBufferSize: 1024 * 64,
@@ -384,6 +432,10 @@ func (gh *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// State endpoint
 	if r.URL.Path == "/api/state" {
+		if !checkSameOriginOrLocal(r) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
 		if !gh.isAuthorized(r) {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
@@ -395,6 +447,10 @@ func (gh *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// WebSocket endpoint
 	if r.URL.Path == "/api/ws" {
+		if !checkSameOriginOrLocal(r) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
 		identity, ok := gh.authenticate(r)
 		if !ok {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -438,10 +494,13 @@ func (gh *gatewayHandler) authenticate(r *http.Request) (AuthIdentity, bool) {
 
 	// 3. Fallback for anonymous localhost if allowed
 	if gh.allowAnonymousLocal && len(gh.tokens) == 0 {
-		return AuthIdentity{
-			Identity: "local-operator",
-			Role:     RoleOperator,
-		}, true
+		if isLoopbackRemote(r.RemoteAddr) && checkSameOriginOrLocal(r) {
+			return AuthIdentity{
+				Identity: "local-operator",
+				Role:     RoleOperator,
+			}, true
+		}
+		return AuthIdentity{}, false
 	}
 
 	return AuthIdentity{}, false
@@ -552,12 +611,12 @@ func (gh *gatewayHandler) dispatchRPC(client *clientConnection, req wsRequest) {
 }
 
 func (gh *gatewayHandler) executeMethod(client *clientConnection, method string, params json.RawMessage) (any, error) {
-	if client.role == RoleViewer && isMutatingMethod(method) {
-		if method == "resizeSession" {
-			// Silent no-op for viewer to avoid disruptive PTY resizes without UI errors
-			return nil, nil
-		}
+	if client.role == RoleViewer && !isViewerAllowed(method) {
 		return nil, errors.New("permission denied: viewer role is read-only")
+	}
+	if client.role == RoleViewer && method == "resizeSession" {
+		// Silent no-op for viewer to avoid disruptive PTY resizes without UI errors
+		return nil, nil
 	}
 
 	switch method {
@@ -862,28 +921,23 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 	}
 }
 
-func isMutatingMethod(method string) bool {
+func isViewerAllowed(method string) bool {
 	switch method {
-	case "submitDecision",
-		"submitAutomaticDecision",
-		"submitLine",
-		"sendTerminalInput",
-		"setInteractiveSession",
-		"resizeSession",
-		"stopSession",
-		"startSession",
-		"restartSession",
-		"saveAgentProfiles",
-		"saveAgentProfilesAndRestart",
-		"saveFullSettings",
-		"testNotification",
-		"requestControl",
-		"grantControl",
-		"declineControl",
-		"releaseControl",
-		"forceTakeControl",
-		"deleteRecording",
-		"stopRun":
+	case "getUserInfo",
+		"getState",
+		"runPreflight",
+		"listPresence",
+		"observeSession",
+		"getAgentProfiles",
+		"getAuditSummary",
+		"getAuditEntries",
+		"verifyAuditJournal",
+		"exportAuditReport",
+		"getTelemetrySnapshot",
+		"listRecordings",
+		"getRecording",
+		"readRecordingChunk",
+		"resizeSession":
 		return true
 	default:
 		return false
