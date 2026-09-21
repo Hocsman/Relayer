@@ -229,6 +229,17 @@ export function AuditContentView({
   }
 
   const agentOptions = summary ? Object.keys(summary.agentCounts).sort() : [];
+  // Derived from the journal rather than listed by hand: a fixed list offered
+  // nine of the kinds the engine writes and silently fell behind each new one.
+  // The summary is unfiltered, so choosing a kind never narrows the choices. A
+  // selected kind stays offered even when the journal no longer holds it, so
+  // the control never shows a value it cannot display.
+  const kindCounts = summary?.kindCounts ?? {};
+  const kindOptions = Object.keys(kindCounts);
+  if (selectedKind && !kindOptions.includes(selectedKind)) {
+    kindOptions.push(selectedKind);
+  }
+  kindOptions.sort();
 
   return (
     <>
@@ -351,15 +362,11 @@ export function AuditContentView({
             onChange={(e) => onSelectKind(e.target.value)}
           >
             <option value="">All kinds</option>
-            <option value="policy_evaluated">policy_evaluated</option>
-            <option value="decision">decision</option>
-            <option value="delivery">delivery</option>
-            <option value="operator_input">operator_input</option>
-            <option value="session_started">session_started</option>
-            <option value="session_finished">session_finished</option>
-            <option value="run_started">run_started</option>
-            <option value="run_finished">run_finished</option>
-            <option value="event_withdrawn">event_withdrawn</option>
+            {kindOptions.map((kind) => (
+              <option key={kind} value={kind}>
+                {kind} ({kindCounts[kind] ?? 0})
+              </option>
+            ))}
           </select>
         </div>
 

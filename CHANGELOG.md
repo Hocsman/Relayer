@@ -4,6 +4,20 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+### Fixed
+
+- **Seven of the nine recording and control audit kinds were never written**: v0.7.0 declared `control_requested`, `control_granted`, `control_declined`, `control_released`, `control_forced`, `recording_started` and `recording_finished`, and `docs/sharing.md` and `docs/recording.md` described each as journaled — "every use is journaled as `control_forced`" — but nothing emitted any of them. A hand-over between operators, and a forced takeover attempt, left no trace in the journal. Only `recording_exported` and `recording_deleted` were real.
+  - Every control verb now journals the transition it made, captured under the same lock as the change so the record describes the state the verb acted on. Where the transfer has another party — the holder asked, the operator handed to or refused, the holder displaced — the record names them in `target_operator` and `target_conn_id`, keys the audit allowlist had already reserved.
+  - One action writes one record. Releasing through the attach control writes `attach_finished` and not `control_released` too; asking again for a terminal you are already waiting on is not journaled twice; a request that expires or is withdrawn moves no terminal and is not journaled.
+  - A holder whose connection drops is journaled as `control_released` by the system, so a journal never shows somebody taking a terminal and then simply stops.
+  - Every force-takeover attempt is journaled, refused ones with outcome `failed`. Force takeover cannot currently be enabled — the documentation said a deployment could opt in, but no setting does that, and the documentation now says so — so today every such record is a refusal, which is exactly the event worth finding.
+  - The session recorder now reports each transcript opening and closing, and the run journals them as `recording_started` and `recording_finished` with the transcript's identity and final size. A transcript the store could not open is journaled as a failure, so a session that went unrecorded says so in the journal as well as in the startup diagnostics.
+  - `TestEveryHandoverIsJournaled` and `TestRecordingLifecycleIsJournaled` drive a real run and read the journal back, then verify it; both fail against the previous code.
+- **The control verbs accepted a session that does not exist**: taking or asking for a terminal on an unknown session ID created a write-lock entry for it, so a client could grow that table without bound. They now refuse it, as the attach verb already did.
+- **A recording named its agent by display name**: transcripts stored `info.Name` as their agent ID where every other audit record uses the agent's identifier, so filtering the journal by agent missed the recording export and delete records. New transcripts store the identifier; the display name keeps its own field, which is what the Recordings panel shows.
+- **Recording and control events were invisible to telemetry**: the metric registry fell through all eleven kinds. `relayer_control_events_total` and `relayer_recording_events_total` now count them by `action` and `outcome`, in both the Prometheus and OTLP exporters.
+- **The Audit panel's kind filter offered nine of the twenty-four kinds**: it was a hand-written list that never gained the attach, recording, control, cleanup or error kinds. It is now derived from the journal's own kind counts, like the agent filter beside it.
+
 ## [0.8.2] - 2026-09-20
 
 Patch release closing every free-form field on the audit kinds that sit closest to raw terminal bytes. The recording, control and attach records now drop `Summary`, `EventID` and `Rule` by a rule in the sanitizer rather than by each emitter remembering to leave them empty.

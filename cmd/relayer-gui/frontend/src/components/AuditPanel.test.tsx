@@ -260,6 +260,43 @@ describe("AuditContentView", () => {
     expect(markup).toContain("human (alice)");
     expect(markup).toContain("<dt>Operator</dt><dd><code>alice</code></dd>");
   });
+
+  it("offers every kind the journal holds, not a fixed list", () => {
+    const summary = sampleSummary();
+    // Kinds the hand-written list never offered.
+    summary.kindCounts = { control_forced: 2, recording_finished: 1, decision: 3 };
+    const renderKinds = (selectedKind: string) =>
+      renderToStaticMarkup(
+        <AuditContentView
+          summary={summary}
+          verification={sampleVerification(true)}
+          entries={[]}
+          selectedAgent=""
+          selectedKind={selectedKind}
+          limit={50}
+          expandedEntryKey={null}
+          onSelectAgent={() => {}}
+          onSelectKind={() => {}}
+          onSelectLimit={() => {}}
+          onToggleExpand={() => {}}
+          onRefresh={() => {}}
+        />,
+      );
+
+    const markup = renderKinds("");
+    expect(markup).toContain('<option value="control_forced">control_forced (2)</option>');
+    expect(markup).toContain('<option value="recording_finished">recording_finished (1)</option>');
+    expect(markup).toContain('<option value="decision">decision (3)</option>');
+    // A kind absent from this journal is not offered.
+    expect(markup).not.toContain('value="policy_evaluated"');
+    // Sorted, so the list does not reshuffle between refreshes.
+    expect(markup.indexOf('value="control_forced"')).toBeLessThan(markup.indexOf('value="decision"'));
+    expect(markup.indexOf('value="decision"')).toBeLessThan(markup.indexOf('value="recording_finished"'));
+
+    // A selection the journal no longer holds stays visible instead of
+    // silently reading as "All kinds".
+    expect(renderKinds("attach_started")).toContain('<option value="attach_started" selected="">attach_started (0)</option>');
+  });
 });
 
 describe("AuditPanel", () => {
