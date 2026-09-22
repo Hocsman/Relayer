@@ -139,7 +139,7 @@ func (a *App) saveFullSettingsLocked(request SaveFullSettingsRequest) (FullSetti
 	// DRY RUN appear active while automatic approvals kept being delivered.
 
 	if request.Notifications != nil {
-		a.setNotifier(notify.New(updated.Notifications, nil))
+		a.setNotifier(newNotifier(updated.Notifications))
 	}
 
 	// Notifications are applied above; agents and policies only take effect in

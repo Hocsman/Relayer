@@ -95,3 +95,31 @@ func TestFailedWebhookIsReportedWithoutItsURL(t *testing.T) {
 		t.Fatalf("diagnostics carry the webhook URL: %q", line)
 	}
 }
+
+// TestMergeWebhookHeadersNeverLendsACredentialToASibling: two webhooks share a
+// URL and only one has a credential. The URL is ambiguous, so the one without
+// keeps having none; counting only webhooks with headers made the URL look
+// unambiguous and copied the credential onto the sibling on every save.
+func TestMergeWebhookHeadersNeverLendsACredentialToASibling(t *testing.T) {
+	existing := []WebhookConfig{
+		{Name: "authed", URL: "https://hooks.example/u", Headers: map[string]string{"Authorization": "Bearer A"}},
+		{Name: "plain", URL: "https://hooks.example/u"},
+	}
+	edited := []WebhookConfig{
+		{Name: "authed", URL: "https://hooks.example/u"},
+		{Name: "plain", URL: "https://hooks.example/u"},
+	}
+	merged := MergeWebhookHeaders(existing, edited)
+	if merged[0].Headers["Authorization"] != "Bearer A" {
+		t.Fatalf("authed lost its credential: %v", merged[0].Headers)
+	}
+	if len(merged[1].Headers) != 0 {
+		t.Fatalf("plain was given %v, a credential it never had", merged[1].Headers)
+	}
+
+	// Removing the authed webhook must not move its credential to the other.
+	remaining := MergeWebhookHeaders(existing, edited[1:])
+	if len(remaining[0].Headers) != 0 {
+		t.Fatalf("after removing authed, plain holds %v", remaining[0].Headers)
+	}
+}

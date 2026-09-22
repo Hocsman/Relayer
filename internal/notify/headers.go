@@ -20,13 +20,17 @@ func MergeWebhookHeaders(existing, edited []WebhookConfig) []WebhookConfig {
 	byURL := make(map[string]map[string]string, len(existing))
 	urlCount := make(map[string]int, len(existing))
 	for _, webhook := range existing {
+		url := strings.TrimSpace(webhook.URL)
+		// Counted whether or not the webhook has headers: a URL shared by a
+		// webhook with a credential and one without is ambiguous, and taking
+		// the lone credential for both copied it onto the sibling that never
+		// had one.
+		urlCount[url]++
 		if len(webhook.Headers) == 0 {
 			continue
 		}
-		url := strings.TrimSpace(webhook.URL)
 		byURLAndName[url+"\x00"+strings.TrimSpace(webhook.Name)] = webhook.Headers
 		byURL[url] = webhook.Headers
-		urlCount[url]++
 	}
 
 	merged := make([]WebhookConfig, len(edited))

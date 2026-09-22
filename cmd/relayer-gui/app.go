@@ -178,7 +178,7 @@ func NewApp() *App {
 		shutdownDone:          make(chan struct{}),
 		profileDetector:       toolcatalog.DefaultDetector(),
 		profileTokenGenerator: newOpaqueProfileToken,
-		notifier:              notify.New(notify.DefaultConfig(), nil),
+		notifier:              newNotifier(notify.DefaultConfig()),
 		prepareEngine:         appcore.PrepareDesktopRuntime,
 		startEngine: func(ctx context.Context, plan *appcore.DesktopPlan, runID string) (desktopEngine, error) {
 			return appcore.StartDesktopRuntime(ctx, plan, runID)
@@ -247,7 +247,7 @@ func (a *App) activateRun(run *runGeneration) {
 	}
 	engine := run.engine
 	metadata := engine.Metadata()
-	a.setNotifier(notify.New(metadata.Notifications, nil))
+	a.setNotifier(newNotifier(metadata.Notifications))
 	sessions := engine.Sessions()
 	agents := make([]AgentState, 0, len(sessions))
 	index := make(map[string]int, len(sessions))
@@ -1886,6 +1886,14 @@ func (a *App) currentNotifier() notify.Notifier {
 	a.notifierMu.RLock()
 	defer a.notifierMu.RUnlock()
 	return a.notifier
+}
+
+// newNotifier builds the desktop notifier. Webhook delivery failures go to
+// standard error, like the lifecycle's diagnostics: they were dropped, so a
+// webhook that had stopped working looked exactly like one with nothing to say.
+// The lines never carry the URL or the headers.
+func newNotifier(config notify.Config) notify.Notifier {
+	return notify.NewWithDiagnostics(config, nil, os.Stderr)
 }
 
 func (a *App) setNotifier(notifier notify.Notifier) {
