@@ -27,6 +27,9 @@ type lifecycleFakeBackend struct {
 	removeErr   error
 	removeGone  bool
 	stopFailure error
+	// exited lists the agents whose process the backend reports as gone.
+	// Everything else is reported running, as a live backend would.
+	exited map[string]bool
 }
 
 func (b *lifecycleFakeBackend) Stop(ctx context.Context, id string) error {
@@ -37,6 +40,25 @@ func (b *lifecycleFakeBackend) Stop(ctx context.Context, id string) error {
 		return err
 	}
 	return b.routerFakeBackend.Stop(ctx, id)
+}
+
+func (b *lifecycleFakeBackend) Snapshot(ctx context.Context, id string) (terminal.Snapshot, error) {
+	snapshot, err := b.routerFakeBackend.Snapshot(ctx, id)
+	b.mu.Lock()
+	if b.exited[id] {
+		snapshot.Running = false
+	}
+	b.mu.Unlock()
+	return snapshot, err
+}
+
+func (b *lifecycleFakeBackend) setExited(id string, exited bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.exited == nil {
+		b.exited = make(map[string]bool)
+	}
+	b.exited[id] = exited
 }
 
 func (b *lifecycleFakeBackend) Remove(_ context.Context, id string) error {
@@ -360,13 +382,32 @@ func TestAgentLifecycleStartAndRestartSelfExitedAgent(t *testing.T) {
 		t.Fatalf("StartAgent after MarkProcessExited failed: %v", err)
 	}
 
-	// 2. Process exits on its own without MarkProcessExited being called (router Remove succeeds)
-	// StartAgent should detect that the previous process is gone and restart it cleanly
+	// 2. Start on an agent the backend still reports running is refused, and
+	// nothing is stopped or removed to find out. v0.8.5 called Remove here, and
+	// the tmux backend's Remove kills a live session and reports success.
+	backend.mu.Lock()
+	removesBefore, stopsBefore := len(backend.removes), len(backend.stops)
+	backend.mu.Unlock()
+	if _, err := lifecycle.StartAgent(ctx, "self-exit", "operator_start"); !errors.Is(err, errAgentRunning) {
+		t.Fatalf("StartAgent on a live agent error = %v, want %v", err, errAgentRunning)
+	}
+	backend.mu.Lock()
+	removesAfter, stopsAfter := len(backend.removes), len(backend.stops)
+	backend.mu.Unlock()
+	if removesAfter != removesBefore || stopsAfter != stopsBefore {
+		t.Fatalf("StartAgent on a live agent removed %d and stopped %d sessions, want none",
+			removesAfter-removesBefore, stopsAfter-stopsBefore)
+	}
+
+	// 3. The process exits on its own and the exit never reaches
+	// MarkProcessExited: the backend reports it gone, so Start proceeds.
+	backend.setExited("self-exit", true)
 	if _, err := lifecycle.StartAgent(ctx, "self-exit", "operator_start"); err != nil {
 		t.Fatalf("StartAgent for self-exited agent failed: %v", err)
 	}
+	backend.setExited("self-exit", false)
 
-	// 3. RestartAgent should also succeed cleanly
+	// 4. RestartAgent should also succeed cleanly
 	if _, err := lifecycle.RestartAgent(ctx, "self-exit"); err != nil {
 		t.Fatalf("RestartAgent for self-exited agent failed: %v", err)
 	}

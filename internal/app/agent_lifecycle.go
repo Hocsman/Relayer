@@ -166,14 +166,24 @@ func (l *agentLifecycle) StartAgent(ctx context.Context, agentID, reason string)
 		l.mu.Unlock()
 		return terminal.Info{}, errAgentBusy
 	case l.states[key] == agentStateRunning:
-		// Check whether the process actually exited on its own without an explicit operator stop.
-		// If Remove succeeds, the backend has authoritatively proven the previous process is gone.
-		if err := l.router.Remove(ctx, spec.ID); err == nil || errors.Is(err, terminal.ErrSessionNotFound) {
-			l.states[key] = agentStateStopped
-			break
-		}
+		// The agent may have exited on its own without the exit reaching
+		// MarkProcessExited. Only the backend can say, and asking must change
+		// nothing: v0.8.5 called Remove here, and the tmux backend's Remove
+		// kills a live session and reports success, so Start on a running tmux
+		// agent killed it and started another with no stop on record. The
+		// question is also asked outside l.mu, so a slow backend cannot hold up
+		// MarkProcessExited.
 		l.mu.Unlock()
-		return terminal.Info{}, errAgentRunning
+		if running := l.backendReportsRunning(ctx, spec.ID); running {
+			return terminal.Info{}, errAgentRunning
+		}
+		l.mu.Lock()
+		if l.states[key] != agentStateRunning {
+			// Another lifecycle call moved the agent while the backend was asked.
+			l.mu.Unlock()
+			return terminal.Info{}, errAgentBusy
+		}
+		l.states[key] = agentStateStopped
 	case l.states[key] == agentStateStopUncertain:
 		l.mu.Unlock()
 		return terminal.Info{}, errAgentStopUncertain
@@ -243,6 +253,21 @@ func (l *agentLifecycle) StartAgent(ctx context.Context, agentID, reason string)
 		l.tracker.Reset(spec.ID)
 	}
 	return info, nil
+}
+
+// backendReportsRunning asks the backend, read-only, whether an agent's process
+// still runs. Anything short of a clear "not running" — a snapshot error other
+// than a missing session included — counts as running: starting a second
+// process beside a live one is the failure this guards against.
+func (l *agentLifecycle) backendReportsRunning(ctx context.Context, id string) bool {
+	snapshot, err := l.router.Snapshot(ctx, id)
+	if errors.Is(err, terminal.ErrSessionNotFound) {
+		return false
+	}
+	if err != nil {
+		return true
+	}
+	return snapshot.Running
 }
 
 // RestartAgent is the transactional stop-then-start of one agent. When the
