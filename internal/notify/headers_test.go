@@ -123,3 +123,52 @@ func TestMergeWebhookHeadersNeverLendsACredentialToASibling(t *testing.T) {
 		t.Fatalf("after removing authed, plain holds %v", remaining[0].Headers)
 	}
 }
+
+// TestMergeWebhookHeadersPairsIdenticalWebhooksInOrder: the name is optional,
+// and two unnamed webhooks at one URL both matched the one with a credential by
+// their shared empty name; two webhooks with the same name and different
+// credentials both came out with the second's.
+func TestMergeWebhookHeadersPairsIdenticalWebhooksInOrder(t *testing.T) {
+	existing := []WebhookConfig{
+		{URL: "https://hooks.example/u", Headers: map[string]string{"Authorization": "Bearer A"}},
+		{URL: "https://hooks.example/u"},
+		{Name: "x", URL: "https://hooks.example/v", Headers: map[string]string{"Authorization": "Bearer B1"}},
+		{Name: "x", URL: "https://hooks.example/v", Headers: map[string]string{"Authorization": "Bearer B2"}},
+	}
+	edited := []WebhookConfig{
+		{URL: "https://hooks.example/u"},
+		{URL: "https://hooks.example/u"},
+		{Name: "x", URL: "https://hooks.example/v"},
+		{Name: "x", URL: "https://hooks.example/v"},
+	}
+	merged := MergeWebhookHeaders(existing, edited)
+	want := []string{"Bearer A", "", "Bearer B1", "Bearer B2"}
+	for index, credential := range want {
+		if got := merged[index].Headers["Authorization"]; got != credential {
+			t.Errorf("webhook %d credential = %q, want %q", index, got, credential)
+		}
+	}
+
+	// One of the two removed: which one is unknown, so neither keeps anything.
+	if remaining := MergeWebhookHeaders(existing, edited[1:2]); len(remaining[0].Headers) != 0 {
+		t.Fatalf("after removing one of two unnamed webhooks, the other holds %v", remaining[0].Headers)
+	}
+}
+
+// TestMergeWebhookHeadersGivesNothingToAWebhookAddedAtAnExistingURL: the
+// editor can add a webhook at a URL the file already has; it used to inherit
+// that webhook's credential.
+func TestMergeWebhookHeadersGivesNothingToAWebhookAddedAtAnExistingURL(t *testing.T) {
+	existing := []WebhookConfig{{Name: "team", URL: "https://hooks.example/x", Headers: map[string]string{"Authorization": "Bearer S"}}}
+	edited := []WebhookConfig{
+		{Name: "team", URL: "https://hooks.example/x"},
+		{Name: "added-in-editor", URL: "https://hooks.example/x"},
+	}
+	merged := MergeWebhookHeaders(existing, edited)
+	if merged[0].Headers["Authorization"] != "Bearer S" {
+		t.Fatalf("team lost its credential: %v", merged[0].Headers)
+	}
+	if len(merged[1].Headers) != 0 {
+		t.Fatalf("a webhook added in the editor was given %v", merged[1].Headers)
+	}
+}
