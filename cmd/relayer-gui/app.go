@@ -124,17 +124,13 @@ type App struct {
 	inFlight         map[string]eventKey
 	lineInFlight     map[string]bool
 	stoppingSessions map[string]bool
-	// startBound holds, per session, when its current process was started. A
-	// prompt detected before it is the previous process's: the event pump can
-	// deliver one after the start, and nothing then cleared it.
-	startBound    map[string]time.Time
-	outputRunning map[string]bool
-	outputDirty   map[string]bool
-	frozen        map[string]bool
-	auditFailed   bool
-	shuttingDown  bool
-	startupErr    error
-	configPath    string
+	outputRunning    map[string]bool
+	outputDirty      map[string]bool
+	frozen           map[string]bool
+	auditFailed      bool
+	shuttingDown     bool
+	startupErr       error
+	configPath       string
 
 	deliveryMu        sync.Mutex
 	deliveryAvailable bool
@@ -175,7 +171,6 @@ func NewApp() *App {
 		inFlight:              make(map[string]eventKey),
 		lineInFlight:          make(map[string]bool),
 		stoppingSessions:      make(map[string]bool),
-		startBound:            make(map[string]time.Time),
 		outputRunning:         make(map[string]bool),
 		outputDirty:           make(map[string]bool),
 		frozen:                make(map[string]bool),
@@ -552,11 +547,6 @@ func (a *App) handleAdapterEventForRun(run *runGeneration, event adapters.Event)
 		return
 	}
 	if !event.Actionable() {
-		return
-	}
-	if a.detectedBeforeStart(key.sessionID, event.Timestamp) {
-		// The previous process's prompt, delivered after its replacement
-		// started: it cannot be answered, and would sit on the new process.
 		return
 	}
 	if !a.sessionRunning(event.SessionID) {
@@ -1519,7 +1509,6 @@ func (a *App) completeAgentStart(run *runGeneration, sessionKey string, startedA
 		}
 	}
 	a.rebuildPendingLocked()
-	a.startBound[sessionKey] = bound
 	// A fresh process numbers its events from the start again, and event IDs
 	// derive from that sequence, so the new process's exit — or a prompt it
 	// repeats — carries an ID the previous process already used. v0.8.5 kept
@@ -1717,26 +1706,18 @@ func clearedAll() string {
 	return time.Now().UTC().Truncate(time.Millisecond).Add(time.Millisecond).Format(time.RFC3339Nano)
 }
 
-// detectedBeforeStart reports whether a prompt predates its session's current
-// process.
-func (a *App) detectedBeforeStart(sessionKey string, detected time.Time) bool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	bound, started := a.startBound[sessionKey]
-	return started && !detected.IsZero() && detected.Before(bound)
-}
-
 // dropSessionPendingLocked removes a session's prompts when a Start or a
-// Restart begins. None can be answered while it runs, and the replacement's
-// first prompt usually carries the ID of the previous process's: left pending,
-// the old one made the new one a duplicate. They are not recorded as answered,
-// so the replacement's prompt is taken in.
+// Restart begins, and forgets the ones already answered. None can be answered
+// while it runs, and the replacement's first prompt usually carries the ID of
+// the previous process's: left pending, or remembered as answered, the old one
+// made the new one a duplicate, refused before it was shown or journaled.
 func (a *App) dropSessionPendingLocked(sessionKey string) {
 	for key := range a.pending {
 		if key.sessionID == sessionKey {
 			delete(a.pending, key)
 		}
 	}
+	a.forgetResolvedLocked(sessionKey)
 	a.rebuildPendingLocked()
 }
 

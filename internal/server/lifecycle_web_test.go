@@ -163,29 +163,3 @@ func TestARestartDropsThePreviousProcesssPrompts(t *testing.T) {
 		}
 	}
 }
-
-// TestAWebPromptFromBeforeTheStartIsIgnored: the event pump can deliver the
-// previous process's prompt after the replacement started; it used to sit on
-// the new process, which never raised it.
-func TestAWebPromptFromBeforeTheStartIsIgnored(t *testing.T) {
-	ctrl, _ := startSettingsController(t, policy.DefaultConfig())
-	state := ctrl.GetState()
-	if len(state.Agents) == 0 {
-		t.Skip("the default configuration started no agent on this platform")
-	}
-	id := state.Agents[0].SessionID
-	before := time.Now().UTC().Add(-time.Second)
-	if err := ctrl.RestartSession(state.RunID, id); err != nil {
-		t.Fatalf("RestartSession: %v", err)
-	}
-	ctrl.mu.RLock()
-	rt := ctrl.runtime
-	ctrl.mu.RUnlock()
-	late := adapters.Event{ID: "evt-late", SessionID: id, AgentID: id, Type: adapters.EventConfirmation, Summary: "old question", Timestamp: before}
-	ctrl.handleEvent(context.Background(), rt, session.AdapterEvent{Event: late})
-	for _, pending := range ctrl.GetState().PendingEvents {
-		if pending.ID == "evt-late" {
-			t.Fatal("a prompt of the previous process was queued on its replacement")
-		}
-	}
-}

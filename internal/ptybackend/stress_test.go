@@ -198,6 +198,19 @@ func TestPTYConcurrentSessionsStress(t *testing.T) {
 	}
 
 	if len(completed) != sessionCount {
+		// Say where each session stood: a slow runner and a stalled reader
+		// look the same from the count alone.
+		for _, id := range sessionIDs {
+			if completed[id] {
+				continue
+			}
+			snap, err := manager.Snapshot(context.Background(), id)
+			tail := snap.Output
+			if len(tail) > 160 {
+				tail = tail[len(tail)-160:]
+			}
+			t.Logf("%s: running=%v status=%q err=%v, %d bytes retained, tail %q", id, snap.Running, snap.Status, err, len(snap.Output), tail)
+		}
 		t.Fatalf("only %d/%d concurrent sessions completed within deadline", len(completed), sessionCount)
 	}
 }

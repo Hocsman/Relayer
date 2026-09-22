@@ -74,13 +74,9 @@ type Controller struct {
 	runtime *app.DesktopRuntime
 	runID   string
 
-	state      AppState
-	agentIndex map[string]int // lowercase sessionID -> slice index
-	pending    map[string]pendingItem
-	// startBound holds, per session, when its current process was started.
-	// A prompt detected before it is the previous process's: the event pump
-	// can deliver one after the start, and nothing then cleared it.
-	startBound  map[string]time.Time
+	state       AppState
+	agentIndex  map[string]int // lowercase sessionID -> slice index
+	pending     map[string]pendingItem
 	subscribers map[uint64]func(event string, payload any)
 	nextSubID   uint64
 
@@ -129,7 +125,6 @@ func NewController(configPath string, diagnostics io.Writer) (*Controller, error
 		diagnostics:        diagnostics,
 		agentIndex:         make(map[string]int),
 		pending:            make(map[string]pendingItem),
-		startBound:         make(map[string]time.Time),
 		subscribers:        make(map[uint64]func(event string, payload any)),
 		detector:           toolcatalog.DefaultDetector(),
 		notificationConfig: notify.DefaultConfig(),
@@ -356,14 +351,6 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 		}
 
 		if !adapterEv.Actionable() {
-			return
-		}
-		c.mu.RLock()
-		bound, started := c.startBound[strings.ToLower(adapterEv.SessionID)]
-		c.mu.RUnlock()
-		if started && !adapterEv.Timestamp.IsZero() && adapterEv.Timestamp.Before(bound) {
-			// The previous process's prompt, delivered after its replacement
-			// started: it cannot be answered, and would sit on the new process.
 			return
 		}
 
@@ -992,7 +979,6 @@ func (c *Controller) markSessionStarted(sessionID string, startedAt time.Time) {
 	// that never raised them. The new process's own are kept.
 	bound := startedAt.Truncate(time.Millisecond)
 	c.clearSessionPendingBeforeLocked(sessionID, bound)
-	c.startBound[strings.ToLower(strings.TrimSpace(sessionID))] = bound
 	runID := c.runID
 	c.mu.Unlock()
 	if !found {

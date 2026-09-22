@@ -225,23 +225,36 @@ func TestTheReplacementsFirstPromptSurvivesItsRestart(t *testing.T) {
 	}
 }
 
-// TestAPromptFromBeforeTheStartIsIgnored: the event pump can deliver the
-// previous process's prompt after the replacement started. It used to sit on
-// the new process, which never raised it.
-func TestAPromptFromBeforeTheStartIsIgnored(t *testing.T) {
+// TestTheReplacementsFirstPromptSurvivesAnAnsweredOne: when the previous
+// process's prompt had been answered, its ID was remembered as resolved until
+// the restart completed, and the replacement's first prompt, with the same ID,
+// was refused before it was shown or journaled.
+func TestTheReplacementsFirstPromptSurvivesAnAnsweredOne(t *testing.T) {
 	engine := newFakeDesktopEngine("agent-a")
+	started := make(chan string, 1)
+	release := make(chan struct{})
+	engine.mu.Lock()
+	engine.agentRestartStarted = started
+	engine.agentRestartRelease = release
+	engine.mu.Unlock()
 	application := newBridgeForTest(engine)
 	runID := activeRunIDForTest(application)
 	run := activeRunForTest(application)
 
-	before := time.Now().UTC().Add(-time.Second)
-	if err := application.RestartSession(runID, "agent-a"); err != nil {
+	application.mu.Lock()
+	application.markResolvedLocked(makeEventKey("agent-a", "prompt-1"))
+	application.mu.Unlock()
+	restarted := make(chan error, 1)
+	go func() { restarted <- application.RestartSession(runID, "agent-a") }()
+	<-started
+	replacement := bridgeEvent("agent-a", "prompt-1")
+	replacement.Timestamp = time.Now().UTC()
+	application.handleAdapterEventForRun(run, replacement)
+	close(release)
+	if err := <-restarted; err != nil {
 		t.Fatalf("RestartSession: %v", err)
 	}
-	late := bridgeEvent("agent-a", "prompt-old")
-	late.Timestamp = before
-	application.handleAdapterEventForRun(run, late)
-	if state, _ := application.GetState(); len(state.PendingEvents) != 0 {
-		t.Fatalf("pending after a late prompt of the previous process = %#v, want none", state.PendingEvents)
+	if state, _ := application.GetState(); len(state.PendingEvents) != 1 {
+		t.Fatalf("pending after the restart = %#v, want the replacement's prompt", state.PendingEvents)
 	}
 }
