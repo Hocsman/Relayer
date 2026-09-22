@@ -609,6 +609,10 @@ func TestAnExitIsStaleOnlyIfAStartBeganMeanwhile(t *testing.T) {
 		{"an operator stop finishes", agentStateStopping, agentStateStopped, "", true},
 		{"a start begins and succeeds", agentStateStopped, agentStateStarting, agentStateRunning, false},
 		{"a start begins and fails", agentStateStopped, agentStateStarting, agentStateStartFailed, true},
+		// An agent that exited on its own is still "running" when its exit is
+		// judged, and a Start over it ends "running" again: the same state,
+		// with a live replacement that must not be marked stopped.
+		{"a start over a running agent succeeds", agentStateRunning, agentStateStarting, agentStateRunning, false},
 	} {
 		t.Run(move.name, func(t *testing.T) {
 			backend := newLifecycleFakeBackend()
@@ -631,6 +635,9 @@ func TestAnExitIsStaleOnlyIfAStartBeganMeanwhile(t *testing.T) {
 			backend.duringSnapshot = func() {
 				lifecycle.mu.Lock()
 				lifecycle.states[key] = move.to
+				if move.to == agentStateStarting {
+					lifecycle.starts[key]++
+				}
 				lifecycle.mu.Unlock()
 				if move.then != "" {
 					go func() {
@@ -645,6 +652,14 @@ func TestAnExitIsStaleOnlyIfAStartBeganMeanwhile(t *testing.T) {
 
 			if got := lifecycle.MarkProcessExited("moving"); got != move.wantFresh {
 				t.Fatalf("MarkProcessExited = %v, want %v", got, move.wantFresh)
+			}
+			if move.then == agentStateRunning {
+				lifecycle.mu.Lock()
+				state := lifecycle.states[key]
+				lifecycle.mu.Unlock()
+				if state != agentStateRunning {
+					t.Fatalf("lifecycle state after a stale exit = %q, want the replacement still running", state)
+				}
 			}
 		})
 	}

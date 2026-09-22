@@ -53,6 +53,11 @@ type agentLifecycle struct {
 	mu       sync.Mutex
 	states   map[string]string
 	restarts map[string]int
+	// starts counts every Start that began, so an exit can tell whether one
+	// began while it was being judged: the state alone cannot, because an
+	// agent that exited on its own goes running, stopped, starting and back to
+	// running over a Start.
+	starts map[string]uint64
 }
 
 // newAgentLifecycle takes ownership of no resource; callers keep closing the
@@ -74,6 +79,7 @@ func newAgentLifecycle(
 		tracker:  tracker,
 		states:   make(map[string]string, len(specs)),
 		restarts: make(map[string]int, len(specs)),
+		starts:   make(map[string]uint64, len(specs)),
 	}
 	for _, spec := range specs {
 		key := lifecycleKey(spec.ID)
@@ -190,6 +196,7 @@ func (l *agentLifecycle) StartAgent(ctx context.Context, agentID, reason string)
 		return terminal.Info{}, errAgentStopUncertain
 	}
 	l.states[key] = agentStateStarting
+	l.starts[key]++
 	l.mu.Unlock()
 
 	fail := func(err error) (terminal.Info, error) {
@@ -388,7 +395,7 @@ func (l *agentLifecycle) MarkProcessExited(agentID string) bool {
 	defer l.mu.Unlock()
 	l.waitWhileStartingLocked(key, deadline)
 	spec, known := l.specs[key]
-	sampled := l.states[key]
+	generation := l.starts[key]
 	l.mu.Unlock()
 	running := known && l.router != nil && l.backendReportsRunning(l.router.Context(), spec.ID)
 	l.mu.Lock()
@@ -396,17 +403,16 @@ func (l *agentLifecycle) MarkProcessExited(agentID string) bool {
 		return false
 	}
 
-	if l.states[key] != sampled && l.states[key] == agentStateStarting {
+	if l.starts[key] != generation {
 		// A Start began while the backend was asked. Whether this exit is
 		// stale depends on how it ends: a replacement that runs makes it the
 		// previous process's; a Start that fails leaves no process, and
 		// calling the exit stale then left a dead agent shown running.
 		l.waitWhileStartingLocked(key, deadline)
+		current := l.states[key]
+		return current != agentStateStarting && current != agentStateRunning
 	}
-	switch current := l.states[key]; {
-	case current != sampled && (current == agentStateStarting || current == agentStateRunning):
-		return false
-	case current == agentStateRunning:
+	if l.states[key] == agentStateRunning {
 		l.states[key] = agentStateStopped
 	}
 	return true
