@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -251,13 +252,26 @@ func sendWebhook(ctx context.Context, client HTTPPoster, cfg WebhookConfig, n No
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("deliver webhook to %s: %w", cfg.URL, err)
+		// Neither the URL nor the transport error, which quotes the URL, is
+		// kept: for Slack and Discord the URL itself is the credential.
+		return errWebhookRequestFailed
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("webhook endpoint %s returned HTTP %d", cfg.URL, resp.StatusCode)
+		return webhookStatusError{code: resp.StatusCode}
 	}
 
 	return nil
+}
+
+// errWebhookRequestFailed stands for any failure to reach the endpoint. The
+// underlying error is dropped because it quotes the URL.
+var errWebhookRequestFailed = errors.New("webhook request failed")
+
+// webhookStatusError is a response outside 2xx.
+type webhookStatusError struct{ code int }
+
+func (err webhookStatusError) Error() string {
+	return fmt.Sprintf("webhook endpoint returned HTTP %d", err.code)
 }

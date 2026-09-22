@@ -2,13 +2,16 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Hocsman/Relayer/internal/config"
+	"github.com/Hocsman/Relayer/internal/notify"
 	"github.com/Hocsman/Relayer/internal/policy"
 )
 
@@ -151,5 +154,83 @@ func TestWebRestartRequiredFollowsWhatTheRunningEngineHas(t *testing.T) {
 	}
 	if !saved.RestartRequired {
 		t.Fatal("a dry-run change was reported as applied, but the running engine never sees it")
+	}
+}
+
+// TestWebNotificationSaveKeepsWebhookHeaders: the editor never receives header
+// values, so every save used to write every webhook back without them.
+func TestWebNotificationSaveKeepsWebhookHeaders(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	created, err := config.LoadOrCreate(configPath)
+	if err != nil {
+		t.Fatalf("LoadOrCreate: %v", err)
+	}
+	notifications := created.Notifications
+	notifications.Enabled = true
+	notifications.Webhooks = []notify.WebhookConfig{{
+		Name:        "team",
+		URL:         "https://hooks.example/team",
+		Format:      "generic",
+		MinSeverity: "warning",
+		Timeout:     "5s",
+		Headers:     map[string]string{"Authorization": "Bearer HEADER-PROBE-SECRET"},
+	}}
+	if _, _, err := config.UpdateFullConfiguration(configPath, created.Revision, config.FullConfigurationUpdate{Notifications: &notifications}); err != nil {
+		t.Fatalf("write notifications: %v", err)
+	}
+	ctrl, err := NewController(configPath, io.Discard)
+	if err != nil {
+		t.Fatalf("NewController: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := ctrl.Start(ctx); err != nil {
+		cancel()
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = ctrl.Close(shutdownCtx)
+		cancel()
+	})
+
+	view, err := ctrl.GetFullSettings()
+	if err != nil {
+		t.Fatalf("GetFullSettings: %v", err)
+	}
+	if len(view.Notifications.Webhooks) != 1 || !view.Notifications.Webhooks[0].HasHeaders {
+		t.Fatalf("webhooks = %+v, want one marked as having headers", view.Notifications.Webhooks)
+	}
+	if encoded, _ := json.Marshal(view); strings.Contains(string(encoded), "HEADER-PROBE-SECRET") {
+		t.Fatal("the settings view carries a webhook header value")
+	}
+
+	edited := view.Notifications
+	edited.Bell = !edited.Bell
+	if _, err := ctrl.SaveFullSettings("", SaveFullSettingsRequest{ExpectedRevision: view.Revision, Notifications: &edited}); err != nil {
+		t.Fatalf("SaveFullSettings: %v", err)
+	}
+	after, err := config.LoadExisting(configPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if len(after.Notifications.Webhooks) != 1 || after.Notifications.Webhooks[0].Headers["Authorization"] != "Bearer HEADER-PROBE-SECRET" {
+		t.Fatalf("webhooks after a bell toggle = %+v, want the Authorization header kept", after.Notifications.Webhooks)
+	}
+}
+
+func TestWebNotificationTestRefusesWhenNotificationsAreOff(t *testing.T) {
+	ctrl, _ := startSettingsController(t, policy.DefaultConfig())
+	view, err := ctrl.GetFullSettings()
+	if err != nil {
+		t.Fatalf("GetFullSettings: %v", err)
+	}
+	off := view.Notifications
+	off.Enabled = false
+	if _, err := ctrl.SaveFullSettings("", SaveFullSettingsRequest{ExpectedRevision: view.Revision, Notifications: &off}); err != nil {
+		t.Fatalf("SaveFullSettings: %v", err)
+	}
+	if err := ctrl.TestNotification(); err == nil {
+		t.Fatal("a test notification reported success with notifications switched off")
 	}
 }

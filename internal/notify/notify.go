@@ -2,6 +2,8 @@ package notify
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -53,8 +55,12 @@ func NewNoop() Notifier {
 var desktopSender = showDesktopNotification
 
 type compositeNotifier struct {
-	config       Config
-	bellOutput   io.Writer
+	config     Config
+	bellOutput io.Writer
+	// diagnostics receives one line per webhook that could not be delivered.
+	// Before it existed a failure left no trace anywhere.
+	diagnostics  io.Writer
+	diagMu       sync.Mutex
 	httpClient   HTTPPoster
 	mu           sync.Mutex
 	lastEventID  string
@@ -64,6 +70,13 @@ type compositeNotifier struct {
 
 // New constructs an active Notifier based on the given configuration.
 func New(config Config, bellOutput io.Writer) Notifier {
+	return NewWithDiagnostics(config, bellOutput, nil)
+}
+
+// NewWithDiagnostics is New with a writer for webhook delivery failures. The
+// lines name the webhook and the kind of failure only: never its URL, which for
+// Slack and Discord is the credential, and never its headers.
+func NewWithDiagnostics(config Config, bellOutput, diagnostics io.Writer) Notifier {
 	if !config.Enabled || (!config.Bell && !config.Desktop && len(config.Webhooks) == 0) {
 		return noopNotifier{}
 	}
@@ -71,10 +84,11 @@ func New(config Config, bellOutput io.Writer) Notifier {
 		bellOutput = os.Stderr
 	}
 	return &compositeNotifier{
-		config:     config,
-		bellOutput: bellOutput,
-		httpClient: defaultHTTPClient,
-		throttle:   1 * time.Second,
+		config:      config,
+		bellOutput:  bellOutput,
+		diagnostics: diagnostics,
+		httpClient:  defaultHTTPClient,
+		throttle:    1 * time.Second,
 	}
 }
 
@@ -172,7 +186,29 @@ func (c *compositeNotifier) Notify(n Notification) {
 		}
 
 		go func(webhook WebhookConfig, payload Notification) {
-			_ = sendWebhook(context.Background(), c.httpClient, webhook, payload)
+			if err := sendWebhook(context.Background(), c.httpClient, webhook, payload); err != nil {
+				c.reportWebhookFailure(webhook, err)
+			}
 		}(targetWebhook, n)
 	}
+}
+
+// reportWebhookFailure writes one bounded line about a webhook that was not
+// delivered.
+func (c *compositeNotifier) reportWebhookFailure(webhook WebhookConfig, err error) {
+	if c.diagnostics == nil {
+		return
+	}
+	name := strings.TrimSpace(webhook.Name)
+	if name == "" {
+		name = "unnamed"
+	}
+	reason := "the request failed"
+	var status webhookStatusError
+	if errors.As(err, &status) {
+		reason = fmt.Sprintf("the endpoint answered HTTP %d", status.code)
+	}
+	c.diagMu.Lock()
+	defer c.diagMu.Unlock()
+	_, _ = fmt.Fprintf(c.diagnostics, "notify: webhook %q was not delivered: %s\n", name, reason)
 }

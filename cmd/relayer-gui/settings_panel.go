@@ -30,6 +30,9 @@ type NotificationWebhookSetting struct {
 	Format      string `json:"format"`
 	MinSeverity string `json:"minSeverity"`
 	Timeout     string `json:"timeout"`
+	// HasHeaders says the webhook carries headers, usually a credential. Their
+	// values never leave the engine, and a save keeps them.
+	HasHeaders bool `json:"hasHeaders"`
 }
 
 type NotificationSettings struct {
@@ -178,6 +181,10 @@ func (a *App) saveFullSettingsLocked(request SaveFullSettingsRequest) (FullSetti
 	// 3. Process notification settings if provided
 	if request.Notifications != nil {
 		notifCfg := buildNotificationConfig(*request.Notifications)
+		// The editor never receives header values, so it cannot send them
+		// back; without this every save erased every webhook's credential,
+		// and the rebuilt notifier sent the next alert unauthenticated.
+		notifCfg.Webhooks = notify.MergeWebhookHeaders(current.Notifications.Webhooks, notifCfg.Webhooks)
 		update.Notifications = &notifCfg
 	}
 
@@ -206,7 +213,7 @@ func (a *App) saveFullSettingsLocked(request SaveFullSettingsRequest) (FullSetti
 	// DRY RUN appear active while automatic approvals kept being delivered.
 
 	if update.Notifications != nil {
-		a.notifier = notify.New(updated.Notifications, nil)
+		a.setNotifier(notify.New(updated.Notifications, nil))
 	}
 
 	// Notifications are applied above; agents and policies only take effect in
@@ -266,6 +273,7 @@ func extractNotificationSettings(cfg notify.Config) NotificationSettings {
 			Format:      w.Format,
 			MinSeverity: w.MinSeverity,
 			Timeout:     w.Timeout,
+			HasHeaders:  len(w.Headers) > 0,
 		})
 	}
 	return NotificationSettings{

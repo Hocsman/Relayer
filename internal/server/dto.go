@@ -206,6 +206,9 @@ type NotificationWebhookSetting struct {
 	Format      string `json:"format"`
 	MinSeverity string `json:"minSeverity"`
 	Timeout     string `json:"timeout"`
+	// HasHeaders says the webhook carries headers, usually a credential. Their
+	// values never leave the engine, and a save keeps them.
+	HasHeaders bool `json:"hasHeaders"`
 }
 
 type NotificationSettings struct {

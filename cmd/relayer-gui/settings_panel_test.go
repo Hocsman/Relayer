@@ -237,3 +237,59 @@ intercept_patterns:
 		t.Fatalf("a dry-run save changed the policy on disk:\n got  %+v\n want %+v", after.Policies, want)
 	}
 }
+
+// TestDesktopNotificationSaveKeepsWebhookHeaders: the desktop rebuilt its
+// notifier from the saved configuration at once, so erasing the headers on
+// save sent the next alert without its credential.
+func TestDesktopNotificationSaveKeepsWebhookHeaders(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	initialYAML := `version: 1
+backend: pty
+
+notifications:
+  enabled: true
+  webhooks:
+    - name: team
+      url: https://hooks.example/team
+      format: generic
+      min_severity: warning
+      timeout: 5s
+      headers:
+        Authorization: Bearer HEADER-PROBE-SECRET
+
+agents:
+  - id: alpha
+    name: Agent Alpha
+    command: ["echo", "alpha"]
+
+intercept_patterns:
+  - pattern: '(?i)continue'
+    description: continue prompt
+`
+	if err := os.WriteFile(configPath, []byte(initialYAML), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	app := NewApp()
+	app.configPath = configPath
+	app.ctx = context.Background()
+
+	view, err := app.GetFullSettings()
+	if err != nil {
+		t.Fatalf("GetFullSettings: %v", err)
+	}
+	if len(view.Notifications.Webhooks) != 1 || !view.Notifications.Webhooks[0].HasHeaders {
+		t.Fatalf("webhooks = %+v, want one marked as having headers", view.Notifications.Webhooks)
+	}
+	edited := view.Notifications
+	edited.Bell = !edited.Bell
+	if _, err := app.SaveFullSettings("", SaveFullSettingsRequest{ExpectedRevision: view.Revision, Notifications: &edited}); err != nil {
+		t.Fatalf("SaveFullSettings: %v", err)
+	}
+	after, err := config.LoadExisting(configPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if len(after.Notifications.Webhooks) != 1 || after.Notifications.Webhooks[0].Headers["Authorization"] != "Bearer HEADER-PROBE-SECRET" {
+		t.Fatalf("webhooks after a bell toggle = %+v, want the Authorization header kept", after.Notifications.Webhooks)
+	}
+}

@@ -173,7 +173,7 @@ func (c *Controller) startLocked(ctx context.Context) error {
 	metadata := rt.Metadata()
 	c.activeConfigRevision = metadata.ConfigRevision
 	c.notificationConfig = metadata.Notifications
-	c.notifier = notify.New(metadata.Notifications, c.diagnostics)
+	c.notifier = notify.NewWithDiagnostics(metadata.Notifications, c.diagnostics, c.diagnostics)
 
 	sessions := rt.Sessions()
 	agents := make([]AgentState, 0, len(sessions))
@@ -416,13 +416,15 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 			Details:   adapterEv.Summary,
 			Timestamp: time.Now().UTC(),
 		}
-		if c.notifier != nil {
-			c.notifier.Notify(notif)
-		}
-
+		// Both are replaced under c.mu when the settings are saved, so they are
+		// read under it too; the notifier was read without the lock.
 		c.mu.RLock()
+		notifier := c.notifier
 		notifConfig := c.notificationConfig
 		c.mu.RUnlock()
+		if notifier != nil {
+			notifier.Notify(notif)
+		}
 
 		if notifConfig.Enabled && notify.SeverityMeetsThreshold(notif.Severity, notifConfig.MinSeverity) {
 			c.broadcast(eventNotification, NotificationEvent{
@@ -1263,6 +1265,9 @@ func (c *Controller) SaveFullSettings(runID string, req SaveFullSettingsRequest)
 
 	if req.Notifications != nil {
 		update.Notifications = convertNotificationSettings(req.Notifications)
+		// The editor never receives header values, so it cannot send them
+		// back; without this every save erased every webhook's credential.
+		update.Notifications.Webhooks = notify.MergeWebhookHeaders(cfg.Notifications.Webhooks, update.Notifications.Webhooks)
 	}
 
 	if req.Security != nil {
@@ -1286,7 +1291,7 @@ func (c *Controller) SaveFullSettings(runID string, req SaveFullSettingsRequest)
 	// Live reload notifier if notifications were updated
 	if update.Notifications != nil {
 		c.notificationConfig = res.Notifications
-		c.notifier = notify.New(res.Notifications, c.diagnostics)
+		c.notifier = notify.NewWithDiagnostics(res.Notifications, c.diagnostics, c.diagnostics)
 	}
 
 	// Notifications are applied above; agents and policies only reach a new
@@ -1314,7 +1319,13 @@ func (c *Controller) SaveFullSettings(runID string, req SaveFullSettingsRequest)
 func (c *Controller) TestNotification() error {
 	c.mu.RLock()
 	notifier := c.notifier
+	enabled := c.notificationConfig.Enabled
 	c.mu.RUnlock()
+	if !enabled {
+		// A test that "succeeds" with notifications switched off tells the
+		// operator the channels work when nothing would be sent.
+		return errors.New("notifications are disabled")
+	}
 
 	notif := notify.Notification{
 		Title:     "Relayer Test Notification",
@@ -1812,6 +1823,7 @@ func extractNotificationSettings(cfg notify.Config) NotificationSettings {
 			Format:      w.Format,
 			MinSeverity: string(w.MinSeverity),
 			Timeout:     w.Timeout,
+			HasHeaders:  len(w.Headers) > 0,
 		})
 	}
 	return NotificationSettings{

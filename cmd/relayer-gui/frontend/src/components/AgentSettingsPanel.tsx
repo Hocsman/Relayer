@@ -93,7 +93,8 @@ export function AgentSettingsPanel({
         await bridge.testNotification();
         setTestFeedback("✓ Notification de test envoyée !");
       } else {
-        setTestFeedback("✓ Test simulé");
+        // No channel was exercised; saying "sent" here was a false assurance.
+        setTestFeedback("Test unavailable in this interface.");
       }
       setTimeout(() => setTestFeedback(""), 3500);
     } catch {
@@ -1271,6 +1272,11 @@ function NotificationSettingsTab({
                   <td><strong>{hook.name}</strong></td>
                   <td style={{ maxWidth: "240px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={hook.url}>
                     {hook.url}
+                    {hook.hasHeaders && (
+                      <span className="settings-webhook-headers" title="This webhook has headers (for example an Authorization credential). Their values are not shown, and saving keeps them.">
+                        {" "}🔒 headers kept
+                      </span>
+                    )}
                   </td>
                   <td><span className="catalog-badge">{hook.format}</span></td>
                   <td>{hook.minSeverity}</td>

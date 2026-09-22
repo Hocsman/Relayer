@@ -144,7 +144,11 @@ type App struct {
 	profileRevisionToken  string
 	profileDetector       toolcatalog.Detector
 	profileTokenGenerator func() (string, error)
-	notifier              notify.Notifier
+
+	// notifier is replaced when settings are saved and read by the event
+	// consumer, so it has its own lock; the consumer read it with none.
+	notifierMu sync.RWMutex
+	notifier   notify.Notifier
 
 	shutdownOnce sync.Once
 	shutdownDone chan struct{}
@@ -243,7 +247,7 @@ func (a *App) activateRun(run *runGeneration) {
 	}
 	engine := run.engine
 	metadata := engine.Metadata()
-	a.notifier = notify.New(metadata.Notifications, nil)
+	a.setNotifier(notify.New(metadata.Notifications, nil))
 	sessions := engine.Sessions()
 	agents := make([]AgentState, 0, len(sessions))
 	index := make(map[string]int, len(sessions))
@@ -572,17 +576,19 @@ func (a *App) handleAdapterEventForRun(run *runGeneration, event adapters.Event)
 	a.rebuildPendingLocked()
 	a.mu.Unlock()
 	a.emit(eventSemantic, view)
-	if a.notifier != nil {
+	if notifier := a.currentNotifier(); notifier != nil {
 		agentName := event.AgentID
+		a.mu.RLock()
 		if index, found := a.agentIndex[strings.ToLower(event.SessionID)]; found {
 			agentName = a.state.Agents[index].Name
 		}
+		a.mu.RUnlock()
 		isGuardrail := evaluation.Reason == policy.ReasonDestructive ||
 			evaluation.Reason == policy.ReasonExfiltration ||
 			evaluation.Reason == policy.ReasonGuardrailBlocked
 
 		if isGuardrail {
-			a.notifier.Notify(notify.Notification{
+			notifier.Notify(notify.Notification{
 				Title:     "🛡️ Relayer Guardrail Alert",
 				AgentName: agentName,
 				SessionID: event.SessionID,
@@ -597,7 +603,7 @@ func (a *App) handleAdapterEventForRun(run *runGeneration, event adapters.Event)
 			if requiresSecretHandling(event) || evaluation.Reason == "sensitive" {
 				reason = "sensitive input required"
 			}
-			a.notifier.Notify(notify.Notification{
+			notifier.Notify(notify.Notification{
 				Title:     "Relayer",
 				AgentName: agentName,
 				SessionID: event.SessionID,
@@ -1874,4 +1880,16 @@ func humanAuditDecision(decision adapters.Decision) audit.Decision {
 	default:
 		return audit.DecisionAsk
 	}
+}
+
+func (a *App) currentNotifier() notify.Notifier {
+	a.notifierMu.RLock()
+	defer a.notifierMu.RUnlock()
+	return a.notifier
+}
+
+func (a *App) setNotifier(notifier notify.Notifier) {
+	a.notifierMu.Lock()
+	a.notifier = notifier
+	a.notifierMu.Unlock()
 }

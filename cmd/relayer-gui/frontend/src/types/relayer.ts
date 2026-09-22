@@ -545,6 +545,9 @@ export interface NotificationWebhookSetting {
   format: string;
   minSeverity: string;
   timeout: string;
+  // The webhook carries headers, usually a credential. Their values never
+  // reach the interface, and saving keeps them.
+  hasHeaders?: boolean;
 }
 
 export interface NotificationSettings {
