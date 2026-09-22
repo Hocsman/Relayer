@@ -5,6 +5,7 @@ package session
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sync"
@@ -52,24 +53,113 @@ func (r *processRef) release() {
 	}
 }
 
+// ownedHandle is a pipe handle the device duplicated for itself. conpty's Close
+// closes its own handles at once, and a Read blocked in ReadFile on one of them
+// then woke up — or the next Read started — on a number Windows had freed: every
+// Stop reported "invalid handle" as a stream failure, and once the number had
+// been given to another pipe, the reader read that pipe's bytes into the
+// agent's output and never ended. This copy is closed only when no Read or
+// Write is using it, and an operation that starts after Close never touches it.
+type ownedHandle struct {
+	mu       sync.Mutex
+	handle   windows.Handle
+	inFlight int
+	closed   bool
+}
+
+func duplicateHandle(source windows.Handle) (*ownedHandle, error) {
+	process := windows.CurrentProcess()
+	var duplicate windows.Handle
+	if err := windows.DuplicateHandle(process, source, process, &duplicate, 0, false, windows.DUPLICATE_SAME_ACCESS); err != nil {
+		return nil, err
+	}
+	return &ownedHandle{handle: duplicate}, nil
+}
+
+// acquire returns the handle for one operation, or false once it is closed.
+// Every true answer must be followed by done.
+func (h *ownedHandle) acquire() (windows.Handle, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return 0, false
+	}
+	h.inFlight++
+	return h.handle, true
+}
+
+func (h *ownedHandle) done() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.inFlight--
+	h.closeIfIdleLocked()
+}
+
+func (h *ownedHandle) close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.closed = true
+	h.closeIfIdleLocked()
+}
+
+func (h *ownedHandle) closeIfIdleLocked() {
+	if h.closed && h.inFlight == 0 && h.handle != 0 {
+		_ = windows.CloseHandle(h.handle)
+		h.handle = 0
+	}
+}
+
+// windowsConPTYDevice reads and writes through its own copies of the pipe
+// handles. Closing the pseudo console makes conhost exit, which closes the
+// other end of both pipes: a Read blocked on the output copy then returns
+// ERROR_BROKEN_PIPE, once the output conhost had already written is drained,
+// and a blocked Write fails the same way. Only then is each copy closed.
 type windowsConPTYDevice struct {
-	c *conpty.ConPty
+	c      *conpty.ConPty
+	output *ownedHandle
+	input  *ownedHandle
+}
+
+func newWindowsConPTYDevice(c *conpty.ConPty) (*windowsConPTYDevice, error) {
+	output, err := duplicateHandle(windows.Handle(c.OutPipeReadFd()))
+	if err != nil {
+		return nil, fmt.Errorf("duplicate the pseudo console's output: %w", err)
+	}
+	input, err := duplicateHandle(windows.Handle(c.InPipeWriteFd()))
+	if err != nil {
+		output.close()
+		return nil, fmt.Errorf("duplicate the pseudo console's input: %w", err)
+	}
+	return &windowsConPTYDevice{c: c, output: output, input: input}, nil
 }
 
 func (w *windowsConPTYDevice) Read(p []byte) (int, error) {
-	return w.c.Read(p)
+	handle, ok := w.output.acquire()
+	if !ok {
+		return 0, io.EOF
+	}
+	defer w.output.done()
+	var read uint32
+	err := windows.ReadFile(handle, p, &read, nil)
+	return int(read), err
 }
 
 func (w *windowsConPTYDevice) Write(p []byte) (int, error) {
-	return w.c.Write(p)
+	handle, ok := w.input.acquire()
+	if !ok {
+		return 0, ErrClosed
+	}
+	defer w.input.done()
+	var written uint32
+	err := windows.WriteFile(handle, p, &written, nil)
+	return int(written), err
 }
 
 func (w *windowsConPTYDevice) Close() error {
-	var errs []error
-	if err := w.c.Close(); err != nil {
-		errs = append(errs, err)
-	}
-	return errors.Join(errs...)
+	err := w.c.Close()
+	w.input.close()
+	w.output.close()
+	return err
 }
 
 func (w *windowsConPTYDevice) Resize(columns, rows int) error {
@@ -80,6 +170,11 @@ func startPTY(session *processSession, cmd *exec.Cmd, columns, rows int) (ptyDev
 	c, err := conpty.New(clamp(columns, 1, 65535), clamp(rows, 1, 65535), 0)
 	if err != nil {
 		return nil, fmt.Errorf("initialize conpty: %w", err)
+	}
+	device, err := newWindowsConPTYDevice(c)
+	if err != nil {
+		_ = c.Close()
+		return nil, err
 	}
 
 	name := cmd.Path
@@ -97,7 +192,7 @@ func startPTY(session *processSession, cmd *exec.Cmd, columns, rows int) (ptyDev
 
 	pid, handle, err := c.Spawn(name, cmd.Args, attr)
 	if err != nil {
-		_ = c.Close()
+		_ = device.Close()
 		return nil, fmt.Errorf("spawn in conpty: %w", err)
 	}
 	session.proc.set(windows.Handle(handle))
@@ -107,7 +202,7 @@ func startPTY(session *processSession, cmd *exec.Cmd, columns, rows int) (ptyDev
 		cmd.Process = p
 	}
 
-	return &windowsConPTYDevice{c: c}, nil
+	return device, nil
 }
 
 // waitCommand waits for the leader and returns its exit state. It deliberately

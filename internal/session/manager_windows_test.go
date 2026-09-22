@@ -158,3 +158,65 @@ func TestAnAgentThatExitsWith259IsConfirmedStopped(t *testing.T) {
 		t.Fatalf("Stop of an agent that exited with 259: %v", err)
 	}
 }
+
+// TestStoppingAnAgentReportsNoStreamError: closing the pseudo console freed the
+// output pipe's handle while the reader was still blocked on it, and the next
+// read used the freed number. Every Stop then reported "invalid handle" as a
+// backend failure — the desktop journaled it and marked the agent failed — and
+// when Windows had already given the number to another pipe, the reader read
+// that pipe's bytes into the agent's output and never ended.
+func TestStoppingAnAgentReportsNoStreamError(t *testing.T) {
+	for _, agentCase := range []struct {
+		id      string
+		command []string
+	}{
+		{"quiet", []string{"cmd.exe", "/c", "ping -n 60 127.0.0.1 >nul"}},
+		{"chatty", []string{"cmd.exe", "/c", "for /l %i in (1,1,100000) do @echo line %i"}},
+	} {
+		t.Run(agentCase.id, func(t *testing.T) {
+			events := make(chan Event, 1024)
+			ctx, cancel := context.WithCancel(context.Background())
+			manager, err := NewManager(ctx, events, []intercept.Pattern{{
+				Name:        "never",
+				Description: "never matches",
+				Expression:  `\A\z never`,
+			}}, 1024)
+			if err != nil {
+				cancel()
+				t.Fatalf("NewManager: %v", err)
+			}
+			streamErrors := make(chan error, 16)
+			go func() {
+				for {
+					select {
+					case event := <-events:
+						if failure, ok := event.(Error); ok {
+							streamErrors <- failure.Err
+						}
+					case <-ctx.Done():
+						return
+					}
+				}
+			}()
+			t.Cleanup(func() {
+				manager.Close()
+				cancel()
+			})
+
+			info, err := manager.Start(agent.Spec{ID: agentCase.id, Name: agentCase.id, Command: agentCase.command}, 80, 24)
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			time.Sleep(700 * time.Millisecond)
+			if err := manager.Stop(info.ID); err != nil {
+				t.Fatalf("Stop: %v", err)
+			}
+			waitDone(t, manager, info.ID)
+			select {
+			case err := <-streamErrors:
+				t.Fatalf("stopping the agent reported a stream failure: %v", err)
+			case <-time.After(300 * time.Millisecond):
+			}
+		})
+	}
+}

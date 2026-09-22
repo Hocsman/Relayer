@@ -120,9 +120,12 @@ func TestShutdownSendsASingleSIGTERM(t *testing.T) {
 	}
 	counter := filepath.Join(t.TempDir(), "terms")
 	info, err := manager.Start(agent.Spec{
-		ID:    "counts-terms",
-		Name:  "counts terms",
-		Shell: `trap 'printf x >> "$RELAYER_COUNT"' TERM; printf 'READY\n'; while [ ! -s "$RELAYER_COUNT" ]; do sleep 0.05; done; sleep 0.5; exit 0`,
+		ID:   "counts-terms",
+		Name: "counts terms",
+		// The loops run shell builtins only. A shell waiting on an external
+		// sleep runs its trap once for every TERM that arrived meanwhile, so
+		// an agent written that way cannot tell one signal from two.
+		Shell: `trap 'printf x >> "$RELAYER_COUNT"' TERM; printf 'READY\n'; while [ ! -s "$RELAYER_COUNT" ]; do :; done; i=0; while [ $i -lt 30000 ]; do i=$((i+1)); done; exit 0`,
 		Env:   map[string]string{"RELAYER_COUNT": counter},
 	}, 40, 10)
 	if err != nil {
