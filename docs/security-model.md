@@ -91,10 +91,18 @@ resulting audit entries; the binding is only as strong as the secret's
 distribution, and Relayer does not authenticate a person behind a token.
 
 Tokens travel in a query parameter or an `Authorization` header. The gateway
-serves plain HTTP and performs no origin check on the WebSocket upgrade.
-Binding outside `127.0.0.1` therefore requires an external TLS terminator and
-network restriction; treat a gateway URL, including its token, as a
-credential equivalent to shell access on the supervising host.
+serves plain HTTP, so binding outside `127.0.0.1` requires an external TLS
+terminator and network restriction; treat a gateway URL, including its token,
+as a credential equivalent to shell access on the supervising host.
+
+Browser requests are accepted only from the gateway's own origin: an `Origin`
+header must name exactly the host and port the request was sent to, so neither
+another site nor another local port can drive the gateway. With no token on
+loopback, the gateway also refuses any `Host` other than `127.0.0.1`,
+`localhost` or `[::1]` on its own port, which is what defeats DNS rebinding —
+comparing `Origin` with `Host` alone does not, since a rebinding page controls
+both. Anonymous loopback access remains open to any local client, including
+other users of a shared machine.
 
 Interactive attach over the web has the same property as native tmux attach:
 input goes directly to the pseudo-terminal and does not pass through the
@@ -261,6 +269,7 @@ tamper-evident.
 | Audit disclosure or tampering | Redaction is heuristic and the local file is unsigned and unencrypted. |
 | Shared audit rotation races | Separate Relayer processes do not coordinate one audit path. |
 | Native attach bypass | Direct tmux input is outside policy and decision auditing. |
+| Tokenless local gateway | `relayer serve` with no token on loopback trusts every local client as `local-operator`; only the Origin and Host checks separate it from a web page. |
 | Platform surprises | Windows uses ConPTY for PTY execution (tmux unavailable); WSL is unvalidated during alpha. |
 
 ## Safer operating practices

@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -175,17 +176,20 @@ func (c *clientConnection) close() {
 	close(c.send)
 }
 
-func isLoopbackHost(hostPort string) bool {
-	h := hostPort
-	if host, _, err := net.SplitHostPort(hostPort); err == nil {
-		h = host
+// localHostsFor lists the Host header values a tokenless gateway answers to:
+// the loopback names a local browser can use to reach this port, and nothing
+// else. A browser omits the default port from Host, so port 80 also admits the
+// bare names.
+func localHostsFor(port int) map[string]struct{} {
+	names := []string{"127.0.0.1", "localhost", "[::1]"}
+	hosts := make(map[string]struct{}, 2*len(names))
+	for _, name := range names {
+		hosts[name+":"+strconv.Itoa(port)] = struct{}{}
+		if port == 80 {
+			hosts[name] = struct{}{}
+		}
 	}
-	h = strings.TrimPrefix(strings.TrimSuffix(h, "]"), "[")
-	if strings.EqualFold(h, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(h)
-	return ip != nil && ip.IsLoopback()
+	return hosts
 }
 
 func isLoopbackRemote(remoteAddr string) bool {
@@ -201,7 +205,18 @@ func isLoopbackRemote(remoteAddr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func checkSameOriginOrLocal(r *http.Request) bool {
+// checkSameOrigin accepts a request that carries no Origin, or one whose Origin
+// names exactly the host and port it was sent to.
+//
+// A page on another loopback port is not the same origin. Trusting any local
+// port meant anything else listening locally — a dev server, a dashboard, a
+// page with an XSS hole — could drive the gateway. The web UI is served by the
+// gateway itself and always connects to its own origin.
+//
+// Origin is compared to Host, and a DNS-rebinding page controls both, so this
+// check alone does not protect the tokenless mode: gatewayHandler.ServeHTTP
+// also pins Host there.
+func checkSameOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		// Non-browser clients (CLI, curl, native GUI) do not send Origin header.
@@ -211,20 +226,12 @@ func checkSameOriginOrLocal(r *http.Request) bool {
 	if err != nil || u.Host == "" {
 		return false
 	}
-	// Direct same-origin match (same host and port)
-	if strings.EqualFold(u.Host, r.Host) {
-		return true
-	}
-	// Localhost cross-port access (e.g. Vite dev server on localhost:5173 connecting to gateway on localhost:8080)
-	if isLoopbackHost(u.Host) && isLoopbackHost(r.Host) {
-		return true
-	}
-	return false
+	return strings.EqualFold(u.Host, r.Host)
 }
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		return checkSameOriginOrLocal(r)
+		return checkSameOrigin(r)
 	},
 	ReadBufferSize:  1024 * 64,
 	WriteBufferSize: 1024 * 64,
@@ -312,7 +319,7 @@ func Serve(ctx context.Context, opts Options) error {
 		opts.Port = tcpAddr.Port
 	}
 
-	handler := newGatewayHandler(ctrl, tokens, allowAnonymousLocal, opts.StaticDir, opts.Diagnostics)
+	handler := newGatewayHandler(ctrl, tokens, allowAnonymousLocal, opts.Port, opts.StaticDir, opts.Diagnostics)
 	httpServer := &http.Server{
 		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
@@ -369,14 +376,17 @@ type gatewayHandler struct {
 	ctrl                *Controller
 	tokens              map[string]AuthIdentity
 	allowAnonymousLocal bool
-	staticDir           string
-	diagnostics         io.Writer
+	// localHosts is the Host allowlist of the tokenless mode, fixed once the
+	// listening port is known. It is empty when tokens are configured.
+	localHosts  map[string]struct{}
+	staticDir   string
+	diagnostics io.Writer
 
 	clientsMu sync.RWMutex
 	clients   map[*clientConnection]struct{}
 }
 
-func newGatewayHandler(ctrl *Controller, tokens map[string]AuthIdentity, allowAnonymousLocal bool, staticDir string, diagnostics io.Writer) *gatewayHandler {
+func newGatewayHandler(ctrl *Controller, tokens map[string]AuthIdentity, allowAnonymousLocal bool, port int, staticDir string, diagnostics io.Writer) *gatewayHandler {
 	gh := &gatewayHandler{
 		ctrl:                ctrl,
 		tokens:              tokens,
@@ -384,6 +394,9 @@ func newGatewayHandler(ctrl *Controller, tokens map[string]AuthIdentity, allowAn
 		staticDir:           staticDir,
 		diagnostics:         diagnostics,
 		clients:             make(map[*clientConnection]struct{}),
+	}
+	if allowAnonymousLocal {
+		gh.localHosts = localHostsFor(port)
 	}
 
 	// Subscribe to controller events and broadcast to all connected WebSocket clients
@@ -423,6 +436,18 @@ func (gh *gatewayHandler) closeClients() {
 }
 
 func (gh *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// The tokenless mode trusts a request because it arrives over loopback. A
+	// page that rebinds its own DNS name to 127.0.0.1 arrives over loopback too,
+	// and controls Origin as well, so neither the socket nor the Origin check
+	// can tell it apart. The Host its browser sends still names the attacker's
+	// domain: pinning Host to the loopback names this gateway was started on is
+	// what separates the two. It applies to every path, the static UI included,
+	// so a rebinding page is never served anything by a tokenless gateway.
+	if gh.allowAnonymousLocal && !gh.isLocalHost(r.Host) {
+		http.Error(w, "Forbidden: unexpected Host for a tokenless gateway", http.StatusForbidden)
+		return
+	}
+
 	// Health endpoint
 	if r.URL.Path == "/api/health" {
 		w.Header().Set("Content-Type", "application/json")
@@ -432,7 +457,7 @@ func (gh *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// State endpoint
 	if r.URL.Path == "/api/state" {
-		if !checkSameOriginOrLocal(r) {
+		if !checkSameOrigin(r) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
@@ -447,7 +472,7 @@ func (gh *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// WebSocket endpoint
 	if r.URL.Path == "/api/ws" {
-		if !checkSameOriginOrLocal(r) {
+		if !checkSameOrigin(r) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
@@ -492,9 +517,13 @@ func (gh *gatewayHandler) authenticate(r *http.Request) (AuthIdentity, bool) {
 		return AuthIdentity{}, false
 	}
 
-	// 3. Fallback for anonymous localhost if allowed
+	// 3. Fallback for anonymous localhost if allowed. ServeHTTP has already
+	// pinned Host for this mode; the checks repeat here so any future route
+	// that authenticates gets them too. The anonymous mode only exists on a
+	// loopback bind, so the RemoteAddr test does not refuse anything today: it
+	// keeps the mode from quietly widening if the bind rules ever change.
 	if gh.allowAnonymousLocal && len(gh.tokens) == 0 {
-		if isLoopbackRemote(r.RemoteAddr) && checkSameOriginOrLocal(r) {
+		if gh.isLocalHost(r.Host) && isLoopbackRemote(r.RemoteAddr) && checkSameOrigin(r) {
 			return AuthIdentity{
 				Identity: "local-operator",
 				Role:     RoleOperator,
@@ -504,6 +533,13 @@ func (gh *gatewayHandler) authenticate(r *http.Request) (AuthIdentity, bool) {
 	}
 
 	return AuthIdentity{}, false
+}
+
+// isLocalHost reports whether a Host header is one of the loopback names this
+// tokenless gateway was started on.
+func (gh *gatewayHandler) isLocalHost(host string) bool {
+	_, ok := gh.localHosts[strings.ToLower(strings.TrimSpace(host))]
+	return ok
 }
 
 func (gh *gatewayHandler) isAuthorized(r *http.Request) bool {

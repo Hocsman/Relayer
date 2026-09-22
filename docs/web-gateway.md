@@ -12,10 +12,24 @@ relayer serve --bind 0.0.0.0 --port 8080 \
 ```
 
 > [!WARNING]
-> The gateway serves plain HTTP and performs no origin check on the WebSocket
-> upgrade. Binding anywhere other than `127.0.0.1` requires an external TLS
-> terminator and network restriction. Treat a gateway URL, token included, as a
-> credential equivalent to shell access on the supervising host.
+> The gateway serves plain HTTP. Binding anywhere other than `127.0.0.1`
+> requires an external TLS terminator and network restriction. Treat a gateway
+> URL, token included, as a credential equivalent to shell access on the
+> supervising host.
+
+## Origin and Host checks
+
+A browser request is accepted only from the gateway's own origin: its `Origin`
+header, when present, must name exactly the host and port the request was sent
+to. A page served from another origin cannot call the API or open the
+WebSocket, and that includes a page on **another port of the same machine** —
+a dev server or a dashboard running locally is not trusted because it is local.
+Clients that send no `Origin`, such as `curl` or a script, are unaffected.
+
+Behind a reverse proxy, the proxy must **preserve the `Host` header** the browser
+sent (for nginx, `proxy_set_header Host $host;`). A proxy that rewrites `Host` to
+the upstream address makes every browser request look cross-origin, and the
+gateway refuses it with `403`.
 
 ## Flags
 
@@ -80,6 +94,17 @@ parameter or an `Authorization: Bearer` header.
 Binding to `127.0.0.1` with no token configured allows anonymous local access as
 `local-operator`. Binding anywhere else with no token configured makes the
 gateway generate one operator and one viewer secret and print both.
+
+A tokenless gateway answers only to requests addressed to `127.0.0.1:PORT`,
+`localhost:PORT` or `[::1]:PORT`, on every path, and refuses any other `Host`
+with `403`. This is what stops DNS rebinding: a web page whose own domain
+resolves to `127.0.0.1` reaches the loopback socket and controls its `Origin`,
+but its browser still names the page's domain in `Host`.
+
+Anonymous access is still access for **anything running locally as a client**:
+another user on a shared machine, or a local program, can connect as
+`local-operator` without a secret. On a machine you do not have to yourself,
+pass `--token` even on loopback.
 
 ## Multiple operators
 

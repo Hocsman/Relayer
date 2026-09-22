@@ -1226,17 +1226,19 @@ func TestGatewayOriginAndLoopbackProtection(t *testing.T) {
 		t.Errorf("GET /api/state without origin status = %d, want %d", respCLI.StatusCode, http.StatusOK)
 	}
 
-	// 3. /api/state with loopback Origin succeeds
+	// 3. /api/state from another loopback port is a different origin. Anything
+	// else listening locally (a dev server, a dashboard) must not be able to
+	// drive the gateway just because it is also on localhost.
 	reqLocal, _ := http.NewRequest("GET", readyInfo.serverURL+"/api/state", nil)
 	reqLocal.Header.Set("Origin", "http://localhost:3000")
 	reqLocal.Header.Set("Authorization", "Bearer op-secret-123")
 	respLocal, err := client.Do(reqLocal)
 	if err != nil {
-		t.Fatalf("GET /api/state with local origin: %v", err)
+		t.Fatalf("GET /api/state with another local origin: %v", err)
 	}
 	_ = respLocal.Body.Close()
-	if respLocal.StatusCode != http.StatusOK {
-		t.Errorf("GET /api/state with local origin status = %d, want %d", respLocal.StatusCode, http.StatusOK)
+	if respLocal.StatusCode != http.StatusForbidden {
+		t.Errorf("GET /api/state from another loopback port status = %d, want %d", respLocal.StatusCode, http.StatusForbidden)
 	}
 
 	// 4. WebSocket dial with evil Origin must be rejected (403 Forbidden)
@@ -1266,14 +1268,23 @@ func TestGatewayOriginAndLoopbackProtection(t *testing.T) {
 	}
 	_ = wsConn.Close()
 
-	// 6. WebSocket dial with loopback Origin succeeds
+	// 6. WebSocket dial from another loopback port is refused; the same origin
+	// the UI is served from is accepted.
 	localHeader := make(http.Header)
 	localHeader.Set("Origin", "http://localhost:5173")
-	wsLocalConn, _, err := normalDialer.Dial(wsURL, localHeader)
-	if err != nil {
-		t.Fatalf("WebSocket dial with local origin failed: %v", err)
+	if conn, resp, err := normalDialer.Dial(wsURL, localHeader); err == nil {
+		_ = conn.Close()
+		t.Error("WebSocket dial from another loopback port succeeded, want failure")
+	} else if resp != nil && resp.StatusCode != http.StatusForbidden {
+		t.Errorf("WebSocket dial from another loopback port status = %d, want %d", resp.StatusCode, http.StatusForbidden)
 	}
-	_ = wsLocalConn.Close()
+	sameHeader := make(http.Header)
+	sameHeader.Set("Origin", readyInfo.serverURL)
+	wsSameConn, _, err := normalDialer.Dial(wsURL, sameHeader)
+	if err != nil {
+		t.Fatalf("WebSocket dial with the same origin failed: %v", err)
+	}
+	_ = wsSameConn.Close()
 }
 
 func TestAnonymousLocalRejectsCrossOrigin(t *testing.T) {

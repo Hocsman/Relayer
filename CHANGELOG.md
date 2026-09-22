@@ -4,6 +4,14 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+### Security
+
+- **A DNS-rebinding page still got the operator role on a tokenless gateway**: v0.8.4 added an Origin check, but it compared `Origin` with `Host`, and a page that rebinds its own domain to `127.0.0.1` controls both — its browser sends `Origin: http://rebind.example:8080` and `Host: rebind.example:8080`, they match, and the socket is loopback. Such a page could still read `getAgentProfiles`, write an agent command line of its choice and restart the agent: command execution from a web page, on the default `relayer serve` invocation.
+  - A tokenless gateway now answers only to requests addressed to `127.0.0.1:PORT`, `localhost:PORT` or `[::1]:PORT`, on every path including the static interface and `/api/health`, and refuses any other `Host` with `403`. That header is the one a rebinding page cannot choose.
+  - The Origin check no longer trusts any loopback origin on any port. A page on another local port — a dev server, the telemetry stack's anonymous Grafana on `:3000` — is another origin, and v0.8.4's tests asserted the opposite. `Origin` must now name exactly the host and port the request was sent to.
+  - Behind a reverse proxy the proxy must preserve `Host`; one that rewrites it to the upstream address makes every browser request look cross-origin. `docs/web-gateway.md` now says so, and no longer claims there is no origin check at all.
+  - `TestAnonymousGatewayRefusesDNSRebinding` drives the rebinding request shape against a real gateway on every kind of path and over the WebSocket; it fails against v0.8.5.
+
 ## [0.8.5] - 2026-09-21
 
 Patch release entitled "réglages honnêtes" ("honest settings"), resolving settings fidelity, configuration lifecycle transitions, notification enforcement, and process termination handling.
