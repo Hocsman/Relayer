@@ -253,7 +253,7 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 				joinRunError(&returnErr, "writing the end of supervision to the audit", recordErr)
 			}
 		}
-		closeContext, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		closeContext, cancel := context.WithTimeout(context.Background(), session.StopBudget+3*time.Second)
 		defer cancel()
 		closeErr := router.Close(closeContext)
 		if closeErr != nil {
@@ -487,14 +487,14 @@ func startAgentSessionsObserved(
 			terminal.Size{Columns: columns, Rows: rows},
 		)
 		if startErr != nil {
-			closeContext, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+			closeContext, cancel := context.WithTimeout(context.Background(), session.StopBudget+3*time.Second)
 			_ = owner.Close(closeContext)
 			cancel()
 			return nil, nil, fmt.Errorf("starting agent %q: %w", spec.ID, startErr)
 		}
 		if observer != nil {
 			if observeErr := observer(spec, info); observeErr != nil {
-				closeContext, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+				closeContext, cancel := context.WithTimeout(context.Background(), session.StopBudget+3*time.Second)
 				_ = owner.Close(closeContext)
 				cancel()
 				return nil, nil, fmt.Errorf("auditing the startup of agent %q: %w", spec.ID, observeErr)

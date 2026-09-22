@@ -74,9 +74,13 @@ type Controller struct {
 	runtime *app.DesktopRuntime
 	runID   string
 
-	state       AppState
-	agentIndex  map[string]int // lowercase sessionID -> slice index
-	pending     map[string]pendingItem
+	state      AppState
+	agentIndex map[string]int // lowercase sessionID -> slice index
+	pending    map[string]pendingItem
+	// startBound holds, per session, when its current process was started.
+	// A prompt detected before it is the previous process's: the event pump
+	// can deliver one after the start, and nothing then cleared it.
+	startBound  map[string]time.Time
 	subscribers map[uint64]func(event string, payload any)
 	nextSubID   uint64
 
@@ -125,6 +129,7 @@ func NewController(configPath string, diagnostics io.Writer) (*Controller, error
 		diagnostics:        diagnostics,
 		agentIndex:         make(map[string]int),
 		pending:            make(map[string]pendingItem),
+		startBound:         make(map[string]time.Time),
 		subscribers:        make(map[uint64]func(event string, payload any)),
 		detector:           toolcatalog.DefaultDetector(),
 		notificationConfig: notify.DefaultConfig(),
@@ -353,6 +358,14 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 		if !adapterEv.Actionable() {
 			return
 		}
+		c.mu.RLock()
+		bound, started := c.startBound[strings.ToLower(adapterEv.SessionID)]
+		c.mu.RUnlock()
+		if started && !adapterEv.Timestamp.IsZero() && adapterEv.Timestamp.Before(bound) {
+			// The previous process's prompt, delivered after its replacement
+			// started: it cannot be answered, and would sit on the new process.
+			return
+		}
 
 		evaluation := rt.Evaluate(adapterEv)
 		decisions := rt.SupportedDecisions(adapterEv)
@@ -375,7 +388,7 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 			Summary:   adapterEv.Summary,
 			Sensitive: adapterEv.Sensitive,
 			Risk:      string(adapterEv.Risk),
-			Timestamp: ts.Format(time.RFC3339Nano),
+			Timestamp: ts.UTC().Format(eventTimestampLayout),
 			Evaluation: PolicyEvaluation{
 				Action:         string(evaluation.Action),
 				ProposedAction: string(evaluation.ProposedAction),
@@ -527,6 +540,11 @@ func (c *Controller) clearSessionPendingBeforeLocked(sessionID string, before ti
 	}
 	c.rebuildPendingEventsLocked()
 }
+
+// eventTimestampLayout is RFC 3339 with a fixed nine-digit fraction. Prompts are
+// ordered by comparing their timestamps as text, here and in the interface;
+// RFC3339Nano drops trailing zeros, so a prompt at .1 sorted after one at .12.
+const eventTimestampLayout = "2006-01-02T15:04:05.000000000Z07:00"
 
 func pendingDetectedAt(item pendingItem) time.Time {
 	if !item.event.Timestamp.IsZero() {
@@ -931,7 +949,7 @@ func (c *Controller) StopSession(runID, sessionID string) error {
 		return errors.New("supervisor runtime not ready")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), session.StopBudget+2*time.Second)
 	defer cancel()
 
 	return rt.StopAgent(ctx, sessionID)
@@ -974,6 +992,7 @@ func (c *Controller) markSessionStarted(sessionID string, startedAt time.Time) {
 	// that never raised them. The new process's own are kept.
 	bound := startedAt.Truncate(time.Millisecond)
 	c.clearSessionPendingBeforeLocked(sessionID, bound)
+	c.startBound[strings.ToLower(strings.TrimSpace(sessionID))] = bound
 	runID := c.runID
 	c.mu.Unlock()
 	if !found {
@@ -997,7 +1016,8 @@ func (c *Controller) RestartSession(runID, sessionID string) error {
 		return errors.New("supervisor runtime not ready")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// The stop, the wait for its session to settle, then the start.
+	ctx, cancel := context.WithTimeout(context.Background(), session.StopBudget+5*time.Second)
 	defer cancel()
 
 	startedAt := time.Now().UTC()

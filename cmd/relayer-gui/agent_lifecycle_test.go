@@ -186,3 +186,62 @@ func TestARestartDropsThePreviousProcesssPrompts(t *testing.T) {
 		t.Fatalf("pending after the replacement's prompt = %d, want it pending", len(state.PendingEvents))
 	}
 }
+
+// TestTheReplacementsFirstPromptSurvivesItsRestart: the replacement's first
+// prompt usually carries the previous process's prompt ID. Taken in while the
+// restart was still completing, it was refused as a duplicate of the old one,
+// which was still pending, and never shown or audited.
+func TestTheReplacementsFirstPromptSurvivesItsRestart(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	started := make(chan string, 1)
+	release := make(chan struct{})
+	engine.mu.Lock()
+	engine.agentRestartStarted = started
+	engine.agentRestartRelease = release
+	engine.mu.Unlock()
+	application := newBridgeForTest(engine)
+	runID := activeRunIDForTest(application)
+	run := activeRunForTest(application)
+
+	application.handleAdapterEventForRun(run, bridgeEvent("agent-a", "prompt-1"))
+	restarted := make(chan error, 1)
+	go func() { restarted <- application.RestartSession(runID, "agent-a") }()
+	<-started
+
+	// The replacement is up and asks the same question before the restart
+	// has finished on the desktop's side.
+	replacement := bridgeEvent("agent-a", "prompt-1")
+	replacement.Timestamp = time.Now().UTC()
+	replacement.Summary = "replacement question"
+	application.handleAdapterEventForRun(run, replacement)
+	close(release)
+	if err := <-restarted; err != nil {
+		t.Fatalf("RestartSession: %v", err)
+	}
+
+	state, _ := application.GetState()
+	if len(state.PendingEvents) != 1 || state.PendingEvents[0].Summary != "replacement question" {
+		t.Fatalf("pending after the restart = %#v, want the replacement's own prompt", state.PendingEvents)
+	}
+}
+
+// TestAPromptFromBeforeTheStartIsIgnored: the event pump can deliver the
+// previous process's prompt after the replacement started. It used to sit on
+// the new process, which never raised it.
+func TestAPromptFromBeforeTheStartIsIgnored(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	application := newBridgeForTest(engine)
+	runID := activeRunIDForTest(application)
+	run := activeRunForTest(application)
+
+	before := time.Now().UTC().Add(-time.Second)
+	if err := application.RestartSession(runID, "agent-a"); err != nil {
+		t.Fatalf("RestartSession: %v", err)
+	}
+	late := bridgeEvent("agent-a", "prompt-old")
+	late.Timestamp = before
+	application.handleAdapterEventForRun(run, late)
+	if state, _ := application.GetState(); len(state.PendingEvents) != 0 {
+		t.Fatalf("pending after a late prompt of the previous process = %#v, want none", state.PendingEvents)
+	}
+}

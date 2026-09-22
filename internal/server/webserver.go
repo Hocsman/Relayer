@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/Hocsman/Relayer/internal/session"
 )
 
 // UserRole defines the privilege level of an authenticated client.
@@ -303,7 +305,11 @@ func Serve(ctx context.Context, opts Options) error {
 		return fmt.Errorf("starting supervisor controller: %w", err)
 	}
 	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// Every agent is stopped in parallel, so one stop's worst case bounds
+		// them all. Five seconds let serve exit while an agent the console
+		// close never reaches was still inside its grace period, and it kept
+		// running after Relayer was gone.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), session.StopBudget+2*time.Second)
 		defer cancel()
 		_ = ctrl.Close(shutdownCtx)
 	}()

@@ -24,6 +24,16 @@ var (
 
 // gracefulStopTimeout, the time an agent has between the stop request and a
 // forced kill, is set per platform: see pty_device_*.go.
+
+// StopBudget is the longest one Stop can take: the grace period, then the
+// forced kill and its confirmation, and the descendants' cleanup and output
+// drain. A caller that gives a stop less reports one still under way as
+// unconfirmed, and the agent is then locked as stop_uncertain: when the
+// Windows grace became five seconds, the web gateway's five-second budget did
+// that to every agent the console close never reaches. Budgets for a Stop, a
+// Restart or a shutdown are built on it.
+const StopBudget = gracefulStopTimeout + 2*forcedStopTimeout + descendantGraceTime + finalOutputDrainTime + time.Second
+
 const (
 	forcedStopTimeout    = 500 * time.Millisecond
 	descendantGraceTime  = 250 * time.Millisecond

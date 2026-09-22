@@ -124,13 +124,17 @@ type App struct {
 	inFlight         map[string]eventKey
 	lineInFlight     map[string]bool
 	stoppingSessions map[string]bool
-	outputRunning    map[string]bool
-	outputDirty      map[string]bool
-	frozen           map[string]bool
-	auditFailed      bool
-	shuttingDown     bool
-	startupErr       error
-	configPath       string
+	// startBound holds, per session, when its current process was started. A
+	// prompt detected before it is the previous process's: the event pump can
+	// deliver one after the start, and nothing then cleared it.
+	startBound    map[string]time.Time
+	outputRunning map[string]bool
+	outputDirty   map[string]bool
+	frozen        map[string]bool
+	auditFailed   bool
+	shuttingDown  bool
+	startupErr    error
+	configPath    string
 
 	deliveryMu        sync.Mutex
 	deliveryAvailable bool
@@ -171,6 +175,7 @@ func NewApp() *App {
 		inFlight:              make(map[string]eventKey),
 		lineInFlight:          make(map[string]bool),
 		stoppingSessions:      make(map[string]bool),
+		startBound:            make(map[string]time.Time),
 		outputRunning:         make(map[string]bool),
 		outputDirty:           make(map[string]bool),
 		frozen:                make(map[string]bool),
@@ -547,6 +552,11 @@ func (a *App) handleAdapterEventForRun(run *runGeneration, event adapters.Event)
 		return
 	}
 	if !event.Actionable() {
+		return
+	}
+	if a.detectedBeforeStart(key.sessionID, event.Timestamp) {
+		// The previous process's prompt, delivered after its replacement
+		// started: it cannot be answered, and would sit on the new process.
 		return
 	}
 	if !a.sessionRunning(event.SessionID) {
@@ -1343,7 +1353,7 @@ func (a *App) StopSession(runID, sessionID string) error {
 	displaySessionID := a.state.Agents[index].SessionID
 	a.mu.Unlock()
 	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "stopping"})
-	ctx, cancel := context.WithTimeout(run.ctx, 6*time.Second)
+	ctx, cancel := context.WithTimeout(run.ctx, session.StopBudget+2*time.Second)
 	err = run.engine.StopAgent(ctx, sessionID)
 	cancel()
 	if err != nil {
@@ -1398,9 +1408,10 @@ func (a *App) StartSession(runID, sessionID string) error {
 	}
 	a.stoppingSessions[sessionKey] = true
 	a.state.Agents[index].Status = "starting"
+	a.dropSessionPendingLocked(sessionKey)
 	displaySessionID := a.state.Agents[index].SessionID
 	a.mu.Unlock()
-	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "starting"})
+	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "starting", ClearedBefore: clearedAll()})
 	startedAt := time.Now().UTC()
 	ctx, cancel := context.WithTimeout(run.ctx, 10*time.Second)
 	err = run.engine.StartAgent(ctx, sessionID)
@@ -1461,11 +1472,12 @@ func (a *App) RestartSession(runID, sessionID string) error {
 	}
 	a.stoppingSessions[sessionKey] = true
 	a.state.Agents[index].Status = "stopping"
+	a.dropSessionPendingLocked(sessionKey)
 	displaySessionID := a.state.Agents[index].SessionID
 	a.mu.Unlock()
-	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "stopping"})
+	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "stopping", ClearedBefore: clearedAll()})
 	startedAt := time.Now().UTC()
-	ctx, cancel := context.WithTimeout(run.ctx, 12*time.Second)
+	ctx, cancel := context.WithTimeout(run.ctx, session.StopBudget+8*time.Second)
 	err = run.engine.RestartAgent(ctx, sessionID)
 	cancel()
 	if err != nil {
@@ -1507,6 +1519,7 @@ func (a *App) completeAgentStart(run *runGeneration, sessionKey string, startedA
 		}
 	}
 	a.rebuildPendingLocked()
+	a.startBound[sessionKey] = bound
 	// A fresh process numbers its events from the start again, and event IDs
 	// derive from that sequence, so the new process's exit — or a prompt it
 	// repeats — carries an ID the previous process already used. v0.8.5 kept
@@ -1693,10 +1706,38 @@ func (a *App) restoreAgentRunningLocked(sessionID string) {
 	}
 }
 
+// eventTimestampLayout is RFC 3339 with a fixed nine-digit fraction. Prompts are
+// ordered by comparing their timestamps as text, here and in the interface;
+// RFC3339Nano drops trailing zeros, so a prompt at .1 sorted after one at .12.
+const eventTimestampLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
 // clearedAll is the ClearedBefore of a status that dropped every prompt of the
 // session: a millisecond past now, the resolution clients compare at.
 func clearedAll() string {
 	return time.Now().UTC().Truncate(time.Millisecond).Add(time.Millisecond).Format(time.RFC3339Nano)
+}
+
+// detectedBeforeStart reports whether a prompt predates its session's current
+// process.
+func (a *App) detectedBeforeStart(sessionKey string, detected time.Time) bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	bound, started := a.startBound[sessionKey]
+	return started && !detected.IsZero() && detected.Before(bound)
+}
+
+// dropSessionPendingLocked removes a session's prompts when a Start or a
+// Restart begins. None can be answered while it runs, and the replacement's
+// first prompt usually carries the ID of the previous process's: left pending,
+// the old one made the new one a duplicate. They are not recorded as answered,
+// so the replacement's prompt is taken in.
+func (a *App) dropSessionPendingLocked(sessionKey string) {
+	for key := range a.pending {
+		if key.sessionID == sessionKey {
+			delete(a.pending, key)
+		}
+	}
+	a.rebuildPendingLocked()
 }
 
 func (a *App) clearSessionPendingLocked(sessionID string) {
@@ -1811,7 +1852,7 @@ func supervisionView(
 		Summary:   safeEventSummary(event),
 		Sensitive: requiresSecretHandling(event),
 		Risk:      string(event.Risk),
-		Timestamp: timestamp.UTC().Format(time.RFC3339Nano),
+		Timestamp: timestamp.UTC().Format(eventTimestampLayout),
 		Evaluation: PolicyEvaluation{
 			Action:         string(evaluation.Action),
 			ProposedAction: string(evaluation.ProposedAction),

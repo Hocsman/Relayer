@@ -842,7 +842,7 @@ func (r *DesktopRuntime) abortInitialization() error {
 		}
 	}
 	if r.router != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), session.StopBudget+3*time.Second)
 		stopErr := r.stopAllSessions(ctx)
 		r.strictStop = true
 		r.strictStopped = stopErr == nil
