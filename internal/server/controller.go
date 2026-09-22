@@ -459,11 +459,15 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 		})
 
 	case session.Exited:
+		// Emitted when Relayer loses ownership of a tmux session: supervision
+		// ended, not necessarily the process. "failed", as on the desktop, is a
+		// status the interface clears Running on; "stopped" left the card
+		// offering a Stop that could only fail.
 		c.mu.Lock()
 		idx, found := c.agentIndex[strings.ToLower(ev.SessionID)]
 		if found {
 			c.state.Agents[idx].Running = false
-			c.state.Agents[idx].Status = "stopped"
+			c.state.Agents[idx].Status = "failed"
 		}
 		c.mu.Unlock()
 
@@ -471,7 +475,7 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 			RunID:     c.runID,
 			Scope:     "session",
 			SessionID: ev.SessionID,
-			Status:    "stopped",
+			Status:    "failed",
 		})
 		c.announceFinishedRecording(ev.SessionID)
 
@@ -988,6 +992,19 @@ func (c *Controller) loadAgentProfilesLocked() (AgentProfilesView, error) {
 	}, nil
 }
 
+// revisionCurrentLocked reports whether a save was prepared against the file as
+// it is now: the token must be the one last handed out, and the file must
+// still have the content that token was handed out for.
+//
+// Only the token was checked before, and it only changes when this gateway
+// writes or reloads the view. A form loaded before someone edited the file by
+// hand could therefore be saved over the edit: a deny rule added in the YAML
+// was dropped by a save that only toggled dry-run. An empty token was also
+// accepted as "no check" by the settings save.
+func (c *Controller) revisionCurrentLocked(expected, fileRevision string) bool {
+	return expected != "" && expected == c.revisionToken && fileRevision == c.revisionHash
+}
+
 func (c *Controller) getOrGenerateToken(revisionHash string) string {
 	if c.revisionHash != revisionHash || c.revisionToken == "" {
 		tokenBytes := make([]byte, 16)
@@ -1081,7 +1098,7 @@ func (c *Controller) SaveAgentProfiles(runID string, req SaveAgentProfilesReques
 		return AgentProfilesView{}, err
 	}
 
-	if req.ExpectedRevision != c.revisionToken {
+	if !c.revisionCurrentLocked(req.ExpectedRevision, cfg.Revision) {
 		return AgentProfilesView{}, errStaleRevision
 	}
 
@@ -1112,7 +1129,7 @@ func (c *Controller) SaveAgentProfilesAndRestart(req SaveAgentProfilesAndRestart
 		return LifecycleResult{}, err
 	}
 
-	if req.ExpectedRevision != c.revisionToken {
+	if !c.revisionCurrentLocked(req.ExpectedRevision, cfg.Revision) {
 		return LifecycleResult{}, errStaleRevision
 	}
 
@@ -1263,7 +1280,7 @@ func (c *Controller) SaveFullSettings(runID string, req SaveFullSettingsRequest)
 		return FullSettingsView{}, err
 	}
 
-	if req.ExpectedRevision != "" && req.ExpectedRevision != c.revisionToken {
+	if !c.revisionCurrentLocked(req.ExpectedRevision, cfg.Revision) {
 		return FullSettingsView{}, errStaleRevision
 	}
 

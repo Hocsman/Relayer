@@ -234,3 +234,51 @@ func TestWebNotificationTestRefusesWhenNotificationsAreOff(t *testing.T) {
 		t.Fatal("a test notification reported success with notifications switched off")
 	}
 }
+
+// TestWebSaveRefusesAFormOlderThanTheFile: the save checked only an opaque
+// token that changes when this gateway writes, so a form loaded before someone
+// edited the YAML by hand was saved over the edit. A deny rule added by hand
+// was dropped by a save that only toggled dry-run.
+func TestWebSaveRefusesAFormOlderThanTheFile(t *testing.T) {
+	strict := policy.ProfileConfig(policy.ProfileStrict, "")
+	strict.Guardrails.BlockOutsideWorkspace = false
+	ctrl, configPath := startSettingsController(t, strict)
+
+	view, err := ctrl.GetFullSettings()
+	if err != nil {
+		t.Fatalf("GetFullSettings: %v", err)
+	}
+
+	// Someone edits the file by hand while the form is open.
+	onDisk, err := config.LoadExisting(configPath)
+	if err != nil {
+		t.Fatalf("LoadExisting: %v", err)
+	}
+	edited := onDisk.Policies
+	edited.Rules = append(edited.Rules, policy.Rule{
+		Name:   "deny-terraform",
+		Match:  policy.Match{CommandRegex: `(?i)^terraform\b`},
+		Action: policy.ActionDeny,
+	})
+	if _, _, err := config.UpdateFullConfiguration(configPath, onDisk.Revision, config.FullConfigurationUpdate{Policies: &edited}); err != nil {
+		t.Fatalf("edit by hand: %v", err)
+	}
+
+	security := view.Security
+	security.DryRun = !security.DryRun
+	if _, err := ctrl.SaveFullSettings("", SaveFullSettingsRequest{ExpectedRevision: view.Revision, Security: &security}); err == nil {
+		t.Fatal("a form loaded before the file was edited was saved over the edit")
+	}
+	after, err := config.LoadExisting(configPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if len(after.Policies.Rules) != 1 || after.Policies.Rules[0].Name != "deny-terraform" {
+		t.Fatalf("rules after the refused save = %+v, want the hand-added deny rule", after.Policies.Rules)
+	}
+
+	// An empty token is not a way around the check.
+	if _, err := ctrl.SaveFullSettings("", SaveFullSettingsRequest{Security: &security}); err == nil {
+		t.Fatal("a save with no revision token was accepted")
+	}
+}

@@ -1,11 +1,14 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Hocsman/Relayer/internal/policy"
+	"github.com/Hocsman/Relayer/internal/session"
 )
 
 func agentStateEventually(t *testing.T, ctrl *Controller, sessionID string, want func(AgentState) bool) AgentState {
@@ -54,6 +57,25 @@ func TestWebAgentCanBeStoppedAndStartedAgainAndAgain(t *testing.T) {
 		started := agentStateEventually(t, ctrl, sessionID, func(agent AgentState) bool { return agent.Running })
 		if started.Status != "running" {
 			t.Fatalf("cycle %d: status after the start = %q, want running", cycle, started.Status)
+		}
+	}
+}
+
+// TestLosingATmuxSessionClearsRunning: when Relayer loses ownership of a tmux
+// session, the gateway marked the agent "stopped", a status the interface does
+// not clear Running on, so the card kept a Stop button that could only fail.
+func TestLosingATmuxSessionClearsRunning(t *testing.T) {
+	ctrl, _ := startSettingsController(t, policy.ProfileConfig(policy.ProfileDeveloperFriendly, ""))
+	agents := ctrl.GetState().Agents
+	if len(agents) == 0 {
+		t.Fatal("the default configuration has no agent")
+	}
+	id := agents[0].SessionID
+	ctrl.handleEvent(context.Background(), nil, session.Exited{SessionID: id, Err: errors.New("tmux supervision interrupted")})
+
+	for _, agent := range ctrl.GetState().Agents {
+		if strings.EqualFold(agent.SessionID, id) && (agent.Running || agent.Status != "failed") {
+			t.Fatalf("agent after a lost session = running %v, status %q; want not running and failed", agent.Running, agent.Status)
 		}
 	}
 }

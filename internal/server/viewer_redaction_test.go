@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +17,7 @@ const viewerProbeSecret = "sk-VIEWER-PROBE-SECRET-4242"
 
 // startGatewayWithSecretInArgv boots a gateway whose only agent carries a
 // credential in its argument vector, the way an --api-key flag does.
-func startGatewayWithSecretInArgv(t *testing.T) string {
+func startGatewayWithSecretInArgv(t *testing.T) (string, string) {
 	t.Helper()
 
 	command := `["sh", "-c", "sleep 30", "relayer", "--api-key", "` + viewerProbeSecret + `"]`
@@ -27,7 +26,15 @@ func startGatewayWithSecretInArgv(t *testing.T) string {
 	}
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
-	yaml := "version: 1\nbackend: pty\nagents:\n  - id: keyed\n    name: Keyed agent\n    command: " + command +
+	// The journal lives in the test's directory, so a leaked path is detectable.
+	// The journal refuses a directory other users can read.
+	journalDir := filepath.Join(dir, "audit")
+	if err := os.Mkdir(journalDir, 0o700); err != nil {
+		t.Fatalf("mkdir audit: %v", err)
+	}
+	journal := filepath.Join(journalDir, "audit.jsonl")
+	yaml := "version: 1\nbackend: pty\naudit:\n  enabled: true\n  mode: metadata\n  path: '" + journal + "'\n" +
+		"agents:\n  - id: keyed\n    name: Keyed agent\n    command: " + command +
 		"\nintercept_patterns:\n  - pattern: '(?i)continue'\n    description: continue prompt\n"
 	if err := os.WriteFile(configPath, []byte(yaml), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -46,13 +53,13 @@ func startGatewayWithSecretInArgv(t *testing.T) string {
 	})
 	select {
 	case url := <-readyCh:
-		return url
+		return url, configPath
 	case err := <-serverErrCh:
 		t.Fatalf("Serve failed: %v", err)
 	case <-time.After(10 * time.Second):
 		t.Fatal("server startup timed out")
 	}
-	return ""
+	return "", ""
 }
 
 func rawReply(t *testing.T, client *sharedGatewayClient, method string) string {
@@ -64,15 +71,24 @@ func rawReply(t *testing.T, client *sharedGatewayClient, method string) string {
 
 // TestViewerNeverReceivesAnAgentsArguments pins the leak v0.8.4's changelog
 // said was closed: a viewer token received every agent's full command line,
-// credentials included, through getAgentProfiles and getState.
+// credentials included, through getAgentProfiles; and getState named the
+// configuration and journal files in its startup notices. getAuditSummary and
+// verifyAuditJournal also named the journal's path.
 func TestViewerNeverReceivesAnAgentsArguments(t *testing.T) {
-	baseURL := startGatewayWithSecretInArgv(t)
+	baseURL, configPath := startGatewayWithSecretInArgv(t)
+	// A token unique to this test's directory, independent of how JSON escapes
+	// a Windows path.
+	pathToken := filepath.Base(filepath.Dir(filepath.Dir(configPath)))
 	viewer := dialSharedGateway(t, baseURL, "viewDave")
 	operator := dialSharedGateway(t, baseURL, "opAlice")
 
-	for _, method := range []string{"getAgentProfiles", "getState"} {
-		if reply := rawReply(t, viewer, method); strings.Contains(reply, viewerProbeSecret) {
+	for _, method := range []string{"getAgentProfiles", "getState", "getAuditSummary", "verifyAuditJournal"} {
+		reply := rawReply(t, viewer, method)
+		if strings.Contains(reply, viewerProbeSecret) {
 			t.Errorf("a viewer's %s carries the agent's credential:\n%s", method, reply)
+		}
+		if strings.Contains(reply, pathToken) {
+			t.Errorf("a viewer's %s names the configuration's directory:\n%s", method, reply)
 		}
 	}
 
@@ -99,30 +115,26 @@ func TestViewerNeverReceivesAnAgentsArguments(t *testing.T) {
 	if reply := rawReply(t, operator, "getAgentProfiles"); !strings.Contains(reply, viewerProbeSecret) {
 		t.Error("the operator's profiles lost the argument vector it edits")
 	}
+	if reply := rawReply(t, operator, "getAuditSummary"); !strings.Contains(reply, pathToken) {
+		t.Errorf("the operator's audit summary lost the journal's path:\n%s", reply)
+	}
 }
 
-func TestExecutableOnlyKeepsNothingAfterTheExecutable(t *testing.T) {
-	// Built the way the session manager builds a display command.
-	quoted := func(argv ...string) string {
-		parts := make([]string, len(argv))
-		for index, argument := range argv {
-			parts[index] = strconv.Quote(argument)
-		}
-		return strings.Join(parts, " ")
+// TestViewerStillSeesWhichAgentItWatches: the display command is already only
+// the executable's name. Masking it again left a viewer's cards nameless.
+func TestViewerStillSeesWhichAgentItWatches(t *testing.T) {
+	baseURL, _ := startGatewayWithSecretInArgv(t)
+	viewer := dialSharedGateway(t, baseURL, "viewDave")
+	operator := dialSharedGateway(t, baseURL, "opAlice")
+
+	var viewerState, operatorState AppState
+	viewer.mustCall("getState", map[string]any{}, &viewerState)
+	operator.mustCall("getState", map[string]any{}, &operatorState)
+	if len(viewerState.Agents) != 1 || len(operatorState.Agents) != 1 {
+		t.Fatalf("agents = %d for the viewer and %d for the operator, want 1 each", len(viewerState.Agents), len(operatorState.Agents))
 	}
-	cases := map[string]string{
-		quoted("/usr/local/bin/claude", "--api-key", "sk-secret"): "claude",
-		"[explicit shell]":             "[explicit shell]",
-		"":                             "",
-		"claude --api-key sk-unquoted": "",
-	}
-	if runtime.GOOS == "windows" {
-		// filepath.Base splits on backslashes only on Windows.
-		cases[quoted(`C:\Tools\aider.exe`, "--openai-api-key", "sk")] = "aider.exe"
-	}
-	for display, want := range cases {
-		if got := executableOnly(display); got != want {
-			t.Errorf("executableOnly(%q) = %q, want %q", display, got, want)
-		}
+	if viewerState.Agents[0].DisplayCommand == "" || viewerState.Agents[0].DisplayCommand != operatorState.Agents[0].DisplayCommand {
+		t.Fatalf("viewer display command = %q, operator's = %q, want the same executable name",
+			viewerState.Agents[0].DisplayCommand, operatorState.Agents[0].DisplayCommand)
 	}
 }

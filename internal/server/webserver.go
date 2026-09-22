@@ -839,6 +839,9 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 	case "getAgentProfiles":
 		view, err := gh.ctrl.GetAgentProfiles()
 		if err != nil {
+			if client.role != RoleOperator {
+				return nil, errViewerProfiles
+			}
 			return nil, err
 		}
 		return profilesForRole(view, client.role), nil
@@ -886,15 +889,29 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 		return gh.ctrl.StopRun(p.RunID)
 
 	case "getAuditSummary":
-		return gh.ctrl.GetAuditSummary()
+		summary, err := gh.ctrl.GetAuditSummary()
+		if err != nil {
+			return nil, auditErrorForRole(err, client.role)
+		}
+		summary.Path = auditPathForRole(summary.Path, client.role)
+		return summary, nil
 
 	case "getAuditEntries":
 		var filter AuditFilterInput
 		_ = json.Unmarshal(params, &filter)
-		return gh.ctrl.GetAuditEntries(filter)
+		entries, err := gh.ctrl.GetAuditEntries(filter)
+		if err != nil {
+			return nil, auditErrorForRole(err, client.role)
+		}
+		return entries, nil
 
 	case "verifyAuditJournal":
-		return gh.ctrl.VerifyAuditJournal()
+		verification, err := gh.ctrl.VerifyAuditJournal()
+		if err != nil {
+			return nil, auditErrorForRole(err, client.role)
+		}
+		verification.Path = auditPathForRole(verification.Path, client.role)
+		return verification, nil
 
 	case "exportAuditReport":
 		var p struct {
@@ -904,7 +921,11 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 		if p.Format == "" {
 			p.Format = "json"
 		}
-		return gh.ctrl.ExportAuditReport(p.Format)
+		report, err := gh.ctrl.ExportAuditReport(p.Format)
+		if err != nil {
+			return nil, auditErrorForRole(err, client.role)
+		}
+		return report, nil
 
 	case "getTelemetrySnapshot":
 		return gh.ctrl.GetTelemetrySnapshot(), nil
