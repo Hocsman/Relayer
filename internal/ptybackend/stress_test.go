@@ -180,8 +180,10 @@ func TestPTYConcurrentSessionsStress(t *testing.T) {
 		sessionIDs = append(sessionIDs, info.ID)
 	}
 
-	// Poll all sessions concurrently until all complete
-	deadline := time.Now().Add(20 * time.Second)
+	// Poll all sessions concurrently until all complete. Three floods of 30000
+	// lines each cross three pseudo-terminals here; a loaded four-core CI runner
+	// has been seen 2000 lines short of the end after 20 seconds.
+	deadline := time.Now().Add(90 * time.Second)
 	completed := make(map[terminal.SessionID]bool)
 
 	for time.Now().Before(deadline) && len(completed) < sessionCount {
