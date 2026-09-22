@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Hocsman/Relayer/internal/config"
+	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/tmuxbackend"
 	"github.com/gorilla/websocket"
 )
@@ -200,8 +201,11 @@ func TestServerLifecycleAndAgentAddition(t *testing.T) {
 			return nil, err
 		}
 
-		// Read messages until we get the response matching reqID
-		wsConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		// Read messages until we get the response matching reqID. A call that
+		// restarts the agents stops every one of them first, and a stop is
+		// allowed session.StopBudget — five of those seconds are the grace an
+		// agent gets on Windows to handle its console closing.
+		wsConn.SetReadDeadline(time.Now().Add(session.StopBudget + 10*time.Second))
 		for {
 			_, data, err := wsConn.ReadMessage()
 			if err != nil {

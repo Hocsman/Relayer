@@ -12,7 +12,8 @@ import (
 // later by the wait, a caller that gave up first is refused at once, and a nil
 // context is tolerated as every other runtime entry point tolerates it.
 func TestAfterLockWaitGivesTheOperationItsBudget(t *testing.T) {
-	nilled, release := afterLockWait(nil, time.Second)
+	var unset context.Context // a caller that never set one
+	nilled, release := afterLockWait(unset, time.Second)
 	release()
 	if nilled == nil {
 		t.Fatal("a nil context was not replaced")
