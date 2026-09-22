@@ -293,6 +293,28 @@ export function AgentSettingsPanel({
     }
   };
 
+  // reloadEveryTab replaces every tab's draft with what the file holds, and
+  // reports whether it could. After a failed restart the drafts no longer match
+  // the file, and a stale security draft would be saved again.
+  const reloadEveryTab = async (): Promise<boolean> => {
+    try {
+      const reloaded = typeof bridge.getFullSettings === "function" && !readOnly
+        ? await bridge.getFullSettings()
+        : await bridge.getAgentProfiles();
+      setView(reloaded);
+      setDraft(cloneProfiles(reloaded.profiles));
+      if ("security" in reloaded && (reloaded as FullSettingsView).security) {
+        const fullReloaded = reloaded as FullSettingsView;
+        setFullView(fullReloaded);
+        setSecurityDraft(fullReloaded.security);
+        setNotificationDraft(fullReloaded.notifications);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const saveAndRestart = async () => {
     if (readOnly || !view || !validation.valid || !view.editable || !canActivate || busy) return;
     setActivating(true);
@@ -316,9 +338,15 @@ export function AgentSettingsPanel({
       setView(result.profiles);
       setDraft(cloneProfiles(result.profiles.profiles));
       if (result.outcome === "rolled_back") {
+        // The file is back to what it was, so every tab is reloaded from it:
+        // the security and notification tabs used to keep the changes the
+        // notice said were undone, one save away from being written again.
+        const reloaded = await reloadEveryTab();
         setNotice({
           tone: "warning",
-          text: "The new run did not start. The previous YAML was restored and the earlier plan was relaunched under a new run.",
+          text: reloaded
+            ? "The new run did not start. The previous YAML was restored and the earlier plan was relaunched under a new run."
+            : "The new run did not start. The previous YAML was restored and the earlier plan was relaunched under a new run, but the security and notification tabs could not be reloaded and still show your unsaved changes.",
         });
       } else {
         setActivating(false);
@@ -326,24 +354,7 @@ export function AgentSettingsPanel({
         return;
       }
     } catch {
-      // Reload every tab, not only the agents: the drafts may no longer match
-      // what the file holds, and a stale security draft would be saved again.
-      let reloadedFromFile = false;
-      try {
-        const reloaded = typeof bridge.getFullSettings === "function" && !readOnly
-          ? await bridge.getFullSettings()
-          : await bridge.getAgentProfiles();
-        setView(reloaded);
-        setDraft(cloneProfiles(reloaded.profiles));
-        if ("security" in reloaded && (reloaded as FullSettingsView).security) {
-          const fullReloaded = reloaded as FullSettingsView;
-          setFullView(fullReloaded);
-          setSecurityDraft(fullReloaded.security);
-          setNotificationDraft(fullReloaded.notifications);
-        }
-        reloadedFromFile = true;
-      } catch {
-      }
+      const reloadedFromFile = await reloadEveryTab();
       // Say the form was reloaded only if it was: otherwise it still shows the
       // unsaved drafts, and saving them again would repeat the failed change.
       setError(reloadedFromFile

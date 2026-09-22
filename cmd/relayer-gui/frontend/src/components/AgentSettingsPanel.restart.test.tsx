@@ -153,3 +153,42 @@ describe("a failed Save and restart", () => {
     expect(error).toContain("could not be reloaded");
   });
 });
+
+describe("a Save and restart that was rolled back", () => {
+  // The desktop restores the file byte for byte when the new run does not
+  // start. The panel reloaded only the agents, so the security tab kept the
+  // change the notice said had been undone, one save away from being written.
+  it("reloads the security tab from the restored file", async () => {
+    act(() => {
+      root.render(
+        <AgentSettingsPanel
+          bridge={bridgeWhoseReload(async () => settings())}
+          runID="run-1"
+          runStatus="idle"
+          pendingEvents={[]}
+          onSave={async () => settings()}
+          onSaveAndRestart={async () => ({ outcome: "rolled_back", state: {} as never, profiles: settings() })}
+          onClose={() => {}}
+        />,
+      );
+    });
+    await settle();
+    const button = (text: string) => Array.from(container.querySelectorAll("button"))
+      .find((candidate) => (candidate.textContent ?? "").includes(text));
+    const dryRun = () => Array.from(container.querySelectorAll("label"))
+      .find((label) => (label.textContent ?? "").includes("Dry-Run Mode"))
+      ?.querySelector("input") as HTMLInputElement | undefined;
+
+    act(() => button("Security")!.click());
+    expect(dryRun()?.checked).toBe(false);
+    act(() => dryRun()!.click());
+    expect(dryRun()?.checked).toBe(true);
+
+    act(() => button("Save and start")!.click());
+    await settle();
+    await settle();
+
+    expect(container.textContent).toContain("The previous YAML was restored");
+    expect(dryRun()?.checked, "the security tab after the rollback").toBe(false);
+  });
+});

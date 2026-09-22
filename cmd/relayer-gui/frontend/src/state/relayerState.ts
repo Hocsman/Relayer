@@ -195,10 +195,17 @@ export function relayerReducer(state: RelayerUIState, action: RelayerAction): Re
       }
       if (!action.status.sessionID) return state;
       const nextStatus = action.status.status as AppState["agents"][number]["status"];
+      // A session that ended can answer none of its prompts. Keeping them
+      // offered Review on a dead agent, and answering one revived its card.
+      const ended = nextStatus === "exited" || nextStatus === "failed";
+      const sessionID = action.status.sessionID;
       return {
         ...state,
         app: {
           ...state.app,
+          pendingEvents: ended
+            ? state.app.pendingEvents.filter((event) => event.sessionID !== sessionID)
+            : state.app.pendingEvents,
           agents: state.app.agents.map((agent) =>
             agent.sessionID === action.status.sessionID
               ? {

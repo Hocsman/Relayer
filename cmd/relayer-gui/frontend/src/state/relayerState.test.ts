@@ -229,4 +229,13 @@ describe("relayerReducer", () => {
     expect(restarted.app?.agents[0].status).toBe("running");
     expect(restarted.app?.agents[0].running).toBe(true);
   });
+
+  it("drops an ended session's prompts and keeps the others", () => {
+    const loaded = relayerReducer(initialRelayerState, { type: "loaded", state: appState() });
+    const failed = relayerReducer(loaded, {
+      type: "status",
+      status: { runID: "run-1", scope: "session", sessionID: "a", status: "failed" },
+    });
+    expect(failed.app?.pendingEvents.map((event) => event.sessionID)).toEqual(["b"]);
+  });
 });
