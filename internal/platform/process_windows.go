@@ -20,7 +20,7 @@ func NewShellCommand(ctx context.Context, script string) (*exec.Cmd, error) {
 // SetGracefulCancel is a no-op on Windows. Agent processes are spawned through
 // ConPTY rather than exec.Cmd.Start, so os/exec never watches their context,
 // and closing the pseudo console is the graceful stop there.
-func SetGracefulCancel(*exec.Cmd, time.Duration) {}
+func SetGracefulCancel(*exec.Cmd, time.Duration, func()) {}
 
 // The functions below address a process by its numeric PID, and Windows hands a
 // freed PID to the next process that asks for one. They are only safe while the
@@ -51,18 +51,21 @@ func ProcessGroupExists(command *exec.Cmd) bool {
 	if command == nil || command.Process == nil || command.ProcessState != nil {
 		return false
 	}
-	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(command.Process.Pid))
+	handle, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(command.Process.Pid))
 	if err != nil {
 		return false
 	}
 	defer windows.CloseHandle(handle)
 
-	var exitCode uint32
-	if err := windows.GetExitCodeProcess(handle, &exitCode); err != nil {
+	// A process object is signalled when it terminates. Its exit code cannot
+	// say the same: a program may exit with 259, the value of STILL_ACTIVE,
+	// and with the session now holding the process object open that exited
+	// agent read as alive forever, so no Stop of it could be confirmed.
+	event, err := windows.WaitForSingleObject(handle, 0)
+	if err != nil {
 		return false
 	}
-	const statusStillActive = 259
-	return exitCode == statusStillActive
+	return event == uint32(windows.WAIT_TIMEOUT)
 }
 
 // IsPTYCloseError recognizes Windows pipe closure errors when the child exits.

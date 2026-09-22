@@ -105,3 +105,52 @@ func TestEveryStopPathGivesTheAgentItsGracePeriod(t *testing.T) {
 		assertStoppedGracefully(t, marker, "parent context cancelled first")
 	})
 }
+
+// TestShutdownSendsASingleSIGTERM: a caller that cancels a parent context and
+// then closes used to send two — the context's cancellation hook, then Close —
+// and an agent whose handler runs only once, or treats a second TERM as
+// "force", was killed by the second.
+func TestShutdownSendsASingleSIGTERM(t *testing.T) {
+	events := make(chan Event, 256)
+	parent, cancel := context.WithCancel(context.Background())
+	manager, err := NewManager(parent, events, integrationPatterns, 4096)
+	if err != nil {
+		cancel()
+		t.Fatalf("NewManager: %v", err)
+	}
+	counter := filepath.Join(t.TempDir(), "terms")
+	info, err := manager.Start(agent.Spec{
+		ID:    "counts-terms",
+		Name:  "counts terms",
+		Shell: `trap 'printf x >> "$RELAYER_COUNT"' TERM; printf 'READY\n'; while [ ! -s "$RELAYER_COUNT" ]; do sleep 0.05; done; sleep 0.5; exit 0`,
+		Env:   map[string]string{"RELAYER_COUNT": counter},
+	}, 40, 10)
+	if err != nil {
+		cancel()
+		t.Fatalf("Start: %v", err)
+	}
+	deadline := time.After(3 * time.Second)
+	for ready := false; !ready; {
+		select {
+		case event := <-events:
+			if output, ok := event.(OutputAvailable); ok && output.SessionID == info.ID {
+				content, _ := manager.Output(info.ID)
+				ready = strings.Contains(content, "READY")
+			}
+		case <-deadline:
+			cancel()
+			t.Fatal("the agent never became ready")
+		}
+	}
+
+	cancel()
+	manager.Close()
+
+	data, err := os.ReadFile(counter)
+	if err != nil {
+		t.Fatalf("read the TERM count: %v", err)
+	}
+	if got := len(data); got != 1 {
+		t.Fatalf("the agent received %d SIGTERMs during one shutdown, want exactly 1", got)
+	}
+}

@@ -138,3 +138,23 @@ func TestWindowsStopDoesNotWaitOutTheUnixGracePeriod(t *testing.T) {
 		t.Fatalf("Stop took %s, want well under the %s grace period", elapsed, gracefulStopTimeout)
 	}
 }
+
+// TestAnAgentThatExitsWith259IsConfirmedStopped: 259 is the value of
+// STILL_ACTIVE, and liveness was read from the exit code. With the session now
+// holding the process object open, an agent that exited with 259 looked alive
+// for good and every Stop of it reported ErrStopUncertain.
+func TestAnAgentThatExitsWith259IsConfirmedStopped(t *testing.T) {
+	manager := newWindowsTestManager(t)
+	info, err := manager.Start(agent.Spec{
+		ID:      "exits-with-259",
+		Name:    "exits with 259",
+		Command: []string{"cmd.exe", "/c", "exit 259"},
+	}, 80, 24)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitDone(t, manager, info.ID)
+	if err := manager.Stop(info.ID); err != nil {
+		t.Fatalf("Stop of an agent that exited with 259: %v", err)
+	}
+}

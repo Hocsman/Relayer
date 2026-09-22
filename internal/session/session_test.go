@@ -140,3 +140,35 @@ func TestSettleDescendantsKillsAndReportsASurvivingGroup(t *testing.T) {
 		t.Fatalf("outcome = settled %v, leftover %v; want settled with a leftover", settled, leftover)
 	}
 }
+
+// TestRequestStopSendsNothingToAReapedLeader: once the leader is reaped its
+// number is free, and a stop request that arrives afterwards — an operator's
+// Stop, a cancelled context, a shutdown — must leave the group to waitSession.
+func TestRequestStopSendsNothingToAReapedLeader(t *testing.T) {
+	session := &processSession{
+		done: make(chan struct{}),
+		terminateGroup: func(*exec.Cmd) {
+			t.Error("a stop request signalled a reaped leader's group by number")
+		},
+		killGroup: func(*exec.Cmd) {
+			t.Error("a stop request killed a reaped leader's group by number")
+		},
+	}
+	session.setResult(nil, nil)
+	session.requestStop()
+}
+
+// TestRequestStopAsksOnce: a cancelled context and an explicit stop are the
+// same request, so the agent sees one SIGTERM however many paths ask.
+func TestRequestStopAsksOnce(t *testing.T) {
+	terms := 0
+	session := &processSession{
+		done:           make(chan struct{}),
+		terminateGroup: func(*exec.Cmd) { terms++ },
+	}
+	session.requestStop()
+	session.requestStop()
+	if terms != 1 {
+		t.Fatalf("termination requests = %d, want 1", terms)
+	}
+}

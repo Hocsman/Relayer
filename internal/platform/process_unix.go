@@ -49,21 +49,31 @@ func ProcessGroupExists(command *exec.Cmd) bool {
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
-// SetGracefulCancel makes cancelling the command's context ask its whole process
-// group to stop, instead of os/exec's default of killing the leader outright.
-// A leader that has not exited after grace is then killed by os/exec itself.
+// SetGracefulCancel makes cancelling the command's context call stop — the
+// caller's graceful stop request — instead of os/exec's default of killing the
+// leader outright. A leader still running after grace is then killed by
+// os/exec itself.
 //
 // Without it, every path that cancels a parent context before stopping the
 // sessions — a supervisor shutting down, a signal to relayer serve — sent
 // SIGKILL to each agent before any SIGTERM, so no agent could shut down
-// cleanly. os/exec only calls Cancel while the process has not been waited
-// for, so the process-group ID is still reserved when it is signalled.
-func SetGracefulCancel(command *exec.Cmd, grace time.Duration) {
-	if command == nil {
+// cleanly. The caller passes its own stop request rather than a signal, so the
+// cancellation and a later explicit stop are one request and one SIGTERM: an
+// agent whose handler runs only once was killed by a second.
+//
+// os/exec may call Cancel after the leader was reaped but before Wait returned,
+// and the session only learns of the reap when Wait returns. In that moment the
+// stop request signals the group by number, as the session's own cleanup does
+// right after the reap. That is safe on Unix: the kernel keeps a group's number
+// reserved while any member lives, and a group with no member left answers
+// ESRCH unless the whole PID space wrapped around in between. Windows has no
+// such rule, which is why it holds the process handle instead.
+func SetGracefulCancel(command *exec.Cmd, grace time.Duration, stop func()) {
+	if command == nil || stop == nil {
 		return
 	}
 	command.Cancel = func() error {
-		TerminateProcessGroup(command)
+		stop()
 		return nil
 	}
 	command.WaitDelay = grace

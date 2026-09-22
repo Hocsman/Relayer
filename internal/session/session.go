@@ -68,8 +68,9 @@ type processSession struct {
 	// These hooks default to the platform process-group primitives. Keeping
 	// them per session makes the negative confirmation paths deterministic in
 	// tests without mutating package globals used by concurrent sessions.
-	killGroup   func(*exec.Cmd)
-	groupExists func(*exec.Cmd) bool
+	terminateGroup func(*exec.Cmd)
+	killGroup      func(*exec.Cmd)
+	groupExists    func(*exec.Cmd) bool
 
 	// recordInput and recordResize are nil unless a transcript is being
 	// written. They are set once, before the session is published, so no lock
@@ -204,7 +205,7 @@ func (s *processSession) requestStop() {
 			return
 		}
 
-		platform.TerminateProcessGroup(s.cmd)
+		s.terminateProcessGroup()
 		if closeConsoleToStop {
 			s.closePTY()
 		}
@@ -299,7 +300,7 @@ func (s *processSession) confirmProcessGroupStopped(timeout time.Duration) error
 // per session in parallel, and cutting it made every shutdown SIGKILL the
 // agents' children with no chance to exit cleanly.
 func (s *processSession) settleDescendants() {
-	platform.TerminateProcessGroup(s.cmd)
+	s.terminateProcessGroup()
 	leftover := false
 	if s.processGroupExists() {
 		time.Sleep(descendantGraceTime)
@@ -321,6 +322,14 @@ func (s *processSession) waitGroupGone(timeout time.Duration) bool {
 		time.Sleep(groupCheckInterval)
 	}
 	return true
+}
+
+func (s *processSession) terminateProcessGroup() {
+	if s.terminateGroup != nil {
+		s.terminateGroup(s.cmd)
+		return
+	}
+	platform.TerminateProcessGroup(s.cmd)
 }
 
 func (s *processSession) killProcessGroup() {

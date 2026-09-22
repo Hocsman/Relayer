@@ -180,6 +180,11 @@ func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 		done:     make(chan struct{}),
 		readDone: make(chan struct{}),
 	}
+	// A cancelled context stops the agent through requestStop, as Stop does,
+	// rather than with os/exec's immediate SIGKILL: several shutdown paths
+	// cancel before they stop. Going through requestStop also makes the
+	// cancellation and a later Stop or Close a single SIGTERM.
+	platform.SetGracefulCancel(cmd, gracefulStopTimeout, session.requestStop)
 	// Captured under the lock Start already holds, so the session keeps one
 	// recorder for its whole life even if SetRecorder is called concurrently.
 	recorder := m.recorder
@@ -516,19 +521,22 @@ func (m *Manager) Close() {
 		}
 		m.mu.Unlock()
 
-		// Every session is asked to stop before the Manager's context is
-		// cancelled. Cancelling first made each reader close its PTY on its
-		// next read, and every agent received SIGHUP before its grace period.
-		// The waits run in parallel: one after another, a run of silent agents
+		// Every session is asked to stop, and the Manager's context is only
+		// cancelled afterwards. A caller that cancelled a parent context first
+		// has already reached each session's requestStop through the context's
+		// cancellation hook, so the request below is the same single SIGTERM.
+		// The stops run in parallel: one after another, a run of silent agents
 		// took the grace period once per agent and outlived callers' budgets.
-		for _, session := range sessions {
-			session.requestStop()
-		}
 		var stopping sync.WaitGroup
 		for _, session := range sessions {
 			stopping.Add(1)
 			go func(session *processSession) {
 				defer stopping.Done()
+				// The request runs in parallel too: on Windows it closes
+				// the pseudo console, which blocks until the attached
+				// processes have handled CTRL_CLOSE_EVENT, so one agent at
+				// a time added up past callers' shutdown budgets.
+				session.requestStop()
 				_ = session.waitForStop()
 			}(session)
 		}
@@ -567,9 +575,6 @@ func newCommand(ctx context.Context, spec agent.Spec) (*exec.Cmd, bool, error) {
 	}
 	command.Dir = spec.Cwd
 	command.Env = mergedEnvironment(spec.Env)
-	// A cancelled context must stop the agent the way Stop does, not with an
-	// immediate SIGKILL: several shutdown paths cancel before they stop.
-	platform.SetGracefulCancel(command, gracefulStopTimeout)
 	return command, shell, nil
 }
 
