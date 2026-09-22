@@ -4,7 +4,7 @@ Relayer's goal is to improve human visibility and provide an approval handoff
 for interactive CLI prompts. It does not make an agent safe, constrain what it
 can do, or prove that a displayed prompt is authentic.
 
-This document describes the threat model and residual risk for Relayer v0.8.3 GA. For
+This document describes the threat model and residual risk for Relayer v0.8.6 GA. For
 private vulnerability reporting, see [SECURITY.md](../SECURITY.md).
 
 ## Assets

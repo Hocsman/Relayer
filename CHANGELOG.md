@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-09-22
+
+Patch release that makes the v0.8.4 and v0.8.5 fixes true. A verification of those two releases found each of their eight fixes partial, two of them critical: a web page could take over a tokenless gateway through DNS rebinding, and on Windows stopping an agent could kill an unrelated process. Both are closed. The settings editor no longer weakens the policy it saves, every PTY stop path gives agents their grace period, an agent that exits on its own can be restarted any number of times, and viewer tokens no longer receive command lines or file paths. The entries below say only what the code does, and the overstatements in earlier entries are corrected at the end of this section.
+
 ### Security
 
 - **A DNS-rebinding page still got the operator role on a tokenless gateway**: v0.8.4 added an Origin check, but it compared `Origin` with `Host`, and a page that rebinds its own domain to `127.0.0.1` controls both — its browser sends `Origin: http://rebind.example:8080` and `Host: rebind.example:8080`, they match, and the socket is loopback. Such a page could still read `getAgentProfiles`, write an agent command line of its choice and restart the agent: command execution from a web page, on the default `relayer serve` invocation.
@@ -875,7 +879,9 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.4...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.6...main
+[0.8.6]: https://github.com/Hocsman/Relayer/compare/v0.8.5...v0.8.6
+[0.8.5]: https://github.com/Hocsman/Relayer/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/Hocsman/Relayer/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/Hocsman/Relayer/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/Hocsman/Relayer/compare/v0.8.1...v0.8.2
