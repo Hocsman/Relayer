@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/audit"
 )
 
@@ -134,8 +135,14 @@ func (r *Registry) Observe(entry audit.Entry) {
 			adapter, agentID, typeStr, riskStr, sensitiveStr)
 		r.eventsDetectedTotal[key]++
 
-		eventKey := makeEventKey(entry.RunID, entry.SessionID, entry.EventID)
-		r.pendingEvents[eventKey] = entry.Timestamp
+		// A process exit is journaled as a detected event, but nothing ever
+		// decides it. Counting it as pending leaked one entry per exit: with
+		// each process's exit now carrying its own ID, the gauge grew without
+		// bound as agents were restarted.
+		if entry.EventType != adapters.EventProcessExit {
+			eventKey := makeEventKey(entry.RunID, entry.SessionID, entry.EventID)
+			r.pendingEvents[eventKey] = entry.Timestamp
+		}
 
 	case audit.KindEventWithdrawn:
 		key := fmt.Sprintf("adapter=%s,agent_id=%s", adapter, agentID)

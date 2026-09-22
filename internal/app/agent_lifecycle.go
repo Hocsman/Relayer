@@ -369,13 +369,29 @@ func (l *agentLifecycle) recordLifecycle(entry audit.Entry) error {
 // then let a second Start run beside it. The backend decides, read-only and
 // outside l.mu: if it reports the current process running, the exit is stale
 // and changes nothing, and the caller must not show the agent as stopped.
+//
+// An exit that arrives while a Start is under way is most likely the previous
+// process's: that session emits its exit when it settles, which is what Start
+// waits for before launching the replacement. Asked then, the backend still
+// had only the settled session and called the exit current, and the front end
+// marked the live replacement exited. The answer therefore waits, briefly, for
+// the Start to finish. If a Start begins while the backend is asked, the exit
+// is the previous process's for the same reason. Any other move — an operator
+// Stop finishing, say — leaves the exit current.
 func (l *agentLifecycle) MarkProcessExited(agentID string) bool {
 	if l == nil {
 		return true
 	}
 	key := lifecycleKey(agentID)
+	deadline := time.Now().Add(exitDuringStartWait)
 	l.mu.Lock()
+	for l.states[key] == agentStateStarting && time.Now().Before(deadline) {
+		l.mu.Unlock()
+		time.Sleep(10 * time.Millisecond)
+		l.mu.Lock()
+	}
 	spec, known := l.specs[key]
+	sampled := l.states[key]
 	l.mu.Unlock()
 	if known && l.router != nil && l.backendReportsRunning(l.router.Context(), spec.ID) {
 		return false
@@ -383,8 +399,15 @@ func (l *agentLifecycle) MarkProcessExited(agentID string) bool {
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.states[key] == agentStateRunning {
+	switch current := l.states[key]; {
+	case current != sampled && (current == agentStateStarting || current == agentStateRunning):
+		return false
+	case current == agentStateRunning:
 		l.states[key] = agentStateStopped
 	}
 	return true
 }
+
+// exitDuringStartWait bounds how long an exit waits for a Start in progress:
+// the settle wait, plus the launch itself.
+const exitDuringStartWait = settleTimeout + 2*time.Second

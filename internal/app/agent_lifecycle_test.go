@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/audit"
@@ -27,6 +28,9 @@ type lifecycleFakeBackend struct {
 	removeErr   error
 	removeGone  bool
 	stopFailure error
+	// duringSnapshot, when set, runs inside every Snapshot: a lifecycle call
+	// that moves while the backend is being asked.
+	duringSnapshot func()
 	// removeRunning makes the next Remove calls refuse with ErrSessionRunning,
 	// the way a backend does between reaping a leader and settling its group.
 	removeRunning int
@@ -48,11 +52,26 @@ func (b *lifecycleFakeBackend) Stop(ctx context.Context, id string) error {
 func (b *lifecycleFakeBackend) Snapshot(ctx context.Context, id string) (terminal.Snapshot, error) {
 	snapshot, err := b.routerFakeBackend.Snapshot(ctx, id)
 	b.mu.Lock()
+	hook := b.duringSnapshot
+	b.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	b.mu.Lock()
 	if b.exited[id] {
 		snapshot.Running = false
 	}
 	b.mu.Unlock()
 	return snapshot, err
+}
+
+// Start launches a fresh process, which runs until the test says otherwise.
+func (b *lifecycleFakeBackend) Start(ctx context.Context, spec agent.Spec, size terminal.Size) (terminal.Info, error) {
+	info, err := b.routerFakeBackend.Start(ctx, spec, size)
+	if err == nil {
+		b.setExited(spec.ID, false)
+	}
+	return info, err
 }
 
 func (b *lifecycleFakeBackend) setExited(id string, exited bool) {
@@ -521,5 +540,101 @@ func TestRestartAtTheReapInstantWaitsForTheSessionToSettle(t *testing.T) {
 	backend.mu.Unlock()
 	if removes < 4 {
 		t.Fatalf("Remove was tried %d time(s), want it retried until the session settled", removes)
+	}
+}
+
+// TestAnExitDuringARestartIsThePreviousProcesss: the previous process's exit
+// is emitted when its session settles, which is what the Restart waits for, so
+// it reached the front end while the replacement was starting. The lifecycle
+// called it current and the desktop marked the live replacement exited.
+func TestAnExitDuringARestartIsThePreviousProcesss(t *testing.T) {
+	backend := newLifecycleFakeBackend()
+	router, err := newBackendRouter(context.Background(), backend)
+	if err != nil {
+		t.Fatalf("newBackendRouter: %v", err)
+	}
+	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	spec := lifecycleTestSpec(t, "restarting")
+	if _, err := router.Start(context.Background(), spec, terminal.Size{Columns: 80, Rows: 24}); err != nil {
+		t.Fatalf("initial start: %v", err)
+	}
+	lifecycle := newAgentLifecycle(router, lifecycleTestRecorder(t), []agent.Spec{spec}, terminal.Size{Columns: 80, Rows: 24}, nil)
+
+	// The process has exited and its session is settling.
+	backend.setExited("restarting", true)
+	backend.mu.Lock()
+	backend.removeRunning = 10
+	backend.mu.Unlock()
+
+	restarted := make(chan error, 1)
+	go func() {
+		_, err := lifecycle.RestartAgent(context.Background(), "restarting")
+		restarted <- err
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		lifecycle.mu.Lock()
+		state := lifecycle.states[lifecycleKey("restarting")]
+		lifecycle.mu.Unlock()
+		if state == agentStateStarting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the restart never reached starting (state %q)", state)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	// The settled session's exit arrives now.
+	if lifecycle.MarkProcessExited("restarting") {
+		t.Fatal("the previous process's exit was called current, and the live replacement would be shown exited")
+	}
+	if err := <-restarted; err != nil {
+		t.Fatalf("RestartAgent: %v", err)
+	}
+}
+
+// TestAnExitIsStaleOnlyIfAStartBeganMeanwhile: the lifecycle can move while
+// the backend is asked about an exit. An operator Stop finishing then is the
+// same process, and treating the exit as stale left the web card running for
+// an agent that had stopped; only a Start beginning then makes it stale.
+func TestAnExitIsStaleOnlyIfAStartBeganMeanwhile(t *testing.T) {
+	for _, move := range []struct {
+		name      string
+		from, to  string
+		wantFresh bool
+	}{
+		{"an operator stop finishes", agentStateStopping, agentStateStopped, true},
+		{"a start begins", agentStateStopped, agentStateStarting, false},
+	} {
+		t.Run(move.name, func(t *testing.T) {
+			backend := newLifecycleFakeBackend()
+			router, err := newBackendRouter(context.Background(), backend)
+			if err != nil {
+				t.Fatalf("newBackendRouter: %v", err)
+			}
+			t.Cleanup(func() { _ = router.Close(context.Background()) })
+			spec := lifecycleTestSpec(t, "moving")
+			if _, err := router.Start(context.Background(), spec, terminal.Size{Columns: 80, Rows: 24}); err != nil {
+				t.Fatalf("initial start: %v", err)
+			}
+			lifecycle := newAgentLifecycle(router, lifecycleTestRecorder(t), []agent.Spec{spec}, terminal.Size{Columns: 80, Rows: 24}, nil)
+			key := lifecycleKey("moving")
+			lifecycle.mu.Lock()
+			lifecycle.states[key] = move.from
+			lifecycle.mu.Unlock()
+			backend.setExited("moving", true)
+			backend.mu.Lock()
+			backend.duringSnapshot = func() {
+				lifecycle.mu.Lock()
+				lifecycle.states[key] = move.to
+				lifecycle.mu.Unlock()
+			}
+			backend.mu.Unlock()
+
+			if got := lifecycle.MarkProcessExited("moving"); got != move.wantFresh {
+				t.Fatalf("MarkProcessExited = %v, want %v", got, move.wantFresh)
+			}
+		})
 	}
 }

@@ -370,3 +370,22 @@ func TestHandoverAndRecordingEventsAreCounted(t *testing.T) {
 		}
 	}
 }
+
+// TestProcessExitsAreNeverPending: an exit is journaled as a detected event but
+// is never decided, so each one stayed in events_pending forever.
+func TestProcessExitsAreNeverPending(t *testing.T) {
+	reg := NewRegistry()
+	for i, id := range []string{"exit-1", "exit-2", "exit-3"} {
+		reg.Observe(audit.Entry{
+			RunID:     "run-1",
+			SessionID: "agent",
+			EventID:   id,
+			Kind:      audit.KindEventDetected,
+			EventType: adapters.EventProcessExit,
+			Timestamp: time.Now().UTC().Add(time.Duration(i) * time.Second),
+		})
+	}
+	if pending := reg.Snapshot().EventsPending; pending != 0 {
+		t.Fatalf("events_pending after three process exits = %d, want 0", pending)
+	}
+}

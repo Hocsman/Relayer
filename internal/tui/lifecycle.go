@@ -136,6 +136,7 @@ func (m *Model) applyLifecycleResult(message agentLifecycleMsg) tea.Cmd {
 		pane.policyTag = ""
 		setViewportContent(&pane.viewport, "")
 		m.removePending(message.SessionID)
+		m.forgetResolved(message.SessionID)
 		m.clearAutomaticState(message.SessionID)
 		delete(m.deferredEvents, message.SessionID)
 		delete(m.lineDeferredEvents, message.SessionID)
