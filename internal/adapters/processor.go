@@ -637,6 +637,11 @@ func (p *Processor) MarkProcessExitEvent(exitCode *int, failed bool) Event {
 	adapterID := p.adapter.ID()
 	p.terminated = true
 	event := NewProcessExitEvent(sessionID, agentID, adapterID, sequence, exitCode, failed)
+	if instance := p.state.instance; instance != "" {
+		// See DetectionState.instance: one exit per process, and no two
+		// processes under this session share its ID.
+		event.ID = occurrenceID(event.Signature+"\x00"+instance, sequence)
+	}
 	stored := event.Clone()
 	p.terminalEvent = &stored
 	p.mu.Unlock()

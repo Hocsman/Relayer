@@ -1079,6 +1079,17 @@ func TestManagerTreatsStableDeadPaneWithoutWaitStatusAsUnknownExit(t *testing.T)
 	if probes := runner.callsFor("has-session"); len(probes) != 0 {
 		t.Fatalf("normal pending wait status triggered failure probes: %#v", probes)
 	}
+
+	// The pane stays "pending" forever. Once its exit is published, Snapshot
+	// must say it stopped: an error here made the lifecycle treat the agent as
+	// running, refuse its next Start and discard the exit as stale.
+	snapshot, err := manager.Snapshot(context.Background(), info.ID)
+	if err != nil {
+		t.Fatalf("Snapshot after the unknown exit: %v", err)
+	}
+	if snapshot.Running || snapshot.ExitCode != nil {
+		t.Fatalf("snapshot after the unknown exit = %#v, want stopped with no exit code", snapshot)
+	}
 }
 
 func TestManagerRestoresDeadPipeAndRevalidatesIt(t *testing.T) {

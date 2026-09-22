@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/audit"
@@ -201,7 +202,7 @@ func (l *agentLifecycle) StartAgent(ctx context.Context, agentID, reason string)
 	// Release the previous identity. A missing route is fine (the session may
 	// never have registered one); every other failure means the backend could
 	// not prove the previous process is gone.
-	if err := l.router.Remove(ctx, spec.ID); err != nil && !errors.Is(err, terminal.ErrSessionNotFound) {
+	if err := l.removeWhenSettled(ctx, spec.ID); err != nil && !errors.Is(err, terminal.ErrSessionNotFound) {
 		l.mu.Lock()
 		l.states[key] = agentStateStopUncertain
 		l.mu.Unlock()
@@ -253,6 +254,36 @@ func (l *agentLifecycle) StartAgent(ctx context.Context, agentID, reason string)
 		l.tracker.Reset(spec.ID)
 	}
 	return info, nil
+}
+
+// settleTimeout bounds how long Start waits for an exited session to finish
+// cleaning up. The PTY backend settles within its descendant grace, forced
+// kill confirmation and output drain, well under a second.
+const settleTimeout = 3 * time.Second
+
+// removeWhenSettled releases a session identity, waiting briefly while the
+// backend reports the session still running.
+//
+// A process that has just exited is reported gone by Snapshot as soon as it is
+// reaped, but its session only releases after its descendants are cleaned up
+// and its last output is drained. A Start or Restart in that window got
+// ErrSessionRunning from Remove, marked the agent stop_uncertain, and refused
+// every later Start until an operator stopped it again. The wait only follows a
+// stop or an exit the backend has confirmed; a session that really keeps
+// running still ends in ErrSessionRunning once the wait runs out.
+func (l *agentLifecycle) removeWhenSettled(ctx context.Context, id string) error {
+	deadline := time.Now().Add(settleTimeout)
+	for {
+		err := l.router.Remove(ctx, id)
+		if !errors.Is(err, terminal.ErrSessionRunning) || time.Now().After(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 }
 
 func (l *agentLifecycle) specFor(key string) agent.Spec {

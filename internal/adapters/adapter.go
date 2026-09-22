@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -32,6 +33,14 @@ type DetectionState struct {
 	SessionID string
 	AgentID   string
 	AdapterID string
+
+	// instance tells this process apart from any earlier one under the same
+	// session. Occurrence IDs derive from the session and a sequence that
+	// starts again with each process, so a restarted agent's exit carried the
+	// same ID as the exit before it, and a front end that remembered the first
+	// dropped the second as a duplicate. Only the exit ID uses it: prompt IDs
+	// stay stable, which their chunking and replay tests rely on.
+	instance string
 
 	detectionText string
 	inCodeFence   bool
@@ -218,7 +227,18 @@ func NewDetectionState(sessionID, agentID, adapterID string) *DetectionState {
 		SessionID: strings.TrimSpace(sessionID),
 		AgentID:   strings.TrimSpace(agentID),
 		AdapterID: strings.ToLower(strings.TrimSpace(adapterID)),
+		instance:  newInstanceToken(),
 	}
+}
+
+// newInstanceToken returns a random token for one process instance. A failed
+// read leaves it empty, which only makes exit IDs deterministic again.
+func newInstanceToken() string {
+	var raw [8]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(raw[:])
 }
 
 // Pending returns a defensive copy of the current actionable event.

@@ -27,6 +27,9 @@ type lifecycleFakeBackend struct {
 	removeErr   error
 	removeGone  bool
 	stopFailure error
+	// removeRunning makes the next Remove calls refuse with ErrSessionRunning,
+	// the way a backend does between reaping a leader and settling its group.
+	removeRunning int
 	// exited lists the agents whose process the backend reports as gone.
 	// Everything else is reported running, as a live backend would.
 	exited map[string]bool
@@ -65,6 +68,10 @@ func (b *lifecycleFakeBackend) Remove(_ context.Context, id string) error {
 	b.mu.Lock()
 	b.removes = append(b.removes, id)
 	err, gone := b.removeErr, b.removeGone
+	if b.removeRunning > 0 {
+		b.removeRunning--
+		err = terminal.ErrSessionRunning
+	}
 	b.mu.Unlock()
 	if err != nil {
 		return err
@@ -481,5 +488,38 @@ func TestRestartOfADeadAgentDoesNotStopItAgain(t *testing.T) {
 		if entry.Kind == audit.KindSessionFinished {
 			t.Fatalf("RestartAgent journaled %s/%s for a process that had already exited", entry.Kind, entry.Reason)
 		}
+	}
+}
+
+// TestRestartAtTheReapInstantWaitsForTheSessionToSettle: a backend reports the
+// process gone as soon as its leader is reaped, but refuses to release the
+// session until the leader's group is cleaned up. A Restart in that window
+// skipped the stop, found Remove refused, and latched stop_uncertain; every
+// later Start of the agent was then refused.
+func TestRestartAtTheReapInstantWaitsForTheSessionToSettle(t *testing.T) {
+	backend := newLifecycleFakeBackend()
+	router, err := newBackendRouter(context.Background(), backend)
+	if err != nil {
+		t.Fatalf("newBackendRouter: %v", err)
+	}
+	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	spec := lifecycleTestSpec(t, "settling")
+	if _, err := router.Start(context.Background(), spec, terminal.Size{Columns: 80, Rows: 24}); err != nil {
+		t.Fatalf("initial start: %v", err)
+	}
+	lifecycle := newAgentLifecycle(router, lifecycleTestRecorder(t), []agent.Spec{spec}, terminal.Size{Columns: 80, Rows: 24}, nil)
+
+	backend.setExited("settling", true)
+	backend.mu.Lock()
+	backend.removeRunning = 3
+	backend.mu.Unlock()
+	if _, err := lifecycle.RestartAgent(context.Background(), "settling"); err != nil {
+		t.Fatalf("RestartAgent while the session settles: %v", err)
+	}
+	backend.mu.Lock()
+	removes := len(backend.removes)
+	backend.mu.Unlock()
+	if removes < 4 {
+		t.Fatalf("Remove was tried %d time(s), want it retried until the session settled", removes)
 	}
 }

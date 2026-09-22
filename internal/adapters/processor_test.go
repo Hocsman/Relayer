@@ -437,3 +437,25 @@ type readerFunc func([]byte) (int, error)
 func (read readerFunc) Read(buffer []byte) (int, error) { return read(buffer) }
 
 var _ io.Reader = readerFunc(nil)
+
+// TestEachProcessExitHasItsOwnID: occurrence IDs derive from the session and a
+// sequence that starts again with each process, so a restarted agent's exit
+// used to carry the same ID as the one before it, and the desktop dropped the
+// second as a duplicate. One process keeps one exit ID; two processes under the
+// same session never share one.
+func TestEachProcessExitHasItsOwnID(t *testing.T) {
+	code := 0
+	first := newGenericTestProcessor(t, 4096, Hooks{})
+	second := newGenericTestProcessor(t, 4096, Hooks{})
+	firstExit := first.MarkProcessExitEvent(&code, false)
+	secondExit := second.MarkProcessExitEvent(&code, false)
+	if firstExit.SessionID != secondExit.SessionID || firstExit.Sequence != secondExit.Sequence {
+		t.Fatalf("fixture processors differ: %#v and %#v", firstExit, secondExit)
+	}
+	if firstExit.ID == secondExit.ID {
+		t.Fatalf("two processes of session %q share the exit ID %q", firstExit.SessionID, firstExit.ID)
+	}
+	if again := first.MarkProcessExitEvent(nil, true); again.ID != firstExit.ID {
+		t.Fatalf("one process reported two exit IDs: %q then %q", firstExit.ID, again.ID)
+	}
+}

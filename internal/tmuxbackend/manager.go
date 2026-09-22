@@ -958,6 +958,14 @@ func (m *Manager) Snapshot(ctx context.Context, id string) (terminal.Snapshot, e
 	}
 	snapshot, err := m.inspect(ctx, target)
 	if err != nil {
+		// A dead pane whose exit status tmux never fills in stays "pending"
+		// forever. Once the monitor has published that exit as a neutral
+		// terminal state, the pane is closed: answering with an error would
+		// make every caller treat the agent as still running, refuse its next
+		// Start and discard its exit as stale.
+		if errors.Is(err, errPaneExitPending) && target.exitPublished() {
+			return target.snapshot(), nil
+		}
 		return terminal.Snapshot{}, err
 	}
 	if snapshot.Running {

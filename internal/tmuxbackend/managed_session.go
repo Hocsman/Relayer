@@ -248,6 +248,13 @@ func (s *managedSession) finish() bool {
 	return emitted
 }
 
+// exitPublished reports whether this session's exit was already published.
+func (s *managedSession) exitPublished() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.exitEmitted
+}
+
 func (s *managedSession) processExitEvent(snapshot Snapshot) adapters.Event {
 	s.mu.Lock()
 	event := s.markProcessExitLocked(snapshot)
