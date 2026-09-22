@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/creack/pty"
 )
@@ -15,6 +16,9 @@ import (
 // graceful stop, and closing the master first would send SIGHUP before the
 // agent had its grace period.
 const closeConsoleToStop = false
+
+// gracefulStopTimeout is the time between SIGTERM and SIGKILL.
+const gracefulStopTimeout = 1500 * time.Millisecond
 
 // processRef holds nothing on Unix. A process-group ID stays reserved while
 // the group has a member, and the session stops signalling the group once

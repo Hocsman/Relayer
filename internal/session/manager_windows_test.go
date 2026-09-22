@@ -134,8 +134,11 @@ func TestWindowsStopDoesNotWaitOutTheUnixGracePeriod(t *testing.T) {
 	if err := manager.Stop(info.ID); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
-	if elapsed := time.Since(started); elapsed >= gracefulStopTimeout {
-		t.Fatalf("Stop took %s, want well under the %s grace period", elapsed, gracefulStopTimeout)
+	// An agent that exits on the close event stops at once; the grace period
+	// only bounds one that is still handling it.
+	const unixGrace = 1500 * time.Millisecond
+	if elapsed := time.Since(started); elapsed >= unixGrace {
+		t.Fatalf("Stop took %s, want well under %s", elapsed, unixGrace)
 	}
 }
 

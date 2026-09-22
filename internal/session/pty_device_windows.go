@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/charmbracelet/x/conpty"
 	"golang.org/x/sys/windows"
@@ -20,6 +21,15 @@ import (
 // — which sends CTRL_CLOSE_EVENT to every process attached to it — is the
 // graceful stop. Waiting out a grace period first only delayed every Stop.
 const closeConsoleToStop = true
+
+// gracefulStopTimeout is the time an agent has to handle CTRL_CLOSE_EVENT
+// before it is killed. It matches Windows, which ends a console process whose
+// close handler has not returned after about five seconds. It was 1.5 seconds,
+// the Unix SIGTERM grace, and closing the console now returns at once: an agent
+// that saved its state on close was killed partway through. A Stop still
+// returns as soon as the agent has exited, so an ordinary agent stops in about
+// 0.2 seconds.
+const gracefulStopTimeout = 5 * time.Second
 
 // processRef pins the leader's process object for as long as the Manager owns
 // the session. Windows never hands a PID to a new process while a handle to
@@ -110,10 +120,11 @@ func (h *ownedHandle) closeIfIdleLocked() {
 }
 
 // windowsConPTYDevice reads and writes through its own copies of the pipe
-// handles. Closing the pseudo console makes conhost exit, which closes the
-// other end of both pipes: a Read blocked on the output copy then returns
-// ERROR_BROKEN_PIPE, once the output conhost had already written is drained,
-// and a blocked Write fails the same way. Only then is each copy closed.
+// handles. A Read blocked on the output copy when the console is closed
+// returns with whatever conhost writes next, or ERROR_BROKEN_PIPE once conhost
+// has exited; a blocked Write fails when the input side goes. Only then is each
+// copy closed. Any Read that starts after Close returns io.EOF at once, without
+// draining what conhost may still hold, and any Write returns ErrClosed.
 type windowsConPTYDevice struct {
 	c      *conpty.ConPty
 	output *ownedHandle
@@ -152,7 +163,18 @@ func (w *windowsConPTYDevice) Write(p []byte) (int, error) {
 	defer w.input.done()
 	var written uint32
 	err := windows.WriteFile(handle, p, &written, nil)
+	if isClosedPipe(err) {
+		// The console closed under the write: report it the way callers
+		// recognise a closed session, rather than as a raw Windows error.
+		err = fmt.Errorf("%w: %v", ErrClosed, err)
+	}
 	return int(written), err
+}
+
+func isClosedPipe(err error) bool {
+	return errors.Is(err, windows.ERROR_NO_DATA) ||
+		errors.Is(err, windows.ERROR_BROKEN_PIPE) ||
+		errors.Is(err, windows.ERROR_PIPE_NOT_CONNECTED)
 }
 
 func (w *windowsConPTYDevice) Close() error {

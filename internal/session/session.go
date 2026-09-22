@@ -22,8 +22,9 @@ var (
 	ErrStopUncertain = errors.New("PTY session stop not confirmed")
 )
 
+// gracefulStopTimeout, the time an agent has between the stop request and a
+// forced kill, is set per platform: see pty_device_*.go.
 const (
-	gracefulStopTimeout  = 1500 * time.Millisecond
 	forcedStopTimeout    = 500 * time.Millisecond
 	descendantGraceTime  = 250 * time.Millisecond
 	finalOutputDrainTime = 100 * time.Millisecond

@@ -533,9 +533,10 @@ func (m *Manager) Close() {
 			go func(session *processSession) {
 				defer stopping.Done()
 				// The request runs in parallel too: on Windows it closes
-				// the pseudo console, which blocks until the attached
-				// processes have handled CTRL_CLOSE_EVENT, so one agent at
-				// a time added up past callers' shutdown budgets.
+				// the pseudo console, which on some Windows builds blocks
+				// until the attached processes have handled
+				// CTRL_CLOSE_EVENT, so one agent at a time added up past
+				// callers' shutdown budgets.
 				session.requestStop()
 				_ = session.waitForStop()
 			}(session)
