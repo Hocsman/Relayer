@@ -387,7 +387,7 @@ notifications:
       url: https://hooks.slack.com/services/T00/B00/XXXX
       min_severity: warning # info, warning, critical
       timeout: 5s
-      headers: # optional; kept when the settings editor saves
+      headers: # optional; kept by an editor save unless the webhook is renamed beside another at the same URL
         X-Relayer-Team: platform
 ```
 

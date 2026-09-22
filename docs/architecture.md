@@ -140,7 +140,8 @@ Stopping a session is graceful first. On Unix the process group receives
 SIGTERM and has 1.5 seconds before SIGKILL; cancelling a session's context does
 the same, rather than os/exec's default immediate kill. On Windows the pseudo
 console is closed, which sends `CTRL_CLOSE_EVENT` to every attached process, and
-a leader still running after the grace period is killed. This covers PTY agents:
+a leader still running 5 seconds later, Windows' own limit for a close handler,
+is killed; a Stop returns as soon as the agent has exited. This covers PTY agents:
 a tmux agent is stopped with `tmux kill-session`, which sends SIGHUP to the
 pane's processes with no grace period.
 
@@ -319,7 +320,7 @@ terminated merely because the TUI exited. See [audit.md](audit.md).
 The `internal/app.agentLifecycle` controller coordinates operator-initiated per-agent stop, start, and restart operations across both presentations (TUI and Desktop GUI):
 
 - **Zero shared identity**: A replacement process is never started while the previous stop is unconfirmed;
-- **Audit ordering**: `session_started` is durably recorded in the cryptographic journal before any process launches, preserving the foundational invariant that audit precedes execution;
+- **Audit ordering**: `session_started` is durably recorded in the audit journal before any process launches, preserving the foundational invariant that audit precedes execution;
 - **Operator attribution**: Every lifecycle transition explicitly attributes the human operator as the decision actor;
 - **Safe backend release**: Backends implement `terminal.SessionRemover` to ensure operating system processes are fully reaped and removed before an identity can be reused.
 

@@ -3,7 +3,10 @@
 `relayer serve` runs the supervisor without a desktop application and exposes it
 over HTTP and WebSocket. It serves the same interface the Desktop GUI uses, so
 agents running on a cloud devbox, an EC2 or GCP instance, or inside a container
-can be supervised from a browser.
+can be supervised from a browser. In a container, start it with an init process
+(`docker run --init`, or tini): without one, nothing reaps an agent's orphaned
+children, their zombies keep its process group alive, and every Stop of that
+agent is reported as unconfirmed.
 
 ```bash
 relayer serve --bind 0.0.0.0 --port 8080 \
@@ -32,7 +35,7 @@ drops the port, and the browser's `Origin` keeps it). A proxy that rewrites
 `Host` to the upstream address makes every browser request look cross-origin,
 and the gateway refuses it with `403`. Behind any proxy or tunnel, run the
 gateway with `--token`: see [No token](#no-token) for what a tokenless one
-refuses.
+accepts, which includes such a proxy's requests that carry no `Origin`.
 
 ## Flags
 
@@ -105,18 +108,25 @@ resolves to `127.0.0.1` reaches the loopback socket and controls its `Origin`,
 but its browser still names the page's domain in `Host`.
 
 The same check refuses a tokenless gateway reached **through a forward or a
-proxy that changes the port or the name**: an SSH tunnel to another local port
-(`ssh -L 9000:127.0.0.1:8080`), an editor forward that picks a different port,
-or a reverse proxy under another name all send a `Host` that is not the
-gateway's own address and port, and get `403`.
+proxy that sends another name or port in `Host`**: an SSH tunnel to another
+local port (`ssh -L 9000:127.0.0.1:8080`), an editor forward that picks a
+different port, or a reverse proxy that preserves the public `Host` all get
+`403`.
 
-A forward that keeps `127.0.0.1` or `localhost` **and the same port**
-(`ssh -L 8080:127.0.0.1:8080`, or an editor forward that reuses the remote port)
-is indistinguishable from a local browser and **is accepted anonymously as
-`local-operator`**. Every local process on the machine that opened the forward
-can then operate the remote agents. Pass `--token` for any forward, tunnel or
-proxy: a gateway with tokens checks `Origin` against `Host`, but does not pin
-`Host` itself.
+Two common set-ups are **accepted anonymously as `local-operator`** instead:
+
+- a forward that keeps `127.0.0.1` or `localhost` **and the same port**
+  (`ssh -L 8080:127.0.0.1:8080`, or an editor forward that reuses the remote
+  port), which is indistinguishable from a local browser: every local process
+  on the machine that opened the forward can operate the remote agents;
+- a reverse proxy that **rewrites `Host` to the gateway's own address**, which
+  is nginx's default (`proxy_set_header Host $proxy_host` for
+  `proxy_pass http://127.0.0.1:8080`): every request through it that carries no
+  `Origin`, such as `curl` or a script, is anonymous operator access for anyone
+  who can reach the proxy.
+
+Pass `--token` for any forward, tunnel or proxy: a gateway with tokens checks
+`Origin` against `Host`, but does not pin `Host` itself.
 
 Anonymous access is still access for **anything running locally as a client**:
 another user on a shared machine, or a local program, can connect as
