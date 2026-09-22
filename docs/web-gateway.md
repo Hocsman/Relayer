@@ -27,9 +27,12 @@ a dev server or a dashboard running locally is not trusted because it is local.
 Clients that send no `Origin`, such as `curl` or a script, are unaffected.
 
 Behind a reverse proxy, the proxy must **preserve the `Host` header** the browser
-sent (for nginx, `proxy_set_header Host $host;`). A proxy that rewrites `Host` to
-the upstream address makes every browser request look cross-origin, and the
-gateway refuses it with `403`.
+sent, port included (for nginx, `proxy_set_header Host $http_host;`: `$host`
+drops the port, and the browser's `Origin` keeps it). A proxy that rewrites
+`Host` to the upstream address makes every browser request look cross-origin,
+and the gateway refuses it with `403`. Behind any proxy or tunnel, run the
+gateway with `--token`: see [No token](#no-token) for what a tokenless one
+refuses.
 
 ## Flags
 
@@ -91,8 +94,8 @@ parameter or an `Authorization: Bearer` header.
 
 ## No token
 
-Binding to `127.0.0.1` with no token configured allows anonymous local access as
-`local-operator`. Binding anywhere else with no token configured makes the
+Binding to `127.0.0.1` or `localhost` with no token configured allows anonymous
+local access as `local-operator`. Binding anywhere else with no token configured makes the
 gateway generate one operator and one viewer secret and print both.
 
 A tokenless gateway answers only to requests addressed to `127.0.0.1:PORT`,
@@ -100,6 +103,13 @@ A tokenless gateway answers only to requests addressed to `127.0.0.1:PORT`,
 with `403`. This is what stops DNS rebinding: a web page whose own domain
 resolves to `127.0.0.1` reaches the loopback socket and controls its `Origin`,
 but its browser still names the page's domain in `Host`.
+
+The same check refuses a tokenless gateway reached **through a forward or a
+proxy**. An SSH tunnel (`ssh -L 9000:127.0.0.1:8080`), an editor's port
+forwarding, or a reverse proxy on another port or name all send a `Host` that is
+not the gateway's own address and port, and get `403`. Pass `--token` to use any
+of them: a gateway with tokens checks `Origin` against `Host`, but does not pin
+`Host` itself.
 
 Anonymous access is still access for **anything running locally as a client**:
 another user on a shared machine, or a local program, can connect as
@@ -122,6 +132,11 @@ The gateway is an authentication boundary, not a sandbox. A holder of an
 operator token has the same authority over the supervised agents as somebody
 sitting at the local Desktop GUI, including interactive attachment, which
 bypasses prompt detection, policy, and arbitration by design.
+
+An operator also receives each agent's full command line, because it can edit
+and restart the agents: a credential passed as an argument is visible to every
+operator token. A viewer receives only each agent's executable name, and none of
+the configuration's file paths.
 
 The full trust boundary is described in
 [security-model.md](security-model.md#web-gateway-and-remote-operators).

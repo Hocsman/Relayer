@@ -140,13 +140,18 @@ Stopping a session is graceful first. On Unix the process group receives
 SIGTERM and has 1.5 seconds before SIGKILL; cancelling a session's context does
 the same, rather than os/exec's default immediate kill. On Windows the pseudo
 console is closed, which sends `CTRL_CLOSE_EVENT` to every attached process, and
-a leader still running after the grace period is killed.
+a leader still running after the grace period is killed. This covers PTY agents:
+a tmux agent is stopped with `tmux kill-session`, which sends SIGHUP to the
+pane's processes with no grace period.
 
-Relayer never signals a process by a number the operating system may have
-handed to someone else. On Windows it holds a handle to each agent's process
-until the session is released, and Windows does not reuse a PID while such a
-handle is open. On both platforms a session stops addressing its process group
-once the leader is reaped and its descendants have been cleaned up.
+On Windows, Relayer never signals a process by a number the system may have
+handed to someone else: it holds a handle to each agent's process until the
+session is released, and Windows does not reuse a PID while such a handle is
+open. On Unix, a session addresses its process group by number until the leader
+is reaped and its descendants are cleaned up, and never after. That cleanup runs
+right after the reap, while the kernel still reserves the group's number for any
+member left; a group with no member left answers `ESRCH` unless the whole PID
+space wrapped around in that moment.
 
 The application sets `TERM=xterm-256color`. Viewport geometry is converted to
 PTY columns and rows. Context-aware resizing is batched asynchronously by the

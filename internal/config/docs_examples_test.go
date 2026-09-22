@@ -51,9 +51,34 @@ var topLevelKey = regexp.MustCompile(`(?m)^([a-z_]+):`)
 // not load. A fragment is completed with the required top-level fields it does
 // not set itself.
 func TestConfigurationReferenceExamplesLoad(t *testing.T) {
-	blocks := yamlBlocks(t, filepath.Join(repositoryRoot(t), "docs", "configuration.md"))
+	checkExamplesLoad(t, filepath.Join("docs", "configuration.md"), 5)
+}
+
+// TestEveryDocumentedConfigurationLoads extends the check to every other page
+// with a configuration example. v0.8.6 fixed the reference but not README's
+// "every top-level section" example, which used the same rejected keys.
+func TestEveryDocumentedConfigurationLoads(t *testing.T) {
+	for _, page := range []struct {
+		path    string
+		minimum int
+	}{
+		{"README.md", 1},
+		{filepath.Join("docs", "recording.md"), 1},
+		{filepath.Join("docs", "audit.md"), 0},
+		{filepath.Join("docs", "observability.md"), 0},
+		{filepath.Join("docs", "troubleshooting.md"), 0},
+	} {
+		t.Run(page.path, func(t *testing.T) { checkExamplesLoad(t, page.path, page.minimum) })
+	}
+}
+
+// checkExamplesLoad loads the top-level YAML examples of one page and fails
+// unless at least minimum of them were checked.
+func checkExamplesLoad(t *testing.T, page string, minimum int) {
+	t.Helper()
+	blocks := yamlBlocks(t, filepath.Join(repositoryRoot(t), page))
 	if len(blocks) == 0 {
-		t.Fatal("docs/configuration.md has no YAML example")
+		t.Fatalf("%s has no YAML example", page)
 	}
 	skeleton := map[string]string{
 		"version":            "version: 1\n",
@@ -100,7 +125,7 @@ func TestConfigurationReferenceExamplesLoad(t *testing.T) {
 			t.Errorf("example %d (starting %q) does not load: %v", index+1, first, err)
 		}
 	}
-	if checked < 5 {
-		t.Fatalf("only %d top-level examples were checked; the reference lost its examples or the filter is wrong", checked)
+	if checked < minimum {
+		t.Fatalf("only %d top-level examples of %s were checked, want at least %d; the page lost its examples or the filter is wrong", checked, page, minimum)
 	}
 }

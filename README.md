@@ -372,15 +372,15 @@ telemetry:
   otlp:
     enabled: false
     endpoint: ""
-    interval: 15s
+    export_interval: 15s
 
 notifications:
   enabled: true
-  os_notifications: true
-  terminal_bell: true
+  desktop: true
+  bell: true
   webhooks:
     - name: slack-ops
-      type: slack # slack, discord, generic
+      format: slack # slack, discord, generic
       url: https://hooks.slack.com/services/...
       min_severity: warning
 
@@ -393,9 +393,11 @@ policies:
   default_action: ask
   dry_run: false
   guardrails:
-    block_destructive: true   # Blocks rm -rf, mkfs, format
-    block_exfiltration: true  # Blocks curl | bash, reading .ssh / .env
-    workspace_only: true      # Restricts agent modifications to workspace
+    block_destructive: true        # Blocks rm -rf, mkfs, format
+    block_exfiltration: true       # Blocks curl | bash, reading .ssh / .env
+    block_sensitive_paths: true    # Protects .env, .git, keys and credentials
+    block_outside_workspace: true  # Intercepts file access outside workspace_root
+    workspace_root: .              # Resolved against this file's directory
   rules:
     - name: ask-reviewer-confirmations
       match:
@@ -412,6 +414,9 @@ audit:
   path: ""       # empty selects the private per-user default
   max_file_size_mb: 10
   max_files: 5
+
+recording:
+  enabled: false # transcripts of agent output; see docs/recording.md
 
 agents:
   - id: builder
