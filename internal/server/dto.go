@@ -108,6 +108,11 @@ type StatusEvent struct {
 	Scope     string `json:"scope"`
 	Status    string `json:"status"`
 	SessionID string `json:"sessionID,omitempty"`
+	// ClearedBefore, when set, says the backend dropped every prompt of the
+	// session detected before this time (RFC 3339): the session ended, or a
+	// new process replaced it. Clients drop the same prompts; a status without
+	// it, such as a stream error on a live session, leaves them answerable.
+	ClearedBefore string `json:"clearedBefore,omitempty"`
 }
 
 type SafeErrorEvent struct {

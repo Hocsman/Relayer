@@ -1316,7 +1316,7 @@ function NotificationSettingsTab({
                   <td style={{ maxWidth: "240px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={hook.url}>
                     {hook.url}
                     {hook.hasHeaders && (
-                      <span className="settings-webhook-headers" title="This webhook has headers (for example an Authorization credential). Their values are not shown, and saving keeps them.">
+                      <span className="settings-webhook-headers" title="This webhook has headers (for example an Authorization credential). Their values are not shown. Saving keeps them, unless you rename this webhook while another uses the same URL.">
                         {" "}🔒 headers kept
                       </span>
                     )}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
 )
@@ -146,5 +147,42 @@ func TestAStaleExitDoesNotStopTheReplacement(t *testing.T) {
 
 	if state := agentStateForTest(application, "agent-a"); !state.Running || state.Status != "running" {
 		t.Fatalf("state after a stale exit = %#v, want the replacement still running", state)
+	}
+}
+
+// TestARestartDropsThePreviousProcesssPrompts: during a restart the previous
+// process's exit is set aside as stale, and its prompts used to stay pending on
+// the replacement. They blocked its automatic decisions, and its own first
+// prompt, which carries the same ID, was refused as a duplicate.
+func TestARestartDropsThePreviousProcesssPrompts(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	application := newBridgeForTest(engine)
+	runID := activeRunIDForTest(application)
+	run := activeRunForTest(application)
+
+	application.handleAdapterEventForRun(run, bridgeEvent("agent-a", "prompt-1"))
+	if state, _ := application.GetState(); len(state.PendingEvents) != 1 {
+		t.Fatalf("pending before the restart = %d, want the previous process's prompt", len(state.PendingEvents))
+	}
+
+	engine.mu.Lock()
+	engine.staleExits = true
+	engine.mu.Unlock()
+	if err := application.RestartSession(runID, "agent-a"); err != nil {
+		t.Fatalf("RestartSession: %v", err)
+	}
+	application.handleAdapterEventForRun(run, exitEventForTest("agent-a"))
+
+	state, _ := application.GetState()
+	if len(state.PendingEvents) != 0 {
+		t.Fatalf("pending after the restart = %#v, want the previous process's prompt gone", state.PendingEvents)
+	}
+
+	// The replacement raises the same prompt: it must be pending, not refused.
+	repeated := bridgeEvent("agent-a", "prompt-1")
+	repeated.Timestamp = time.Now().UTC()
+	application.handleAdapterEventForRun(run, repeated)
+	if state, _ := application.GetState(); len(state.PendingEvents) != 1 {
+		t.Fatalf("pending after the replacement's prompt = %d, want it pending", len(state.PendingEvents))
 	}
 }

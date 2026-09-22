@@ -336,15 +336,16 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 				c.state.Agents[idx].Running = false
 				c.state.Agents[idx].Status = status
 			}
-			c.clearSessionPendingLocked(adapterEv.SessionID)
+			cleared := c.clearSessionPendingLocked(adapterEv.SessionID)
 			runID := c.runID
 			c.mu.Unlock()
 
 			c.broadcast(eventStatus, StatusEvent{
-				RunID:     runID,
-				Scope:     "session",
-				SessionID: adapterEv.SessionID,
-				Status:    status,
+				RunID:         runID,
+				Scope:         "session",
+				SessionID:     adapterEv.SessionID,
+				Status:        status,
+				ClearedBefore: cleared,
 			})
 			return
 		}
@@ -374,7 +375,7 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 			Summary:   adapterEv.Summary,
 			Sensitive: adapterEv.Sensitive,
 			Risk:      string(adapterEv.Risk),
-			Timestamp: ts.Format(time.RFC3339),
+			Timestamp: ts.Format(time.RFC3339Nano),
 			Evaluation: PolicyEvaluation{
 				Action:         string(evaluation.Action),
 				ProposedAction: string(evaluation.ProposedAction),
@@ -477,14 +478,15 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 			c.state.Agents[idx].Running = false
 			c.state.Agents[idx].Status = "failed"
 		}
-		c.clearSessionPendingLocked(ev.SessionID)
+		cleared := c.clearSessionPendingLocked(ev.SessionID)
 		c.mu.Unlock()
 
 		c.broadcast(eventStatus, StatusEvent{
-			RunID:     c.runID,
-			Scope:     "session",
-			SessionID: ev.SessionID,
-			Status:    "failed",
+			RunID:         c.runID,
+			Scope:         "session",
+			SessionID:     ev.SessionID,
+			Status:        "failed",
+			ClearedBefore: cleared,
 		})
 		c.announceFinishedRecording(ev.SessionID)
 
@@ -501,13 +503,37 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 
 // clearSessionPendingLocked drops every prompt of a session that ended: none
 // of them can be answered any more, and the desktop drops them the same way.
-func (c *Controller) clearSessionPendingLocked(sessionID string) {
+// It returns the StatusEvent ClearedBefore that tells clients to do the same:
+// a millisecond past now, the resolution clients compare at, so it covers
+// every prompt already detected.
+func (c *Controller) clearSessionPendingLocked(sessionID string) string {
 	for key, item := range c.pending {
 		if strings.EqualFold(item.view.SessionID, sessionID) {
 			delete(c.pending, key)
 		}
 	}
 	c.rebuildPendingEventsLocked()
+	return time.Now().UTC().Truncate(time.Millisecond).Add(time.Millisecond).Format(time.RFC3339Nano)
+}
+
+// clearSessionPendingBeforeLocked drops the session's prompts detected before
+// the given time, which callers round to the millisecond so that clients,
+// comparing at that resolution, drop exactly the same prompts.
+func (c *Controller) clearSessionPendingBeforeLocked(sessionID string, before time.Time) {
+	for key, item := range c.pending {
+		if strings.EqualFold(item.view.SessionID, sessionID) && pendingDetectedAt(item).Before(before) {
+			delete(c.pending, key)
+		}
+	}
+	c.rebuildPendingEventsLocked()
+}
+
+func pendingDetectedAt(item pendingItem) time.Time {
+	if !item.event.Timestamp.IsZero() {
+		return item.event.Timestamp
+	}
+	detected, _ := time.Parse(time.RFC3339Nano, item.view.Timestamp)
+	return detected
 }
 
 func (c *Controller) rebuildPendingEventsLocked() {
@@ -687,12 +713,22 @@ func (c *Controller) SubmitDecisionWithOperator(runID, sessionID, eventID, value
 
 	item.view.DeliveryStatus = "delivered"
 	c.broadcast(eventSemantic, item.view)
-	c.broadcast(eventStatus, StatusEvent{
-		RunID:     runID,
-		Scope:     "session",
-		SessionID: sessionID,
-		Status:    "running",
-	})
+	// The agent may have exited on the answer, and its exit already said so:
+	// a "running" after it revived the dead agent's card on every client.
+	c.mu.RLock()
+	stillRunning := false
+	if idx, ok := c.agentIndex[strings.ToLower(sessionID)]; ok {
+		stillRunning = c.state.Agents[idx].Running
+	}
+	c.mu.RUnlock()
+	if stillRunning {
+		c.broadcast(eventStatus, StatusEvent{
+			RunID:     runID,
+			Scope:     "session",
+			SessionID: sessionID,
+			Status:    "running",
+		})
+	}
 
 	return nil
 }
@@ -913,10 +949,11 @@ func (c *Controller) StartSession(runID, sessionID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	startedAt := time.Now().UTC()
 	if err := rt.StartAgent(ctx, sessionID); err != nil {
 		return err
 	}
-	c.markSessionStarted(sessionID)
+	c.markSessionStarted(sessionID, startedAt)
 	return nil
 }
 
@@ -924,7 +961,7 @@ func (c *Controller) StartSession(runID, sessionID string) error {
 // client. v0.8.5 never did: Running stayed false after a start, so the card
 // offered Start for an agent that was running, and a second click hit the
 // lifecycle's "still running" refusal.
-func (c *Controller) markSessionStarted(sessionID string) {
+func (c *Controller) markSessionStarted(sessionID string, startedAt time.Time) {
 	c.mu.Lock()
 	idx, found := c.agentIndex[strings.ToLower(strings.TrimSpace(sessionID))]
 	if found && idx < len(c.state.Agents) {
@@ -932,16 +969,22 @@ func (c *Controller) markSessionStarted(sessionID string) {
 		c.state.Agents[idx].Status = "running"
 		c.state.Agents[idx].ExitCode = nil
 	}
+	// The previous process's prompts go. Its exit, arriving during the start,
+	// is set aside as stale, and they used to stay offered on a replacement
+	// that never raised them. The new process's own are kept.
+	bound := startedAt.Truncate(time.Millisecond)
+	c.clearSessionPendingBeforeLocked(sessionID, bound)
 	runID := c.runID
 	c.mu.Unlock()
 	if !found {
 		return
 	}
 	c.broadcast(eventStatus, StatusEvent{
-		RunID:     runID,
-		Scope:     "session",
-		SessionID: sessionID,
-		Status:    "running",
+		RunID:         runID,
+		Scope:         "session",
+		SessionID:     sessionID,
+		Status:        "running",
+		ClearedBefore: bound.Format(time.RFC3339Nano),
 	})
 }
 
@@ -957,10 +1000,11 @@ func (c *Controller) RestartSession(runID, sessionID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	startedAt := time.Now().UTC()
 	if err := rt.RestartAgent(ctx, sessionID); err != nil {
 		return err
 	}
-	c.markSessionStarted(sessionID)
+	c.markSessionStarted(sessionID, startedAt)
 	return nil
 }
 

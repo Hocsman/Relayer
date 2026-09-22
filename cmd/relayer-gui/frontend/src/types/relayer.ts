@@ -159,6 +159,8 @@ export interface StatusEvent {
   scope: "run" | "session" | "audit";
   status: RunStatus | SessionStatus | AuditState["status"];
   sessionID?: string;
+  /** The backend dropped the session's prompts detected before this time (RFC 3339). */
+  clearedBefore?: string;
 }
 
 export interface SafeErrorEvent {

@@ -195,17 +195,20 @@ export function relayerReducer(state: RelayerUIState, action: RelayerAction): Re
       }
       if (!action.status.sessionID) return state;
       const nextStatus = action.status.status as AppState["agents"][number]["status"];
-      // A session that ended can answer none of its prompts. Keeping them
-      // offered Review on a dead agent, and answering one revived its card.
-      const ended = nextStatus === "exited" || nextStatus === "failed";
+      // The backend says which prompts it dropped: those of a session that
+      // ended, or of the process a restart replaced. Keeping them offered
+      // Review on a dead agent. A status alone is not enough: a stream error on
+      // a live session is also "failed", and its prompts stay answerable.
       const sessionID = action.status.sessionID;
+      const clearedBefore = action.status.clearedBefore ? Date.parse(action.status.clearedBefore) : NaN;
       return {
         ...state,
         app: {
           ...state.app,
-          pendingEvents: ended
-            ? state.app.pendingEvents.filter((event) => event.sessionID !== sessionID)
-            : state.app.pendingEvents,
+          pendingEvents: Number.isNaN(clearedBefore)
+            ? state.app.pendingEvents
+            : state.app.pendingEvents.filter((event) =>
+              event.sessionID !== sessionID || Date.parse(event.timestamp) >= clearedBefore),
           agents: state.app.agents.map((agent) =>
             agent.sessionID === action.status.sessionID
               ? {

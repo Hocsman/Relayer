@@ -230,12 +230,32 @@ describe("relayerReducer", () => {
     expect(restarted.app?.agents[0].running).toBe(true);
   });
 
-  it("drops an ended session's prompts and keeps the others", () => {
+  it("drops the prompts the backend cleared and keeps the others", () => {
+    const loaded = relayerReducer(initialRelayerState, { type: "loaded", state: appState() });
+    const ended = relayerReducer(loaded, {
+      type: "status",
+      status: { runID: "run-1", scope: "session", sessionID: "a", status: "exited", clearedBefore: "2026-01-01T00:00:01Z" },
+    });
+    expect(ended.app?.pendingEvents.map((event) => event.sessionID)).toEqual(["b"]);
+  });
+
+  it("keeps a prompt raised after the cut, such as the replacement's first", () => {
+    const loaded = relayerReducer(initialRelayerState, { type: "loaded", state: appState() });
+    const restarted = relayerReducer(loaded, {
+      type: "status",
+      status: { runID: "run-1", scope: "session", sessionID: "a", status: "running", clearedBefore: "2025-12-31T23:59:59Z" },
+    });
+    expect(restarted.app?.pendingEvents).toHaveLength(2);
+  });
+
+  // A stream error on a live session is reported as "failed" too; its prompts
+  // are still answerable and must stay on screen.
+  it("keeps a live session's prompts on a failed status the backend did not clear", () => {
     const loaded = relayerReducer(initialRelayerState, { type: "loaded", state: appState() });
     const failed = relayerReducer(loaded, {
       type: "status",
       status: { runID: "run-1", scope: "session", sessionID: "a", status: "failed" },
     });
-    expect(failed.app?.pendingEvents.map((event) => event.sessionID)).toEqual(["b"]);
+    expect(failed.app?.pendingEvents).toHaveLength(2);
   });
 });

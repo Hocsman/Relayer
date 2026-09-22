@@ -99,3 +99,67 @@ func TestLosingATmuxSessionClearsRunning(t *testing.T) {
 	ctrl.handleEvent(context.Background(), nil, session.AdapterEventWithdrawn{Event: prompt})
 	assertLost("after a late withdrawal")
 }
+
+// seedPrompt makes a prompt of the given session pending, detected at the
+// given time, as if the event pump had just queued it.
+func seedPrompt(ctrl *Controller, sessionID, id string, detected time.Time) adapters.Event {
+	prompt := adapters.Event{ID: id, SessionID: sessionID, Type: adapters.EventConfirmation, Timestamp: detected}
+	ctrl.mu.Lock()
+	ctrl.pending[sessionID+":"+id] = pendingItem{event: prompt, view: SupervisionEvent{ID: id, SessionID: sessionID, Timestamp: detected.Format(time.RFC3339Nano)}}
+	ctrl.rebuildPendingEventsLocked()
+	ctrl.mu.Unlock()
+	return prompt
+}
+
+// TestAnExitedAgentLosesItsPromptsOnTheWeb: the prompts of an agent that
+// exited stayed pending, and answering one set the dead agent running again.
+func TestAnExitedAgentLosesItsPromptsOnTheWeb(t *testing.T) {
+	ctrl, _ := startSettingsController(t, policy.DefaultConfig())
+	state := ctrl.GetState()
+	if len(state.Agents) == 0 {
+		t.Skip("the default configuration started no agent on this platform")
+	}
+	id := state.Agents[0].SessionID
+	if err := ctrl.StopSession(state.RunID, id); err != nil {
+		t.Fatalf("StopSession: %v", err)
+	}
+	agentStateEventually(t, ctrl, id, func(agent AgentState) bool { return !agent.Running })
+
+	prompt := seedPrompt(ctrl, id, "evt-exit", time.Now().UTC())
+	ctrl.mu.RLock()
+	rt := ctrl.runtime
+	ctrl.mu.RUnlock()
+	exit := adapters.Event{ID: "exit-1", SessionID: id, Type: adapters.EventProcessExit, Timestamp: time.Now().UTC()}
+	ctrl.handleEvent(context.Background(), rt, session.AdapterEvent{Event: exit})
+	if pending := ctrl.GetState().PendingEvents; len(pending) != 0 {
+		t.Fatalf("%d prompt(s) of the exited agent still pending", len(pending))
+	}
+
+	ctrl.handleEvent(context.Background(), rt, session.AdapterEventWithdrawn{Event: prompt})
+	for _, agent := range ctrl.GetState().Agents {
+		if strings.EqualFold(agent.SessionID, id) && agent.Running {
+			t.Fatal("a late withdrawal marked the exited agent running")
+		}
+	}
+}
+
+// TestARestartDropsThePreviousProcesssPrompts: the previous process's exit is
+// set aside as stale during a restart, and its prompts used to stay offered on
+// the replacement, which never raised them.
+func TestARestartDropsThePreviousProcesssPrompts(t *testing.T) {
+	ctrl, _ := startSettingsController(t, policy.DefaultConfig())
+	state := ctrl.GetState()
+	if len(state.Agents) == 0 {
+		t.Skip("the default configuration started no agent on this platform")
+	}
+	id := state.Agents[0].SessionID
+	seedPrompt(ctrl, id, "evt-old", time.Now().UTC().Add(-time.Second))
+	if err := ctrl.RestartSession(state.RunID, id); err != nil {
+		t.Fatalf("RestartSession: %v", err)
+	}
+	for _, pending := range ctrl.GetState().PendingEvents {
+		if pending.ID == "evt-old" {
+			t.Fatal("the previous process's prompt is still offered after the restart")
+		}
+	}
+}

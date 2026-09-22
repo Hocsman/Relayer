@@ -715,7 +715,7 @@ func (a *App) handleProcessExit(run *runGeneration, event adapters.Event, backen
 	}
 	a.mu.Unlock()
 	a.refreshOutputForRun(run, event.SessionID)
-	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: event.SessionID, Status: status})
+	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: event.SessionID, Status: status, ClearedBefore: clearedAll()})
 }
 
 // scheduleAutomatic serialises every automatic decision for a session and
@@ -1401,6 +1401,7 @@ func (a *App) StartSession(runID, sessionID string) error {
 	displaySessionID := a.state.Agents[index].SessionID
 	a.mu.Unlock()
 	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "starting"})
+	startedAt := time.Now().UTC()
 	ctx, cancel := context.WithTimeout(run.ctx, 10*time.Second)
 	err = run.engine.StartAgent(ctx, sessionID)
 	cancel()
@@ -1415,7 +1416,7 @@ func (a *App) StartSession(runID, sessionID string) error {
 		a.emitSafeError(run, "start_failed", "session could not be started", sessionID)
 		return errors.New("session could not be started")
 	}
-	a.completeAgentStart(run, sessionKey)
+	a.completeAgentStart(run, sessionKey, startedAt)
 	return nil
 }
 
@@ -1463,6 +1464,7 @@ func (a *App) RestartSession(runID, sessionID string) error {
 	displaySessionID := a.state.Agents[index].SessionID
 	a.mu.Unlock()
 	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "stopping"})
+	startedAt := time.Now().UTC()
 	ctx, cancel := context.WithTimeout(run.ctx, 12*time.Second)
 	err = run.engine.RestartAgent(ctx, sessionID)
 	cancel()
@@ -1478,7 +1480,7 @@ func (a *App) RestartSession(runID, sessionID string) error {
 		a.emitSafeError(run, "restart_failed", "session could not be restarted cleanly", sessionID)
 		return errors.New("session could not be restarted cleanly")
 	}
-	a.completeAgentStart(run, sessionKey)
+	a.completeAgentStart(run, sessionKey, startedAt)
 	return nil
 }
 
@@ -1486,10 +1488,25 @@ func (a *App) RestartSession(runID, sessionID string) error {
 // exit state belong to the previous process instance and never carry over.
 // Revision stays monotonic across process instances so the follow-up output
 // snapshot is accepted by the presentation's revision guard.
-func (a *App) completeAgentStart(run *runGeneration, sessionKey string) {
+// completeAgentStart marks the agent running. The previous process's prompts
+// are dropped: an exit that arrives during the start is the previous
+// process's and is set aside as stale, and its prompts used to stay pending,
+// blocking the new process's automatic decisions and hiding its first prompt,
+// which carries the same ID. Only prompts detected before startedAt go; the
+// new process may already have raised one.
+func (a *App) completeAgentStart(run *runGeneration, sessionKey string, startedAt time.Time) {
 	a.mu.Lock()
 	delete(a.stoppingSessions, sessionKey)
 	delete(a.frozen, sessionKey)
+	// Rounded to the millisecond, the resolution clients compare at, so the
+	// interface drops exactly the prompts dropped here.
+	bound := startedAt.Truncate(time.Millisecond)
+	for key, item := range a.pending {
+		if key.sessionID == sessionKey && item.event.Timestamp.Before(bound) {
+			delete(a.pending, key)
+		}
+	}
+	a.rebuildPendingLocked()
 	// A fresh process numbers its events from the start again, and event IDs
 	// derive from that sequence, so the new process's exit — or a prompt it
 	// repeats — carries an ID the previous process already used. v0.8.5 kept
@@ -1512,7 +1529,7 @@ func (a *App) completeAgentStart(run *runGeneration, sessionKey string) {
 	if displaySessionID == "" {
 		return
 	}
-	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "running"})
+	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "running", ClearedBefore: bound.Format(time.RFC3339Nano)})
 	a.refreshOutputForRun(run, displaySessionID)
 }
 
@@ -1642,7 +1659,7 @@ func (a *App) markLegacyExit(run *runGeneration, sessionID string) {
 	a.clearSessionPendingLocked(sessionID)
 	a.rebuildPendingLocked()
 	a.mu.Unlock()
-	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: sessionID, Status: "failed"})
+	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: sessionID, Status: "failed", ClearedBefore: clearedAll()})
 }
 
 func (a *App) backendFor(run *runGeneration, sessionID string) string {
@@ -1674,6 +1691,12 @@ func (a *App) restoreAgentRunningLocked(sessionID string) {
 	if index, found := a.agentIndex[strings.ToLower(sessionID)]; found && a.state.Agents[index].Running {
 		a.state.Agents[index].Status = "running"
 	}
+}
+
+// clearedAll is the ClearedBefore of a status that dropped every prompt of the
+// session: a millisecond past now, the resolution clients compare at.
+func clearedAll() string {
+	return time.Now().UTC().Truncate(time.Millisecond).Add(time.Millisecond).Format(time.RFC3339Nano)
 }
 
 func (a *App) clearSessionPendingLocked(sessionID string) {
