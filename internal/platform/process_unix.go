@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+	"time"
 )
 
 // NewShellCommand constructs the explicitly requested Unix shell invocation.
@@ -46,6 +47,26 @@ func ProcessGroupExists(command *exec.Cmd) bool {
 	}
 	err := signalProcessGroup(command.Process.Pid, syscall.Signal(0))
 	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// SetGracefulCancel makes cancelling the command's context ask its whole process
+// group to stop, instead of os/exec's default of killing the leader outright.
+// A leader that has not exited after grace is then killed by os/exec itself.
+//
+// Without it, every path that cancels a parent context before stopping the
+// sessions — a supervisor shutting down, a signal to relayer serve — sent
+// SIGKILL to each agent before any SIGTERM, so no agent could shut down
+// cleanly. os/exec only calls Cancel while the process has not been waited
+// for, so the process-group ID is still reserved when it is signalled.
+func SetGracefulCancel(command *exec.Cmd, grace time.Duration) {
+	if command == nil {
+		return
+	}
+	command.Cancel = func() error {
+		TerminateProcessGroup(command)
+		return nil
+	}
+	command.WaitDelay = grace
 }
 
 // IsPTYCloseError recognizes the EIO returned by many Unix PTY masters after

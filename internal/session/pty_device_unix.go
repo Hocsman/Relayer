@@ -9,6 +9,18 @@ import (
 	"github.com/creack/pty"
 )
 
+// closeConsoleToStop is false on Unix: SIGTERM to the process group is the
+// graceful stop, and closing the master first would send SIGHUP before the
+// agent had its grace period.
+const closeConsoleToStop = false
+
+// processRef holds nothing on Unix. A process-group ID stays reserved while
+// the group has a member, and the session stops signalling the group once
+// waitSession has cleaned it up.
+type processRef struct{}
+
+func (*processRef) release() {}
+
 type unixPTYDevice struct {
 	file *os.File
 }
@@ -43,6 +55,10 @@ func startPTY(session *processSession, cmd *exec.Cmd, columns, rows int) (ptyDev
 	return &unixPTYDevice{file: file}, nil
 }
 
-func waitCommand(session *processSession) error {
-	return session.cmd.Wait()
+// waitCommand reaps the leader. os/exec records the state in cmd.ProcessState
+// on this goroutine; the Unix platform helpers never read that field, so there
+// is nothing for it to race with.
+func waitCommand(session *processSession) (*os.ProcessState, error) {
+	err := session.cmd.Wait()
+	return session.cmd.ProcessState, err
 }

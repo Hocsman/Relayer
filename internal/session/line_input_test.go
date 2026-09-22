@@ -62,7 +62,7 @@ func TestManagerSendLineMapsTerminationAndWriteFailureWithoutAcknowledgement(t *
 	manager, process, reader = newLineInputManager(t)
 	defer reader.Close()
 	defer process.closePTY()
-	process.setResult(nil)
+	process.setResult(nil, nil)
 	if err := manager.SendLine(context.Background(), "line-session", "after-wait"); !errors.Is(err, ErrClosed) {
 		t.Fatalf("known exited process error = %v", err)
 	}

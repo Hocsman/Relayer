@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"time"
 )
 
 func NewShellCommand(context.Context, string) (*exec.Cmd, error) {
@@ -25,5 +26,8 @@ func KillProcessGroup(command *exec.Cmd) {
 }
 
 func ProcessGroupExists(*exec.Cmd) bool { return false }
+
+// SetGracefulCancel is a no-op where process groups cannot be addressed.
+func SetGracefulCancel(*exec.Cmd, time.Duration) {}
 
 func IsPTYCloseError(error) bool { return false }

@@ -134,6 +134,18 @@ implementation uses the native Windows Pseudo Console (ConPTY) API via
 `github.com/charmbracelet/x/conpty` to spawn processes and handle pseudoconsole
 I/O and resizing. Process tree cleanup on Windows is handled via `taskkill`.
 
+Stopping a session is graceful first. On Unix the process group receives
+SIGTERM and has 1.5 seconds before SIGKILL; cancelling a session's context does
+the same, rather than os/exec's default immediate kill. On Windows the pseudo
+console is closed, which sends `CTRL_CLOSE_EVENT` to every attached process, and
+a leader still running after the grace period is killed.
+
+Relayer never signals a process by a number the operating system may have
+handed to someone else. On Windows it holds a handle to each agent's process
+until the session is released, and Windows does not reuse a PID while such a
+handle is open. On both platforms a session stops addressing its process group
+once the leader is reaped and its descendants have been cleaned up.
+
 The application sets `TERM=xterm-256color`. Viewport geometry is converted to
 PTY columns and rows. Context-aware resizing is batched asynchronously by the
 TUI so a slow backend does not block Bubble Tea's update loop; older synchronous

@@ -269,6 +269,7 @@ tamper-evident.
 | Audit disclosure or tampering | Redaction is heuristic and the local file is unsigned and unencrypted. |
 | Shared audit rotation races | Separate Relayer processes do not coordinate one audit path. |
 | Native attach bypass | Direct tmux input is outside policy and decision auditing. |
+| Windows process trees | Descendants are found by parent PID through `taskkill /T`: one that detached from its console is missed, and a process whose parent held the same number before the agent did could be included. A Job Object would bound the tree exactly. |
 | Tokenless local gateway | `relayer serve` with no token on loopback trusts every local client as `local-operator`; only the Origin and Host checks separate it from a web page. |
 | Platform surprises | Windows uses ConPTY for PTY execution (tmux unavailable); WSL is unvalidated during alpha. |
 

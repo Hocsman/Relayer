@@ -262,30 +262,17 @@ func (m *Manager) readSession(session *processSession, device io.Reader) {
 
 func (m *Manager) waitSession(session *processSession) {
 	defer m.wg.Done()
-	err := waitCommand(session) // The sole Wait call for a successfully started command.
+	state, err := waitCommand(session) // The sole Wait call for a successfully started command.
 	// Wait is the first authoritative proof that the process can no longer
 	// consume input. Mark the Processor terminated immediately, under the same
 	// lock as SendLine, before publishing Result or spending time cleaning up
 	// descendants. This closes the check-then-write window at process exit.
-	exitEvent := markProcessExitEvent(session, err)
-	session.setResult(err)
+	exitEvent := markProcessExitEvent(session, state, err)
+	session.setResult(state, err)
 
-	// The shell may exit while descendants still own the slave PTY.
-	platform.TerminateProcessGroup(session.cmd)
-	if platform.ProcessGroupExists(session.cmd) {
-		timer := time.NewTimer(descendantGraceTime)
-		select {
-		case <-timer.C:
-		case <-m.ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-		}
-		platform.KillProcessGroup(session.cmd)
-	}
+	// The shell may exit while descendants still own the slave PTY. After this
+	// the group is settled and nothing addresses the leader's number again.
+	session.settleDescendants()
 
 	// cmd.Wait may win before the PTY reader has consumed the final kernel
 	// buffer. Give the normal EOF path a short bounded drain window, then close
@@ -447,6 +434,9 @@ func (m *Manager) Remove(sessionID string) error {
 		return terminal.ErrSessionRunning
 	}
 	delete(m.sessions, ownedID)
+	// Only now may the operating system hand the leader's PID to another
+	// process: nothing will address this session again.
+	target.proc.release()
 	return nil
 }
 
@@ -520,14 +510,31 @@ func (m *Manager) Close() {
 		}
 		m.mu.Unlock()
 
-		m.cancel()
+		// Every session is asked to stop before the Manager's context is
+		// cancelled. Cancelling first made each reader close its PTY on its
+		// next read, and every agent received SIGHUP before its grace period.
+		// The waits run in parallel: one after another, a run of silent agents
+		// took the grace period once per agent and outlived callers' budgets.
 		for _, session := range sessions {
 			session.requestStop()
 		}
+		var stopping sync.WaitGroup
 		for _, session := range sessions {
-			_ = session.waitForStop()
+			stopping.Add(1)
+			go func(session *processSession) {
+				defer stopping.Done()
+				_ = session.waitForStop()
+			}(session)
 		}
+		stopping.Wait()
+
+		// Cancelled after the waits, and before joining: an essential event
+		// sender blocked on a full channel is released here.
+		m.cancel()
 		m.wg.Wait()
+		for _, session := range sessions {
+			session.proc.release()
+		}
 	})
 }
 
@@ -554,6 +561,9 @@ func newCommand(ctx context.Context, spec agent.Spec) (*exec.Cmd, bool, error) {
 	}
 	command.Dir = spec.Cwd
 	command.Env = mergedEnvironment(spec.Env)
+	// A cancelled context must stop the agent the way Stop does, not with an
+	// immediate SIGKILL: several shutdown paths cancel before they stop.
+	platform.SetGracefulCancel(command, gracefulStopTimeout)
 	return command, shell, nil
 }
 
@@ -596,10 +606,10 @@ func displayCommand(spec agent.Spec) string {
 	return strings.Join(parts, " ")
 }
 
-func markProcessExitEvent(session *processSession, waitErr error) adapters.Event {
+func markProcessExitEvent(session *processSession, state *os.ProcessState, waitErr error) adapters.Event {
 	var exitCode *int
-	if session.cmd != nil && session.cmd.ProcessState != nil {
-		code := session.cmd.ProcessState.ExitCode()
+	if state != nil {
+		code := state.ExitCode()
 		exitCode = &code
 	}
 	return session.processor.MarkProcessExitEvent(exitCode, waitErr != nil)

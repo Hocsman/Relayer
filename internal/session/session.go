@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -42,6 +43,22 @@ type processSession struct {
 	resultMu  sync.RWMutex
 	exited    bool
 	waitErr   error
+	// exitState is the leader's exit state, kept here rather than read from
+	// cmd.ProcessState, which the stop path's goroutine must not touch while
+	// waitSession is still writing it.
+	exitState *os.ProcessState
+	// groupSettled latches once waitSession has finished with the process
+	// group: the leader was reaped and its descendants were terminated. From
+	// then on nothing signals, probes or kills by the leader's number, which
+	// may belong to an unrelated process. groupLeftover records that the
+	// cleanup could not confirm the group gone, so a Stop still reports
+	// ErrStopUncertain instead of retrying against that number.
+	groupSettled  bool
+	groupLeftover bool
+
+	// proc pins the leader's process identity while the session is owned.
+	// See processRef for each platform.
+	proc processRef
 
 	fileMu       sync.RWMutex
 	device       ptyDevice
@@ -62,11 +79,35 @@ type processSession struct {
 	recordResize func(at time.Time, columns, rows int)
 }
 
-func (s *processSession) setResult(err error) {
+func (s *processSession) setResult(state *os.ProcessState, err error) {
 	s.resultMu.Lock()
 	s.exited = true
+	s.exitState = state
 	s.waitErr = err
 	s.resultMu.Unlock()
+}
+
+// reaped reports whether the leader has been waited for. Once it has, its PID
+// is free for the operating system to reuse, and only waitSession's own
+// cleanup may still address the group.
+func (s *processSession) reaped() bool {
+	s.resultMu.RLock()
+	defer s.resultMu.RUnlock()
+	return s.exited
+}
+
+// settleGroup latches the end of Relayer's dealings with the process group.
+func (s *processSession) settleGroup(leftover bool) {
+	s.resultMu.Lock()
+	s.groupSettled = true
+	s.groupLeftover = leftover
+	s.resultMu.Unlock()
+}
+
+func (s *processSession) groupOutcome() (settled, leftover bool) {
+	s.resultMu.RLock()
+	defer s.resultMu.RUnlock()
+	return s.groupSettled, s.groupLeftover
 }
 
 func (s *processSession) result() (bool, *int, error) {
@@ -76,8 +117,8 @@ func (s *processSession) result() (bool, *int, error) {
 		return false, nil, nil
 	}
 	var exitCode *int
-	if s.cmd != nil && s.cmd.ProcessState != nil {
-		code := s.cmd.ProcessState.ExitCode()
+	if s.exitState != nil {
+		code := s.exitState.ExitCode()
 		exitCode = &code
 	}
 	return true, exitCode, s.waitErr
@@ -155,16 +196,25 @@ func (s *processSession) closePTY() {
 
 func (s *processSession) requestStop() {
 	s.stopOnce.Do(func() {
-		select {
-		case <-s.done:
-			s.cancel()
+		if s.reaped() {
+			// Nothing is left to ask: the leader is gone and waitSession owns
+			// what remains of its group.
+			s.cancelContext()
 			s.closePTY()
 			return
-		default:
 		}
 
 		platform.TerminateProcessGroup(s.cmd)
+		if closeConsoleToStop {
+			s.closePTY()
+		}
 	})
+}
+
+func (s *processSession) cancelContext() {
+	if s.cancel != nil {
+		s.cancel()
+	}
 }
 
 func (s *processSession) waitForStop() error {
@@ -173,25 +223,42 @@ func (s *processSession) waitForStop() error {
 
 func (s *processSession) waitForStopWithin(gracefulTimeout, forcedTimeout time.Duration) error {
 	if waitForSignal(s.done, gracefulTimeout) {
-		if s.cancel != nil {
-			s.cancel()
-		}
+		s.cancelContext()
 		s.closePTY()
 		return s.confirmProcessGroupStopped(forcedTimeout)
 	}
 
-	if s.cancel != nil {
-		s.cancel()
-	}
+	s.cancelContext()
 	s.closePTY()
-	s.killProcessGroup()
+	// Closing the PTY can end the leader, and it may be reaped between the
+	// grace period running out and this line. A reaped leader's number is
+	// exactly what must never be signalled: v0.8.5 did so here, and on Windows
+	// taskkill /F then killed whatever process had just been given that PID.
+	if !s.reaped() {
+		s.killProcessGroup()
+	}
 	if !waitForSignal(s.done, forcedTimeout) {
 		return ErrStopUncertain
 	}
 	return s.confirmProcessGroupStopped(forcedTimeout)
 }
 
+// confirmProcessGroupStopped reports whether the leader and its group are gone.
+// In a Manager, done only closes after waitSession has settled the group, so
+// the answer is the latch. Probing and killing by number remains only for a
+// leader that was never reaped, which a Manager-owned session never is here.
 func (s *processSession) confirmProcessGroupStopped(timeout time.Duration) error {
+	if settled, leftover := s.groupOutcome(); settled {
+		if leftover {
+			return ErrStopUncertain
+		}
+		return nil
+	}
+	if s.reaped() {
+		// Reaped but not yet settled: waitSession is still cleaning up, and it
+		// is the only caller allowed to address the group now.
+		return ErrStopUncertain
+	}
 	if !s.processGroupExists() {
 		return nil
 	}
@@ -220,6 +287,40 @@ func (s *processSession) confirmProcessGroupStopped(timeout time.Duration) error
 			return nil
 		}
 	}
+}
+
+// settleDescendants runs once, on waitSession's goroutine, right after the
+// leader is reaped: the shell may exit while descendants still own the slave
+// PTY. It asks the group to stop, gives it descendantGraceTime, kills what
+// remains, and then latches the group as settled. It is the last code allowed
+// to address the leader's number.
+//
+// The grace period is not cut short by a Manager shutdown. It is bounded, runs
+// per session in parallel, and cutting it made every shutdown SIGKILL the
+// agents' children with no chance to exit cleanly.
+func (s *processSession) settleDescendants() {
+	platform.TerminateProcessGroup(s.cmd)
+	leftover := false
+	if s.processGroupExists() {
+		time.Sleep(descendantGraceTime)
+		if s.processGroupExists() {
+			s.killProcessGroup()
+			leftover = !s.waitGroupGone(forcedStopTimeout)
+		}
+	}
+	s.settleGroup(leftover)
+}
+
+// waitGroupGone polls until the group disappears or the timeout passes.
+func (s *processSession) waitGroupGone(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for s.processGroupExists() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(groupCheckInterval)
+	}
+	return true
 }
 
 func (s *processSession) killProcessGroup() {
