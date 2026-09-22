@@ -461,12 +461,13 @@ func (gh *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
-		if !gh.isAuthorized(r) {
+		identity, ok := gh.authenticate(r)
+		if !ok {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gh.ctrl.GetState())
+		_ = json.NewEncoder(w).Encode(stateForRole(gh.ctrl.GetState(), identity.Role))
 		return
 	}
 
@@ -539,11 +540,6 @@ func (gh *gatewayHandler) authenticate(r *http.Request) (AuthIdentity, bool) {
 // tokenless gateway was started on.
 func (gh *gatewayHandler) isLocalHost(host string) bool {
 	_, ok := gh.localHosts[strings.ToLower(strings.TrimSpace(host))]
-	return ok
-}
-
-func (gh *gatewayHandler) isAuthorized(r *http.Request) bool {
-	_, ok := gh.authenticate(r)
 	return ok
 }
 
@@ -665,7 +661,7 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 		}, nil
 
 	case "getState":
-		return gh.ctrl.GetState(), nil
+		return stateForRole(gh.ctrl.GetState(), client.role), nil
 
 	case "runPreflight":
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -841,7 +837,11 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 		return nil, gh.ctrl.RestartSession(p.RunID, p.SessionID)
 
 	case "getAgentProfiles":
-		return gh.ctrl.GetAgentProfiles()
+		view, err := gh.ctrl.GetAgentProfiles()
+		if err != nil {
+			return nil, err
+		}
+		return profilesForRole(view, client.role), nil
 
 	case "saveAgentProfiles":
 		var p struct {

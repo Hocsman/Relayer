@@ -104,13 +104,15 @@ export function AgentSettingsPanel({
 
   useEffect(() => {
     let active = true;
-    const loader = (readOnly || typeof bridge.getFullSettings !== "function")
-      ? bridge.getAgentProfiles().then((loaded) => ({
-          ...loaded,
-          security: securityDraft,
-          notifications: notificationDraft,
-        }))
-      : bridge.getFullSettings();
+    // A viewer, or an engine without full settings, gets the agent profiles
+    // only. The security and notification tabs used to be filled from the
+    // form's initial drafts instead, so a viewer was shown guardrails and
+    // limits that were not the engine's; those tabs now say they are not
+    // available rather than invent values.
+    const loader: Promise<AgentProfilesView | FullSettingsView> =
+      (readOnly || typeof bridge.getFullSettings !== "function")
+        ? bridge.getAgentProfiles()
+        : bridge.getFullSettings();
 
     void loader.then(
       (loaded) => {
@@ -467,7 +469,9 @@ export function AgentSettingsPanel({
               </fieldset>
             )}
 
-            {activeTab === "security" && (
+            {activeTab === "security" && !fullView && <SettingsUnavailable readOnly={readOnly} />}
+
+            {activeTab === "security" && fullView && (
               <SecuritySettingsTab
                 settings={securityDraft}
                 presets={fullView?.securityPresets}
@@ -480,7 +484,9 @@ export function AgentSettingsPanel({
               />
             )}
 
-            {activeTab === "notifications" && (
+            {activeTab === "notifications" && !fullView && <SettingsUnavailable readOnly={readOnly} />}
+
+            {activeTab === "notifications" && fullView && (
               <NotificationSettingsTab
                 settings={notificationDraft}
                 onChange={(next) => {
@@ -882,6 +888,19 @@ function readOnlyReasonLabel(reason: AgentProfile["readOnlyReason"]): string {
     default:
       return "This profile uses advanced fields that stay protected against a partial rewrite.";
   }
+}
+
+// SettingsUnavailable replaces a settings tab whose values were not loaded.
+function SettingsUnavailable({ readOnly }: { readOnly?: boolean }) {
+  return (
+    <div className="settings-section" role="note">
+      <p>
+        {readOnly
+          ? "Security and notification settings are shown to operators only."
+          : "This engine does not report these settings, so none are shown."}
+      </p>
+    </div>
+  );
 }
 
 // limitValue reads a limit field. An empty or invalid entry is 0, which the

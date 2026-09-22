@@ -14,6 +14,19 @@ interface RecordingsPanelProps {
   onClose(): void;
 }
 
+// recordingPermissions is what a connection may do with a transcript. A viewer
+// may list and replay; exporting and deleting are operator actions, and the
+// engine refuses them for a viewer as well.
+export function recordingPermissions(
+  bridge: Pick<RelayerBridge, "deleteRecording" | "exportRecording">,
+  readOnly: boolean | undefined,
+): { deletable: boolean; exportable: boolean } {
+  return {
+    deletable: Boolean(bridge.deleteRecording) && !readOnly,
+    exportable: Boolean(bridge.exportRecording) && !readOnly,
+  };
+}
+
 // A single request never pages an entire session into memory, and the cap
 // bounds how many follow-up requests the panel will chain before it stops.
 const CHUNK_LIMIT = 500;
@@ -50,7 +63,7 @@ export function RecordingsPanel({ bridge, readOnly, onClose }: RecordingsPanelPr
   // A build without a recording store has no list call at all. That is a
   // supported configuration, not a failure, so it gets its own empty state.
   const supported = Boolean(bridge.listRecordings);
-  const deletable = Boolean(bridge.deleteRecording) && !readOnly;
+  const { deletable, exportable } = recordingPermissions(bridge, readOnly);
 
   const loadData = useCallback(async () => {
     if (!bridge.listRecordings) {
@@ -249,7 +262,7 @@ export function RecordingsPanel({ bridge, readOnly, onClose }: RecordingsPanelPr
             <button
               className="button button--ghost"
               type="button"
-              disabled={!selected || downloading || !bridge.exportRecording || readOnly}
+              disabled={!selected || downloading || !exportable}
               onClick={() => {
                 if (selected) void handleDownload(selected);
               }}

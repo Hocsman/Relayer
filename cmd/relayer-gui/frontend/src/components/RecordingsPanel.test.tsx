@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { RecordingView, RelayerBridge } from "../types/relayer";
-import { RecordingsContentView, RecordingsPanel } from "./RecordingsPanel";
+import { RecordingsContentView, RecordingsPanel, recordingPermissions } from "./RecordingsPanel";
 
 function sampleRecordings(): RecordingView[] {
   return [
@@ -331,6 +331,34 @@ describe("RecordingsPanel", () => {
 
     expect(markup).toContain('disabled=""');
     expect(markup).toContain("Download .cast");
+  });
+
+  it("never lets a viewer delete or export, whatever the bridge offers", () => {
+    // The panel test above renders before any recording is selected, so it
+    // passed even with the read-only guard removed. The rule itself is checked
+    // here, and the rendered rows below.
+    const bridge = { deleteRecording: async () => {}, exportRecording: async () => "" };
+    expect(recordingPermissions(bridge, true)).toEqual({ deletable: false, exportable: false });
+    expect(recordingPermissions(bridge, false)).toEqual({ deletable: true, exportable: true });
+    expect(recordingPermissions({}, false)).toEqual({ deletable: false, exportable: false });
+
+    const recordings = sampleRecordings().map((recording) => ({ ...recording, active: false }));
+    const render = (deletable: boolean) =>
+      renderToStaticMarkup(
+        <RecordingsContentView
+          recordings={recordings}
+          selectedID={recordings[0].id}
+          frames={[]}
+          deletable={deletable}
+          confirmingDeleteID={null}
+          onSelect={() => {}}
+          onConfirmDelete={() => {}}
+          onDelete={() => {}}
+          onRefresh={() => {}}
+        />,
+      );
+    expect(render(true)).toContain("Delete");
+    expect(render(false)).not.toContain(">Delete<");
   });
 });
 
