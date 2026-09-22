@@ -220,6 +220,9 @@ type FullSettingsView struct {
 	AgentProfilesView
 	Security      SecuritySettings     `json:"security"`
 	Notifications NotificationSettings `json:"notifications"`
+	// SecurityPresets are the values each preset fills in, from the same
+	// source the configuration loader uses.
+	SecurityPresets map[string]SecuritySettings `json:"securityPresets"`
 }
 
 type SaveFullSettingsRequest struct {

@@ -300,11 +300,13 @@ export function AgentSettingsPanel({
     try {
       let expectedRevision = view.revision;
       if (typeof bridge.saveFullSettings === "function" && (securityDirty || notificationsDirty)) {
+        // Only what changed: sending an untouched security tab along with a
+        // notification change rewrote the policy for no reason.
         const fullResult = await bridge.saveFullSettings(runID, {
           expectedRevision: view.revision,
           profiles: profilesForSave(draft),
-          security: securityDraft,
-          notifications: notificationDraft,
+          security: securityDirty ? securityDraft : undefined,
+          notifications: notificationsDirty ? notificationDraft : undefined,
         });
         if (fullResult?.revision) {
           expectedRevision = fullResult.revision;
@@ -468,6 +470,7 @@ export function AgentSettingsPanel({
             {activeTab === "security" && (
               <SecuritySettingsTab
                 settings={securityDraft}
+                presets={fullView?.securityPresets}
                 onChange={(next) => {
                   setSecurityDraft(next);
                   setNotice(undefined);
@@ -881,12 +884,40 @@ function readOnlyReasonLabel(reason: AgentProfile["readOnlyReason"]): string {
   }
 }
 
+// limitValue reads a limit field. An empty or invalid entry is 0, which the
+// engine treats as no limit; the field used to fall back to 30 or 10, so a
+// limit could never be removed from the form.
+export function limitValue(raw: string): number {
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
+}
+
+// presetSettings fills the form from a preset the engine supplied. The preset
+// values come from the engine's own profile definitions: the form used to carry
+// its own copy, which disagreed with what the engine loads for the same name
+// (strict was 20/5 here and 10/1 there; permissive turned the guardrails off
+// here and kept them on there). The workspace path is the user's, not the
+// preset's, so it is kept.
+export function presetSettings(
+  current: SecuritySettings,
+  profile: string,
+  presets: Record<string, SecuritySettings> | undefined,
+): SecuritySettings {
+  const preset = presets?.[profile];
+  if (!preset) {
+    return { ...current, profile };
+  }
+  return { ...preset, profile, workspaceRoot: current.workspaceRoot };
+}
+
 function SecuritySettingsTab({
   settings,
+  presets,
   onChange,
   disabled,
 }: {
   settings: SecuritySettings;
+  presets?: Record<string, SecuritySettings>;
   onChange(settings: SecuritySettings): void;
   disabled: boolean;
 }) {
@@ -894,48 +925,7 @@ function SecuritySettingsTab({
     onChange({ ...settings, [field]: value });
 
   const onProfilePresetChange = (profile: string) => {
-    if (profile === "strict") {
-      onChange({
-        ...settings,
-        profile: "strict",
-        defaultAction: "ask",
-        dryRun: false,
-        blockDestructive: true,
-        blockExfiltration: true,
-        blockSensitivePaths: true,
-        blockOutsideWorkspace: true,
-        rateLimitPerMinute: 20,
-        maxConsecutiveAutoDecisions: 5,
-      });
-    } else if (profile === "developer-friendly") {
-      onChange({
-        ...settings,
-        profile: "developer-friendly",
-        defaultAction: "ask",
-        dryRun: false,
-        blockDestructive: true,
-        blockExfiltration: true,
-        blockSensitivePaths: true,
-        blockOutsideWorkspace: false,
-        rateLimitPerMinute: 30,
-        maxConsecutiveAutoDecisions: 10,
-      });
-    } else if (profile === "permissive") {
-      onChange({
-        ...settings,
-        profile: "permissive",
-        defaultAction: "allow",
-        dryRun: true,
-        blockDestructive: false,
-        blockExfiltration: false,
-        blockSensitivePaths: false,
-        blockOutsideWorkspace: false,
-        rateLimitPerMinute: 60,
-        maxConsecutiveAutoDecisions: 30,
-      });
-    } else {
-      patch("profile", profile);
-    }
+    onChange(presetSettings(settings, profile, presets));
   };
 
   return (
@@ -954,7 +944,7 @@ function SecuritySettingsTab({
           >
             <option value="developer-friendly">developer-friendly (Balanced)</option>
             <option value="strict">strict (High Security)</option>
-            <option value="permissive">permissive (Audit / Dry-Run)</option>
+            <option value="permissive">permissive (Automatic, guardrails on)</option>
             <option value="custom">custom</option>
           </select>
         </div>
@@ -1050,29 +1040,29 @@ function SecuritySettingsTab({
         <h3>Rate Limiting & Safety Bounds</h3>
         <p>Prevent runaway loops and excessive automated approvals.</p>
         <div className="settings-row">
-          <span>Rate Limit (Decisions / Minute)</span>
+          <span>Rate Limit (Decisions / Minute, 0 = none)</span>
           <input
             className="settings-input"
             type="number"
-            min={1}
+            min={0}
             max={600}
             style={{ width: "100px" }}
             value={settings.rateLimitPerMinute}
-            onChange={(e) => patch("rateLimitPerMinute", parseInt(e.target.value, 10) || 30)}
+            onChange={(e) => patch("rateLimitPerMinute", limitValue(e.target.value))}
             disabled={disabled}
             aria-label="Rate limit per minute"
           />
         </div>
         <div className="settings-row">
-          <span>Max Consecutive Auto Decisions</span>
+          <span>Max Consecutive Auto Decisions (0 = none)</span>
           <input
             className="settings-input"
             type="number"
-            min={1}
+            min={0}
             max={100}
             style={{ width: "100px" }}
             value={settings.maxConsecutiveAutoDecisions}
-            onChange={(e) => patch("maxConsecutiveAutoDecisions", parseInt(e.target.value, 10) || 10)}
+            onChange={(e) => patch("maxConsecutiveAutoDecisions", limitValue(e.target.value))}
             disabled={disabled}
             aria-label="Max consecutive auto decisions"
           />

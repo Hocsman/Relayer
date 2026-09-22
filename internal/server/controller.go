@@ -1186,6 +1186,7 @@ func (c *Controller) GetFullSettings() (FullSettingsView, error) {
 	return FullSettingsView{
 		AgentProfilesView: profilesView,
 		Security:          extractSecuritySettings(cfg.Policies),
+		SecurityPresets:   securityPresetViews(),
 		Notifications:     extractNotificationSettings(cfg.Notifications),
 	}, nil
 }
@@ -1250,6 +1251,7 @@ func (c *Controller) SaveFullSettings(runID string, req SaveFullSettingsRequest)
 	return FullSettingsView{
 		AgentProfilesView: profilesView,
 		Security:          extractSecuritySettings(res.Policies),
+		SecurityPresets:   securityPresetViews(),
 		Notifications:     extractNotificationSettings(res.Notifications),
 	}, nil
 }
@@ -1721,60 +1723,29 @@ func profileFromSpec(spec agent.Spec) AgentProfile {
 	}
 }
 
+// extractSecuritySettings describes a policy for the settings editor. The
+// conversion is a plain type conversion from policy.Settings, so the editor's
+// fields cannot drift from the ones policy.ApplySettings understands.
 func extractSecuritySettings(cfg policy.Config) SecuritySettings {
-	profileName := "custom"
-	// Detect known profile
-	if len(cfg.Rules) == 0 && cfg.DefaultAction == policy.ActionAsk {
-		profileName = "strict"
-	} else if len(cfg.Rules) >= 3 && cfg.Rules[0].Name == "dev-friendly-git-readonly" {
-		profileName = "developer-friendly"
-	}
-
-	return SecuritySettings{
-		Profile:                     profileName,
-		DefaultAction:               string(cfg.DefaultAction),
-		DryRun:                      cfg.DryRun,
-		BlockDestructive:            cfg.Guardrails.BlockDestructive,
-		BlockExfiltration:           cfg.Guardrails.BlockExfiltration,
-		BlockSensitivePaths:         cfg.Guardrails.BlockSensitivePaths,
-		BlockOutsideWorkspace:       cfg.Guardrails.BlockOutsideWorkspace,
-		WorkspaceRoot:               cfg.Guardrails.WorkspaceRoot,
-		RateLimitPerMinute:          cfg.RateLimitPerMinute,
-		MaxConsecutiveAutoDecisions: cfg.MaxConsecutiveAutoDecisions,
-	}
+	return SecuritySettings(policy.SettingsFrom(cfg))
 }
 
+// securityPresetViews are the values the editor fills in when a preset is
+// picked. They come from policy.ProfileConfig, like the loader's.
+func securityPresetViews() map[string]SecuritySettings {
+	presets := policy.PresetSettings()
+	views := make(map[string]SecuritySettings, len(presets))
+	for name, settings := range presets {
+		views[name] = SecuritySettings(settings)
+	}
+	return views
+}
+
+// buildPolicyConfig applies the editor's settings to the existing policy. It
+// is policy.ApplySettings, shared with the other front end: rules and blocked
+// patterns survive a save that did not touch them.
 func buildPolicyConfig(sec SecuritySettings, existing policy.Config, baseDir string) (policy.Config, error) {
-	ws := strings.TrimSpace(sec.WorkspaceRoot)
-	if ws == "" {
-		ws = baseDir
-	}
-
-	parsedProfile, _ := policy.ParseProfile(sec.Profile)
-	var base policy.Config
-	if parsedProfile != "" && parsedProfile != policy.ProfileCustom {
-		base = policy.ProfileConfig(parsedProfile, ws)
-	} else {
-		base = existing
-	}
-
-	if sec.DefaultAction != "" {
-		base.DefaultAction = policy.Action(strings.ToLower(strings.TrimSpace(sec.DefaultAction)))
-	}
-	base.DryRun = sec.DryRun
-	base.Guardrails.BlockDestructive = sec.BlockDestructive
-	base.Guardrails.BlockExfiltration = sec.BlockExfiltration
-	base.Guardrails.BlockSensitivePaths = sec.BlockSensitivePaths
-	base.Guardrails.BlockOutsideWorkspace = sec.BlockOutsideWorkspace
-	base.Guardrails.WorkspaceRoot = ws
-	if sec.RateLimitPerMinute > 0 {
-		base.RateLimitPerMinute = sec.RateLimitPerMinute
-	}
-	if sec.MaxConsecutiveAutoDecisions > 0 {
-		base.MaxConsecutiveAutoDecisions = sec.MaxConsecutiveAutoDecisions
-	}
-
-	return base, nil
+	return policy.ApplySettings(existing, policy.Settings(sec), baseDir)
 }
 
 func extractNotificationSettings(cfg notify.Config) NotificationSettings {

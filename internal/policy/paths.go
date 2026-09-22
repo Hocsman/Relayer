@@ -83,6 +83,12 @@ func ContainsSensitivePathReference(text string) bool {
 	return sensitiveTextRegex.MatchString(text)
 }
 
+// IsRootedPath reports whether p is absolute, or rooted without a volume
+// (\dir on Windows), and so must not be resolved against another directory.
+func IsRootedPath(p string) bool {
+	return isRootedPath(p)
+}
+
 // isRootedPath returns true if p is an absolute path or rooted path (starts with / or \).
 func isRootedPath(p string) bool {
 	if filepath.IsAbs(p) {

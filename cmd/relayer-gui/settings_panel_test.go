@@ -4,7 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
+
+	"github.com/Hocsman/Relayer/internal/config"
 )
 
 func TestGetAndSaveFullSettings(t *testing.T) {
@@ -98,5 +101,78 @@ intercept_patterns:
 	// Profiles were untouched, so restart should not be required
 	if saved.RestartRequired {
 		t.Errorf("expected RestartRequired false when profiles are unchanged")
+	}
+}
+
+// TestDesktopSecuritySaveKeepsWhatTheFormDoesNotShow is the desktop half of the
+// settings round-trip fix: the GUI shared the web gateway's guess-and-rebuild
+// save, so a form that only toggled dry-run dropped a deny rule and a blocked
+// pattern and rewrote the limits.
+func TestDesktopSecuritySaveKeepsWhatTheFormDoesNotShow(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	initialYAML := `version: 1
+backend: pty
+
+policies:
+  default_action: ask
+  dry_run: false
+  rate_limit_per_minute: 10
+  max_consecutive_auto_decisions: 1
+  guardrails:
+    block_destructive: true
+    block_exfiltration: true
+    block_sensitive_paths: true
+    blocked_patterns: ['(?i)terraform\s+destroy']
+  rules:
+    - name: deny-terraform
+      match:
+        command_regex: '(?i)^terraform\b'
+      action: deny
+
+agents:
+  - id: alpha
+    name: Agent Alpha
+    command: ["echo", "alpha"]
+
+intercept_patterns:
+  - pattern: '(?i)continue'
+    description: continue prompt
+`
+	if err := os.WriteFile(configPath, []byte(initialYAML), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	before, err := config.LoadExisting(configPath)
+	if err != nil {
+		t.Fatalf("LoadExisting: %v", err)
+	}
+
+	app := NewApp()
+	app.configPath = configPath
+	app.ctx = context.Background()
+
+	view, err := app.GetFullSettings()
+	if err != nil {
+		t.Fatalf("GetFullSettings: %v", err)
+	}
+	if view.SecurityPresets["strict"].RateLimitPerMinute != 10 {
+		t.Fatalf("strict preset = %+v, want the Go preset's values", view.SecurityPresets["strict"])
+	}
+	security := view.Security
+	security.DryRun = true
+	if _, err := app.SaveFullSettings("", SaveFullSettingsRequest{
+		ExpectedRevision: view.Revision,
+		Security:         &security,
+	}); err != nil {
+		t.Fatalf("SaveFullSettings: %v", err)
+	}
+
+	after, err := config.LoadExisting(configPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	want := before.Policies
+	want.DryRun = true
+	if !reflect.DeepEqual(after.Policies, want) {
+		t.Fatalf("a dry-run save changed the policy on disk:\n got  %+v\n want %+v", after.Policies, want)
 	}
 }

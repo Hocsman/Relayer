@@ -41,17 +41,20 @@ type NotificationSettings struct {
 }
 
 type FullSettingsView struct {
-	ConfigPath      string               `json:"configPath"`
-	Revision        string               `json:"revision"`
-	Catalog         []AgentCatalogEntry  `json:"catalog"`
-	Profiles        []AgentProfile       `json:"profiles"`
-	Security        SecuritySettings     `json:"security"`
-	Notifications   NotificationSettings `json:"notifications"`
-	MinProfiles     int                  `json:"minProfiles"`
-	MaxProfiles     int                  `json:"maxProfiles"`
-	RestartRequired bool                 `json:"restartRequired"`
-	Editable        bool                 `json:"editable"`
-	ReadOnlyReason  string               `json:"readOnlyReason,omitempty"`
+	ConfigPath string              `json:"configPath"`
+	Revision   string              `json:"revision"`
+	Catalog    []AgentCatalogEntry `json:"catalog"`
+	Profiles   []AgentProfile      `json:"profiles"`
+	Security   SecuritySettings    `json:"security"`
+	// SecurityPresets are the values each preset fills in, from the same
+	// source the configuration loader uses.
+	SecurityPresets map[string]SecuritySettings `json:"securityPresets"`
+	Notifications   NotificationSettings        `json:"notifications"`
+	MinProfiles     int                         `json:"minProfiles"`
+	MaxProfiles     int                         `json:"maxProfiles"`
+	RestartRequired bool                        `json:"restartRequired"`
+	Editable        bool                        `json:"editable"`
+	ReadOnlyReason  string                      `json:"readOnlyReason,omitempty"`
 }
 
 type SaveFullSettingsRequest struct {
@@ -112,6 +115,7 @@ func (a *App) loadFullSettingsLocked() (FullSettingsView, error) {
 		Catalog:         profilesView.Catalog,
 		Profiles:        profilesView.Profiles,
 		Security:        sec,
+		SecurityPresets: securityPresetViews(),
 		Notifications:   notif,
 		MinProfiles:     profilesView.MinProfiles,
 		MaxProfiles:     profilesView.MaxProfiles,
@@ -223,6 +227,7 @@ func (a *App) saveFullSettingsLocked(request SaveFullSettingsRequest) (FullSetti
 		Catalog:         profilesView.Catalog,
 		Profiles:        profilesView.Profiles,
 		Security:        extractSecuritySettings(updated.Policies),
+		SecurityPresets: securityPresetViews(),
 		Notifications:   extractNotificationSettings(updated.Notifications),
 		MinProfiles:     profilesView.MinProfiles,
 		MaxProfiles:     profilesView.MaxProfiles,
@@ -232,27 +237,22 @@ func (a *App) saveFullSettingsLocked(request SaveFullSettingsRequest) (FullSetti
 	}, nil
 }
 
+// extractSecuritySettings describes a policy for the settings editor. The
+// conversion is a plain type conversion from policy.Settings, so the editor's
+// fields cannot drift from the ones policy.ApplySettings understands.
 func extractSecuritySettings(cfg policy.Config) SecuritySettings {
-	profileName := "custom"
-	// Detect known profile
-	if len(cfg.Rules) == 0 && cfg.DefaultAction == policy.ActionAsk {
-		profileName = "strict"
-	} else if len(cfg.Rules) >= 3 && cfg.Rules[0].Name == "dev-friendly-git-readonly" {
-		profileName = "developer-friendly"
-	}
+	return SecuritySettings(policy.SettingsFrom(cfg))
+}
 
-	return SecuritySettings{
-		Profile:                     profileName,
-		DefaultAction:               string(cfg.DefaultAction),
-		DryRun:                      cfg.DryRun,
-		BlockDestructive:            cfg.Guardrails.BlockDestructive,
-		BlockExfiltration:           cfg.Guardrails.BlockExfiltration,
-		BlockSensitivePaths:         cfg.Guardrails.BlockSensitivePaths,
-		BlockOutsideWorkspace:       cfg.Guardrails.BlockOutsideWorkspace,
-		WorkspaceRoot:               cfg.Guardrails.WorkspaceRoot,
-		RateLimitPerMinute:          cfg.RateLimitPerMinute,
-		MaxConsecutiveAutoDecisions: cfg.MaxConsecutiveAutoDecisions,
+// securityPresetViews are the values the editor fills in when a preset is
+// picked. They come from policy.ProfileConfig, like the loader's.
+func securityPresetViews() map[string]SecuritySettings {
+	presets := policy.PresetSettings()
+	views := make(map[string]SecuritySettings, len(presets))
+	for name, settings := range presets {
+		views[name] = SecuritySettings(settings)
 	}
+	return views
 }
 
 func extractNotificationSettings(cfg notify.Config) NotificationSettings {
@@ -275,37 +275,11 @@ func extractNotificationSettings(cfg notify.Config) NotificationSettings {
 	}
 }
 
+// buildPolicyConfig applies the editor's settings to the existing policy. It
+// is policy.ApplySettings, shared with the other front end: rules and blocked
+// patterns survive a save that did not touch them.
 func buildPolicyConfig(sec SecuritySettings, existing policy.Config, baseDir string) (policy.Config, error) {
-	ws := strings.TrimSpace(sec.WorkspaceRoot)
-	if ws == "" {
-		ws = baseDir
-	}
-
-	parsedProfile, _ := policy.ParseProfile(sec.Profile)
-	var base policy.Config
-	if parsedProfile != "" && parsedProfile != policy.ProfileCustom {
-		base = policy.ProfileConfig(parsedProfile, ws)
-	} else {
-		base = existing
-	}
-
-	if sec.DefaultAction != "" {
-		base.DefaultAction = policy.Action(strings.ToLower(strings.TrimSpace(sec.DefaultAction)))
-	}
-	base.DryRun = sec.DryRun
-	base.Guardrails.BlockDestructive = sec.BlockDestructive
-	base.Guardrails.BlockExfiltration = sec.BlockExfiltration
-	base.Guardrails.BlockSensitivePaths = sec.BlockSensitivePaths
-	base.Guardrails.BlockOutsideWorkspace = sec.BlockOutsideWorkspace
-	base.Guardrails.WorkspaceRoot = ws
-	if sec.RateLimitPerMinute > 0 {
-		base.RateLimitPerMinute = sec.RateLimitPerMinute
-	}
-	if sec.MaxConsecutiveAutoDecisions > 0 {
-		base.MaxConsecutiveAutoDecisions = sec.MaxConsecutiveAutoDecisions
-	}
-
-	return base, nil
+	return policy.ApplySettings(existing, policy.Settings(sec), baseDir)
 }
 
 func buildNotificationConfig(notif NotificationSettings) notify.Config {

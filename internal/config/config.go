@@ -630,6 +630,20 @@ func decodePolicies(configured *configuredPolicies, configDir string) (policy.Co
 	if configured == nil {
 		return result, nil
 	}
+	// The workspace guardrail compares paths the agent names, which are
+	// absolute, with this root. A relative root — "." for a configuration
+	// loaded as config.yaml — never contained any of them, so every workspace
+	// check failed. Relative roots resolve against the configuration's
+	// directory, like the other relative paths in this file.
+	if absolute, err := filepath.Abs(configDir); err == nil {
+		configDir = absolute
+	}
+	if configured.Guardrails != nil && configured.Guardrails.WorkspaceRoot != nil {
+		if root := strings.TrimSpace(*configured.Guardrails.WorkspaceRoot); root != "" && !policy.IsRootedPath(root) {
+			resolved := filepath.Join(configDir, root)
+			configured.Guardrails.WorkspaceRoot = &resolved
+		}
+	}
 
 	if configured.Profile != nil {
 		profileName := strings.TrimSpace(*configured.Profile)

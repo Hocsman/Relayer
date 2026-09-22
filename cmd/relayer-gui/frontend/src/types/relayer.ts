@@ -558,6 +558,9 @@ export interface NotificationSettings {
 export interface FullSettingsView extends AgentProfilesView {
   security: SecuritySettings;
   notifications: NotificationSettings;
+  // The values each preset fills in, from the same Go source the
+  // configuration loader uses. Optional: an older engine does not send them.
+  securityPresets?: Record<string, SecuritySettings>;
 }
 
 export interface SaveFullSettingsRequest {
