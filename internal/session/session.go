@@ -31,7 +31,8 @@ var (
 // unconfirmed, and the agent is then locked as stop_uncertain: when the
 // Windows grace became five seconds, the web gateway's five-second budget did
 // that to every agent the console close never reaches. Budgets for a Stop, a
-// Restart or a shutdown are built on it.
+// Restart or a shutdown are built on it. It bounds a PTY stop; a tmux stop is
+// a few tmux commands, each bounded by the tmux backend's own command timeout.
 const StopBudget = gracefulStopTimeout + 2*forcedStopTimeout + descendantGraceTime + finalOutputDrainTime + time.Second
 
 const (

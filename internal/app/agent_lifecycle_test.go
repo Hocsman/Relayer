@@ -28,6 +28,9 @@ type lifecycleFakeBackend struct {
 	removeErr   error
 	removeGone  bool
 	stopFailure error
+	// stopHold, when it has a channel for an agent, holds that agent's Stop
+	// until the channel is closed: a slow stop.
+	stopHold map[string]chan struct{}
 	// duringSnapshot, when set, runs inside every Snapshot: a lifecycle call
 	// that moves while the backend is being asked.
 	duringSnapshot func()
@@ -42,7 +45,11 @@ type lifecycleFakeBackend struct {
 func (b *lifecycleFakeBackend) Stop(ctx context.Context, id string) error {
 	b.mu.Lock()
 	err := b.stopFailure
+	hold := b.stopHold[id]
 	b.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
 	if err != nil {
 		return err
 	}
@@ -662,5 +669,58 @@ func TestAnExitIsStaleOnlyIfAStartBeganMeanwhile(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestAStopDoesNotWaitForAnotherAgentsSlowStop: every action on one agent took
+// the runtime's quiescence lock exclusively, so a Stop behind another agent's
+// slow stop spent its whole budget waiting, never ran, and left its agent
+// locked as stop_uncertain.
+func TestAStopDoesNotWaitForAnotherAgentsSlowStop(t *testing.T) {
+	backend := newLifecycleFakeBackend()
+	router, err := newBackendRouter(context.Background(), backend)
+	if err != nil {
+		t.Fatalf("newBackendRouter: %v", err)
+	}
+	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	slow, quick := lifecycleTestSpec(t, "slow"), lifecycleTestSpec(t, "quick")
+	for _, spec := range []agent.Spec{slow, quick} {
+		if _, err := router.Start(context.Background(), spec, terminal.Size{Columns: 80, Rows: 24}); err != nil {
+			t.Fatalf("start %s: %v", spec.ID, err)
+		}
+	}
+	lifecycle := newAgentLifecycle(router, lifecycleTestRecorder(t), []agent.Spec{slow, quick}, terminal.Size{Columns: 80, Rows: 24}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	runtime := &DesktopRuntime{ctx: ctx, cancel: cancel, router: router, lifecycle: lifecycle}
+
+	hold := make(chan struct{})
+	backend.mu.Lock()
+	backend.stopHold = map[string]chan struct{}{"slow": hold}
+	backend.mu.Unlock()
+	slowDone := make(chan error, 1)
+	go func() { slowDone <- runtime.StopAgent(context.Background(), "slow") }()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		lifecycle.mu.Lock()
+		state := lifecycle.states[lifecycleKey("slow")]
+		lifecycle.mu.Unlock()
+		if state == agentStateStopping {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the slow stop never began (state %q)", state)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	budget, cancelBudget := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancelBudget()
+	if err := runtime.StopAgent(budget, "quick"); err != nil {
+		t.Fatalf("a Stop behind another agent's slow stop: %v", err)
+	}
+	close(hold)
+	if err := <-slowDone; err != nil {
+		t.Fatalf("the slow stop: %v", err)
 	}
 }

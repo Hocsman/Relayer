@@ -311,7 +311,10 @@ func Serve(ctx context.Context, opts Options) error {
 		// running after Relayer was gone.
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), session.StopBudget+2*time.Second)
 		defer cancel()
-		_ = ctrl.Close(shutdownCtx)
+		if err := ctrl.Close(shutdownCtx); err != nil {
+			// Said, not swallowed: an agent may have outlived the shutdown.
+			_, _ = fmt.Fprintf(opts.Diagnostics, "Closing the agents did not finish cleanly: %v\n", err)
+		}
 	}()
 
 	addr := fmt.Sprintf("%s:%d", opts.Bind, opts.Port)

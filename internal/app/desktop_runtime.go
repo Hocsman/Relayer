@@ -117,8 +117,14 @@ type DesktopRuntime struct {
 	strictStop    bool
 	strictStopped bool
 
-	closeMu   sync.Mutex
-	quiesceMu sync.Mutex
+	closeMu sync.Mutex
+	// quiesceMu keeps an operator's action on one agent from interleaving
+	// with a whole-run stop, restart or close. Actions on single agents take
+	// it shared: they are serialized per agent by the lifecycle, and used to
+	// queue behind one another, so a Stop waiting for another agent's slow
+	// stop ran out of its budget before it began and locked its agent as
+	// stop_uncertain. Whole-run transitions take it exclusively.
+	quiesceMu sync.RWMutex
 	closed    bool
 	closeErr  error
 }
@@ -563,8 +569,11 @@ func (r *DesktopRuntime) StopAgent(ctx context.Context, agentID string) error {
 	if err := r.available(); err != nil {
 		return err
 	}
-	r.quiesceMu.Lock()
-	defer r.quiesceMu.Unlock()
+	waitedFrom := time.Now()
+	r.quiesceMu.RLock()
+	defer r.quiesceMu.RUnlock()
+	ctx, cancel := afterLockWait(ctx, time.Since(waitedFrom))
+	defer cancel()
 	return r.lifecycle.StopAgent(ctx, agentID, "operator_stop")
 }
 
@@ -575,8 +584,11 @@ func (r *DesktopRuntime) StartAgent(ctx context.Context, agentID string) error {
 	if err := r.available(); err != nil {
 		return err
 	}
-	r.quiesceMu.Lock()
-	defer r.quiesceMu.Unlock()
+	waitedFrom := time.Now()
+	r.quiesceMu.RLock()
+	defer r.quiesceMu.RUnlock()
+	ctx, cancel := afterLockWait(ctx, time.Since(waitedFrom))
+	defer cancel()
 	_, err := r.lifecycle.StartAgent(ctx, agentID, "operator_start")
 	return err
 }
@@ -588,8 +600,11 @@ func (r *DesktopRuntime) RestartAgent(ctx context.Context, agentID string) error
 	if err := r.available(); err != nil {
 		return err
 	}
-	r.quiesceMu.Lock()
-	defer r.quiesceMu.Unlock()
+	waitedFrom := time.Now()
+	r.quiesceMu.RLock()
+	defer r.quiesceMu.RUnlock()
+	ctx, cancel := afterLockWait(ctx, time.Since(waitedFrom))
+	defer cancel()
 	_, err := r.lifecycle.RestartAgent(ctx, agentID)
 	return err
 }
@@ -629,11 +644,14 @@ func (r *DesktopRuntime) BeginShutdown(ctx context.Context) error {
 		return nil
 	}
 	r.cancel()
+	waitedFrom := time.Now()
 	r.quiesceMu.Lock()
 	defer r.quiesceMu.Unlock()
 	if r.router == nil {
 		return nil
 	}
+	ctx, cancel := afterLockWait(ctx, time.Since(waitedFrom))
+	defer cancel()
 	return r.router.Close(ctx)
 }
 
@@ -655,8 +673,11 @@ func (r *DesktopRuntime) BeginRestart(ctx context.Context) error {
 		return terminal.ErrClosed
 	}
 
+	waitedFrom := time.Now()
 	r.quiesceMu.Lock()
 	defer r.quiesceMu.Unlock()
+	ctx, cancel := afterLockWait(ctx, time.Since(waitedFrom))
+	defer cancel()
 	r.strictStop = true
 	stopErr := r.stopAllSessions(ctx)
 	r.strictStopped = stopErr == nil
@@ -755,8 +776,11 @@ func (r *DesktopRuntime) Close(ctx context.Context) error {
 		}
 	}
 	if r.router != nil {
+		waitedFrom := time.Now()
 		r.quiesceMu.Lock()
-		closeErr := r.router.Close(ctx)
+		closeCtx, cancel := afterLockWait(ctx, time.Since(waitedFrom))
+		closeErr := r.router.Close(closeCtx)
+		cancel()
 		r.quiesceMu.Unlock()
 		if closeErr != nil {
 			result = errors.Join(result, fmt.Errorf("close the backends: %w", closeErr))
@@ -972,4 +996,26 @@ func (r *DesktopRuntime) closeRecorder() error {
 		r.recordings = nil
 	}
 	return errors.Join(errs...)
+}
+
+// afterLockWait returns ctx with its deadline moved later by the time spent
+// waiting for the quiescence lock, so an operation's budget counts from when it
+// can begin: a shutdown that waited for an operator's stop used to close the
+// backends on what was left, and exit with an agent still running. An explicit
+// cancellation of ctx still ends the operation.
+func afterLockWait(ctx context.Context, waited time.Duration) (context.Context, context.CancelFunc) {
+	deadline, ok := ctx.Deadline()
+	if !ok || waited <= 0 {
+		return context.WithCancel(ctx)
+	}
+	owned, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline.Add(waited))
+	stop := context.AfterFunc(ctx, func() {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			cancel()
+		}
+	})
+	return owned, func() {
+		stop()
+		cancel()
+	}
 }
