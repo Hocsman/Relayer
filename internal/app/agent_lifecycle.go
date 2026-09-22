@@ -385,20 +385,24 @@ func (l *agentLifecycle) MarkProcessExited(agentID string) bool {
 	key := lifecycleKey(agentID)
 	deadline := time.Now().Add(exitDuringStartWait)
 	l.mu.Lock()
-	for l.states[key] == agentStateStarting && time.Now().Before(deadline) {
-		l.mu.Unlock()
-		time.Sleep(10 * time.Millisecond)
-		l.mu.Lock()
-	}
+	defer l.mu.Unlock()
+	l.waitWhileStartingLocked(key, deadline)
 	spec, known := l.specs[key]
 	sampled := l.states[key]
 	l.mu.Unlock()
-	if known && l.router != nil && l.backendReportsRunning(l.router.Context(), spec.ID) {
+	running := known && l.router != nil && l.backendReportsRunning(l.router.Context(), spec.ID)
+	l.mu.Lock()
+	if running {
 		return false
 	}
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	if l.states[key] != sampled && l.states[key] == agentStateStarting {
+		// A Start began while the backend was asked. Whether this exit is
+		// stale depends on how it ends: a replacement that runs makes it the
+		// previous process's; a Start that fails leaves no process, and
+		// calling the exit stale then left a dead agent shown running.
+		l.waitWhileStartingLocked(key, deadline)
+	}
 	switch current := l.states[key]; {
 	case current != sampled && (current == agentStateStarting || current == agentStateRunning):
 		return false
@@ -406,6 +410,16 @@ func (l *agentLifecycle) MarkProcessExited(agentID string) bool {
 		l.states[key] = agentStateStopped
 	}
 	return true
+}
+
+// waitWhileStartingLocked releases l.mu while the agent is starting, until the
+// deadline, and returns with l.mu held.
+func (l *agentLifecycle) waitWhileStartingLocked(key string, deadline time.Time) {
+	for l.states[key] == agentStateStarting && time.Now().Before(deadline) {
+		l.mu.Unlock()
+		time.Sleep(10 * time.Millisecond)
+		l.mu.Lock()
+	}
 }
 
 // exitDuringStartWait bounds how long an exit waits for a Start in progress:

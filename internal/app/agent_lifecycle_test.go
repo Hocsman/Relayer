@@ -597,15 +597,18 @@ func TestAnExitDuringARestartIsThePreviousProcesss(t *testing.T) {
 // TestAnExitIsStaleOnlyIfAStartBeganMeanwhile: the lifecycle can move while
 // the backend is asked about an exit. An operator Stop finishing then is the
 // same process, and treating the exit as stale left the web card running for
-// an agent that had stopped; only a Start beginning then makes it stale.
+// an agent that had stopped. A Start beginning then makes it stale only if the
+// Start succeeds: one that fails leaves no process to show running.
 func TestAnExitIsStaleOnlyIfAStartBeganMeanwhile(t *testing.T) {
 	for _, move := range []struct {
 		name      string
 		from, to  string
+		then      string
 		wantFresh bool
 	}{
-		{"an operator stop finishes", agentStateStopping, agentStateStopped, true},
-		{"a start begins", agentStateStopped, agentStateStarting, false},
+		{"an operator stop finishes", agentStateStopping, agentStateStopped, "", true},
+		{"a start begins and succeeds", agentStateStopped, agentStateStarting, agentStateRunning, false},
+		{"a start begins and fails", agentStateStopped, agentStateStarting, agentStateStartFailed, true},
 	} {
 		t.Run(move.name, func(t *testing.T) {
 			backend := newLifecycleFakeBackend()
@@ -629,6 +632,14 @@ func TestAnExitIsStaleOnlyIfAStartBeganMeanwhile(t *testing.T) {
 				lifecycle.mu.Lock()
 				lifecycle.states[key] = move.to
 				lifecycle.mu.Unlock()
+				if move.then != "" {
+					go func() {
+						time.Sleep(50 * time.Millisecond)
+						lifecycle.mu.Lock()
+						lifecycle.states[key] = move.then
+						lifecycle.mu.Unlock()
+					}()
+				}
 			}
 			backend.mu.Unlock()
 
