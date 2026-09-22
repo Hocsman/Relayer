@@ -246,7 +246,13 @@ func (m *Manager) Start(spec agent.Spec, columns, rows int) (Info, error) {
 func (m *Manager) readSession(session *processSession, device io.Reader) {
 	defer m.wg.Done()
 
-	err := session.processor.Run(session.ctx, device)
+	// The reader runs until the PTY reaches EOF or is closed, never merely
+	// because a context was cancelled. Stopping on cancellation made it close
+	// the PTY at its next read, which sends SIGHUP: an agent handling SIGTERM
+	// — and printing anything while it did — was killed partway through its
+	// own shutdown. Every stop path closes the PTY itself once it is done, so
+	// the reader always ends, and it keeps the agent's last output.
+	err := session.processor.Run(context.Background(), device)
 	// Publish the drain barrier before sending the final invalidation. The
 	// output bytes are already retained in Processor; a full UI event channel
 	// must not prevent waitSession from closing Done and publishing lifecycle.

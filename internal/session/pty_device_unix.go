@@ -3,6 +3,8 @@
 package session
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 
@@ -58,7 +60,20 @@ func startPTY(session *processSession, cmd *exec.Cmd, columns, rows int) (ptyDev
 // waitCommand reaps the leader. os/exec records the state in cmd.ProcessState
 // on this goroutine; the Unix platform helpers never read that field, so there
 // is nothing for it to race with.
+//
+// When the session's context was cancelled, os/exec reports the context's
+// error from Wait even if the agent then shut down cleanly on its SIGTERM. That
+// error says why the agent was asked to stop, not that it failed, so an agent
+// that exited on its own terms keeps its real exit status.
 func waitCommand(session *processSession) (*os.ProcessState, error) {
 	err := session.cmd.Wait()
-	return session.cmd.ProcessState, err
+	state := session.cmd.ProcessState
+	if err != nil && state != nil && state.Exited() &&
+		(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		if state.Success() {
+			return state, nil
+		}
+		return state, &exec.ExitError{ProcessState: state}
+	}
+	return state, err
 }

@@ -21,6 +21,8 @@ All notable user-visible changes are documented here. This file follows the stru
   - Cancelling an agent's context now sends SIGTERM to its process group, and os/exec kills the leader only if it is still running after the grace period.
   - `Close` asks every session to stop before cancelling anything, and waits for them in parallel rather than one after another.
   - An agent's children get their 250 ms grace after the agent exits even during a shutdown; a shutdown used to skip it and kill them at once.
+  - The PTY reader no longer stops because a context was cancelled. It used to close the PTY at its next read, which sends SIGHUP, so an agent that printed anything while handling SIGTERM was killed partway through its own shutdown. Every stop path closes the PTY itself, so the reader still ends, and it now keeps the agent's last output.
+  - An agent that exits cleanly after a cancellation keeps its real exit status; os/exec reported the context's error instead, and the exit was recorded as a failure.
   - `TestEveryStopPathGivesTheAgentItsGracePeriod` runs a leader that traps SIGTERM to write a marker, through Stop, Close, and a cancelled parent context.
 - **Unix: the process-group guards v0.8.4 announced were not in the v0.8.4 release**: they were removed by the commit the `v0.8.4` tag was moved to, because skipping descendant cleanup after the leader exits broke termination of signal-ignoring descendants. The settled-group latch above is the replacement: descendant cleanup still runs, and the group is never addressed after it.
 
