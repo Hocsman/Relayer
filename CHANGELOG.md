@@ -52,9 +52,23 @@ All notable user-visible changes are documented here. This file follows the stru
 - **Starting a running tmux agent killed it and started another**: to restart an agent that had exited on its own, v0.8.5 made Start call the backend's `Remove` whenever the agent was believed running, and took success as proof the process was gone. The tmux backend's `Remove` kills a live session and reports success, so Start on a running tmux agent — tmux is the default backend on Unix, and the web interface offered Start on running agents — killed it and launched a second one with no stop on record. Start now asks the backend, read-only, whether the process still runs, refuses if it does, and asks outside the lifecycle lock so a slow backend cannot hold up an exit notification.
 - **Unix: the process-group guards v0.8.4 announced were not in the v0.8.4 release**: they were removed by the commit the `v0.8.4` tag was moved to, because skipping descendant cleanup after the leader exits broke termination of signal-ignoring descendants. The settled-group latch above is the replacement: descendant cleanup still runs, and the group is never addressed after it.
 
+### Documentation
+
+- **The configuration reference's examples did not load**: they used keys the strict loader rejects — `os_notifications`, `terminal_bell` and `type` for notifications, `workspace_only` for the workspace guardrail, `interval` for OTLP — so a copied example was a configuration Relayer refused. They now use `desktop`, `bell`, `format`, `block_outside_workspace` with `workspace_root`, and `export_interval`, and `TestConfigurationReferenceExamplesLoad` loads every top-level YAML example in `docs/configuration.md` with the strict loader, so the reference cannot drift from the loader again. It fails against the v0.8.5 document.
+- The reference said omitted `notifications` default to disabled; they default to enabled, with the bell and desktop notifications on. It called the audit journal tamper-evident; it is unsigned and is not.
+
+### Corrections to earlier entries
+
+The v0.8.4 and v0.8.5 entries below describe more than those releases did. They are left as written, with each overstatement corrected here:
+
+- **v0.8.4, origin check**: the check accepted any loopback origin on any port and compared `Origin` with `Host`, which a DNS-rebinding page controls; a tokenless gateway stayed exposed to web pages. Fixed above.
+- **v0.8.4, PID reuse**: the `ProcessState` guards protect Windows only, and read a field another goroutine was writing. The session-level guards the entry lists (`requestStop`, `waitForStopWithin`, `confirmProcessGroupStopped`, `waitSession`) are not in the v0.8.4 release: the `v0.8.4` tag was moved from `01177f9`, whose release build failed and published nothing, to `8fed073`, which removed them. The published v0.8.4 artefacts are built from `8fed073`. v0.8.5 then reintroduced a PID kill on Windows. Fixed above.
+- **v0.8.4, viewer allowlist**: viewers were not given agent configurations "without exposing secrets": `getAgentProfiles` returned every argument vector. Replaying a recording remains available to viewers, as `docs/recording.md` says; only export and deletion are operator actions. Fixed above.
+- **v0.8.5, settings**: security settings were not saved "without loss" — a save dropped deny rules and blocked patterns and rewrote limits — and the "restart required" fix applied to the web gateway only. The graceful Unix stop covered a single agent's Stop and not shutdown; on Windows it made every Stop 1.5 seconds slower. Restarting an agent that exited on its own worked once, on the desktop. Webhook headers were erased by every save. All fixed above.
+
 ## [0.8.5] - 2026-09-21
 
-Patch release entitled "réglages honnêtes" ("honest settings"), resolving settings fidelity, configuration lifecycle transitions, notification enforcement, and process termination handling.
+Patch release entitled "réglages honnêtes" ("honest settings"), resolving settings fidelity, configuration lifecycle transitions, notification enforcement, and process termination handling. Several of its fixes were partial; see "Corrections to earlier entries" under 0.8.6.
 
 ### Fixed
 
@@ -79,7 +93,7 @@ Patch release entitled "réglages honnêtes" ("honest settings"), resolving sett
 
 ## [0.8.4] - 2026-09-21
 
-Patch release addressing three critical security and process-lifecycle vulnerabilities across the Relayer Web Gateway, the session supervisor, and role-based access control.
+Patch release addressing three critical security and process-lifecycle vulnerabilities across the Relayer Web Gateway, the session supervisor, and role-based access control. Its origin check and PID-reuse guard were incomplete and its tag was moved after a failed release build; see "Corrections to earlier entries" under 0.8.6.
 
 ### Security
 

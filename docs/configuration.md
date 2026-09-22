@@ -101,13 +101,16 @@ or regex text.
 | `notifications` | No | System desktop alerts and webhooks (Slack, Discord, JSON). |
 | `sessions` | No | Detached tmux persistence and success cleanup. |
 | `policies` | No | Security profile, guardrails, rate limits, and first-match action rules. |
-| `audit` | No | Local tamper-evident JSONL recorder with rotation. |
+| `audit` | No | Local JSONL recorder with rotation. It is unsigned and not tamper-evident; see [audit.md](audit.md). |
 | `agents` | Yes | Zero to eight agent specifications. |
 | `intercept_patterns` | Yes | One or more generic adapter regexes, each optionally `sensitive`. |
 
 If `sessions` is omitted, persistence is false and cleanup on success is true.
 If `policies` is omitted, every actionable event defaults to `ask` and dry-run
-is false. If `telemetry` or `notifications` are omitted, they default to disabled.
+is false. If `telemetry` is omitted it is disabled. If `notifications` is
+omitted, notifications are **enabled**, with the terminal bell and desktop
+notifications on and no webhooks; set `notifications.enabled: false` to turn
+them off.
 If `audit` is omitted from an existing v1 file, auditing is disabled
 for compatibility. Newly generated files include and enable metadata auditing.
 
@@ -285,7 +288,8 @@ policies:
     block_destructive: true         # Intercept destructive file deletions & formatting (rm -rf, mkfs, format, etc.)
     block_exfiltration: true        # Intercept piped shell execution & secret reading (curl | bash, .ssh, .env)
     block_sensitive_paths: true     # Protect .env, .git, id_rsa, keys and credentials
-    workspace_only: true            # Restrict agent file writes strictly within the workspace
+    block_outside_workspace: true   # Intercept file access outside workspace_root
+    workspace_root: ./workspace     # Resolved against this file's directory when relative
     blocked_patterns:               # Optional custom regex patterns that force human review
       - '(?i)drop\s+database'
   rules:
@@ -343,7 +347,7 @@ Guardrail options:
   - `block_destructive`: Intercepts destructive disk formatting or file deletion patterns (`rm -rf`, `mkfs`, `format`, `dd of=`, `del /s`, `rmdir /s`).
   - `block_exfiltration`: Intercepts piped remote shell executions or unauthorized credential reading (`curl | bash`, `.ssh`, `.aws`, `.env`).
   - `block_sensitive_paths`: Intercepts modifications to project repository metadata, secrets, and private keys (`.git/`, `.env`, `id_rsa`, `.pem`).
-  - `workspace_only`: Ensures file modifications remain within the configured working directory.
+  - `block_outside_workspace`: Intercepts file access outside `workspace_root`, which defaults to the configuration file's directory and is resolved against it when relative.
   - `blocked_patterns`: Custom list of Go regular expressions that force operator arbitration when matched.
 
 ## Telemetry
@@ -359,7 +363,8 @@ telemetry:
   otlp:
     enabled: false
     endpoint: "https://otlp.example.com:4318/v1/metrics"
-    interval: 15s
+    export_interval: 15s
+    timeout: 5s
     headers:
       Authorization: "Bearer SECRET_TOKEN"
 ```
@@ -373,18 +378,22 @@ telemetry:
 ```yaml
 notifications:
   enabled: true
-  os_notifications: true
-  terminal_bell: true
+  desktop: true
+  bell: true
+  min_severity: info # info, warning, critical
   webhooks:
     - name: slack-alerts
-      type: slack # slack, discord, generic
+      format: slack # slack, discord, generic
       url: https://hooks.slack.com/services/T00/B00/XXXX
       min_severity: warning # info, warning, critical
+      timeout: 5s
+      headers: # optional; kept when the settings editor saves
+        X-Relayer-Team: platform
 ```
 
-- `os_notifications`: Emits native system notifications on Windows (Toast notifications via PowerShell), macOS (osascript system notification center), and Linux (via `notify-send` / libnotify).
-- `terminal_bell`: Emits an acoustic ASCII terminal bell (`\a`) upon pending arbitration prompts.
-- `webhooks`: Dispatches JSON payloads to remote endpoints with automatic rate limiting and backoff:
+- `desktop`: Emits native system notifications on Windows (Toast notifications via PowerShell), macOS (osascript system notification center), and Linux (via `notify-send` / libnotify).
+- `bell`: Emits an acoustic ASCII terminal bell (`\a`) upon pending arbitration prompts.
+- `webhooks`: Dispatches JSON payloads to remote endpoints. A delivery failure is written to the diagnostics with the webhook's name, never its URL:
   - `slack`: Formatted Slack Block Kit payload.
   - `discord`: Formatted Discord Embeds payload.
   - `generic`: Standard JSON payload.
