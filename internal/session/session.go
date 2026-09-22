@@ -32,7 +32,9 @@ var (
 // Windows grace became five seconds, the web gateway's five-second budget did
 // that to every agent the console close never reaches. Budgets for a Stop, a
 // Restart or a shutdown are built on it. It bounds a PTY stop; a tmux stop is
-// a few tmux commands, each bounded by the tmux backend's own command timeout.
+// a few tmux commands, each bounded by the tmux backend's own command timeout,
+// so a wedged tmux server can outlast it and have its stop reported
+// unconfirmed.
 const StopBudget = gracefulStopTimeout + 2*forcedStopTimeout + descendantGraceTime + finalOutputDrainTime + time.Second
 
 const (

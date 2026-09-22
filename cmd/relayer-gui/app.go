@@ -1504,7 +1504,7 @@ func (a *App) completeAgentStart(run *runGeneration, sessionKey string, startedA
 	// interface drops exactly the prompts dropped here.
 	bound := startedAt.Truncate(time.Millisecond)
 	for key, item := range a.pending {
-		if key.sessionID == sessionKey && item.event.Timestamp.Before(bound) {
+		if key.sessionID == sessionKey && promptDetectedAt(item).Before(bound) {
 			delete(a.pending, key)
 		}
 	}
@@ -1699,6 +1699,18 @@ func (a *App) restoreAgentRunningLocked(sessionID string) {
 // ordered by comparing their timestamps as text, here and in the interface;
 // RFC3339Nano drops trailing zeros, so a prompt at .1 sorted after one at .12.
 const eventTimestampLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
+// promptDetectedAt is when a prompt was detected. An adapter stamps every
+// event, but the view falls back to the time it was received, and the
+// interface compares that: taking a zero timestamp as older than any start
+// dropped such a prompt here while the interface kept showing it.
+func promptDetectedAt(item pendingEvent) time.Time {
+	if !item.event.Timestamp.IsZero() {
+		return item.event.Timestamp
+	}
+	detected, _ := time.Parse(time.RFC3339Nano, item.view.Timestamp)
+	return detected
+}
 
 // clearedAll is the ClearedBefore of a status that dropped every prompt of the
 // session: a millisecond past now, the resolution clients compare at.

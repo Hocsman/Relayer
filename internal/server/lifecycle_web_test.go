@@ -163,3 +163,33 @@ func TestARestartDropsThePreviousProcesssPrompts(t *testing.T) {
 		}
 	}
 }
+
+// TestAWebLivePromptStampedBeforeTheStartIsStillShown: the gateway used to drop
+// at ingestion every prompt detected before the session's last start. After the
+// clock steps back, that is every prompt of a live agent.
+func TestAWebLivePromptStampedBeforeTheStartIsStillShown(t *testing.T) {
+	ctrl, _ := startSettingsController(t, policy.DefaultConfig())
+	state := ctrl.GetState()
+	if len(state.Agents) == 0 {
+		t.Skip("the default configuration started no agent on this platform")
+	}
+	id := state.Agents[0].SessionID
+	if err := ctrl.RestartSession(state.RunID, id); err != nil {
+		t.Fatalf("RestartSession: %v", err)
+	}
+	ctrl.mu.RLock()
+	rt := ctrl.runtime
+	ctrl.mu.RUnlock()
+	stepped := adapters.Event{ID: "evt-stepped", SessionID: id, AgentID: id, Type: adapters.EventConfirmation, Summary: "a live question", Timestamp: time.Now().UTC().Add(-time.Minute)}
+	ctrl.handleEvent(context.Background(), rt, session.AdapterEvent{Event: stepped})
+
+	shown := false
+	for _, pending := range ctrl.GetState().PendingEvents {
+		if pending.ID == "evt-stepped" {
+			shown = true
+		}
+	}
+	if !shown {
+		t.Fatal("a live agent's prompt was dropped because its timestamp preceded the last start")
+	}
+}

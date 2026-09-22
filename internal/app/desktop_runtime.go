@@ -1004,6 +1004,9 @@ func (r *DesktopRuntime) closeRecorder() error {
 // backends on what was left, and exit with an agent still running. An explicit
 // cancellation of ctx still ends the operation.
 func afterLockWait(ctx context.Context, waited time.Duration) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	deadline, ok := ctx.Deadline()
 	if !ok || waited <= 0 {
 		return context.WithCancel(ctx)
@@ -1014,6 +1017,14 @@ func afterLockWait(ctx context.Context, waited time.Duration) (context.Context, 
 			cancel()
 		}
 	})
+	// AfterFunc runs on its own goroutine, so a context already cancelled when
+	// the lock came free would otherwise hand back a live one for an instant,
+	// long enough to admit an operation the caller had given up on. Once ctx
+	// has ended on its deadline it reports nothing further, so a cancellation
+	// after that cannot reach the operation, which then ends on its own.
+	if errors.Is(ctx.Err(), context.Canceled) {
+		cancel()
+	}
 	return owned, func() {
 		stop()
 		cancel()

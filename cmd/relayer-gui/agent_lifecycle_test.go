@@ -258,3 +258,26 @@ func TestTheReplacementsFirstPromptSurvivesAnAnsweredOne(t *testing.T) {
 		t.Fatalf("pending after the restart = %#v, want the replacement's prompt", state.PendingEvents)
 	}
 }
+
+// TestALivePromptStampedBeforeTheStartIsStillShown: prompts used to be dropped
+// at ingestion when their detection time preceded the session's last start.
+// After the clock steps back, an NTP correction for instance, that is every
+// prompt of a live agent, dropped without being shown, decided or journaled.
+func TestALivePromptStampedBeforeTheStartIsStillShown(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	application := newBridgeForTest(engine)
+	runID := activeRunIDForTest(application)
+	run := activeRunForTest(application)
+
+	if err := application.RestartSession(runID, "agent-a"); err != nil {
+		t.Fatalf("RestartSession: %v", err)
+	}
+	stepped := bridgeEvent("agent-a", "prompt-stepped")
+	stepped.Timestamp = time.Now().UTC().Add(-time.Minute)
+	application.handleAdapterEventForRun(run, stepped)
+
+	state, _ := application.GetState()
+	if len(state.PendingEvents) != 1 || state.PendingEvents[0].ID != "prompt-stepped" {
+		t.Fatalf("pending = %#v, want the live agent's prompt", state.PendingEvents)
+	}
+}
