@@ -250,8 +250,8 @@ export function RecordingsPanel({ bridge, readOnly, onClose }: RecordingsPanelPr
 
         <footer className="recordings-panel__footer">
           <p>
-            Recordings hold terminal output only. Credentials intercepted by the policy engine are
-            redacted before a frame is written to disk.
+            Recordings hold the terminal output verbatim, including anything an agent printed, and
+            typed input only where the configuration records it. Treat a transcript as sensitive.
           </p>
           {actionError && (
             <p className="recordings-panel__action-error" role="alert">
@@ -489,11 +489,8 @@ function RecordingRow({
               {recording.droppedFrames} dropped
             </span>
           )}
-          {recording.inputRecorded && (
-            <span className="recordings-badge recordings-badge--input">Input recorded</span>
-          )}
-          {recording.redacted && (
-            <span className="recordings-badge recordings-badge--redacted">Redacted</span>
+          {inputBadge(recording) && (
+            <span className="recordings-badge recordings-badge--input">{inputBadge(recording)}</span>
           )}
         </div>
       </td>
@@ -554,4 +551,13 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// inputBadge says what a transcript holds of what was typed. "Redacted" alone
+// read as if the whole transcript were redacted, while redaction only ever masks
+// input frames; and tmux sessions record no input at all, whatever the
+// configuration says.
+export function inputBadge(recording: Pick<RecordingView, "inputRecorded" | "redacted" | "backend">): string {
+  if (!recording.inputRecorded || recording.backend === "tmux") return "";
+  return recording.redacted ? "Input masked" : "Input recorded verbatim";
 }

@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { RecordingView, RelayerBridge } from "../types/relayer";
-import { RecordingsContentView, RecordingsPanel, recordingPermissions } from "./RecordingsPanel";
+import { inputBadge, RecordingsContentView, RecordingsPanel, recordingPermissions } from "./RecordingsPanel";
 
 function sampleRecordings(): RecordingView[] {
   return [
@@ -74,8 +74,18 @@ describe("RecordingsContentView", () => {
     expect(markup).toContain("47.1 KB");
     expect(markup).toContain("Truncated");
     expect(markup).toContain("12 dropped");
-    expect(markup).toContain("Input recorded");
-    expect(markup).toContain("Redacted");
+    expect(markup).toContain("Input masked");
+    // rec-1 records no input: redaction, which only masks input frames, has
+    // nothing to say about it, and a bare "Redacted" read as if the output were.
+    expect(markup).not.toContain(">Redacted<");
+  });
+
+  it("describes recorded input truthfully, and none for tmux", () => {
+    expect(inputBadge({ inputRecorded: false, redacted: true, backend: "pty" })).toBe("");
+    expect(inputBadge({ inputRecorded: true, redacted: true, backend: "pty" })).toBe("Input masked");
+    expect(inputBadge({ inputRecorded: true, redacted: false, backend: "pty" })).toBe("Input recorded verbatim");
+    // tmux sends keys through tmux itself, so its transcripts hold no input.
+    expect(inputBadge({ inputRecorded: true, redacted: false, backend: "tmux" })).toBe("");
   });
 
   it("marks an in-progress recording and offers no delete control for it", () => {
