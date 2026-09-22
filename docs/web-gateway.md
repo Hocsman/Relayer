@@ -105,10 +105,17 @@ resolves to `127.0.0.1` reaches the loopback socket and controls its `Origin`,
 but its browser still names the page's domain in `Host`.
 
 The same check refuses a tokenless gateway reached **through a forward or a
-proxy**. An SSH tunnel (`ssh -L 9000:127.0.0.1:8080`), an editor's port
-forwarding, or a reverse proxy on another port or name all send a `Host` that is
-not the gateway's own address and port, and get `403`. Pass `--token` to use any
-of them: a gateway with tokens checks `Origin` against `Host`, but does not pin
+proxy that changes the port or the name**: an SSH tunnel to another local port
+(`ssh -L 9000:127.0.0.1:8080`), an editor forward that picks a different port,
+or a reverse proxy under another name all send a `Host` that is not the
+gateway's own address and port, and get `403`.
+
+A forward that keeps `127.0.0.1` or `localhost` **and the same port**
+(`ssh -L 8080:127.0.0.1:8080`, or an editor forward that reuses the remote port)
+is indistinguishable from a local browser and **is accepted anonymously as
+`local-operator`**. Every local process on the machine that opened the forward
+can then operate the remote agents. Pass `--token` for any forward, tunnel or
+proxy: a gateway with tokens checks `Origin` against `Host`, but does not pin
 `Host` itself.
 
 Anonymous access is still access for **anything running locally as a client**:
@@ -135,8 +142,9 @@ bypasses prompt detection, policy, and arbitration by design.
 
 An operator also receives each agent's full command line, because it can edit
 and restart the agents: a credential passed as an argument is visible to every
-operator token. A viewer receives only each agent's executable name, and none of
-the configuration's file paths.
+operator token. A viewer receives only each agent's executable name, and no host
+path: not the configuration's, the audit journal's, the recordings' or an
+agent's working directory, and not in an error message either.
 
 The full trust boundary is described in
 [security-model.md](security-model.md#web-gateway-and-remote-operators).

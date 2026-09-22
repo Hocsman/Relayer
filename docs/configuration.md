@@ -393,7 +393,7 @@ notifications:
 
 - `desktop`: Emits native system notifications on Windows (Toast notifications via PowerShell), macOS (osascript system notification center), and Linux (via `notify-send` / libnotify).
 - `bell`: Emits an acoustic ASCII terminal bell (`\a`) upon pending arbitration prompts.
-- `webhooks`: Dispatches JSON payloads to remote endpoints. A delivery failure is reported with the webhook's name, never its URL or headers: `relayer serve` writes it to its diagnostics and the desktop application to its standard error. The terminal interface does not report it, because it owns the terminal.
+- `webhooks`: Dispatches JSON payloads to remote endpoints. A delivery failure is reported with the webhook's name, never its URL or headers: `relayer serve` writes it to its diagnostics and the desktop application to its standard error, which is visible only when the application is started from a terminal (the released Windows build has no console). The terminal interface does not report it, because it owns the terminal.
   - `slack`: Formatted Slack Block Kit payload.
   - `discord`: Formatted Discord Embeds payload.
   - `generic`: Standard JSON payload.
