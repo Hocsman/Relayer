@@ -68,9 +68,11 @@ therefore occur before a subprocess starts. If a later session cannot start, or
 its session-start audit record fails, the application rolls back sessions that
 already started.
 
-Runtime updates to policies, guardrails, and webhooks in the Desktop GUI are
-handled dynamically by `internal/config` and applied with hot-reload without
-stopping running agent sessions.
+Settings saved from the Desktop GUI or the web gateway are written by
+`internal/config`. Notification and webhook changes are applied to the running
+process at once. The policy engine is built once per run, so policy and
+guardrail changes take effect at the next restart, and the editor reports a
+restart as required until then.
 
 ## Agent plans
 

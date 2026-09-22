@@ -113,3 +113,43 @@ func TestWebSecurityViewCarriesTheGoPresets(t *testing.T) {
 		t.Fatalf("strict preset = %d/%d, want ProfileConfig's 10/1", strict.RateLimitPerMinute, strict.MaxConsecutiveAutoDecisions)
 	}
 }
+
+// TestWebRestartRequiredFollowsWhatTheRunningEngineHas: a notification-only
+// save is applied at once and owes no restart; a policy save does. v0.8.5
+// asked for a restart after every save, notifications included.
+func TestWebRestartRequiredFollowsWhatTheRunningEngineHas(t *testing.T) {
+	ctrl, _ := startSettingsController(t, policy.DefaultConfig())
+	view, err := ctrl.GetFullSettings()
+	if err != nil {
+		t.Fatalf("GetFullSettings: %v", err)
+	}
+	if view.RestartRequired {
+		t.Fatal("a freshly started run already reports a restart as required")
+	}
+
+	notifications := view.Notifications
+	notifications.Bell = !notifications.Bell
+	saved, err := ctrl.SaveFullSettings("", SaveFullSettingsRequest{
+		ExpectedRevision: view.Revision,
+		Notifications:    &notifications,
+	})
+	if err != nil {
+		t.Fatalf("SaveFullSettings notifications: %v", err)
+	}
+	if saved.RestartRequired {
+		t.Fatal("a notification-only save asked for a restart, though it is applied at once")
+	}
+
+	security := saved.Security
+	security.DryRun = true
+	saved, err = ctrl.SaveFullSettings("", SaveFullSettingsRequest{
+		ExpectedRevision: saved.Revision,
+		Security:         &security,
+	})
+	if err != nil {
+		t.Fatalf("SaveFullSettings security: %v", err)
+	}
+	if !saved.RestartRequired {
+		t.Fatal("a dry-run change was reported as applied, but the running engine never sees it")
+	}
+}

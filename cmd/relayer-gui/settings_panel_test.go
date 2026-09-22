@@ -98,9 +98,70 @@ intercept_patterns:
 		t.Errorf("expected 1 webhook team-slack")
 	}
 
-	// Profiles were untouched, so restart should not be required
+	// The policy changed, and the engine is built once per run: the save must
+	// say a restart is needed. v0.8.5 asserted the opposite here, because only
+	// agent changes were counted, and the panel said "applied immediately".
+	if !saved.RestartRequired {
+		t.Errorf("expected RestartRequired true after a policy change the running engine does not have")
+	}
+}
+
+// TestNotificationOnlySaveNeedsNoRestart guards the other side of the
+// restart-required rule: notifications are applied to the running app at once,
+// so a save that changes only them must not ask for a restart.
+func TestNotificationOnlySaveNeedsNoRestart(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	initialYAML := `version: 1
+backend: pty
+
+agents:
+  - id: alpha
+    name: Agent Alpha
+    command: ["echo", "alpha"]
+
+intercept_patterns:
+  - pattern: '(?i)continue'
+    description: continue prompt
+`
+	if err := os.WriteFile(configPath, []byte(initialYAML), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	app := NewApp()
+	app.configPath = configPath
+	app.ctx = context.Background()
+
+	view, err := app.GetFullSettings()
+	if err != nil {
+		t.Fatalf("GetFullSettings: %v", err)
+	}
+	// As if the running engine had been started from this file.
+	app.activeConfigRevision = app.profileRevisionHash
+
+	notifications := view.Notifications
+	notifications.Bell = !notifications.Bell
+	saved, err := app.SaveFullSettings("", SaveFullSettingsRequest{
+		ExpectedRevision: view.Revision,
+		Notifications:    &notifications,
+	})
+	if err != nil {
+		t.Fatalf("SaveFullSettings: %v", err)
+	}
 	if saved.RestartRequired {
-		t.Errorf("expected RestartRequired false when profiles are unchanged")
+		t.Fatal("a notification-only save asked for a restart, though it is applied at once")
+	}
+
+	// A policy change after it still needs one.
+	security := saved.Security
+	security.DryRun = true
+	saved, err = app.SaveFullSettings("", SaveFullSettingsRequest{
+		ExpectedRevision: saved.Revision,
+		Security:         &security,
+	})
+	if err != nil {
+		t.Fatalf("SaveFullSettings security: %v", err)
+	}
+	if !saved.RestartRequired {
+		t.Fatal("a dry-run change was reported as applied, but the running engine never sees it")
 	}
 }
 

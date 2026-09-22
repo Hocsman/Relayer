@@ -243,11 +243,11 @@ export function AgentSettingsPanel({
         setNotice(result.restartRequired
           ? {
               tone: "warning",
-              text: "Configuration saved — restart required to apply agent changes.",
+              text: "Configuration saved — restart the run to apply it.",
             }
           : {
               tone: "success",
-              text: "Configuration saved and applied immediately.",
+              text: "Configuration saved and applied.",
             });
         setCloseConfirmation(false);
       } else {

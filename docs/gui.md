@@ -245,13 +245,14 @@ Configure human supervisor alerts:
 - **Terminal Bell**: Enable acoustic ASCII `\a` alert bell.
 - **Webhooks Table**: Add, edit, or remove outbound webhooks for **Slack** (Block Kit), **Discord** (Embeds), or generic JSON with min-severity filtering (`info`, `warning`, `critical`).
 
-### Hot-Reload Without Agent Interruption
+### What applies at once, and what needs a restart
 
-Saving changes in **Security & Guardrails** or **Notifications & Webhooks**
-updates `config.yaml` atomically and updates the active runtime engine
-immediately **without restarting or killing running agent processes**.
-Only structural agent modifications (`command`, `cwd`, `backend`, or agent addition/removal)
-require an intentional generation restart.
+Saving updates `config.yaml` atomically. Changes in **Notifications & Webhooks**
+are applied to the running app at once. Changes in **Security & Guardrails**,
+like agent changes, take effect when the run is restarted: the policy engine is
+built once per run. After such a save the editor reports a restart as required,
+and the top bar keeps showing the policy that is actually enforced; neither
+claims the new policy is active before it is.
 
 Saving uses an opaque revision token, a per-file lock, and atomic replacement.
 Concurrent Relayer writers cannot both publish from the same revision; an

@@ -172,8 +172,9 @@ inside Go until the user explicitly replaces the entire argv. Shell commands,
 environment overrides, and unknown advanced adapters are read-only in the GUI
 and remain editable in YAML. A plain GUI save does not mutate running sessions;
 the guarded restart action can apply the saved configuration without closing
-the application. Security profiles, guardrails, and webhooks in other tabs are
-hot-reloaded immediately without restarting agents. Legacy documents and
+the application. Webhook and notification changes in the other tabs apply at
+once; security profiles and guardrails take effect when the run restarts, and
+the editor reports a restart as required until they do. Legacy documents and
 profiles with historical IDs outside the form's conservative syntax remain
 read-only; Relayer does not migrate or normalize them silently.
 

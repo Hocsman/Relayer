@@ -201,23 +201,25 @@ func (a *App) saveFullSettingsLocked(request SaveFullSettingsRequest) (FullSetti
 	a.profileRevisionHash = revision
 	a.profileRevisionToken = token
 
-	// Update GUI runtime topbar state if active
-	if update.Policies != nil {
-		a.mu.Lock()
-		a.state.Policy.DefaultAction = string(update.Policies.DefaultAction)
-		a.state.Policy.DryRun = update.Policies.DryRun
-		a.mu.Unlock()
-	}
+	// The top bar is not updated here. It shows the running engine's policy,
+	// and the engine is built once per run: showing the saved values made
+	// DRY RUN appear active while automatic approvals kept being delivered.
 
 	if update.Notifications != nil {
 		a.notifier = notify.New(updated.Notifications, nil)
 	}
 
-	if !specsChanged && a.activeConfigRevision != "" {
+	// Notifications are applied above; agents and policies only take effect in
+	// a new run. The running engine is therefore still current only when the
+	// save changed neither, and nothing was already waiting for a restart.
+	// v0.8.5 advanced it whenever the agents were unchanged, so a policy save
+	// was announced as "applied immediately" while nothing enforced it.
+	policiesChanged := !reflect.DeepEqual(current.Policies, updated.Policies)
+	if !specsChanged && !policiesChanged && a.activeConfigRevision != "" && a.activeConfigRevision == current.Revision {
 		a.activeConfigRevision = updated.Revision
 	}
 	profilesView := a.agentProfilesViewLocked(updated, token)
-	if specsChanged {
+	if specsChanged || policiesChanged {
 		profilesView.RestartRequired = true
 	}
 

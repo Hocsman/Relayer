@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -1241,6 +1242,15 @@ func (c *Controller) SaveFullSettings(runID string, req SaveFullSettingsRequest)
 	if update.Notifications != nil {
 		c.notificationConfig = res.Notifications
 		c.notifier = notify.New(res.Notifications, c.diagnostics)
+	}
+
+	// Notifications are applied above; agents and policies only reach a new
+	// run. When the save changed neither, and nothing was already waiting for
+	// a restart, the running engine is still current and no restart is owed.
+	agentsChanged := update.UpdateAgents && !reflect.DeepEqual(cfg.Agents, res.Agents)
+	policiesChanged := !reflect.DeepEqual(cfg.Policies, res.Policies)
+	if !agentsChanged && !policiesChanged && c.activeConfigRevision != "" && c.activeConfigRevision == cfg.Revision {
+		c.activeConfigRevision = res.Revision
 	}
 
 	profilesView, err := c.loadAgentProfilesLocked()

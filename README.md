@@ -63,7 +63,7 @@ go run github.com/Hocsman/Relayer/cmd/relayer@latest
 - Fully bidirectional interactive browser terminal: attach to an agent and type
   directly into its PTY, including arrow keys, VT escape sequences and `Ctrl+C`,
   streamed over WebSocket binary frames. Attach and detach are audited; keystrokes are not.
-- Visual configuration editor in Desktop GUI with hot-reload (Policies, Guardrails, Webhooks) without agent restart.
+- Visual configuration editor in the Desktop GUI and the web gateway for agents, policies, guardrails and webhooks. Notification changes apply at once; policy and agent changes apply when the run is restarted, and the editor says when one is due.
 - Interactive terminal text search (`Ctrl+F`) with circular navigation and highlighting via `@xterm/addon-search`.
 - Operator arbitration shortcuts: `Alt+1..8` (agent focus/modal), `Ctrl+Enter` (Allow), `Esc` (Deny).
 - Fullscreen TUI metrics overlay (`m` / `M`) reporting uptime, decision ratios, and reaction latency stats.
@@ -205,7 +205,7 @@ path. Applications opened from Finder or desktop launchers may not inherit the s
 when required.
 
 The Desktop GUI features:
-- **Visual Settings Editor**: Interactive tabs for `🤖 Agents`, `🛡️ Security & Guardrails`, and `🔔 Notifications & Webhooks`. Edit policies, sensitive paths, and webhooks with immediate **hot-reload** without interrupting or restarting running agent processes.
+- **Visual Settings Editor**: Interactive tabs for `🤖 Agents`, `🛡️ Security & Guardrails`, and `🔔 Notifications & Webhooks`. Notification and webhook changes apply at once. Policy and guardrail changes are saved immediately and take effect when the run is restarted — the running policy engine is built once per run — and the editor says so rather than claiming they are already applied.
 - **Per-Agent Process Controls**: Granular `Stop`, `Restart`, and `Start` controls on each agent terminal card in the workspace to manage individual agents in place without interrupting sibling processes.
 - **Terminal Search (`Ctrl+F`)**: Integrated xterm search toolbar with match count, highlighting, circular `Enter` / `Shift+Enter` navigation, and `Esc` dismissal.
 - **Arbitration Shortcuts**: `Alt+1..8` to focus agents / open pending arbitration modals, `Ctrl+Enter` to approve (`Allow`), and `Esc` to deny (`Deny`).
