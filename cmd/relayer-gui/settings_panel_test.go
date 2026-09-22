@@ -151,8 +151,13 @@ intercept_patterns:
 	}
 
 	// A policy change after it still needs one.
+	before, err := app.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
 	security := saved.Security
 	security.DryRun = true
+	security.DefaultAction = "deny"
 	saved, err = app.SaveFullSettings("", SaveFullSettingsRequest{
 		ExpectedRevision: saved.Revision,
 		Security:         &security,
@@ -162,6 +167,16 @@ intercept_patterns:
 	}
 	if !saved.RestartRequired {
 		t.Fatal("a dry-run change was reported as applied, but the running engine never sees it")
+	}
+
+	// The top bar shows the running engine's policy. Showing the saved values
+	// put DRY RUN on screen while automatic approvals kept being delivered.
+	after, err := app.GetState()
+	if err != nil {
+		t.Fatalf("GetState after the save: %v", err)
+	}
+	if after.Policy != before.Policy {
+		t.Fatalf("policy shown after a save = %+v, want the running engine's %+v until a restart", after.Policy, before.Policy)
 	}
 }
 

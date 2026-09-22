@@ -52,7 +52,13 @@ describe("presetSettings", () => {
     expect(next.maxConsecutiveAutoDecisions).toBe(1);
     expect(next.blockDestructive).toBe(true);
     expect(next.defaultAction).toBe("ask");
-    expect(next.dryRun).toBe(false);
+  });
+
+  it("keeps dry-run: choosing a preset in a dry-run configuration must not go live", () => {
+    // current is in dry-run; every preset the engine sends has it off.
+    const next = presetSettings(current, "strict", { strict: strictFromEngine });
+    expect(next.dryRun).toBe(true);
+    expect(presetSettings({ ...current, dryRun: false }, "strict", { strict: strictFromEngine }).dryRun).toBe(false);
   });
 
   it("keeps the user's workspace path: choosing a preset does not move the workspace", () => {

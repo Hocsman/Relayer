@@ -328,6 +328,7 @@ export function AgentSettingsPanel({
     } catch {
       // Reload every tab, not only the agents: the drafts may no longer match
       // what the file holds, and a stale security draft would be saved again.
+      let reloadedFromFile = false;
       try {
         const reloaded = typeof bridge.getFullSettings === "function" && !readOnly
           ? await bridge.getFullSettings()
@@ -340,9 +341,14 @@ export function AgentSettingsPanel({
           setSecurityDraft(fullReloaded.security);
           setNotificationDraft(fullReloaded.notifications);
         }
+        reloadedFromFile = true;
       } catch {
       }
-      setError("The run change failed and the configuration was reloaded from the file. Decisions stay blocked until the engine is back in a safe state.");
+      // Say the form was reloaded only if it was: otherwise it still shows the
+      // unsaved drafts, and saving them again would repeat the failed change.
+      setError(reloadedFromFile
+        ? "The run change failed and the configuration was reloaded from the file. Decisions stay blocked until the engine is back in a safe state."
+        : "The run change failed, and the configuration could not be reloaded: the form still shows your unsaved changes. Close and reopen the settings before trying again. Decisions stay blocked until the engine is back in a safe state.");
     } finally {
       setActivating(false);
     }
@@ -938,8 +944,9 @@ export function limitValue(raw: string): number {
 // values come from the engine's own profile definitions: the form used to carry
 // its own copy, which disagreed with what the engine loads for the same name
 // (strict was 20/5 here and 10/1 there; permissive turned the guardrails off
-// here and kept them on there). The workspace path is the user's, not the
-// preset's, so it is kept.
+// here and kept them on there). The workspace path and dry-run are the user's,
+// not the preset's, so they are kept: a preset switch used to turn dry-run off,
+// so choosing "permissive" in a dry-run configuration went live on save.
 export function presetSettings(
   current: SecuritySettings,
   profile: string,
@@ -949,7 +956,7 @@ export function presetSettings(
   if (!preset) {
     return { ...current, profile };
   }
-  return { ...preset, profile, workspaceRoot: current.workspaceRoot };
+  return { ...preset, profile, workspaceRoot: current.workspaceRoot, dryRun: current.dryRun };
 }
 
 function SecuritySettingsTab({
@@ -990,6 +997,9 @@ function SecuritySettingsTab({
             <option value="custom">custom</option>
           </select>
         </div>
+        <p>
+          Choosing a preset replaces the default action, guardrails, limits and policy rules with the preset's when you save. Dry-run, the workspace root and blocked patterns are kept.
+        </p>
         <div className="settings-row">
           <span>Default Action</span>
           <select
@@ -1070,7 +1080,7 @@ function SecuritySettingsTab({
             className="settings-input"
             style={{ width: "280px" }}
             value={settings.workspaceRoot}
-            placeholder="Empty = current directory"
+            placeholder="Empty = keep the current root, or the configuration file's folder"
             onChange={(e) => patch("workspaceRoot", e.target.value)}
             disabled={disabled}
             aria-label="Workspace root"
