@@ -531,6 +531,13 @@ func (a *tuiBackendAdapter) RestartSession(id string) error {
 	return err
 }
 
+// MarkSessionExited implements the TUI's exit notification.
+func (a *tuiBackendAdapter) MarkSessionExited(id string) {
+	if a.lifecycle != nil {
+		a.lifecycle.MarkProcessExited(id)
+	}
+}
+
 func (a *tuiBackendAdapter) Name() string             { return a.router.Name() }
 func (a *tuiBackendAdapter) Context() context.Context { return a.router.Context() }
 func (a *tuiBackendAdapter) BeginShutdown()           { a.router.BeginShutdown() }

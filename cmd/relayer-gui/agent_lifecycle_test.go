@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/Hocsman/Relayer/internal/adapters"
 )
 
 func markAgentExitedForTest(application *App, sessionID string) {
@@ -89,5 +91,60 @@ func TestStartSessionFailureMarksTheAgentFailed(t *testing.T) {
 	state := agentStateForTest(application, "agent-a")
 	if state.Running || state.Status != "failed" {
 		t.Fatalf("state after failed start = %#v, want an explicit failed state", state)
+	}
+}
+
+func exitEventForTest(sessionID string) adapters.Event {
+	// A fresh process numbers its events from 1 again, so each instance's
+	// first exit carries the same ID.
+	code := 0
+	return adapters.NewProcessExitEvent(sessionID, sessionID, "generic", 1, &code, false)
+}
+
+func activeRunForTest(application *App) *runGeneration {
+	application.mu.RLock()
+	defer application.mu.RUnlock()
+	return application.active
+}
+
+// TestRestartAfterASecondNaturalExit is the v0.8.5 regression: a restarted
+// agent's exit carries the same event ID as the exit before it, the desktop kept
+// that ID as resolved, and the second exit was dropped. The agent then looked
+// running forever, and Start was refused as "still running".
+func TestRestartAfterASecondNaturalExit(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	application := newBridgeForTest(engine)
+	runID := activeRunIDForTest(application)
+	run := activeRunForTest(application)
+
+	for cycle := 1; cycle <= 3; cycle++ {
+		application.handleAdapterEventForRun(run, exitEventForTest("agent-a"))
+		if state := agentStateForTest(application, "agent-a"); state.Running || state.Status != "exited" {
+			t.Fatalf("cycle %d: state after the exit = %#v, want exited", cycle, state)
+		}
+		if err := application.StartSession(runID, "agent-a"); err != nil {
+			t.Fatalf("cycle %d: StartSession after a natural exit: %v", cycle, err)
+		}
+		if state := agentStateForTest(application, "agent-a"); !state.Running {
+			t.Fatalf("cycle %d: state after the start = %#v, want running", cycle, state)
+		}
+	}
+}
+
+// TestAStaleExitDoesNotStopTheReplacement: the previous process's exit can be
+// emitted after its replacement started. The lifecycle then reports it stale,
+// and the desktop must keep showing the replacement as running.
+func TestAStaleExitDoesNotStopTheReplacement(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	application := newBridgeForTest(engine)
+	run := activeRunForTest(application)
+
+	engine.mu.Lock()
+	engine.staleExits = true
+	engine.mu.Unlock()
+	application.handleAdapterEventForRun(run, exitEventForTest("agent-a"))
+
+	if state := agentStateForTest(application, "agent-a"); !state.Running || state.Status != "running" {
+		t.Fatalf("state after a stale exit = %#v, want the replacement still running", state)
 	}
 }

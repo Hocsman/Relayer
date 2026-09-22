@@ -1006,10 +1006,27 @@ func (m *Model) applyProcessExit(event adapters.Event) tea.Cmd {
 		summary = "process finished"
 	}
 	m.appendLog(fmt.Sprintf("%s: %s", m.panes[paneIndex].name, summary))
+	notify := m.notifySessionExited(event.SessionID)
 	if m.inputTarget == "" && !m.writePending {
-		return m.activateNextPrompt()
+		return tea.Batch(notify, m.activateNextPrompt())
 	}
-	return nil
+	return notify
+}
+
+// notifySessionExited tells the lifecycle, off the Update loop, that an agent
+// exited on its own. The TUI never did, so the lifecycle kept the agent
+// running and a restart first "stopped" the dead process, journaling a second
+// session_finished. The lifecycle asks the backend to confirm, which for tmux
+// starts a subprocess, so it must not run inside Update.
+func (m *Model) notifySessionExited(sessionID string) tea.Cmd {
+	observer, ok := m.backend.(SessionExitObserver)
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		observer.MarkSessionExited(sessionID)
+		return nil
+	}
 }
 
 func (m *Model) beginAttach(paneIndex int) tea.Cmd {

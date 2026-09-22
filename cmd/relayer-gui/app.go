@@ -80,7 +80,7 @@ type desktopEngine interface {
 	StartAgent(context.Context, string) error
 	StopAgent(context.Context, string) error
 	RestartAgent(context.Context, string) error
-	MarkProcessExited(string)
+	MarkProcessExited(string) bool
 	RecordAudit(audit.Entry) error
 	BeginShutdown(context.Context) error
 	BeginRestart(context.Context) error
@@ -649,10 +649,26 @@ func eventDetectedEntry(event adapters.Event, backend string) audit.Entry {
 }
 
 func (a *App) handleProcessExit(run *runGeneration, event adapters.Event, backend string) {
+	current := true
 	if run != nil && run.engine != nil {
-		run.engine.MarkProcessExited(event.SessionID)
+		current = run.engine.MarkProcessExited(event.SessionID)
 	}
 	key := makeEventKey(event.SessionID, event.ID)
+	if !current {
+		// A replacement already runs: this is the exit of the process before
+		// it, which can be emitted after the replacement started. It is still
+		// a finished session and is journaled, but showing the agent stopped
+		// would hide a live process and offer to start a second one.
+		_ = a.recordAudit(run, eventDetectedEntry(event, backend))
+		finished := eventAuditEntry(audit.KindSessionFinished, event, backend)
+		finished.Outcome = audit.OutcomeFinished
+		finished.Reason = "process_exit"
+		_ = a.recordAudit(run, finished)
+		a.mu.Lock()
+		a.markResolvedLocked(key)
+		a.mu.Unlock()
+		return
+	}
 	// Lifecycle state still has to converge even when audit has failed, so the
 	// result is deliberately ignored rather than short-circuiting the exit.
 	_ = a.recordAudit(run, eventDetectedEntry(event, backend))
@@ -1468,6 +1484,12 @@ func (a *App) completeAgentStart(run *runGeneration, sessionKey string) {
 	a.mu.Lock()
 	delete(a.stoppingSessions, sessionKey)
 	delete(a.frozen, sessionKey)
+	// A fresh process numbers its events from the start again, and event IDs
+	// derive from that sequence, so the new process's exit — or a prompt it
+	// repeats — carries an ID the previous process already used. v0.8.5 kept
+	// those IDs as resolved and dropped the second exit as a duplicate: the
+	// agent then looked running forever and could not be started again.
+	a.forgetResolvedLocked(sessionKey)
 	displaySessionID := ""
 	if index, found := a.agentIndex[sessionKey]; found {
 		agent := &a.state.Agents[index]
@@ -1671,6 +1693,21 @@ func (a *App) markResolvedLocked(key eventKey) {
 	oldest := a.resolvedOrder[0]
 	a.resolvedOrder = append(a.resolvedOrder[:0], a.resolvedOrder[1:]...)
 	delete(a.resolved, oldest)
+}
+
+// forgetResolvedLocked drops the resolved events of one session, so the next
+// process under that identity is not mistaken for the one before it.
+func (a *App) forgetResolvedLocked(sessionKey string) {
+	sessionKey = strings.ToLower(strings.TrimSpace(sessionKey))
+	kept := a.resolvedOrder[:0]
+	for _, key := range a.resolvedOrder {
+		if key.sessionID == sessionKey {
+			delete(a.resolved, key)
+			continue
+		}
+		kept = append(kept, key)
+	}
+	a.resolvedOrder = kept
 }
 
 func (a *App) rebuildPendingLocked() {

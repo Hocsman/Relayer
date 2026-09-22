@@ -318,20 +318,32 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 	case session.AdapterEvent:
 		adapterEv := ev.Event
 		if adapterEv.Type == adapters.EventProcessExit {
-			rt.MarkProcessExited(adapterEv.SessionID)
+			if !rt.MarkProcessExited(adapterEv.SessionID) {
+				// The exit of the process before a replacement that already
+				// runs. Showing the agent stopped would hide the live process.
+				return
+			}
+			// "exited" or "failed" are the statuses the interface clears
+			// Running on; v0.8.5 broadcast "stopped", so the card kept a Stop
+			// button that could only fail.
+			status := "exited"
+			if adapterEv.Metadata["failed"] == "true" {
+				status = "failed"
+			}
 			c.mu.Lock()
 			idx, found := c.agentIndex[strings.ToLower(adapterEv.SessionID)]
 			if found {
 				c.state.Agents[idx].Running = false
-				c.state.Agents[idx].Status = "stopped"
+				c.state.Agents[idx].Status = status
 			}
+			runID := c.runID
 			c.mu.Unlock()
 
 			c.broadcast(eventStatus, StatusEvent{
-				RunID:     c.runID,
+				RunID:     runID,
 				Scope:     "session",
 				SessionID: adapterEv.SessionID,
-				Status:    "stopped",
+				Status:    status,
 			})
 			return
 		}
@@ -873,7 +885,36 @@ func (c *Controller) StartSession(runID, sessionID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	return rt.StartAgent(ctx, sessionID)
+	if err := rt.StartAgent(ctx, sessionID); err != nil {
+		return err
+	}
+	c.markSessionStarted(sessionID)
+	return nil
+}
+
+// markSessionStarted shows a freshly started agent as running and tells every
+// client. v0.8.5 never did: Running stayed false after a start, so the card
+// offered Start for an agent that was running, and a second click hit the
+// lifecycle's "still running" refusal.
+func (c *Controller) markSessionStarted(sessionID string) {
+	c.mu.Lock()
+	idx, found := c.agentIndex[strings.ToLower(strings.TrimSpace(sessionID))]
+	if found && idx < len(c.state.Agents) {
+		c.state.Agents[idx].Running = true
+		c.state.Agents[idx].Status = "running"
+		c.state.Agents[idx].ExitCode = nil
+	}
+	runID := c.runID
+	c.mu.Unlock()
+	if !found {
+		return
+	}
+	c.broadcast(eventStatus, StatusEvent{
+		RunID:     runID,
+		Scope:     "session",
+		SessionID: sessionID,
+		Status:    "running",
+	})
 }
 
 func (c *Controller) RestartSession(runID, sessionID string) error {
@@ -888,7 +929,11 @@ func (c *Controller) RestartSession(runID, sessionID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	return rt.RestartAgent(ctx, sessionID)
+	if err := rt.RestartAgent(ctx, sessionID); err != nil {
+		return err
+	}
+	c.markSessionStarted(sessionID)
+	return nil
 }
 
 func (c *Controller) StopRun(runID string) (AppState, error) {

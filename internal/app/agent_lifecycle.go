@@ -255,13 +255,20 @@ func (l *agentLifecycle) StartAgent(ctx context.Context, agentID, reason string)
 	return info, nil
 }
 
+func (l *agentLifecycle) specFor(key string) agent.Spec {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.specs[key]
+}
+
 // backendReportsRunning asks the backend, read-only, whether an agent's process
 // still runs. Anything short of a clear "not running" — a snapshot error other
-// than a missing session included — counts as running: starting a second
-// process beside a live one is the failure this guards against.
+// than a missing session or a closed backend included — counts as running:
+// starting a second process beside a live one is the failure this guards
+// against. A closed backend runs nothing.
 func (l *agentLifecycle) backendReportsRunning(ctx context.Context, id string) bool {
 	snapshot, err := l.router.Snapshot(ctx, id)
-	if errors.Is(err, terminal.ErrSessionNotFound) {
+	if errors.Is(err, terminal.ErrSessionNotFound) || errors.Is(err, terminal.ErrClosed) {
 		return false
 	}
 	if err != nil {
@@ -282,6 +289,16 @@ func (l *agentLifecycle) RestartAgent(ctx context.Context, agentID string) (term
 	l.mu.Unlock()
 	if !known {
 		return terminal.Info{}, fmt.Errorf("%w: %q", terminal.ErrSessionNotFound, agentID)
+	}
+	if state == agentStateRunning {
+		// A process that already exited on its own has nothing to stop, and
+		// stopping it anyway journaled a second session_finished beside the
+		// one its exit had written. The TUI, which never reported natural
+		// exits to the lifecycle, did that on every restart of a dead agent.
+		if spec := l.specFor(key); spec.ID != "" && !l.backendReportsRunning(ctx, spec.ID) {
+			l.MarkProcessExited(agentID)
+			state = agentStateStopped
+		}
 	}
 	if state == agentStateRunning || state == agentStateStopUncertain {
 		if err := l.StopAgent(ctx, agentID, "operator_restart"); err != nil {
@@ -313,14 +330,30 @@ func (l *agentLifecycle) recordLifecycle(entry audit.Entry) error {
 // MarkProcessExited records that an agent process terminated on its own,
 // transitioning it from running to stopped so that subsequent operator start or
 // restart attempts can safely launch a new process under the same identity.
-func (l *agentLifecycle) MarkProcessExited(agentID string) {
+//
+// It reports whether the exit belongs to the agent's current process. An exit
+// is only identified by the agent, and the previous process's exit can arrive
+// after a replacement started: its session closes Done before the exit event
+// is emitted, and Start may run in between. Marking the replacement stopped
+// then let a second Start run beside it. The backend decides, read-only and
+// outside l.mu: if it reports the current process running, the exit is stale
+// and changes nothing, and the caller must not show the agent as stopped.
+func (l *agentLifecycle) MarkProcessExited(agentID string) bool {
 	if l == nil {
-		return
+		return true
 	}
 	key := lifecycleKey(agentID)
+	l.mu.Lock()
+	spec, known := l.specs[key]
+	l.mu.Unlock()
+	if known && l.router != nil && l.backendReportsRunning(l.router.Context(), spec.ID) {
+		return false
+	}
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.states[key] == agentStateRunning {
 		l.states[key] = agentStateStopped
 	}
+	return true
 }

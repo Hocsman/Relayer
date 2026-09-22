@@ -34,6 +34,10 @@ type fakeLineCall struct {
 }
 
 type fakeDesktopEngine struct {
+	// staleExits makes MarkProcessExited report every exit as belonging to a
+	// process a replacement already superseded.
+	staleExits bool
+
 	startupLogs        []string
 	supportedDecisions []adapters.Decision
 	mu                 sync.Mutex
@@ -313,7 +317,11 @@ func (f *fakeDesktopEngine) RestartAgent(_ context.Context, sessionID string) er
 	return err
 }
 
-func (f *fakeDesktopEngine) MarkProcessExited(_ string) {}
+func (f *fakeDesktopEngine) MarkProcessExited(_ string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.staleExits
+}
 
 func (f *fakeDesktopEngine) RecordAudit(entry audit.Entry) error {
 	f.mu.Lock()

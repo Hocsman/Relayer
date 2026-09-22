@@ -376,11 +376,16 @@ func TestAgentLifecycleStartAndRestartSelfExitedAgent(t *testing.T) {
 
 	ctx := context.Background()
 
-	// 1. Mark process exited on its own, then StartAgent should succeed
-	lifecycle.MarkProcessExited("self-exit")
+	// 1. The process exits on its own and the exit is reported; StartAgent
+	// then succeeds, and the replacement runs.
+	backend.setExited("self-exit", true)
+	if !lifecycle.MarkProcessExited("self-exit") {
+		t.Fatal("the exit of the current process was reported stale")
+	}
 	if _, err := lifecycle.StartAgent(ctx, "self-exit", "operator_start"); err != nil {
 		t.Fatalf("StartAgent after MarkProcessExited failed: %v", err)
 	}
+	backend.setExited("self-exit", false)
 
 	// 2. Start on an agent the backend still reports running is refused, and
 	// nothing is stopped or removed to find out. v0.8.5 called Remove here, and
@@ -410,5 +415,71 @@ func TestAgentLifecycleStartAndRestartSelfExitedAgent(t *testing.T) {
 	// 4. RestartAgent should also succeed cleanly
 	if _, err := lifecycle.RestartAgent(ctx, "self-exit"); err != nil {
 		t.Fatalf("RestartAgent for self-exited agent failed: %v", err)
+	}
+}
+
+// TestAStaleExitLeavesTheReplacementRunning: the previous process's exit can
+// be emitted after its replacement started, and names only the agent. The
+// lifecycle asks the backend and ignores an exit while the current process runs;
+// v0.8.5 marked the replacement stopped, which let a second Start run beside it.
+func TestAStaleExitLeavesTheReplacementRunning(t *testing.T) {
+	backend := newLifecycleFakeBackend()
+	router, err := newBackendRouter(context.Background(), backend)
+	if err != nil {
+		t.Fatalf("newBackendRouter: %v", err)
+	}
+	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	spec := lifecycleTestSpec(t, "replaced")
+	if _, err := router.Start(context.Background(), spec, terminal.Size{Columns: 80, Rows: 24}); err != nil {
+		t.Fatalf("initial start: %v", err)
+	}
+	lifecycle := newAgentLifecycle(router, lifecycleTestRecorder(t), []agent.Spec{spec}, terminal.Size{Columns: 80, Rows: 24}, nil)
+
+	// The backend reports the current process running: this exit is stale.
+	if lifecycle.MarkProcessExited("replaced") {
+		t.Fatal("an exit was accepted while the backend reports the current process running")
+	}
+	if _, err := lifecycle.StartAgent(context.Background(), "replaced", "operator_start"); !errors.Is(err, errAgentRunning) {
+		t.Fatalf("StartAgent after a stale exit = %v, want %v: a second process would run beside the first", err, errAgentRunning)
+	}
+
+	// Once the backend reports it gone, the exit is the current process's.
+	backend.setExited("replaced", true)
+	if !lifecycle.MarkProcessExited("replaced") {
+		t.Fatal("the current process's exit was reported stale")
+	}
+}
+
+// TestRestartOfADeadAgentDoesNotStopItAgain: an agent that exited without the
+// exit reaching the lifecycle — the TUI never reported exits — used to be
+// "stopped" by RestartAgent first, journaling a second session_finished.
+func TestRestartOfADeadAgentDoesNotStopItAgain(t *testing.T) {
+	backend := newLifecycleFakeBackend()
+	router, err := newBackendRouter(context.Background(), backend)
+	if err != nil {
+		t.Fatalf("newBackendRouter: %v", err)
+	}
+	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	spec := lifecycleTestSpec(t, "dead")
+	if _, err := router.Start(context.Background(), spec, terminal.Size{Columns: 80, Rows: 24}); err != nil {
+		t.Fatalf("initial start: %v", err)
+	}
+	recorder := lifecycleTestRecorder(t)
+	lifecycle := newAgentLifecycle(router, recorder, []agent.Spec{spec}, terminal.Size{Columns: 80, Rows: 24}, nil)
+
+	backend.setExited("dead", true)
+	if _, err := lifecycle.RestartAgent(context.Background(), "dead"); err != nil {
+		t.Fatalf("RestartAgent of a dead agent: %v", err)
+	}
+	backend.mu.Lock()
+	stops := len(backend.stops)
+	backend.mu.Unlock()
+	if stops != 0 {
+		t.Fatalf("RestartAgent stopped a process that had already exited %d time(s)", stops)
+	}
+	for _, entry := range lifecycleTestEntries(t, recorder) {
+		if entry.Kind == audit.KindSessionFinished {
+			t.Fatalf("RestartAgent journaled %s/%s for a process that had already exited", entry.Kind, entry.Reason)
+		}
 	}
 }

@@ -88,6 +88,12 @@ type SessionLifecycleBackend interface {
 	RestartSession(id string) error
 }
 
+// SessionExitObserver is the optional capability of being told that an agent
+// exited on its own. The TUI calls it off the Update loop.
+type SessionExitObserver interface {
+	MarkSessionExited(id string)
+}
+
 // Pane describes one agent already started by the caller.
 type Pane struct {
 	ID      string
