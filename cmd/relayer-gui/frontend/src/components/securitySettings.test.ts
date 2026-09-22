@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SecuritySettings } from "../types/relayer";
-import { limitValue, presetSettings } from "./AgentSettingsPanel";
+import { limitValue, presetSettings, saveAndRestartRequest } from "./AgentSettingsPanel";
 
 const current: SecuritySettings = {
   profile: "custom",
@@ -63,5 +63,31 @@ describe("presetSettings", () => {
   it("changes only the profile name when the engine sent no preset", () => {
     const next = presetSettings(current, "strict", undefined);
     expect(next).toEqual({ ...current, profile: "strict" });
+  });
+});
+
+describe("saveAndRestartRequest", () => {
+  it("carries every changed tab in the one transactional request", () => {
+    const notifications = { enabled: true, bell: false, desktop: true, minSeverity: "info", webhooks: [] };
+    const request = saveAndRestartRequest({
+      runID: "run-1",
+      revision: "rev-1",
+      profiles: [],
+      security: strictFromEngine,
+      notifications,
+    });
+    expect(request).toEqual({
+      expectedRunID: "run-1",
+      expectedRevision: "rev-1",
+      profiles: [],
+      security: strictFromEngine,
+      notifications,
+    });
+  });
+
+  it("leaves an untouched tab out, so it is not rewritten", () => {
+    const request = saveAndRestartRequest({ runID: "run-1", revision: "rev-1", profiles: [] });
+    expect("security" in request).toBe(false);
+    expect("notifications" in request).toBe(false);
   });
 });

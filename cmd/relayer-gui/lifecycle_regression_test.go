@@ -863,3 +863,67 @@ func TestLifecycleConcurrentShutdownWaitsForRestartThenClosesCandidateOnce(t *te
 		t.Fatalf("final shutdown state = %#v", state)
 	}
 }
+
+// TestFailedRestartUndoesTheSecurityAndNotificationTabs is the v0.8.5
+// regression: the panel saved the other tabs through a separate call before the
+// transaction, so the snapshot was taken of a file they had already changed, a
+// failed restart kept them, and the panel said the previous YAML was restored.
+// They now travel in the transaction and are undone with the agents.
+func TestFailedRestartUndoesTheSecurityAndNotificationTabs(t *testing.T) {
+	oldEngine := newFakeDesktopEngine("agent-old")
+	application, path, view, _ := newLifecycleApp(t, oldEngine)
+	before, mode := readLifecycleFile(t, path)
+
+	full, err := application.GetFullSettings()
+	if err != nil {
+		t.Fatalf("GetFullSettings: %v", err)
+	}
+	security := full.Security
+	security.DryRun = !security.DryRun
+	notifications := full.Notifications
+	notifications.Bell = !notifications.Bell
+
+	application.prepareEngine = func(appcore.DesktopOptions) (*appcore.DesktopPlan, error) {
+		return nil, errors.New("fixture prepare failed")
+	}
+	application.startEngine = func(context.Context, *appcore.DesktopPlan, string) (desktopEngine, error) {
+		t.Fatal("a failed preflight started a runtime")
+		return nil, nil
+	}
+
+	request := lifecycleRequest("run-old", view, path, "agent-new")
+	request.Security = &security
+	request.Notifications = &notifications
+	if _, err := application.SaveAgentProfilesAndRestart(request); !errors.Is(err, errLifecycleFailed) {
+		t.Fatalf("lifecycle error = %v, want %v", err, errLifecycleFailed)
+	}
+	// Byte for byte: the security and notification changes are undone too.
+	assertLifecycleFileExact(t, path, before, mode)
+}
+
+// TestRestartWritesTheOtherTabsWithTheAgents checks the success side: the tabs
+// sent with a save-and-restart reach the file the new run starts from.
+func TestRestartWritesTheOtherTabsWithTheAgents(t *testing.T) {
+	oldEngine := newFakeDesktopEngine("agent-old")
+	application, path, view, _ := newLifecycleApp(t, oldEngine)
+	installLifecycleStarter(t, application, path, lifecycleStartResult{engine: newFakeDesktopEngine("agent-new")})
+
+	full, err := application.GetFullSettings()
+	if err != nil {
+		t.Fatalf("GetFullSettings: %v", err)
+	}
+	security := full.Security
+	security.DryRun = true
+	request := lifecycleRequest("run-old", view, path, "agent-new")
+	request.Security = &security
+	if _, err := application.SaveAgentProfilesAndRestart(request); err != nil {
+		t.Fatalf("SaveAgentProfilesAndRestart: %v", err)
+	}
+	after, err := config.LoadExisting(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !after.Policies.DryRun {
+		t.Fatal("the security tab sent with the restart did not reach the file")
+	}
+}

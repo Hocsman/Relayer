@@ -129,90 +129,16 @@ func (a *App) loadFullSettingsLocked() (FullSettingsView, error) {
 }
 
 func (a *App) saveFullSettingsLocked(request SaveFullSettingsRequest) (FullSettingsView, error) {
-	path, err := a.profileConfigPathLocked()
+	current, updated, token, specsChanged, err := a.writeFullSettingsLocked(request)
 	if err != nil {
-		return FullSettingsView{}, errProfilesSave
+		return FullSettingsView{}, err
 	}
-	current, err := config.LoadExisting(path)
-	if err != nil {
-		return FullSettingsView{}, errProfilesSave
-	}
-	if current.Legacy {
-		return FullSettingsView{}, errProfilesInvalid
-	}
-	if request.ExpectedRevision == "" || request.ExpectedRevision != a.profileRevisionToken ||
-		a.profileRevisionHash == "" || current.Revision != a.profileRevisionHash {
-		return FullSettingsView{}, errProfilesStale
-	}
-
-	baseDir, err := filepath.Abs(filepath.Dir(path))
-	if err != nil {
-		return FullSettingsView{}, errProfilesInvalid
-	}
-
-	update := config.FullConfigurationUpdate{}
-
-	// 1. Process profiles if provided
-	var specsChanged bool
-	if len(request.Profiles) > 0 {
-		if len(request.Profiles) < minimumAgentProfiles || len(request.Profiles) > maximumAgentProfiles {
-			return FullSettingsView{}, errProfilesInvalid
-		}
-		specs, err := resolveProfileInputs(request.Profiles, current, baseDir)
-		if err != nil {
-			return FullSettingsView{}, errProfilesInvalid
-		}
-		if !reflect.DeepEqual(specs, current.Agents) {
-			update.Agents = specs
-			update.UpdateAgents = true
-			specsChanged = true
-		}
-	}
-
-	// 2. Process security settings if provided
-	if request.Security != nil {
-		policyCfg, err := buildPolicyConfig(*request.Security, current.Policies, baseDir)
-		if err != nil {
-			return FullSettingsView{}, err
-		}
-		update.Policies = &policyCfg
-	}
-
-	// 3. Process notification settings if provided
-	if request.Notifications != nil {
-		notifCfg := buildNotificationConfig(*request.Notifications)
-		// The editor never receives header values, so it cannot send them
-		// back; without this every save erased every webhook's credential,
-		// and the rebuilt notifier sent the next alert unauthenticated.
-		notifCfg.Webhooks = notify.MergeWebhookHeaders(current.Notifications.Webhooks, notifCfg.Webhooks)
-		update.Notifications = &notifCfg
-	}
-
-	token, err := a.profileTokenGenerator()
-	if err != nil {
-		return FullSettingsView{}, errProfilesSave
-	}
-
-	updated, revision, err := config.UpdateFullConfiguration(path, current.Revision, update)
-	if err != nil {
-		if errors.Is(err, config.ErrRevisionMismatch) {
-			return FullSettingsView{}, errProfilesStale
-		}
-		if reloaded, reloadErr := config.LoadExisting(path); reloadErr == nil && reloaded.Revision != current.Revision {
-			a.profileRevisionHash = reloaded.Revision
-			a.profileRevisionToken = token
-		}
-		return FullSettingsView{}, errProfilesSave
-	}
-
-	a.profileRevisionHash = revision
-	a.profileRevisionToken = token
 
 	// The top bar is not updated here. It shows the running engine's policy,
 	// and the engine is built once per run: showing the saved values made
 	// DRY RUN appear active while automatic approvals kept being delivered.
 
-	if update.Notifications != nil {
+	if request.Notifications != nil {
 		a.setNotifier(notify.New(updated.Notifications, nil))
 	}
 
@@ -244,6 +170,93 @@ func (a *App) saveFullSettingsLocked(request SaveFullSettingsRequest) (FullSetti
 		Editable:        profilesView.Editable,
 		ReadOnlyReason:  profilesView.ReadOnlyReason,
 	}, nil
+}
+
+// writeFullSettingsLocked validates and publishes one settings request in a
+// single atomic write, and keeps the opaque revision token in step. It is the
+// write both the plain save and the save-and-restart transaction use; the
+// transaction calls it after capturing its snapshot, so a rollback restores
+// the file as it was before the whole request, security and notifications
+// included.
+func (a *App) writeFullSettingsLocked(request SaveFullSettingsRequest) (current, updated config.Result, token string, specsChanged bool, err error) {
+	path, err := a.profileConfigPathLocked()
+	if err != nil {
+		return config.Result{}, config.Result{}, "", false, errProfilesSave
+	}
+	current, err = config.LoadExisting(path)
+	if err != nil {
+		return config.Result{}, config.Result{}, "", false, errProfilesSave
+	}
+	if current.Legacy {
+		return config.Result{}, config.Result{}, "", false, errProfilesInvalid
+	}
+	if request.ExpectedRevision == "" || request.ExpectedRevision != a.profileRevisionToken ||
+		a.profileRevisionHash == "" || current.Revision != a.profileRevisionHash {
+		return config.Result{}, config.Result{}, "", false, errProfilesStale
+	}
+
+	baseDir, err := filepath.Abs(filepath.Dir(path))
+	if err != nil {
+		return config.Result{}, config.Result{}, "", false, errProfilesInvalid
+	}
+
+	update := config.FullConfigurationUpdate{}
+
+	// 1. Process profiles if provided
+	if len(request.Profiles) > 0 {
+		if len(request.Profiles) < minimumAgentProfiles || len(request.Profiles) > maximumAgentProfiles {
+			return config.Result{}, config.Result{}, "", false, errProfilesInvalid
+		}
+		specs, err := resolveProfileInputs(request.Profiles, current, baseDir)
+		if err != nil {
+			return config.Result{}, config.Result{}, "", false, errProfilesInvalid
+		}
+		if !reflect.DeepEqual(specs, current.Agents) {
+			update.Agents = specs
+			update.UpdateAgents = true
+			specsChanged = true
+		}
+	}
+
+	// 2. Process security settings if provided
+	if request.Security != nil {
+		policyCfg, err := buildPolicyConfig(*request.Security, current.Policies, baseDir)
+		if err != nil {
+			return config.Result{}, config.Result{}, "", false, err
+		}
+		update.Policies = &policyCfg
+	}
+
+	// 3. Process notification settings if provided
+	if request.Notifications != nil {
+		notifCfg := buildNotificationConfig(*request.Notifications)
+		// The editor never receives header values, so it cannot send them
+		// back; without this every save erased every webhook's credential,
+		// and the rebuilt notifier sent the next alert unauthenticated.
+		notifCfg.Webhooks = notify.MergeWebhookHeaders(current.Notifications.Webhooks, notifCfg.Webhooks)
+		update.Notifications = &notifCfg
+	}
+
+	token, err = a.profileTokenGenerator()
+	if err != nil {
+		return config.Result{}, config.Result{}, "", false, errProfilesSave
+	}
+
+	updated, revision, err := config.UpdateFullConfiguration(path, current.Revision, update)
+	if err != nil {
+		if errors.Is(err, config.ErrRevisionMismatch) {
+			return config.Result{}, config.Result{}, "", false, errProfilesStale
+		}
+		if reloaded, reloadErr := config.LoadExisting(path); reloadErr == nil && reloaded.Revision != current.Revision {
+			a.profileRevisionHash = reloaded.Revision
+			a.profileRevisionToken = token
+		}
+		return config.Result{}, config.Result{}, "", false, errProfilesSave
+	}
+
+	a.profileRevisionHash = revision
+	a.profileRevisionToken = token
+	return current, updated, token, specsChanged, nil
 }
 
 // extractSecuritySettings describes a policy for the settings editor. The

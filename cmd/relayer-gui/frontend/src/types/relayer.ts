@@ -220,6 +220,10 @@ export interface SaveAgentProfilesRequest {
 
 export interface SaveAgentProfilesAndRestartRequest extends SaveAgentProfilesRequest {
   expectedRunID: string;
+  // Written in the same transaction as the agents, so a failed restart
+  // restores the file as it was before all of them.
+  security?: SecuritySettings;
+  notifications?: NotificationSettings;
 }
 
 export type LifecycleOutcome = "started" | "restarted" | "rolled_back";

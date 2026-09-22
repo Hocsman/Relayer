@@ -1116,7 +1116,22 @@ func (c *Controller) SaveAgentProfilesAndRestart(req SaveAgentProfilesAndRestart
 		return LifecycleResult{}, errStaleRevision
 	}
 
-	_, newRev, err := config.ReplaceAgents(c.configPath, cfg.Revision, specs)
+	update := config.FullConfigurationUpdate{Agents: specs, UpdateAgents: true}
+	if req.Security != nil {
+		pol, err := buildPolicyConfig(*req.Security, cfg.Policies, filepath.Dir(c.configPath))
+		if err != nil {
+			return LifecycleResult{}, fmt.Errorf("building policy config: %w", err)
+		}
+		update.Policies = &pol
+	}
+	if req.Notifications != nil {
+		update.Notifications = convertNotificationSettings(req.Notifications)
+		update.Notifications.Webhooks = notify.MergeWebhookHeaders(cfg.Notifications.Webhooks, update.Notifications.Webhooks)
+	}
+	// One write for the whole request. The settings panel used to save the
+	// other tabs through a separate call first, so a failure here left them
+	// written while the agents were not.
+	_, newRev, err := config.UpdateFullConfiguration(c.configPath, cfg.Revision, update)
 	if err != nil {
 		return LifecycleResult{}, err
 	}

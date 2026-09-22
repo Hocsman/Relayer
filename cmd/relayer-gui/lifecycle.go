@@ -89,10 +89,7 @@ func (a *App) SaveAgentProfilesAndRestart(request RestartAgentProfilesRequest) (
 		return AgentLifecycleResult{}, errProfilesSave
 	}
 
-	updated, candidateToken, err := a.saveAgentProfilesLocked(SaveAgentProfilesRequest{
-		ExpectedRevision: request.ExpectedRevision,
-		Profiles:         request.Profiles,
-	})
+	updated, candidateToken, err := a.saveCandidateLocked(request)
 	if err != nil {
 		return AgentLifecycleResult{}, err
 	}
@@ -330,4 +327,29 @@ func (a *App) setRunStatus(status, runID string) {
 	}
 	a.mu.Unlock()
 	a.emit(eventStatus, StatusEvent{RunID: runID, Scope: "run", Status: status})
+}
+
+// saveCandidateLocked writes the candidate configuration of a save-and-restart.
+// The settings panel used to save the security and notification tabs through a
+// separate call before starting this transaction, so the snapshot was taken of
+// a file already changed: a failed restart could not undo those tabs, and the
+// panel still said the previous YAML had been restored. They are part of the
+// candidate now, written after the snapshot.
+func (a *App) saveCandidateLocked(request RestartAgentProfilesRequest) (config.Result, string, error) {
+	if request.Security == nil && request.Notifications == nil {
+		return a.saveAgentProfilesLocked(SaveAgentProfilesRequest{
+			ExpectedRevision: request.ExpectedRevision,
+			Profiles:         request.Profiles,
+		})
+	}
+	if len(request.Profiles) < minimumAgentProfiles || len(request.Profiles) > maximumAgentProfiles {
+		return config.Result{}, "", errProfilesInvalid
+	}
+	_, updated, token, _, err := a.writeFullSettingsLocked(SaveFullSettingsRequest{
+		ExpectedRevision: request.ExpectedRevision,
+		Profiles:         request.Profiles,
+		Security:         request.Security,
+		Notifications:    request.Notifications,
+	})
+	return updated, token, err
 }

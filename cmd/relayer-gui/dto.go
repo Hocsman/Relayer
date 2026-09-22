@@ -110,6 +110,11 @@ type RestartAgentProfilesRequest struct {
 	ExpectedRunID    string              `json:"expectedRunID"`
 	ExpectedRevision string              `json:"expectedRevision"`
 	Profiles         []AgentProfileInput `json:"profiles"`
+	// Security and Notifications, when set, are written inside the same
+	// transaction as the agents, after its snapshot: a failed restart then
+	// restores the file as it was before all of them.
+	Security      *SecuritySettings     `json:"security,omitempty"`
+	Notifications *NotificationSettings `json:"notifications,omitempty"`
 }
 
 type AgentLifecycleResult struct {

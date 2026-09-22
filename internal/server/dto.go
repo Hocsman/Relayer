@@ -138,6 +138,10 @@ type SaveAgentProfilesAndRestartRequest struct {
 	ExpectedRunID    string              `json:"expectedRunID,omitempty"`
 	ExpectedRevision string              `json:"expectedRevision"`
 	Profiles         []AgentProfileInput `json:"profiles"`
+	// Security and Notifications, when set, are written in the same atomic
+	// write as the agents rather than by a separate save beforehand.
+	Security      *SecuritySettings     `json:"security,omitempty"`
+	Notifications *NotificationSettings `json:"notifications,omitempty"`
 }
 
 type LifecycleResult struct {

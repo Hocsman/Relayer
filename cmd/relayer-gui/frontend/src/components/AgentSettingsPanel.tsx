@@ -301,25 +301,18 @@ export function AgentSettingsPanel({
     setError(undefined);
     setNotice(undefined);
     try {
-      let expectedRevision = view.revision;
-      if (typeof bridge.saveFullSettings === "function" && (securityDirty || notificationsDirty)) {
-        // Only what changed: sending an untouched security tab along with a
-        // notification change rewrote the policy for no reason.
-        const fullResult = await bridge.saveFullSettings(runID, {
-          expectedRevision: view.revision,
-          profiles: profilesForSave(draft),
-          security: securityDirty ? securityDraft : undefined,
-          notifications: notificationsDirty ? notificationDraft : undefined,
-        });
-        if (fullResult?.revision) {
-          expectedRevision = fullResult.revision;
-        }
-      }
-      const result = await onSaveAndRestart({
-        expectedRunID: runID,
-        expectedRevision: expectedRevision,
+      // One transaction for every tab. The other tabs used to be saved by a
+      // separate call first, so the engine took its rollback snapshot of a file
+      // they had already changed: a failed restart kept them, and the notice
+      // below then claimed the previous YAML had been restored. Only what
+      // changed is sent.
+      const result = await onSaveAndRestart(saveAndRestartRequest({
+        runID,
+        revision: view.revision,
         profiles: profilesForSave(draft),
-      });
+        security: securityDirty ? securityDraft : undefined,
+        notifications: notificationsDirty ? notificationDraft : undefined,
+      }));
       setView(result.profiles);
       setDraft(cloneProfiles(result.profiles.profiles));
       if (result.outcome === "rolled_back") {
@@ -333,13 +326,23 @@ export function AgentSettingsPanel({
         return;
       }
     } catch {
+      // Reload every tab, not only the agents: the drafts may no longer match
+      // what the file holds, and a stale security draft would be saved again.
       try {
-        const reloaded = await bridge.getAgentProfiles();
+        const reloaded = typeof bridge.getFullSettings === "function" && !readOnly
+          ? await bridge.getFullSettings()
+          : await bridge.getAgentProfiles();
         setView(reloaded);
         setDraft(cloneProfiles(reloaded.profiles));
+        if ("security" in reloaded && (reloaded as FullSettingsView).security) {
+          const fullReloaded = reloaded as FullSettingsView;
+          setFullView(fullReloaded);
+          setSecurityDraft(fullReloaded.security);
+          setNotificationDraft(fullReloaded.notifications);
+        }
       } catch {
       }
-      setError("The run change failed. Decisions stay blocked until the engine is back in a safe state.");
+      setError("The run change failed and the configuration was reloaded from the file. Decisions stay blocked until the engine is back in a safe state.");
     } finally {
       setActivating(false);
     }
@@ -889,6 +892,25 @@ function readOnlyReasonLabel(reason: AgentProfile["readOnlyReason"]): string {
     default:
       return "This profile uses advanced fields that stay protected against a partial rewrite.";
   }
+}
+
+// saveAndRestartRequest builds the single transactional request of "Save and
+// restart". An untouched tab is left out, so it is not rewritten.
+export function saveAndRestartRequest(input: {
+  runID: string;
+  revision: string;
+  profiles: SaveAgentProfilesAndRestartRequest["profiles"];
+  security?: SecuritySettings;
+  notifications?: NotificationSettings;
+}): SaveAgentProfilesAndRestartRequest {
+  const request: SaveAgentProfilesAndRestartRequest = {
+    expectedRunID: input.runID,
+    expectedRevision: input.revision,
+    profiles: input.profiles,
+  };
+  if (input.security) request.security = input.security;
+  if (input.notifications) request.notifications = input.notifications;
+  return request;
 }
 
 // SettingsUnavailable replaces a settings tab whose values were not loaded.
