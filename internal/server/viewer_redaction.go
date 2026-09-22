@@ -1,6 +1,10 @@
 package server
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/Hocsman/Relayer/internal/record"
+)
 
 // A viewer token is for watching agents, and the command line an agent was
 // started with can carry a credential: an --api-key flag, a token in a URL. The
@@ -15,8 +19,9 @@ import "errors"
 var errViewerProfiles = errors.New("the agent profiles could not be loaded")
 
 // profilesForRole returns view unchanged for an operator and masked for a
-// viewer: no argument vector and no configuration path. The executable label
-// and the argument count remain, which is what the interface shows a viewer.
+// viewer: no argument vector, no working directory and no configuration path.
+// The executable label and the argument count remain, which is what the
+// interface shows a viewer.
 func profilesForRole(view AgentProfilesView, role UserRole) AgentProfilesView {
 	if role == RoleOperator {
 		return view
@@ -26,6 +31,7 @@ func profilesForRole(view AgentProfilesView, role UserRole) AgentProfilesView {
 	masked.Profiles = make([]AgentProfile, len(view.Profiles))
 	for index, profile := range view.Profiles {
 		profile.Argv = nil
+		profile.Cwd = ""
 		profile.PreserveOnSave = true
 		masked.Profiles[index] = profile
 	}
@@ -67,4 +73,23 @@ func auditPathForRole(path string, role UserRole) string {
 		return path
 	}
 	return ""
+}
+
+// errViewerRecording replaces a recording error for a viewer: the store's
+// errors quote the recording directory and the transcript's path.
+var errViewerRecording = errors.New("the recording could not be read")
+
+// recordingErrorForRole returns err unchanged for an operator. A viewer gets
+// the bare sentinel when err is one of the store's known conditions, whose own
+// messages name no path, and a fixed message otherwise.
+func recordingErrorForRole(err error, role UserRole) error {
+	if err == nil || role == RoleOperator {
+		return err
+	}
+	for _, known := range []error{errRecordingUnavailable, record.ErrRecordingNotFound, record.ErrRecordingActive, record.ErrStoreClosed} {
+		if errors.Is(err, known) {
+			return known
+		}
+	}
+	return errViewerRecording
 }

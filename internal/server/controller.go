@@ -336,6 +336,7 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 				c.state.Agents[idx].Running = false
 				c.state.Agents[idx].Status = status
 			}
+			c.clearSessionPendingLocked(adapterEv.SessionID)
 			runID := c.runID
 			c.mu.Unlock()
 
@@ -445,18 +446,25 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 		key := adapterEv.SessionID + ":" + adapterEv.ID
 		c.mu.Lock()
 		delete(c.pending, key)
-		if idx, found := c.agentIndex[strings.ToLower(adapterEv.SessionID)]; found {
+		// Only a live agent goes back to "running": a withdrawal can arrive after
+		// its exit, and marking a dead agent running brought back a Stop button
+		// that could only fail.
+		running := false
+		if idx, found := c.agentIndex[strings.ToLower(adapterEv.SessionID)]; found && c.state.Agents[idx].Running {
 			c.state.Agents[idx].Status = "running"
+			running = true
 		}
 		c.rebuildPendingEventsLocked()
 		c.mu.Unlock()
 
-		c.broadcast(eventStatus, StatusEvent{
-			RunID:     c.runID,
-			Scope:     "session",
-			SessionID: adapterEv.SessionID,
-			Status:    "running",
-		})
+		if running {
+			c.broadcast(eventStatus, StatusEvent{
+				RunID:     c.runID,
+				Scope:     "session",
+				SessionID: adapterEv.SessionID,
+				Status:    "running",
+			})
+		}
 
 	case session.Exited:
 		// Emitted when Relayer loses ownership of a tmux session: supervision
@@ -469,6 +477,7 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 			c.state.Agents[idx].Running = false
 			c.state.Agents[idx].Status = "failed"
 		}
+		c.clearSessionPendingLocked(ev.SessionID)
 		c.mu.Unlock()
 
 		c.broadcast(eventStatus, StatusEvent{
@@ -488,6 +497,17 @@ func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, ra
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 		})
 	}
+}
+
+// clearSessionPendingLocked drops every prompt of a session that ended: none
+// of them can be answered any more, and the desktop drops them the same way.
+func (c *Controller) clearSessionPendingLocked(sessionID string) {
+	for key, item := range c.pending {
+		if strings.EqualFold(item.view.SessionID, sessionID) {
+			delete(c.pending, key)
+		}
+	}
+	c.rebuildPendingEventsLocked()
 }
 
 func (c *Controller) rebuildPendingEventsLocked() {
@@ -562,7 +582,9 @@ func (c *Controller) SubmitDecisionWithOperator(runID, sessionID, eventID, value
 	delete(c.pending, key)
 	backend := ""
 	if idx, ok := c.agentIndex[strings.ToLower(sessionID)]; ok {
-		c.state.Agents[idx].Status = "running"
+		if c.state.Agents[idx].Running {
+			c.state.Agents[idx].Status = "running"
+		}
 		backend = c.state.Agents[idx].Backend
 	}
 	c.rebuildPendingEventsLocked()

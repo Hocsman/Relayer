@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
 )
@@ -71,11 +72,30 @@ func TestLosingATmuxSessionClearsRunning(t *testing.T) {
 		t.Fatal("the default configuration has no agent")
 	}
 	id := agents[0].SessionID
+	// A prompt was waiting when the session was lost.
+	prompt := adapters.Event{ID: "evt-1", SessionID: id, Type: adapters.EventConfirmation}
+	ctrl.mu.Lock()
+	ctrl.pending[id+":"+prompt.ID] = pendingItem{event: prompt, view: SupervisionEvent{ID: prompt.ID, SessionID: id}}
+	ctrl.rebuildPendingEventsLocked()
+	ctrl.mu.Unlock()
+
 	ctrl.handleEvent(context.Background(), nil, session.Exited{SessionID: id, Err: errors.New("tmux supervision interrupted")})
 
-	for _, agent := range ctrl.GetState().Agents {
-		if strings.EqualFold(agent.SessionID, id) && (agent.Running || agent.Status != "failed") {
-			t.Fatalf("agent after a lost session = running %v, status %q; want not running and failed", agent.Running, agent.Status)
+	assertLost := func(when string) {
+		t.Helper()
+		state := ctrl.GetState()
+		for _, agent := range state.Agents {
+			if strings.EqualFold(agent.SessionID, id) && (agent.Running || agent.Status != "failed") {
+				t.Fatalf("%s: agent = running %v, status %q; want not running and failed", when, agent.Running, agent.Status)
+			}
+		}
+		if len(state.PendingEvents) != 0 {
+			t.Fatalf("%s: %d prompt(s) of the lost session still pending, and answering one marked the agent running", when, len(state.PendingEvents))
 		}
 	}
+	assertLost("after the loss")
+
+	// A withdrawal that arrives afterwards must not revive the agent.
+	ctrl.handleEvent(context.Background(), nil, session.AdapterEventWithdrawn{Event: prompt})
+	assertLost("after a late withdrawal")
 }

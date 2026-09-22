@@ -933,7 +933,11 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 	case "listRecordings":
 		var filter RecordingFilterInput
 		_ = json.Unmarshal(params, &filter)
-		return gh.ctrl.ListRecordings(filter)
+		recordings, err := gh.ctrl.ListRecordings(filter)
+		if err != nil {
+			return nil, recordingErrorForRole(err, client.role)
+		}
+		return recordings, nil
 
 	case "getRecording":
 		var p struct {
@@ -942,7 +946,11 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
-		return gh.ctrl.GetRecording(p.ID)
+		recording, err := gh.ctrl.GetRecording(p.ID)
+		if err != nil {
+			return nil, recordingErrorForRole(err, client.role)
+		}
+		return recording, nil
 
 	case "readRecordingChunk":
 		var p struct {
@@ -953,7 +961,11 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
-		return gh.ctrl.ReadRecordingChunk(p.ID, p.Offset, p.Limit)
+		chunk, err := gh.ctrl.ReadRecordingChunk(p.ID, p.Offset, p.Limit)
+		if err != nil {
+			return nil, recordingErrorForRole(err, client.role)
+		}
+		return chunk, nil
 
 	case "exportRecording":
 		var p struct {

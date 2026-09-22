@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Hocsman/Relayer/internal/record"
 )
 
 const viewerProbeSecret = "sk-VIEWER-PROBE-SECRET-4242"
@@ -33,8 +36,13 @@ func startGatewayWithSecretInArgv(t *testing.T) (string, string) {
 		t.Fatalf("mkdir audit: %v", err)
 	}
 	journal := filepath.Join(journalDir, "audit.jsonl")
+	// So is the agent's working directory.
+	workdir := filepath.Join(dir, "work")
+	if err := os.Mkdir(workdir, 0o700); err != nil {
+		t.Fatalf("mkdir work: %v", err)
+	}
 	yaml := "version: 1\nbackend: pty\naudit:\n  enabled: true\n  mode: metadata\n  path: '" + journal + "'\n" +
-		"agents:\n  - id: keyed\n    name: Keyed agent\n    command: " + command +
+		"agents:\n  - id: keyed\n    name: Keyed agent\n    cwd: '" + workdir + "'\n    command: " + command +
 		"\nintercept_patterns:\n  - pattern: '(?i)continue'\n    description: continue prompt\n"
 	if err := os.WriteFile(configPath, []byte(yaml), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -136,5 +144,24 @@ func TestViewerStillSeesWhichAgentItWatches(t *testing.T) {
 	if viewerState.Agents[0].DisplayCommand == "" || viewerState.Agents[0].DisplayCommand != operatorState.Agents[0].DisplayCommand {
 		t.Fatalf("viewer display command = %q, operator's = %q, want the same executable name",
 			viewerState.Agents[0].DisplayCommand, operatorState.Agents[0].DisplayCommand)
+	}
+}
+
+// TestViewerRecordingErrorsNameNoPath: a transcript deleted by hand, or a
+// recording directory that went away, made the store's error — which quotes the
+// directory and the file — reach a viewer verbatim.
+func TestViewerRecordingErrorsNameNoPath(t *testing.T) {
+	secretPath := filepath.Join("srv", "SECRETREC", "keyed-1.cast")
+	leaky := fmt.Errorf("inspect the recording file %s: %w", secretPath, os.ErrNotExist)
+
+	if got := recordingErrorForRole(leaky, RoleViewer); strings.Contains(got.Error(), "SECRETREC") {
+		t.Fatalf("a viewer's recording error = %q, want no path", got)
+	}
+	if got := recordingErrorForRole(leaky, RoleOperator); got != leaky {
+		t.Fatalf("an operator's recording error = %v, want it unchanged", got)
+	}
+	wrapped := fmt.Errorf("%w: %s", record.ErrRecordingNotFound, secretPath)
+	if got := recordingErrorForRole(wrapped, RoleViewer); got != record.ErrRecordingNotFound {
+		t.Fatalf("a viewer's not-found error = %q, want the bare sentinel", got)
 	}
 }
