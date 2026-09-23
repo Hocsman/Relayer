@@ -988,6 +988,12 @@ func TestUnsupportedAutomaticDecisionFallsBackToAsk(t *testing.T) {
 		return err == nil && len(state.PendingEvents) == 1 &&
 			state.PendingEvents[0].Evaluation.Reason == "fallback_unsupported"
 	})
+	// The core decides on a goroutine of its own, where the bridge decided
+	// synchronously: the counts below are exact only once it has finished,
+	// or a late second delivery or entry would go unseen.
+	run := activeRunForTest(application)
+	run.sup.BeginDrain()
+	run.sup.Wait()
 
 	calls := engine.applySnapshot()
 	if len(calls) != 1 || calls[0].decision != adapters.DecisionAllow || calls[0].manualInput != "" {
@@ -1199,6 +1205,12 @@ func TestProcessExitDuringAutomaticDeliveryStillRecordsTerminalOutcome(t *testin
 		return entries
 	}
 	waitForCondition(t, 2*time.Second, func() bool { return len(terminalDeliveriesOf()) > 0 })
+	// "Exactly one" holds only once the automatic decision has finished:
+	// counted at the first entry, a second one written a moment later went
+	// unseen.
+	run := activeRunForTest(application)
+	run.sup.BeginDrain()
+	run.sup.Wait()
 
 	state, err := application.GetState()
 	if err != nil {
@@ -1769,5 +1781,151 @@ func TestNotificationDispatchedOnGuardrailViolation(t *testing.T) {
 	}
 	if !strings.Contains(n.Title, "Guardrail") {
 		t.Errorf("expected title to mention Guardrail, got %q", n.Title)
+	}
+}
+
+// TestTheEventLoopHandsEverySupervisionEventToTheCore: the run's event loop
+// keeps the output invalidations, which it coalesces itself, and hands
+// everything else to the run's supervision core: a prompt, its withdrawal, a
+// backend stream error and a legacy exit. The events go through the runtime's
+// own channel into the loop a real start runs, and the window sees each one as
+// it did when the loop handled them itself: a prompt brings the latest output
+// before it is shown.
+func TestTheEventLoopHandsEverySupervisionEventToTheCore(t *testing.T) {
+	application, path, view, _ := newLifecycleApp(t, nil)
+	engine := newFakeDesktopEngine("agent-a")
+	engine.outputs["agent-a"] = []string{"ready", "prompt shown"}
+	application.runIDGenerator = lifecycleRunIDs("run-loop")
+	installLifecycleStarter(t, application, path, lifecycleStartResult{engine: engine})
+	var (
+		emittedMu sync.Mutex
+		emitted   []string
+	)
+	application.emitFn = func(_ context.Context, name string, payloads ...interface{}) {
+		entry := name
+		switch payload := payloads[0].(type) {
+		case SupervisionEvent:
+			entry += ":" + payload.ID + ":" + payload.DeliveryStatus
+		case StatusEvent:
+			entry += ":" + payload.Scope + ":" + payload.Status
+		case SafeErrorEvent:
+			entry += ":" + payload.Code
+		case SnapshotEvent:
+			entry += ":" + payload.Output
+		}
+		emittedMu.Lock()
+		emitted = append(emitted, entry)
+		emittedMu.Unlock()
+	}
+	emittedSoFar := func() []string {
+		emittedMu.Lock()
+		defer emittedMu.Unlock()
+		return append([]string(nil), emitted...)
+	}
+	if _, err := application.SaveAgentProfilesAndRestart(lifecycleRequest("", view, path, "agent-a")); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	emittedMu.Lock()
+	emitted = nil
+	emittedMu.Unlock()
+	send := func(message session.Event) {
+		t.Helper()
+		select {
+		case engine.events <- message:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("the event loop stopped taking events at %T", message)
+		}
+	}
+
+	prompt := bridgeEvent("agent-a", "prompt-1")
+	send(session.AdapterEvent{Event: prompt})
+	send(session.AdapterEventWithdrawn{Event: prompt})
+	send(session.Error{SessionID: "agent-a", Err: errors.New("stream closed")})
+	send(session.Exited{SessionID: "agent-a"})
+	// The loop takes one event at a time, so once it has taken this one,
+	// which is ignored, it has handled every event before it.
+	send(session.OutputAvailable{SessionID: ""})
+
+	want := []string{
+		eventSnapshot + ":prompt shown",
+		eventSemantic + ":prompt-1:pending",
+		eventSemantic + ":prompt-1:delivered",
+		eventStatus + ":session:running",
+		eventSnapshot + ":prompt shown",
+		eventStatus + ":session:failed",
+		eventError + ":backend_stream_failed",
+		eventStatus + ":session:failed",
+	}
+	if got := emittedSoFar(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("emitted = %v, want %v", got, want)
+	}
+	state, err := application.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if len(state.PendingEvents) != 0 || len(state.Agents) != 1 || state.Agents[0].Running || state.Agents[0].Status != "failed" {
+		t.Fatalf("state after the events = %#v", state)
+	}
+
+	// An output invalidation stays with the loop, which refreshes the output.
+	engine.mu.Lock()
+	engine.outputs["agent-a"] = []string{"later output"}
+	engine.outputReads["agent-a"] = 0
+	engine.mu.Unlock()
+	send(session.OutputAvailable{SessionID: "agent-a"})
+	waitForCondition(t, 2*time.Second, func() bool {
+		got := emittedSoFar()
+		return len(got) > 0 && got[len(got)-1] == eventSnapshot+":later output"
+	})
+}
+
+// TestTheJournalsFailureStaysOnScreenAfterShutdown: the window still shows
+// that the last run's journal failed once the run is gone, as it did before
+// the state machine moved: the bridge keeps its own copy of the failure,
+// which outlives the run's core.
+func TestTheJournalsFailureStaysOnScreenAfterShutdown(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	engine.auditFailAt = 1
+	application := newBridgeForTest(engine)
+	application.handleAdapterEvent(bridgeEvent("agent-a", "prompt-1"))
+	if state, _ := application.GetState(); state.Audit.Status != "failed" {
+		t.Fatalf("journal state while the run is active = %q, want failed", state.Audit.Status)
+	}
+
+	if err := application.Shutdown(); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	state, err := application.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if state.RunStatus != "stopped" || state.Audit.Status != "failed" {
+		t.Fatalf("after the shutdown: run %q, journal %q, want stopped and failed", state.RunStatus, state.Audit.Status)
+	}
+}
+
+// TestAResizeIsRefusedOnceTheJournalFails: a resize is a backend write like any
+// other, admitted through the gate a journal failure closes, as the bridge
+// always did.
+func TestAResizeIsRefusedOnceTheJournalFails(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	application := newBridgeForTest(engine)
+	runID := activeRunIDForTest(application)
+	if err := application.ResizeSession(runID, "agent-a", 80, 24); err != nil {
+		t.Fatalf("a resize while the journal works: %v", err)
+	}
+	engine.mu.Lock()
+	engine.auditFailAt = engine.auditCalls + 1
+	engine.mu.Unlock()
+	application.handleAdapterEvent(bridgeEvent("agent-a", "prompt-1"))
+
+	if err := application.ResizeSession(runID, "agent-a", 100, 30); !errors.Is(err, errRuntimeStopped) {
+		t.Fatalf("a resize after the journal failed = %v, want errRuntimeStopped", err)
+	}
+	engine.mu.Lock()
+	resizes := len(engine.resizeCalls)
+	engine.mu.Unlock()
+	if resizes != 1 {
+		t.Fatalf("resizes reaching the backend = %d, want only the one before the failure", resizes)
 	}
 }

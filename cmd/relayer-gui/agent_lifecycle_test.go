@@ -345,15 +345,18 @@ func TestAnAutomaticPromptRaisedWhileTheAgentStartsIsDecidedAfterIt(t *testing.T
 	prompt := bridgeEvent("agent-a", "prompt-automatic")
 	prompt.Timestamp = time.Now().UTC()
 	application.handleAdapterEventForRun(run, prompt)
-	if applied := len(engine.applySnapshot()); applied != 0 {
-		t.Fatalf("an automatic decision was taken while the agent was starting (%d)", applied)
+	// A decision is claimed synchronously, before the goroutine that writes
+	// it runs; counting writes here raced that goroutine and saw none.
+	if state, _ := application.GetState(); len(state.PendingEvents) != 1 || state.PendingEvents[0].DeliveryStatus != "pending" {
+		t.Fatalf("an automatic decision was claimed while the agent was starting: %#v", state.PendingEvents)
 	}
 	close(release)
 	if err := <-startDone; err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	waitForCondition(t, 2*time.Second, func() bool { return len(engine.applySnapshot()) == 1 })
-	time.Sleep(50 * time.Millisecond)
+	run.sup.BeginDrain()
+	run.sup.Wait()
 	if calls := engine.applySnapshot(); len(calls) != 1 {
 		t.Fatalf("automatic decisions after the start = %d, want exactly 1", len(calls))
 	}
@@ -408,5 +411,33 @@ func TestARestartedAgentIsNeverShownRunningWithItsPredecessorsOutput(t *testing.
 	after := agentStateForTest(application, "agent-a")
 	if !after.Running || after.Status != "running" || after.Output != "new process" || after.Revision != before.Revision+2 {
 		t.Fatalf("after the start = %#v, want the new process's output at revision %d", after, before.Revision+2)
+	}
+}
+
+// TestARestartedAgentShowsNoneOfItsPredecessorsOutputWhenItsOwnCannotBeRead:
+// the output is dropped when the new process is reported, not replaced by the
+// refresh that follows, so a refresh that fails leaves it empty rather than
+// showing the previous process's. The revision still moves past every
+// snapshot of the previous process.
+func TestARestartedAgentShowsNoneOfItsPredecessorsOutputWhenItsOwnCannotBeRead(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	engine.outputs["agent-a"] = []string{"previous process output"}
+	application := newBridgeForTest(engine)
+	runID := activeRunIDForTest(application)
+	markAgentExitedForTest(application, "agent-a")
+	before := agentStateForTest(application, "agent-a")
+	if before.Output != "previous process output" {
+		t.Fatalf("output before the start = %q", before.Output)
+	}
+	engine.mu.Lock()
+	engine.outputErr = errors.New("fixture output unavailable")
+	engine.mu.Unlock()
+
+	if err := application.StartSession(runID, "agent-a"); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	after := agentStateForTest(application, "agent-a")
+	if !after.Running || after.Output != "" || after.Revision != before.Revision+1 {
+		t.Fatalf("after the start = %#v, want no output at revision %d", after, before.Revision+1)
 	}
 }
