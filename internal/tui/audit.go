@@ -178,7 +178,9 @@ func safeProcessExitMetadata(metadata map[string]string) map[string]string {
 }
 
 func (m *Model) recordEventDetected(paneIndex int, event adapters.Event) bool {
-	if m.promptDetectedAt != nil {
+	// Only a prompt is ever decided. An exit is journaled as detected too, and
+	// kept its detection time for good.
+	if m.promptDetectedAt != nil && event.Type != adapters.EventProcessExit {
 		m.promptDetectedAt[eventKey{sessionID: event.SessionID, eventID: event.ID}] = time.Now()
 	}
 	entry := m.eventAuditEntry(paneIndex, audit.KindEventDetected, event)

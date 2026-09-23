@@ -43,4 +43,9 @@ func TestAnEndedProcessLeavesNoPromptTimes(t *testing.T) {
 	if _, kept := application.promptDetectedAt[eventKey{sessionID: "agent-b", eventID: "evt-live"}]; !kept {
 		t.Fatal("another session's prompt time was dropped")
 	}
+	for key := range application.promptDetectedAt {
+		if key.sessionID == "agent-a" {
+			t.Fatalf("the exit left a detection time of its own: %v", key)
+		}
+	}
 }
