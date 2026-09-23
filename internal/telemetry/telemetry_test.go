@@ -407,3 +407,44 @@ func TestPromptsOfAnEndedProcessAreNotPending(t *testing.T) {
 		t.Fatalf("events_pending = %d, want only the live session's prompt", pending)
 	}
 }
+
+// TestAPromptIsPendingUntilItIsDecided: the front ends journal the policy's
+// evaluation right after each detection, and the registry closed the prompt
+// there, so events_pending stayed at zero while an operator had a question in
+// front of them, and the decision duration measured the policy engine. A
+// prompt now stays pending until its decision, a withdrawal, or the end of
+// its process; a sensitive prompt, whose ID the journal withholds, too.
+func TestAPromptIsPendingUntilItIsDecided(t *testing.T) {
+	reg := NewRegistry()
+	now := time.Now().UTC()
+	entry := func(kind audit.Kind, session, id string, at time.Duration) audit.Entry {
+		return audit.Entry{RunID: "run-1", SessionID: session, EventID: id, Kind: kind, EventType: adapters.EventConfirmation, DecisionBy: audit.DecisionByHuman, Timestamp: now.Add(at)}
+	}
+	reg.Observe(entry(audit.KindEventDetected, "asks", "evt-1", 0))
+	reg.Observe(entry(audit.KindPolicyEvaluated, "asks", "evt-1", time.Millisecond))
+	if pending := reg.Snapshot().EventsPending; pending != 1 {
+		t.Fatalf("events_pending after the policy asked the operator = %d, want 1", pending)
+	}
+	reg.Observe(entry(audit.KindDecision, "asks", "evt-1", 3*time.Second))
+	snapshot := reg.Snapshot()
+	if snapshot.EventsPending != 0 {
+		t.Fatalf("events_pending after the decision = %d, want 0", snapshot.EventsPending)
+	}
+	recorded := false
+	for _, histogram := range snapshot.DecisionDurations {
+		if histogram.Count > 0 && histogram.Sum >= 2.9 {
+			recorded = true
+		}
+	}
+	if !recorded {
+		t.Fatalf("decision durations = %#v, want the three seconds the operator took", snapshot.DecisionDurations)
+	}
+
+	// A sensitive prompt is journaled without its ID, and still ends with its
+	// process.
+	reg.Observe(entry(audit.KindEventDetected, "secret", "", 0))
+	reg.Observe(entry(audit.KindSessionFinished, "secret", "", time.Second))
+	if pending := reg.Snapshot().EventsPending; pending != 0 {
+		t.Fatalf("events_pending after a sensitive prompt's process ended = %d, want 0", pending)
+	}
+}

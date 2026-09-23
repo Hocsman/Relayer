@@ -86,7 +86,7 @@ The dashboard visualizes the following standard Prometheus metrics exported by R
 | `relayer_events_pending` | Gauge | — | Prompts waiting for operator decision | `relayer_events_pending` |
 | `relayer_decisions_total` | Counter | `agent_id`, `action` | Cumulative decisions applied (`allow`, `deny`, `auto`, `custom`) | `sum by (action) (relayer_decisions_total{agent_id=~"$agent_id"})` |
 | `relayer_guardrail_violations_total` | Counter | `agent_id`, `rule_id` | Security guardrail violations blocked | `sum by (rule_id) (relayer_guardrail_violations_total)` |
-| `relayer_decision_duration_seconds` | Histogram | `agent_id`, `action`, `le` | Human arbitration reaction time | `histogram_quantile(0.95, sum(rate(relayer_decision_duration_seconds_bucket[5m])) by (le))` |
+| `relayer_decision_duration_seconds` | Histogram | `adapter`, `agent_id`, `decision_by`, `le` | Time from a prompt's detection to its decision, by the operator or the policy (`decision_by`) | `histogram_quantile(0.95, sum(rate(relayer_decision_duration_seconds_bucket[5m])) by (le))` |
 | `relayer_events_detected_total` | Counter | `agent_id`, `adapter`, `event_type`, `risk` | Cumulative sensitive events intercepted | `sum(rate(relayer_events_detected_total[1m])) * 60` |
 | `relayer_operator_inputs_total` | Counter | `agent_id` | Manual lines sent to agent terminals | `sum(rate(relayer_operator_inputs_total[1m])) * 60` |
 | `relayer_control_events_total` | Counter | `agent_id`, `action`, `outcome` | Terminal hand-overs between operators: `requested`, `granted`, `declined`, `released`, `forced`, `attached`, `detached` | `sum by (outcome) (increase(relayer_control_events_total{action="forced"}[1h]))` |

@@ -175,9 +175,14 @@ func (r *Registry) Observe(entry audit.Entry) {
 			adapter, agentID, decisionStr, byStr, outcomeStr, ruleStr)
 		r.decisionsTotal[key]++
 
-		// Track decision latency duration if this event was previously detected
+		// A prompt stays pending until it is decided. The policy's evaluation
+		// is not a decision: it follows every detection within microseconds,
+		// and closing the prompt there kept events_pending at zero and made
+		// the decision duration measure the policy engine, not the operator.
+		// The decision that follows an automatic evaluation is journaled as
+		// one, by policy, and closes the prompt like a human's.
 		eventKey := makeEventKey(entry.RunID, entry.SessionID, entry.EventID)
-		if detectedAt, found := r.pendingEvents[eventKey]; found {
+		if detectedAt, found := r.pendingEvents[eventKey]; found && entry.Kind == audit.KindDecision {
 			duration := entry.Timestamp.Sub(detectedAt).Seconds()
 			if duration < 0 {
 				duration = 0
@@ -298,6 +303,9 @@ func (r *Registry) dropSessionPending(runID, sessionID string) {
 	if sessionID == "" {
 		return
 	}
+	// A sensitive prompt's ID is withheld from the journal, so it is keyed
+	// by its session alone.
+	delete(r.pendingEvents, makeEventKey(runID, sessionID, ""))
 	prefix := runID + ":" + sessionID + ":"
 	for key := range r.pendingEvents {
 		if strings.HasPrefix(key, prefix) {
