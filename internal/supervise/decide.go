@@ -1,0 +1,397 @@
+package supervise
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+
+	"github.com/Hocsman/Relayer/internal/adapters"
+	"github.com/Hocsman/Relayer/internal/audit"
+	"github.com/Hocsman/Relayer/internal/policy"
+)
+
+// scheduleAutomatic serialises every automatic decision for a session and
+// never overtakes an earlier human prompt. The reservation and WaitGroup Add
+// happen under s.mu so a drain cannot begin waiting between those steps.
+func (s *Supervisor) scheduleAutomatic(sessionID string) {
+	sessionKey := strings.ToLower(strings.TrimSpace(sessionID))
+	if sessionKey == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.shuttingDown || s.auditFailed || s.frozen[sessionKey] || s.stoppingSessions[sessionKey] {
+		s.mu.Unlock()
+		return
+	}
+	if _, busy := s.inFlight[sessionKey]; busy || s.lineInFlight[sessionKey] {
+		s.mu.Unlock()
+		return
+	}
+	key, item, found := s.firstPendingForSessionLocked(sessionKey)
+	if !found || !item.view.Evaluation.Automatic || item.view.DeliveryStatus != "pending" {
+		s.mu.Unlock()
+		return
+	}
+	item.view.DeliveryStatus = "delivering"
+	s.pending[key] = item
+	s.inFlight[sessionKey] = key
+	s.rebuildPendingLocked()
+	view := item.view
+	event := item.event.Clone()
+	evaluation := policy.Evaluation{
+		Action:         policy.Action(item.view.Evaluation.Action),
+		ProposedAction: policy.Action(item.view.Evaluation.ProposedAction),
+		RuleName:       item.view.Evaluation.RuleName,
+		Reason:         item.view.Evaluation.Reason,
+		EventID:        item.event.ID,
+		Automatic:      item.view.Evaluation.Automatic,
+		DryRun:         item.view.Evaluation.DryRun,
+	}
+	s.eventWG.Add(1)
+	s.mu.Unlock()
+	s.sink.Prompt(view)
+	go func() {
+		defer s.eventWG.Done()
+		s.applyAutomatic(key, event, evaluation)
+	}()
+}
+
+func (s *Supervisor) firstPendingForSessionLocked(sessionKey string) (eventKey, pendingEvent, bool) {
+	var selectedKey eventKey
+	var selected pendingEvent
+	found := false
+	for key, item := range s.pending {
+		if key.sessionID != sessionKey {
+			continue
+		}
+		if !found || eventBefore(item.event, selected.event) {
+			selectedKey, selected, found = key, item, true
+		}
+	}
+	return selectedKey, selected, found
+}
+
+func eventBefore(left, right adapters.Event) bool {
+	if left.Sequence != right.Sequence {
+		return left.Sequence < right.Sequence
+	}
+	if !left.Timestamp.Equal(right.Timestamp) {
+		return left.Timestamp.Before(right.Timestamp)
+	}
+	return left.ID < right.ID
+}
+
+func (s *Supervisor) finishDecision(key eventKey, advance bool) {
+	s.mu.Lock()
+	if current, exists := s.inFlight[key.sessionID]; exists && current == key {
+		delete(s.inFlight, key.sessionID)
+	}
+	shuttingDown := s.shuttingDown
+	s.mu.Unlock()
+	if advance && !shuttingDown && s.isActiveRun() {
+		s.scheduleAutomatic(key.sessionID)
+	}
+}
+
+func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluation policy.Evaluation) {
+	advance := false
+	defer func() { s.finishDecision(key, advance) }()
+	decision, supported := adapterDecisionForPolicy(evaluation.Action)
+	if !supported {
+		s.fallbackToAsk(key, "fallback_unsupported")
+		return
+	}
+	backend := s.backendFor(event.SessionID)
+	auditDecision := auditDecisionForPolicy(evaluation.Action)
+	if !s.recordAudit(decisionAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy)) {
+		s.markDelivery(key, "failed", "audit_unavailable")
+		return
+	}
+	if !s.beginDelivery() {
+		if !s.recordAudit(deliveryAuditEntry(
+			event,
+			backend,
+			auditDecision,
+			audit.DecisionByPolicy,
+			audit.OutcomeCancelled,
+			"runtime_stopped",
+		)) {
+			return
+		}
+		s.markDelivery(key, "failed", "runtime_stopped")
+		return
+	}
+	defer s.endDelivery()
+	ctx, cancel := context.WithTimeout(s.ctx, 8*time.Second)
+	err := s.engine.ApplyDecision(ctx, event.SessionID, event, decision, "")
+	cancel()
+	if err == nil {
+		if !s.recordAudit(deliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeApplied, "delivery_applied")) {
+			return
+		}
+		if s.pendingExists(key) {
+			s.resolveEvent(key)
+			advance = true
+		}
+		return
+	}
+	if errors.Is(err, adapters.ErrDecisionUnsupported) {
+		if !s.recordAudit(deliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackUnsupported, "fallback_unsupported")) {
+			return
+		}
+		if s.pendingExists(key) {
+			s.fallbackToAsk(key, "fallback_unsupported")
+		}
+		return
+	}
+	if errors.Is(err, adapters.ErrEventMismatch) {
+		if !s.recordAudit(deliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackStale, "fallback_stale")) {
+			return
+		}
+		if s.pendingExists(key) {
+			s.resolveEvent(key)
+			s.reconcilePending(event.SessionID)
+			advance = true
+		}
+		return
+	}
+	if !s.recordAudit(deliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackDeliveryUncertain, "delivery_uncertain")) {
+		return
+	}
+	if s.pendingExists(key) {
+		s.freezeSession(key, "delivery_uncertain")
+	}
+}
+
+func (s *Supervisor) fallbackToAsk(key eventKey, reason string) {
+	s.mu.Lock()
+	item, exists := s.pending[key]
+	if !exists {
+		s.mu.Unlock()
+		return
+	}
+	item.view.DeliveryStatus = "pending"
+	item.view.Evaluation.Action = "ask"
+	item.view.Evaluation.Automatic = false
+	item.view.Evaluation.Reason = reason
+	s.pending[key] = item
+	s.rebuildPendingLocked()
+	view := item.view
+	s.mu.Unlock()
+	s.sink.Prompt(view)
+}
+
+func (s *Supervisor) addFrozenEvent(event adapters.Event, evaluation policy.Evaluation) {
+	key := makeEventKey(event.SessionID, event.ID)
+	// A frozen event offers no answer at all: the session is already blocked on
+	// an audit or delivery failure and nothing more may be sent to it.
+	view := supervisionView(s.runID, event, evaluation, "failed", nil)
+	s.mu.Lock()
+	s.pending[key] = pendingEvent{event: event.Clone(), view: view}
+	s.frozen[key.sessionID] = true
+	if index, found := s.agentIndex[key.sessionID]; found {
+		s.agents[index].InputFrozen = true
+	}
+	s.setAgentWaitingLocked(event.SessionID)
+	s.rebuildPendingLocked()
+	s.mu.Unlock()
+	s.sink.Prompt(view)
+}
+
+func (s *Supervisor) markDelivery(key eventKey, status, reason string) {
+	s.mu.Lock()
+	item, exists := s.pending[key]
+	if !exists {
+		s.mu.Unlock()
+		return
+	}
+	item.view.DeliveryStatus = status
+	item.view.Evaluation.Reason = reason
+	s.pending[key] = item
+	if status == "uncertain" || status == "failed" {
+		s.frozen[key.sessionID] = true
+		if index, found := s.agentIndex[key.sessionID]; found {
+			s.agents[index].InputFrozen = true
+		}
+	}
+	s.rebuildPendingLocked()
+	view := item.view
+	s.mu.Unlock()
+	s.sink.Prompt(view)
+}
+
+func (s *Supervisor) freezeSession(key eventKey, reason string) {
+	s.markDelivery(key, "uncertain", reason)
+	s.emitSafeError("delivery_uncertain", "Delivery is indeterminate. The session is frozen to prevent a second answer.", key.sessionID)
+}
+
+func (s *Supervisor) resolveEvent(key eventKey) {
+	s.mu.Lock()
+	item, exists := s.pending[key]
+	status := "running"
+	if exists {
+		delete(s.pending, key)
+		s.markResolvedLocked(key)
+		if s.hasPendingForSessionLocked(key.sessionID) {
+			s.setAgentWaitingLocked(key.sessionID)
+			status = "waiting"
+		} else {
+			s.restoreAgentRunningLocked(key.sessionID)
+		}
+		s.rebuildPendingLocked()
+		item.view.DeliveryStatus = "delivered"
+	}
+	s.mu.Unlock()
+	if exists {
+		s.sink.Prompt(item.view)
+		s.sink.Status(Status{RunID: s.runID, Scope: "session", SessionID: key.sessionID, Status: status})
+	}
+}
+
+func (s *Supervisor) hasPendingForSessionLocked(sessionKey string) bool {
+	for key := range s.pending {
+		if key.sessionID == sessionKey {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Supervisor) reconcilePending(sessionID string) {
+	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
+	pending, err := s.engine.PendingEvent(ctx, sessionID)
+	cancel()
+	if err != nil || pending == nil {
+		return
+	}
+	s.handleAdapterEvent(pending.Clone())
+}
+
+// SubmitDecision relays a manual value to the exact canonical occurrence. The
+// value is never copied into application state, events, errors or audit data.
+func (s *Supervisor) SubmitDecision(runID, sessionID, eventID, manualInput string) error {
+	if strings.TrimSpace(manualInput) == "" {
+		return ErrEmptyDecision
+	}
+	return s.applyHumanDecision(runID, sessionID, eventID, adapters.DecisionManual, manualInput)
+}
+
+// SubmitAutomaticDecision relays an answer the adapter encodes itself, so the
+// operator does not have to know the keystroke a given CLI expects.
+//
+// The set of answers a given occurrence accepts is reported on the event, and
+// the adapter is asked again here: a decision that arrived from a stale
+// interface must be refused by the core rather than by the screen that offered
+// it.
+func (s *Supervisor) SubmitAutomaticDecision(runID, sessionID, eventID, decision string) error {
+	switch adapters.Decision(decision) {
+	case adapters.DecisionAllow, adapters.DecisionDeny:
+	default:
+		return ErrUnsupportedDecision
+	}
+	if runErr := s.activeRun(runID); runErr != nil {
+		return runErr
+	}
+	s.mu.RLock()
+	item, exists := s.pending[makeEventKey(sessionID, eventID)]
+	s.mu.RUnlock()
+	if !exists {
+		return ErrDecisionStale
+	}
+	offered := false
+	for _, supported := range s.engine.SupportedDecisions(item.event) {
+		if supported == adapters.Decision(decision) {
+			offered = true
+		}
+	}
+	if !offered {
+		return ErrUnsupportedDecision
+	}
+	return s.applyHumanDecision(runID, sessionID, eventID, adapters.Decision(decision), "")
+}
+
+func (s *Supervisor) applyHumanDecision(
+	runID, sessionID, eventID string,
+	decision adapters.Decision,
+	manualInput string,
+) error {
+	if runErr := s.activeRun(runID); runErr != nil {
+		return runErr
+	}
+	key := makeEventKey(sessionID, eventID)
+	if !s.beginDelivery() {
+		s.mu.RLock()
+		frozen := s.auditFailed || s.frozen[key.sessionID]
+		s.mu.RUnlock()
+		if frozen {
+			return ErrDeliveryUncertain
+		}
+		return ErrRuntimeStopped
+	}
+	defer s.endDelivery()
+
+	s.mu.Lock()
+	item, exists := s.pending[key]
+	frozen := s.frozen[key.sessionID] || s.auditFailed
+	shuttingDown := s.shuttingDown
+	if !exists {
+		s.mu.Unlock()
+		return ErrDecisionStale
+	}
+	if shuttingDown {
+		s.mu.Unlock()
+		return ErrRuntimeStopped
+	}
+	if s.stoppingSessions[key.sessionID] {
+		s.mu.Unlock()
+		return ErrRuntimeStopped
+	}
+	if frozen || item.view.DeliveryStatus == "uncertain" || item.view.DeliveryStatus == "failed" {
+		s.mu.Unlock()
+		return ErrDeliveryUncertain
+	}
+	if _, busy := s.inFlight[key.sessionID]; busy || s.lineInFlight[key.sessionID] || item.view.DeliveryStatus != "pending" {
+		s.mu.Unlock()
+		return ErrDecisionInFlight
+	}
+	s.inFlight[key.sessionID] = key
+	item.view.DeliveryStatus = "delivering"
+	s.pending[key] = item
+	s.rebuildPendingLocked()
+	view := item.view
+	s.mu.Unlock()
+	s.sink.Prompt(view)
+	advance := false
+	defer func() { s.finishDecision(key, advance) }()
+
+	backend := s.backendFor(sessionID)
+	if !s.recordAudit(decisionAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman)) {
+		return ErrAuditUnavailable
+	}
+	ctx, cancel := context.WithTimeout(s.ctx, 8*time.Second)
+	err := s.engine.ApplyDecision(ctx, sessionID, item.event, decision, manualInput)
+	cancel()
+	if err != nil {
+		if errors.Is(err, adapters.ErrEventMismatch) {
+			if !s.recordAudit(deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackStale, "fallback_stale")) {
+				return ErrAuditUnavailable
+			}
+			s.resolveEvent(key)
+			s.reconcilePending(sessionID)
+			advance = true
+			return ErrDecisionStale
+		}
+		if !s.recordAudit(deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackDeliveryUncertain, "delivery_uncertain")) {
+			return ErrAuditUnavailable
+		}
+		s.freezeSession(key, "delivery_uncertain")
+		return ErrDeliveryUncertain
+	}
+	if !s.recordAudit(deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeApplied, "delivery_applied")) {
+		return ErrAuditUnavailable
+	}
+	s.resolveEvent(key)
+	advance = true
+	return nil
+}

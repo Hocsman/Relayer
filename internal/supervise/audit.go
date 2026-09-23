@@ -11,11 +11,10 @@ import (
 
 // The builders below are the journal vocabulary of supervision: every entry
 // the core writes about a prompt, a decision, its delivery or an operator line
-// is shaped here, from display-safe fields only. They are exported while the
-// desktop's state machine still calls them from its own package.
+// is shaped here, from display-safe fields only.
 
-// EventAuditEntry is the common shape of an entry about one adapter event.
-func EventAuditEntry(kind audit.Kind, event adapters.Event, backend string) audit.Entry {
+// eventAuditEntry is the common shape of an entry about one adapter event.
+func eventAuditEntry(kind audit.Kind, event adapters.Event, backend string) audit.Entry {
 	entry := audit.Entry{
 		Kind:       kind,
 		SessionID:  strings.TrimSpace(event.SessionID),
@@ -25,35 +24,35 @@ func EventAuditEntry(kind audit.Kind, event adapters.Event, backend string) audi
 		EventID:    strings.TrimSpace(event.ID),
 		EventType:  event.Type,
 		Risk:       event.Risk,
-		Summary:    SafeEventSummary(event),
-		Sensitive:  RequiresSecretHandling(event),
+		Summary:    safeEventSummary(event),
+		Sensitive:  requiresSecretHandling(event),
 		DecisionBy: audit.DecisionBySystem,
 	}
 	if event.Type == adapters.EventProcessExit {
-		entry.Metadata = SafeExitMetadata(event.Metadata)
+		entry.Metadata = safeExitMetadata(event.Metadata)
 	}
 	return entry
 }
 
-// EventDetectedEntry journals that a prompt or an exit was taken in.
-func EventDetectedEntry(event adapters.Event, backend string) audit.Entry {
-	entry := EventAuditEntry(audit.KindEventDetected, event, backend)
+// eventDetectedEntry journals that a prompt or an exit was taken in.
+func eventDetectedEntry(event adapters.Event, backend string) audit.Entry {
+	entry := eventAuditEntry(audit.KindEventDetected, event, backend)
 	entry.Outcome = audit.OutcomeDetected
 	entry.Reason = "event_detected"
 	return entry
 }
 
-// EventWithdrawnEntry journals that the agent took its question back.
-func EventWithdrawnEntry(event adapters.Event, backend, reason string) audit.Entry {
-	entry := EventAuditEntry(audit.KindEventWithdrawn, event, backend)
+// eventWithdrawnEntry journals that the agent took its question back.
+func eventWithdrawnEntry(event adapters.Event, backend, reason string) audit.Entry {
+	entry := eventAuditEntry(audit.KindEventWithdrawn, event, backend)
 	entry.Outcome = audit.OutcomeCancelled
-	entry.Reason = SafeReason(reason)
+	entry.Reason = safeReason(reason)
 	return entry
 }
 
-// SafeExitMetadata keeps only the exit facts the journal may hold: whether the
+// safeExitMetadata keeps only the exit facts the journal may hold: whether the
 // process failed and its numeric exit code.
-func SafeExitMetadata(metadata map[string]string) map[string]string {
+func safeExitMetadata(metadata map[string]string) map[string]string {
 	if len(metadata) == 0 {
 		return nil
 	}
@@ -72,13 +71,13 @@ func SafeExitMetadata(metadata map[string]string) map[string]string {
 	return result
 }
 
-// PolicyAuditEntry journals the policy's evaluation of a prompt.
-func PolicyAuditEntry(event adapters.Event, backend string, evaluation policy.Evaluation) audit.Entry {
-	entry := EventAuditEntry(audit.KindPolicyEvaluated, event, backend)
+// policyAuditEntry journals the policy's evaluation of a prompt.
+func policyAuditEntry(event adapters.Event, backend string, evaluation policy.Evaluation) audit.Entry {
+	entry := eventAuditEntry(audit.KindPolicyEvaluated, event, backend)
 	entry.DecisionBy = audit.DecisionByPolicy
 	entry.Rule = evaluation.RuleName
-	entry.Reason = SafeReason(evaluation.Reason)
-	entry.Decision = AuditDecisionForPolicy(evaluation.Action)
+	entry.Reason = safeReason(evaluation.Reason)
+	entry.Decision = auditDecisionForPolicy(evaluation.Action)
 	entry.Outcome = audit.OutcomeAsk
 	if evaluation.DryRun {
 		entry.Outcome = audit.OutcomeDryRun
@@ -94,14 +93,14 @@ func PolicyAuditEntry(event adapters.Event, backend string, evaluation policy.Ev
 	return entry
 }
 
-// DecisionAuditEntry journals a decision before it is delivered.
-func DecisionAuditEntry(
+// decisionAuditEntry journals a decision before it is delivered.
+func decisionAuditEntry(
 	event adapters.Event,
 	backend string,
 	decision audit.Decision,
 	actor audit.DecisionBy,
 ) audit.Entry {
-	entry := EventAuditEntry(audit.KindDecision, event, backend)
+	entry := eventAuditEntry(audit.KindDecision, event, backend)
 	entry.Decision = decision
 	entry.DecisionBy = actor
 	entry.Outcome = audit.OutcomeInFlight
@@ -113,8 +112,8 @@ func DecisionAuditEntry(
 	return entry
 }
 
-// DeliveryAuditEntry journals the terminal outcome of a decision's delivery.
-func DeliveryAuditEntry(
+// deliveryAuditEntry journals the terminal outcome of a decision's delivery.
+func deliveryAuditEntry(
 	event adapters.Event,
 	backend string,
 	decision audit.Decision,
@@ -122,20 +121,20 @@ func DeliveryAuditEntry(
 	outcome audit.Outcome,
 	reason string,
 ) audit.Entry {
-	entry := EventAuditEntry(audit.KindDelivery, event, backend)
+	entry := eventAuditEntry(audit.KindDelivery, event, backend)
 	entry.Decision = decision
 	entry.DecisionBy = actor
 	entry.Outcome = outcome
-	entry.Reason = SafeReason(reason)
+	entry.Reason = safeReason(reason)
 	entry.Summary = ""
 	entry.Metadata = nil
 	return entry
 }
 
-// OperatorInputAuditEntry deliberately has no free-form input, summary,
+// operatorInputAuditEntry deliberately has no free-form input, summary,
 // decision, event or metadata field. It records only the lifecycle of an
 // operator-initiated line at the already-known session boundary.
-func OperatorInputAuditEntry(agent AgentSpec, outcome audit.Outcome, reason string) audit.Entry {
+func operatorInputAuditEntry(agent Agent, outcome audit.Outcome, reason string) audit.Entry {
 	return audit.Entry{
 		Kind:       audit.KindOperatorInput,
 		SessionID:  strings.TrimSpace(agent.SessionID),
@@ -148,8 +147,8 @@ func OperatorInputAuditEntry(agent AgentSpec, outcome audit.Outcome, reason stri
 	}
 }
 
-// AuditDecisionForPolicy names a policy action in the journal's vocabulary.
-func AuditDecisionForPolicy(action policy.Action) audit.Decision {
+// auditDecisionForPolicy names a policy action in the journal's vocabulary.
+func auditDecisionForPolicy(action policy.Action) audit.Decision {
 	switch action {
 	case policy.ActionAllow:
 		return audit.DecisionAllow
@@ -162,9 +161,9 @@ func AuditDecisionForPolicy(action policy.Action) audit.Decision {
 	}
 }
 
-// AdapterDecisionForPolicy is the answer an automatic decision sends, and
+// adapterDecisionForPolicy is the answer an automatic decision sends, and
 // false for an action no adapter can encode on its own.
-func AdapterDecisionForPolicy(action policy.Action) (adapters.Decision, bool) {
+func adapterDecisionForPolicy(action policy.Action) (adapters.Decision, bool) {
 	switch action {
 	case policy.ActionAllow:
 		return adapters.DecisionAllow, true
@@ -175,11 +174,11 @@ func AdapterDecisionForPolicy(action policy.Action) (adapters.Decision, bool) {
 	}
 }
 
-// HumanAuditDecision names the answer a human actually gave. A free-text reply
+// humanAuditDecision names the answer a human actually gave. A free-text reply
 // stays "ask": the journal records that a human was consulted and answered, not
 // that the answer permitted anything — only the adapter knows what the bytes
 // mean.
-func HumanAuditDecision(decision adapters.Decision) audit.Decision {
+func humanAuditDecision(decision adapters.Decision) audit.Decision {
 	switch decision {
 	case adapters.DecisionAllow:
 		return audit.DecisionAllow

@@ -260,13 +260,12 @@ func (a *App) stopGenerationLocked(run *runGeneration, strict bool, status strin
 	if run == nil {
 		return nil
 	}
-	a.closeDelivery()
+	run.sup.BeginDrain()
 	a.mu.Lock()
 	if a.active != run {
 		a.mu.Unlock()
 		return errRunStale
 	}
-	a.shuttingDown = true
 	a.state.RunStatus = status
 	a.mu.Unlock()
 	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "run", Status: status})
@@ -284,27 +283,21 @@ func (a *App) stopGenerationLocked(run *runGeneration, strict bool, status strin
 	}
 	cancel()
 	run.cancel()
-	a.deliveryWG.Wait()
+	run.sup.Wait()
 	a.eventWG.Wait()
 	ctx, cancel = context.WithTimeout(context.Background(), 12*time.Second)
 	result = errors.Join(result, run.engine.Close(ctx))
 	cancel()
 
+	// The run's supervision state goes with its core, which is dropped with
+	// the run.
 	a.mu.Lock()
 	if a.active == run {
 		a.active = nil
 		a.engine = nil
 		a.agentIndex = make(map[string]int)
-		a.pending = make(map[eventKey]pendingEvent)
-		a.ingesting = make(map[eventKey]struct{})
-		a.resolved = make(map[eventKey]struct{})
-		a.resolvedOrder = nil
-		a.inFlight = make(map[string]eventKey)
-		a.lineInFlight = make(map[string]bool)
-		a.stoppingSessions = make(map[string]bool)
 		a.outputRunning = make(map[string]bool)
 		a.outputDirty = make(map[string]bool)
-		a.frozen = make(map[string]bool)
 		a.state.Agents = []AgentState{}
 		a.state.PendingEvents = []SupervisionEvent{}
 	}

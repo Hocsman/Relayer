@@ -35,8 +35,8 @@ func TestSafeReason(t *testing.T) {
 	}
 
 	for _, reason := range allowedReasons {
-		if got := SafeReason(reason); got != reason {
-			t.Errorf("SafeReason(%q) = %q, want %q", reason, got, reason)
+		if got := safeReason(reason); got != reason {
+			t.Errorf("safeReason(%q) = %q, want %q", reason, got, reason)
 		}
 	}
 
@@ -48,8 +48,8 @@ func TestSafeReason(t *testing.T) {
 		"some other reason",
 	}
 	for _, unk := range unknowns {
-		if got := SafeReason(unk); got != "unknown" {
-			t.Errorf("SafeReason(%q) = %q, want %q", unk, got, "unknown")
+		if got := safeReason(unk); got != "unknown" {
+			t.Errorf("safeReason(%q) = %q, want %q", unk, got, "unknown")
 		}
 	}
 }

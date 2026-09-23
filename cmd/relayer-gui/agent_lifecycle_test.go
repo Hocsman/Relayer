@@ -13,30 +13,24 @@ import (
 	"github.com/Hocsman/Relayer/internal/policy"
 )
 
+// markAgentExitedForTest ends the agent's process as its own exit would: the
+// agent is no longer running, shows exited with code 0, and its prompts go.
 func markAgentExitedForTest(application *App, sessionID string) {
-	application.mu.Lock()
-	defer application.mu.Unlock()
-	key := strings.ToLower(strings.TrimSpace(sessionID))
-	delete(application.frozen, key)
-	application.state.PendingEvents = nil
-	if index, found := application.agentIndex[key]; found {
-		application.state.Agents[index].Running = false
-		application.state.Agents[index].Status = "exited"
-		application.state.Agents[index].ExitCode = intPtrForTest(0)
-	}
+	application.handleAdapterEventForRun(activeRunForTest(application), exitEventForTest(sessionID))
 }
 
 func agentStateForTest(application *App, sessionID string) AgentState {
-	application.mu.RLock()
-	defer application.mu.RUnlock()
-	key := strings.ToLower(strings.TrimSpace(sessionID))
-	if index, found := application.agentIndex[key]; found {
-		return application.state.Agents[index]
+	state, err := application.GetState()
+	if err != nil {
+		return AgentState{}
+	}
+	for _, agent := range state.Agents {
+		if strings.EqualFold(strings.TrimSpace(agent.SessionID), strings.TrimSpace(sessionID)) {
+			return agent
+		}
 	}
 	return AgentState{}
 }
-
-func intPtrForTest(value int) *int { return &value }
 
 func TestStartSessionRefusesUnknownAgentsAndRunningProcesses(t *testing.T) {
 	engine := newFakeDesktopEngine("agent-a")
@@ -244,9 +238,10 @@ func TestAnAnsweredPromptOfThePreviousProcessStaysAnswered(t *testing.T) {
 	runID := activeRunIDForTest(application)
 	run := activeRunForTest(application)
 
-	application.mu.Lock()
-	application.markResolvedLocked(makeEventKey("agent-a", "prompt-previous"))
-	application.mu.Unlock()
+	application.handleAdapterEventForRun(run, bridgeEvent("agent-a", "prompt-previous"))
+	if err := application.SubmitDecision(runID, "agent-a", "prompt-previous", "Y"); err != nil {
+		t.Fatalf("answering the previous process's prompt: %v", err)
+	}
 	if err := application.RestartSession(runID, "agent-a"); err != nil {
 		t.Fatalf("RestartSession: %v", err)
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/notify"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
+	"github.com/Hocsman/Relayer/internal/supervise"
 	"github.com/Hocsman/Relayer/internal/telemetry"
 	"github.com/Hocsman/Relayer/internal/terminal"
 )
@@ -444,6 +445,9 @@ func cloneStringMap(source map[string]string) map[string]string {
 	return result
 }
 
+// The fake runs the supervision core as the real runtime does.
+var _ supervise.Engine = (*fakeDesktopEngine)(nil)
+
 func newBridgeForTest(engine *fakeDesktopEngine) *App {
 	application := NewApp()
 	application.engine = engine
@@ -495,10 +499,14 @@ func TestBridgeKeepsSimultaneousPromptsWithSameEventIDSeparateBySession(t *testi
 	if len(state.PendingEvents) != 2 {
 		t.Fatalf("pending events = %#v, want two distinct prompts", state.PendingEvents)
 	}
-	if _, exists := application.pending[makeEventKey("Agent-A", "prompt-1")]; !exists {
+	pendingKeys := map[string]bool{}
+	for _, prompt := range state.PendingEvents {
+		pendingKeys[strings.ToLower(prompt.SessionID)+"\x00"+prompt.ID] = true
+	}
+	if !pendingKeys["agent-a\x00prompt-1"] {
 		t.Fatal("Agent-A composite prompt key is missing")
 	}
-	if _, exists := application.pending[makeEventKey("Agent-B", "prompt-1")]; !exists {
+	if !pendingKeys["agent-b\x00prompt-1"] {
 		t.Fatal("Agent-B composite prompt key is missing")
 	}
 	if state.PendingEvents[0].SessionID == state.PendingEvents[1].SessionID {
@@ -786,10 +794,7 @@ func TestSubmitLineFailsClosedForExitAttachShutdownAndAudit(t *testing.T) {
 	t.Run("known exit", func(t *testing.T) {
 		engine := newFakeDesktopEngine("agent-a")
 		application := newBridgeForTest(engine)
-		application.mu.Lock()
-		application.state.Agents[0].Running = false
-		application.state.Agents[0].Status = "exited"
-		application.mu.Unlock()
+		markAgentExitedForTest(application, "agent-a")
 		if err := application.SubmitLine(activeRunIDForTest(application), "agent-a", "hello"); !errors.Is(err, errLineUnavailable) {
 			t.Fatalf("SubmitLine error = %v", err)
 		}
@@ -800,10 +805,7 @@ func TestSubmitLineFailsClosedForExitAttachShutdownAndAudit(t *testing.T) {
 	t.Run("attached", func(t *testing.T) {
 		engine := newFakeDesktopEngine("agent-a")
 		application := newBridgeForTest(engine)
-		application.mu.Lock()
-		application.state.Agents[0].Attached = true
-		application.state.Agents[0].Status = "attached"
-		application.mu.Unlock()
+		activeRunForTest(application).sup.SetAttached("agent-a", true)
 		if err := application.SubmitLine(activeRunIDForTest(application), "agent-a", "hello"); !errors.Is(err, errLineUnavailable) {
 			t.Fatalf("SubmitLine error = %v", err)
 		}
@@ -814,9 +816,7 @@ func TestSubmitLineFailsClosedForExitAttachShutdownAndAudit(t *testing.T) {
 	t.Run("shutdown", func(t *testing.T) {
 		engine := newFakeDesktopEngine("agent-a")
 		application := newBridgeForTest(engine)
-		application.mu.Lock()
-		application.shuttingDown = true
-		application.mu.Unlock()
+		activeRunForTest(application).sup.BeginDrain()
 		if err := application.SubmitLine(activeRunIDForTest(application), "agent-a", "hello"); !errors.Is(err, errRuntimeStopped) {
 			t.Fatalf("SubmitLine error = %v", err)
 		}
@@ -969,29 +969,25 @@ func TestAuditFailurePreventsManualDeliveryAndFreezesBridge(t *testing.T) {
 
 func TestUnsupportedAutomaticDecisionFallsBackToAsk(t *testing.T) {
 	engine := newFakeDesktopEngine("agent-a")
-	application := newBridgeForTest(engine)
-	event := bridgeEvent("agent-a", "automatic-1")
-	application.handleAdapterEvent(event)
-	key := makeEventKey(event.SessionID, event.ID)
-	automatic := policy.Evaluation{
+	// The policy decides the prompt on its own, and the adapter then has no
+	// bytes for the answer.
+	engine.evaluation = policy.Evaluation{
 		Action:         policy.ActionAllow,
 		ProposedAction: policy.ActionAllow,
 		RuleName:       "allow-safe",
 		Reason:         policy.ReasonRule,
-		EventID:        event.ID,
 		Automatic:      true,
 	}
-	runID := activeRunIDForTest(application)
-	application.mu.Lock()
-	item := application.pending[key]
-	item.view = supervisionView(runID, event, automatic, "delivering", nil)
-	application.pending[key] = item
-	application.rebuildPendingLocked()
-	application.mu.Unlock()
-
 	engine.applyErr = adapters.ErrDecisionUnsupported
+	application := newBridgeForTest(engine)
 	application.ctx = context.Background()
-	application.applyAutomatic(key, event, automatic)
+	event := bridgeEvent("agent-a", "automatic-1")
+	application.handleAdapterEvent(event)
+	waitForCondition(t, 2*time.Second, func() bool {
+		state, err := application.GetState()
+		return err == nil && len(state.PendingEvents) == 1 &&
+			state.PendingEvents[0].Evaluation.Reason == "fallback_unsupported"
+	})
 
 	calls := engine.applySnapshot()
 	if len(calls) != 1 || calls[0].decision != adapters.DecisionAllow || calls[0].manualInput != "" {
@@ -1176,33 +1172,33 @@ func TestConcurrentSubmitDecisionAdmitsExactlyOneDelivery(t *testing.T) {
 
 func TestProcessExitDuringAutomaticDeliveryStillRecordsTerminalOutcome(t *testing.T) {
 	engine := newFakeDesktopEngine("agent-a")
-	application := newBridgeForTest(engine)
-	prompt := bridgeEvent("agent-a", "automatic-exit")
-	application.handleAdapterEvent(prompt)
-	key := makeEventKey(prompt.SessionID, prompt.ID)
-	automatic := policy.Evaluation{
+	engine.evaluation = policy.Evaluation{
 		Action:         policy.ActionAllow,
 		ProposedAction: policy.ActionAllow,
 		RuleName:       "allow-safe",
 		Reason:         policy.ReasonRule,
-		EventID:        prompt.ID,
 		Automatic:      true,
 	}
-	runID := activeRunIDForTest(application)
-	application.mu.Lock()
-	item := application.pending[key]
-	item.view = supervisionView(runID, prompt, automatic, "delivering", nil)
-	application.pending[key] = item
-	application.rebuildPendingLocked()
-	application.mu.Unlock()
-
+	application := newBridgeForTest(engine)
+	prompt := bridgeEvent("agent-a", "automatic-exit")
 	exitCode := 0
 	exitEvent := adapters.NewProcessExitEvent(prompt.SessionID, prompt.AgentID, prompt.Adapter, 2, &exitCode, false)
 	application.ctx = context.Background()
+	// The process exits while the automatic answer is being written.
 	engine.beforeApplyReturn = func() {
 		application.handleAdapterEvent(exitEvent)
 	}
-	application.applyAutomatic(key, prompt, automatic)
+	application.handleAdapterEvent(prompt)
+	terminalDeliveriesOf := func() []audit.Entry {
+		var entries []audit.Entry
+		for _, entry := range engine.auditSnapshot() {
+			if entry.Kind == audit.KindDelivery && entry.EventID == prompt.ID {
+				entries = append(entries, entry)
+			}
+		}
+		return entries
+	}
+	waitForCondition(t, 2*time.Second, func() bool { return len(terminalDeliveriesOf()) > 0 })
 
 	state, err := application.GetState()
 	if err != nil {
@@ -1211,12 +1207,7 @@ func TestProcessExitDuringAutomaticDeliveryStillRecordsTerminalOutcome(t *testin
 	if len(state.PendingEvents) != 0 || len(state.Agents) != 1 || state.Agents[0].Status != "exited" {
 		t.Fatalf("post-exit state = %#v", state)
 	}
-	var terminalDeliveries []audit.Entry
-	for _, entry := range engine.auditSnapshot() {
-		if entry.Kind == audit.KindDelivery && entry.EventID == prompt.ID {
-			terminalDeliveries = append(terminalDeliveries, entry)
-		}
-	}
+	terminalDeliveries := terminalDeliveriesOf()
 	if len(terminalDeliveries) != 1 {
 		t.Fatalf("terminal delivery audit entries = %#v, want exactly one", terminalDeliveries)
 	}

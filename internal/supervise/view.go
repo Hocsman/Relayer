@@ -46,9 +46,9 @@ type EvaluationView struct {
 // RFC3339Nano drops trailing zeros, so a prompt at .1 sorted after one at .12.
 const eventTimestampLayout = "2006-01-02T15:04:05.000000000Z07:00"
 
-// NewView builds the view of an event as evaluated by the policy. Only allow
-// and deny are offered as answers: a free-text answer is not a button.
-func NewView(
+// supervisionView builds the view of an event as evaluated by the policy. Only
+// allow and deny are offered as answers: a free-text answer is not a button.
+func supervisionView(
 	runID string,
 	event adapters.Event,
 	evaluation policy.Evaluation,
@@ -73,15 +73,15 @@ func NewView(
 		AgentID:   event.AgentID,
 		Adapter:   event.Adapter,
 		Type:      string(event.Type),
-		Summary:   SafeEventSummary(event),
-		Sensitive: RequiresSecretHandling(event),
+		Summary:   safeEventSummary(event),
+		Sensitive: requiresSecretHandling(event),
 		Risk:      string(event.Risk),
 		Timestamp: timestamp.UTC().Format(eventTimestampLayout),
 		Evaluation: EvaluationView{
 			Action:         string(evaluation.Action),
 			ProposedAction: string(evaluation.ProposedAction),
-			RuleName:       SafeRuleName(evaluation.RuleName),
-			Reason:         SafeReason(evaluation.Reason),
+			RuleName:       safeRuleName(evaluation.RuleName),
+			Reason:         safeReason(evaluation.Reason),
 			Automatic:      evaluation.Automatic,
 			DryRun:         evaluation.DryRun,
 		},

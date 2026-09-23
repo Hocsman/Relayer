@@ -5,19 +5,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"unicode"
 
-	"github.com/Hocsman/Relayer/internal/adapters"
 	appcore "github.com/Hocsman/Relayer/internal/app"
-	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/notify"
-	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/preflight"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/supervise"
@@ -28,12 +23,11 @@ import (
 )
 
 const (
-	eventSnapshot     = "relayer:snapshot"
-	eventSemantic     = "relayer:event"
-	eventStatus       = "relayer:status"
-	eventError        = "relayer:error"
-	maxResolvedEvents = 1024
-	outputFrameDelay  = 40 * time.Millisecond
+	eventSnapshot    = "relayer:snapshot"
+	eventSemantic    = "relayer:event"
+	eventStatus      = "relayer:status"
+	eventError       = "relayer:error"
+	outputFrameDelay = 40 * time.Millisecond
 )
 
 // The bridge's refusals are the supervision core's: the same values, so every
@@ -48,55 +42,42 @@ var (
 	errLineInFlight        = supervise.ErrLineInFlight
 	errLinePromptPending   = supervise.ErrLinePromptPending
 	errLineUnavailable     = supervise.ErrLineUnavailable
-	errLineInvalid         = supervise.ErrLineInvalid
-	errLineUnsupported     = supervise.ErrLineUnsupported
 	errRuntimeStopped      = supervise.ErrRuntimeStopped
 	errRunStale            = supervise.ErrRunStale
 	errAgentUnknown        = supervise.ErrAgentUnknown
 	errAgentStillRunning   = supervise.ErrAgentStillRunning
 )
 
-type eventKey struct {
-	sessionID string
-	eventID   string
-}
-
-type pendingEvent struct {
-	event adapters.Event
-	view  SupervisionEvent
-}
-
+// desktopEngine is the runtime of one run: what the supervision core decides
+// with, and what only the bridge uses — the run's description, its output, the
+// terminal size and the run's own lifecycle.
 type desktopEngine interface {
+	supervise.Engine
 	Metadata() appcore.DesktopMetadata
 	Sessions() []appcore.DesktopSession
 	StartupLogs() []string
-	SupportedDecisions(adapters.Event) []adapters.Decision
 	Events() <-chan session.Event
 	Output(string) (string, error)
 	AnsiOutput(string) (string, error)
-	PendingEvent(context.Context, string) (*adapters.Event, error)
-	Evaluate(adapters.Event) policy.Evaluation
-	ApplyDecision(context.Context, string, adapters.Event, adapters.Decision, string) error
-	SendLine(context.Context, string, string) error
 	Resize(context.Context, string, terminal.Size) error
 	Stop(context.Context, string) error
-	StartAgent(context.Context, string) error
-	StopAgent(context.Context, string) error
-	RestartAgent(context.Context, string) error
-	MarkProcessExited(string) bool
-	RecordAudit(audit.Entry) error
 	BeginShutdown(context.Context) error
 	BeginRestart(context.Context) error
 	Close(context.Context) error
 	TelemetrySnapshot() telemetry.Snapshot
 }
 
+var _ supervise.Engine = (*appcore.DesktopRuntime)(nil)
+
+// runGeneration is one run: its runtime and the supervision core that decides
+// what reaches its agents. Both are replaced together by the next run.
 type runGeneration struct {
 	id         string
 	generation uint64
 	ctx        context.Context
 	cancel     context.CancelFunc
 	engine     desktopEngine
+	sup        *supervise.Supervisor
 	plan       *appcore.DesktopPlan
 }
 
@@ -117,32 +98,23 @@ type App struct {
 	runIDGenerator   func() (string, error)
 	runPreflight     func(context.Context, appcore.PreflightOptions) (preflight.Report, error)
 
-	mu               sync.RWMutex
-	state            AppState
-	agentIndex       map[string]int
-	pending          map[eventKey]pendingEvent
-	ingesting        map[eventKey]struct{}
-	resolved         map[eventKey]struct{}
-	resolvedOrder    []eventKey
-	inFlight         map[string]eventKey
-	lineInFlight     map[string]bool
-	stoppingSessions map[string]bool
-	// startingSessions marks a Start or Restart in progress. The agent is not
-	// yet marked running, and a prompt its replacement raised then used to be
-	// dropped as the prompt of a stopped agent.
-	startingSessions map[string]bool
-	outputRunning    map[string]bool
-	outputDirty      map[string]bool
-	frozen           map[string]bool
-	auditFailed      bool
-	shuttingDown     bool
-	startupErr       error
-	configPath       string
+	// mu guards the bridge's own display state. A lock of the supervision core
+	// may be taken while it is held, never the reverse: the core calls the
+	// bridge's sink only after releasing its own.
+	mu sync.RWMutex
+	// state holds what only the bridge knows. The agents' supervision fields
+	// (status, running, attached, frozen input, exit code), the pending
+	// prompts and the journal's failure are the active run's core's, laid over
+	// it by stateLocked.
+	state         AppState
+	agentIndex    map[string]int
+	outputRunning map[string]bool
+	outputDirty   map[string]bool
+	startupErr    error
+	configPath    string
 
-	deliveryMu        sync.Mutex
-	deliveryAvailable bool
-	deliveryWG        sync.WaitGroup
-
+	// eventWG tracks the bridge's own goroutines: the event loop and the
+	// output refreshes. The core tracks its automatic decisions itself.
 	eventWG sync.WaitGroup
 
 	profilesMu            sync.Mutex
@@ -172,17 +144,8 @@ func NewApp() *App {
 			PendingEvents: []SupervisionEvent{},
 		},
 		agentIndex:            make(map[string]int),
-		pending:               make(map[eventKey]pendingEvent),
-		ingesting:             make(map[eventKey]struct{}),
-		resolved:              make(map[eventKey]struct{}),
-		inFlight:              make(map[string]eventKey),
-		lineInFlight:          make(map[string]bool),
-		stoppingSessions:      make(map[string]bool),
-		startingSessions:      make(map[string]bool),
 		outputRunning:         make(map[string]bool),
 		outputDirty:           make(map[string]bool),
-		frozen:                make(map[string]bool),
-		deliveryAvailable:     true,
 		shutdownDone:          make(chan struct{}),
 		profileDetector:       toolcatalog.DefaultDetector(),
 		profileTokenGenerator: newOpaqueProfileToken,
@@ -258,10 +221,13 @@ func (a *App) activateRun(run *runGeneration) {
 	a.setNotifier(newNotifier(metadata.Notifications))
 	sessions := engine.Sessions()
 	agents := make([]AgentState, 0, len(sessions))
+	specs := make([]supervise.AgentSpec, 0, len(sessions))
 	index := make(map[string]int, len(sessions))
 	for _, item := range sessions {
 		output, _ := engine.Output(item.ID)
 		index[strings.ToLower(item.ID)] = len(agents)
+		// Status, Running and the other supervision fields are the core's,
+		// which starts every agent running.
 		agents = append(agents, AgentState{
 			SessionID:      item.ID,
 			AgentID:        item.ID,
@@ -269,31 +235,35 @@ func (a *App) activateRun(run *runGeneration) {
 			DisplayCommand: item.Command,
 			Backend:        item.Backend,
 			Adapter:        item.Adapter,
-			Status:         "running",
 			Output:         output,
 			Revision:       1,
-			Running:        true,
 			Simulated:      item.Simulated,
 		})
+		specs = append(specs, supervise.AgentSpec{
+			SessionID: item.ID,
+			AgentID:   item.ID,
+			Name:      item.Name,
+			Backend:   item.Backend,
+			Adapter:   item.Adapter,
+		})
 	}
+	// Each run gets a core of its own, so nothing of the previous run's
+	// prompts, answers, freezes or journal failure carries over.
+	sup, err := supervise.New(run.ctx, engine, supervise.Options{
+		RunID:  run.id,
+		Agents: specs,
+		Sink:   desktopSink{app: a, run: run},
+	})
+	if err != nil {
+		return
+	}
+	run.sup = sup
 	a.mu.Lock()
 	a.active = run
 	a.engine = engine
 	a.agentIndex = index
-	a.pending = make(map[eventKey]pendingEvent)
-	a.ingesting = make(map[eventKey]struct{})
-	a.resolved = make(map[eventKey]struct{})
-	a.resolvedOrder = nil
-	a.inFlight = make(map[string]eventKey)
-	a.lineInFlight = make(map[string]bool)
-	a.stoppingSessions = make(map[string]bool)
-	a.startingSessions = make(map[string]bool)
 	a.outputRunning = make(map[string]bool)
 	a.outputDirty = make(map[string]bool)
-	a.frozen = make(map[string]bool)
-	a.auditFailed = false
-	a.shuttingDown = false
-	a.agentIndex = index
 	a.state = AppState{
 		RunID:     run.id,
 		RunStatus: "running",
@@ -313,28 +283,46 @@ func (a *App) activateRun(run *runGeneration) {
 		PendingEvents: []SupervisionEvent{},
 	}
 	a.mu.Unlock()
-	a.openDelivery()
 }
 
+// isActiveRun reports whether run is the active run and is not draining.
 func (a *App) isActiveRun(run *runGeneration) bool {
 	if run == nil {
 		return false
 	}
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	return a.active == run && !a.shuttingDown
+	return a.active == run && !runDraining(run)
+}
+
+// runDraining reports whether a run takes nothing more in. A run without a
+// core has nothing to take in.
+func runDraining(run *runGeneration) bool {
+	return run.sup == nil || run.sup.Draining()
 }
 
 func (a *App) activeRun(expectedRunID string) (*runGeneration, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	if a.active == nil || a.active.engine == nil || a.shuttingDown {
+	if a.active == nil || a.active.engine == nil || runDraining(a.active) {
 		return nil, errRuntimeStopped
 	}
 	if strings.TrimSpace(expectedRunID) == "" || expectedRunID != a.active.id {
 		return nil, errRunStale
 	}
 	return a.active, nil
+}
+
+// supervisor returns the supervision core of the active run, or nil between
+// runs. The core refuses a nil receiver's operations with errRuntimeStopped,
+// after checking their arguments, which is the order the bridge always had.
+func (a *App) supervisor() *supervise.Supervisor {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.active == nil {
+		return nil
+	}
+	return a.active.sup
 }
 
 func (a *App) consumeEvents(run *runGeneration) {
@@ -351,14 +339,8 @@ func (a *App) consumeEvents(run *runGeneration) {
 			switch value := message.(type) {
 			case session.OutputAvailable:
 				a.scheduleOutputRefresh(run, value.SessionID)
-			case session.AdapterEvent:
-				a.handleAdapterEventForRun(run, value.Event.Clone())
-			case session.AdapterEventWithdrawn:
-				a.handleAdapterEventWithdrawnForRun(run, value.Event.Clone())
-			case session.Error:
-				a.markSessionError(run, value.SessionID, "backend_stream_failed")
-			case session.Exited:
-				a.markLegacyExit(run, value.SessionID)
+			default:
+				run.sup.Handle(message)
 			}
 		}
 	}
@@ -370,7 +352,7 @@ func (a *App) scheduleOutputRefresh(run *runGeneration, sessionID string) {
 		return
 	}
 	a.mu.Lock()
-	if a.shuttingDown || a.active != run {
+	if a.active != run || runDraining(run) {
 		a.mu.Unlock()
 		return
 	}
@@ -405,7 +387,7 @@ func (a *App) scheduleOutputRefresh(run *runGeneration, sessionID string) {
 			}
 			a.refreshOutputForRun(run, sessionID)
 			a.mu.Lock()
-			if a.outputDirty[key] && !a.shuttingDown && a.active == run {
+			if a.outputDirty[key] && a.active == run && !runDraining(run) {
 				a.outputDirty[key] = false
 				a.mu.Unlock()
 				continue
@@ -426,7 +408,35 @@ func (a *App) GetState() (AppState, error) {
 	if a.startupErr != nil {
 		return AppState{}, a.startupErr
 	}
-	return cloneAppState(a.state), nil
+	return a.stateLocked(), nil
+}
+
+// stateLocked is a deep copy of the display state: the bridge's own fields,
+// with the active run's supervision state laid over them from one reading of
+// its core. The caller holds a.mu.
+func (a *App) stateLocked() AppState {
+	state := cloneAppState(a.state)
+	if a.active == nil || a.active.sup == nil {
+		return state
+	}
+	core := a.active.sup.State()
+	agents := make(map[string]supervise.Agent, len(core.Agents))
+	for _, agent := range core.Agents {
+		agents[strings.ToLower(agent.SessionID)] = agent
+	}
+	for index := range state.Agents {
+		if agent, found := agents[strings.ToLower(state.Agents[index].SessionID)]; found {
+			state.Agents[index] = withSupervision(state.Agents[index], agent)
+		}
+	}
+	state.PendingEvents = nil
+	for _, view := range core.Pending {
+		state.PendingEvents = append(state.PendingEvents, supervisionEventFromView(view))
+	}
+	if core.AuditFailed {
+		state.Audit.Status = "failed"
+	}
+	return state
 }
 
 func (a *App) refreshOutput(sessionID string) {
@@ -459,837 +469,32 @@ func (a *App) refreshOutputForRun(run *runGeneration, sessionID string) {
 	agent := &a.state.Agents[index]
 	agent.Output = output
 	agent.Revision++
-	payload := snapshotFromAgent(run.id, *agent)
+	displayed := *agent
+	if supervised, found := run.sup.Agent(agent.SessionID); found {
+		displayed = withSupervision(displayed, supervised)
+	}
+	payload := snapshotFromAgent(run.id, displayed)
 	a.mu.Unlock()
 	a.emit(eventSnapshot, payload)
-}
-
-func (a *App) handleAdapterEvent(event adapters.Event) {
-	a.mu.RLock()
-	run := a.active
-	a.mu.RUnlock()
-	if run != nil {
-		a.handleAdapterEventForRun(run, event)
-	}
-}
-
-func (a *App) handleAdapterEventWithdrawn(event adapters.Event) {
-	a.mu.RLock()
-	run := a.active
-	a.mu.RUnlock()
-	if run != nil {
-		a.handleAdapterEventWithdrawnForRun(run, event)
-	}
-}
-
-func (a *App) handleAdapterEventWithdrawnForRun(run *runGeneration, event adapters.Event) {
-	if !a.isActiveRun(run) {
-		return
-	}
-	key := makeEventKey(event.SessionID, event.ID)
-	if key.sessionID == "" || key.eventID == "" {
-		return
-	}
-
-	backend := a.backendFor(run, event.SessionID)
-	_ = a.recordAudit(run, supervise.EventWithdrawnEntry(event, backend, "agent_withdrew_occurrence"))
-
-	a.mu.Lock()
-	if _, duplicate := a.resolved[key]; duplicate {
-		a.mu.Unlock()
-		return
-	}
-	pending, found := a.pending[key]
-	if !found {
-		a.mu.Unlock()
-		return
-	}
-	delete(a.pending, key)
-	sessionKey := strings.ToLower(event.SessionID)
-	if inflightKey, busy := a.inFlight[sessionKey]; busy && inflightKey == key {
-		delete(a.inFlight, sessionKey)
-	}
-	a.markResolvedLocked(key)
-
-	hasOtherPending := false
-	for otherKey := range a.pending {
-		if strings.ToLower(otherKey.sessionID) == sessionKey {
-			hasOtherPending = true
-			break
-		}
-	}
-	currentStatus := "running"
-	if index, foundAgent := a.agentIndex[sessionKey]; foundAgent {
-		if !hasOtherPending && a.state.Agents[index].Status == "waiting" {
-			a.state.Agents[index].Status = "running"
-		}
-		currentStatus = a.state.Agents[index].Status
-	}
-	a.rebuildPendingLocked()
-	a.mu.Unlock()
-
-	view := pending.view
-	view.DeliveryStatus = "delivered"
-	a.emit(eventSemantic, view)
-	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: event.SessionID, Status: currentStatus})
-	a.refreshOutputForRun(run, event.SessionID)
-	a.scheduleAutomatic(run, event.SessionID)
-}
-
-func (a *App) handleAdapterEventForRun(run *runGeneration, event adapters.Event) {
-	if !a.isActiveRun(run) {
-		return
-	}
-	key := makeEventKey(event.SessionID, event.ID)
-	if key.sessionID == "" || key.eventID == "" {
-		a.emitSafeError(run, "invalid_event", "An invalid event was ignored.", event.SessionID)
-		return
-	}
-	if !a.reserveEvent(key) {
-		return
-	}
-	defer a.releaseEventReservation(key)
-
-	backend := a.backendFor(run, event.SessionID)
-	if event.Type == adapters.EventProcessExit {
-		a.handleProcessExit(run, event, backend)
-		return
-	}
-	if !event.Actionable() {
-		return
-	}
-	if !a.sessionRunning(event.SessionID) && !a.sessionStarting(key.sessionID) {
-		a.mu.Lock()
-		a.markResolvedLocked(key)
-		a.mu.Unlock()
-		return
-	}
-	// OutputAvailable is intentionally coalescable. Refreshing here guarantees
-	// that an essential semantic event still brings the latest bounded tail to
-	// the WebView even when its preceding output invalidation was dropped.
-	a.refreshOutputForRun(run, event.SessionID)
-	if !a.recordAudit(run, supervise.EventDetectedEntry(event, backend)) {
-		a.addFrozenEvent(run, event, policy.Evaluation{Action: policy.ActionAsk, ProposedAction: policy.ActionAsk, Reason: policy.ReasonNoEngine})
-		return
-	}
-	evaluation := run.engine.Evaluate(event)
-	if !a.recordAudit(run, supervise.PolicyAuditEntry(event, backend, evaluation)) {
-		a.addFrozenEvent(run, event, evaluation)
-		return
-	}
-
-	view := supervisionView(run.id, event, evaluation, "pending", run.engine.SupportedDecisions(event))
-	a.mu.Lock()
-	a.pending[key] = pendingEvent{event: event.Clone(), view: view}
-	a.setAgentWaitingLocked(event.SessionID)
-	a.rebuildPendingLocked()
-	a.mu.Unlock()
-	a.emit(eventSemantic, view)
-	if notifier := a.currentNotifier(); notifier != nil {
-		agentName := event.AgentID
-		a.mu.RLock()
-		if index, found := a.agentIndex[strings.ToLower(event.SessionID)]; found {
-			agentName = a.state.Agents[index].Name
-		}
-		a.mu.RUnlock()
-		isGuardrail := evaluation.Reason == policy.ReasonDestructive ||
-			evaluation.Reason == policy.ReasonExfiltration ||
-			evaluation.Reason == policy.ReasonGuardrailBlocked
-
-		if isGuardrail {
-			notifier.Notify(notify.Notification{
-				Title:     "🛡️ Relayer Guardrail Alert",
-				AgentName: agentName,
-				SessionID: event.SessionID,
-				Reason:    "security guardrail blocked (" + evaluation.Reason + ")",
-				EventID:   event.ID,
-				Kind:      notify.KindGuardrailBlocked,
-				Severity:  notify.SeverityCritical,
-				Details:   event.Summary,
-			})
-		} else if !evaluation.Automatic {
-			reason := "confirmation required"
-			if supervise.RequiresSecretHandling(event) || evaluation.Reason == "sensitive" {
-				reason = "sensitive input required"
-			}
-			notifier.Notify(notify.Notification{
-				Title:     "Relayer",
-				AgentName: agentName,
-				SessionID: event.SessionID,
-				Reason:    reason,
-				EventID:   event.ID,
-				Kind:      notify.KindPendingDecision,
-				Severity:  notify.SeverityWarning,
-				Details:   event.Summary,
-			})
-		}
-	}
-	a.scheduleAutomatic(run, event.SessionID)
-}
-
-func (a *App) sessionRunning(sessionID string) bool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	index, found := a.agentIndex[strings.ToLower(strings.TrimSpace(sessionID))]
-	return found && a.state.Agents[index].Running
-}
-
-func (a *App) sessionStarting(sessionKey string) bool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.startingSessions[sessionKey]
-}
-
-func (a *App) reserveEvent(key eventKey) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if _, exists := a.resolved[key]; exists {
-		return false
-	}
-	if _, exists := a.pending[key]; exists {
-		return false
-	}
-	if _, exists := a.ingesting[key]; exists {
-		return false
-	}
-	a.ingesting[key] = struct{}{}
-	return true
-}
-
-func (a *App) releaseEventReservation(key eventKey) {
-	a.mu.Lock()
-	delete(a.ingesting, key)
-	a.mu.Unlock()
-}
-
-func (a *App) handleProcessExit(run *runGeneration, event adapters.Event, backend string) {
-	current := true
-	if run != nil && run.engine != nil {
-		current = run.engine.MarkProcessExited(event.SessionID)
-	}
-	key := makeEventKey(event.SessionID, event.ID)
-	if !current {
-		// A replacement already runs: this is the exit of the process before
-		// it, which can be emitted after the replacement started. It is still
-		// a finished session and is journaled, but showing the agent stopped
-		// would hide a live process and offer to start a second one.
-		_ = a.recordAudit(run, supervise.EventDetectedEntry(event, backend))
-		finished := supervise.EventAuditEntry(audit.KindSessionFinished, event, backend)
-		finished.Outcome = audit.OutcomeFinished
-		finished.Reason = "process_exit"
-		_ = a.recordAudit(run, finished)
-		a.mu.Lock()
-		a.markResolvedLocked(key)
-		a.mu.Unlock()
-		return
-	}
-	// Lifecycle state still has to converge even when audit has failed, so the
-	// result is deliberately ignored rather than short-circuiting the exit.
-	_ = a.recordAudit(run, supervise.EventDetectedEntry(event, backend))
-	finished := supervise.EventAuditEntry(audit.KindSessionFinished, event, backend)
-	finished.Outcome = audit.OutcomeFinished
-	if event.Metadata["failed"] == "true" {
-		finished.Outcome = audit.OutcomeFailed
-	}
-	finished.Reason = "process_exit"
-	_ = a.recordAudit(run, finished)
-
-	a.mu.Lock()
-	if _, duplicate := a.resolved[key]; duplicate {
-		a.mu.Unlock()
-		return
-	}
-	a.markResolvedLocked(key)
-	index, found := a.agentIndex[strings.ToLower(event.SessionID)]
-	if found {
-		agent := &a.state.Agents[index]
-		agent.Running = false
-		agent.Attached = false
-		agent.Status = "exited"
-		if event.Metadata["failed"] == "true" {
-			agent.Status = "failed"
-		}
-		if value := strings.TrimSpace(event.Metadata["exit_code"]); value != "" {
-			if code, err := strconv.Atoi(value); err == nil {
-				agent.ExitCode = &code
-			}
-		}
-	}
-	a.clearSessionPendingLocked(event.SessionID)
-	a.rebuildPendingLocked()
-	status := "exited"
-	if found {
-		status = a.state.Agents[index].Status
-	}
-	a.mu.Unlock()
-	a.refreshOutputForRun(run, event.SessionID)
-	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: event.SessionID, Status: status, ClearedBefore: clearedAll()})
-}
-
-// scheduleAutomatic serialises every automatic decision for a session and
-// never overtakes an earlier human prompt. The reservation and WaitGroup Add
-// happen under a.mu so Shutdown cannot begin waiting between those steps.
-func (a *App) scheduleAutomatic(run *runGeneration, sessionID string) {
-	sessionKey := strings.ToLower(strings.TrimSpace(sessionID))
-	if sessionKey == "" {
-		return
-	}
-	a.mu.Lock()
-	if a.shuttingDown || a.active != run || a.auditFailed || a.frozen[sessionKey] || a.stoppingSessions[sessionKey] {
-		a.mu.Unlock()
-		return
-	}
-	if _, busy := a.inFlight[sessionKey]; busy || a.lineInFlight[sessionKey] {
-		a.mu.Unlock()
-		return
-	}
-	key, item, found := a.firstPendingForSessionLocked(sessionKey)
-	if !found || !item.view.Evaluation.Automatic || item.view.DeliveryStatus != "pending" {
-		a.mu.Unlock()
-		return
-	}
-	item.view.DeliveryStatus = "delivering"
-	a.pending[key] = item
-	a.inFlight[sessionKey] = key
-	a.rebuildPendingLocked()
-	view := item.view
-	event := item.event.Clone()
-	evaluation := policy.Evaluation{
-		Action:         policy.Action(item.view.Evaluation.Action),
-		ProposedAction: policy.Action(item.view.Evaluation.ProposedAction),
-		RuleName:       item.view.Evaluation.RuleName,
-		Reason:         item.view.Evaluation.Reason,
-		EventID:        item.event.ID,
-		Automatic:      item.view.Evaluation.Automatic,
-		DryRun:         item.view.Evaluation.DryRun,
-	}
-	a.eventWG.Add(1)
-	a.mu.Unlock()
-	a.emit(eventSemantic, view)
-	go func() {
-		defer a.eventWG.Done()
-		a.applyAutomaticForRun(run, key, event, evaluation)
-	}()
-}
-
-func (a *App) firstPendingForSessionLocked(sessionKey string) (eventKey, pendingEvent, bool) {
-	var selectedKey eventKey
-	var selected pendingEvent
-	found := false
-	for key, item := range a.pending {
-		if key.sessionID != sessionKey {
-			continue
-		}
-		if !found || eventBefore(item.event, selected.event) {
-			selectedKey, selected, found = key, item, true
-		}
-	}
-	return selectedKey, selected, found
-}
-
-func eventBefore(left, right adapters.Event) bool {
-	if left.Sequence != right.Sequence {
-		return left.Sequence < right.Sequence
-	}
-	if !left.Timestamp.Equal(right.Timestamp) {
-		return left.Timestamp.Before(right.Timestamp)
-	}
-	return left.ID < right.ID
-}
-
-func (a *App) finishDecision(run *runGeneration, key eventKey, advance bool) {
-	a.mu.Lock()
-	if current, exists := a.inFlight[key.sessionID]; exists && current == key {
-		delete(a.inFlight, key.sessionID)
-	}
-	shuttingDown := a.shuttingDown
-	a.mu.Unlock()
-	if advance && !shuttingDown && a.isActiveRun(run) {
-		a.scheduleAutomatic(run, key.sessionID)
-	}
-}
-
-func (a *App) applyAutomatic(key eventKey, event adapters.Event, evaluation policy.Evaluation) {
-	a.mu.RLock()
-	run := a.active
-	a.mu.RUnlock()
-	if run != nil {
-		a.applyAutomaticForRun(run, key, event, evaluation)
-	}
-}
-
-func (a *App) applyAutomaticForRun(run *runGeneration, key eventKey, event adapters.Event, evaluation policy.Evaluation) {
-	advance := false
-	defer func() { a.finishDecision(run, key, advance) }()
-	decision, supported := supervise.AdapterDecisionForPolicy(evaluation.Action)
-	if !supported {
-		a.fallbackToAsk(key, "fallback_unsupported")
-		return
-	}
-	backend := a.backendFor(run, event.SessionID)
-	auditDecision := supervise.AuditDecisionForPolicy(evaluation.Action)
-	if !a.recordAudit(run, supervise.DecisionAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy)) {
-		a.markDelivery(key, "failed", "audit_unavailable")
-		return
-	}
-	if !a.beginDelivery() {
-		if !a.recordAudit(run, supervise.DeliveryAuditEntry(
-			event,
-			backend,
-			auditDecision,
-			audit.DecisionByPolicy,
-			audit.OutcomeCancelled,
-			"runtime_stopped",
-		)) {
-			return
-		}
-		a.markDelivery(key, "failed", "runtime_stopped")
-		return
-	}
-	defer a.endDelivery()
-	ctx, cancel := context.WithTimeout(run.ctx, 8*time.Second)
-	err := run.engine.ApplyDecision(ctx, event.SessionID, event, decision, "")
-	cancel()
-	if err == nil {
-		if !a.recordAudit(run, supervise.DeliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeApplied, "delivery_applied")) {
-			return
-		}
-		if a.pendingExists(key) {
-			a.resolveEvent(key)
-			advance = true
-		}
-		return
-	}
-	if errors.Is(err, adapters.ErrDecisionUnsupported) {
-		if !a.recordAudit(run, supervise.DeliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackUnsupported, "fallback_unsupported")) {
-			return
-		}
-		if a.pendingExists(key) {
-			a.fallbackToAsk(key, "fallback_unsupported")
-		}
-		return
-	}
-	if errors.Is(err, adapters.ErrEventMismatch) {
-		if !a.recordAudit(run, supervise.DeliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackStale, "fallback_stale")) {
-			return
-		}
-		if a.pendingExists(key) {
-			a.resolveEvent(key)
-			a.reconcilePending(run, event.SessionID)
-			advance = true
-		}
-		return
-	}
-	if !a.recordAudit(run, supervise.DeliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackDeliveryUncertain, "delivery_uncertain")) {
-		return
-	}
-	if a.pendingExists(key) {
-		a.freezeSession(run, key, "delivery_uncertain")
-	}
-}
-
-func (a *App) fallbackToAsk(key eventKey, reason string) {
-	a.mu.Lock()
-	item, exists := a.pending[key]
-	if !exists {
-		a.mu.Unlock()
-		return
-	}
-	item.view.DeliveryStatus = "pending"
-	item.view.Evaluation.Action = "ask"
-	item.view.Evaluation.Automatic = false
-	item.view.Evaluation.Reason = reason
-	a.pending[key] = item
-	a.rebuildPendingLocked()
-	view := item.view
-	a.mu.Unlock()
-	a.emit(eventSemantic, view)
-}
-
-func (a *App) addFrozenEvent(run *runGeneration, event adapters.Event, evaluation policy.Evaluation) {
-	key := makeEventKey(event.SessionID, event.ID)
-	// A frozen event offers no answer at all: the session is already blocked on
-	// an audit or delivery failure and nothing more may be sent to it.
-	view := supervisionView(run.id, event, evaluation, "failed", nil)
-	a.mu.Lock()
-	a.pending[key] = pendingEvent{event: event.Clone(), view: view}
-	a.frozen[key.sessionID] = true
-	if index, found := a.agentIndex[key.sessionID]; found {
-		a.state.Agents[index].InputFrozen = true
-	}
-	a.setAgentWaitingLocked(event.SessionID)
-	a.rebuildPendingLocked()
-	a.mu.Unlock()
-	a.emit(eventSemantic, view)
-}
-
-func (a *App) markDelivery(key eventKey, status, reason string) {
-	a.mu.Lock()
-	item, exists := a.pending[key]
-	if !exists {
-		a.mu.Unlock()
-		return
-	}
-	item.view.DeliveryStatus = status
-	item.view.Evaluation.Reason = reason
-	a.pending[key] = item
-	if status == "uncertain" || status == "failed" {
-		a.frozen[key.sessionID] = true
-		if index, found := a.agentIndex[key.sessionID]; found {
-			a.state.Agents[index].InputFrozen = true
-		}
-	}
-	a.rebuildPendingLocked()
-	view := item.view
-	a.mu.Unlock()
-	a.emit(eventSemantic, view)
-}
-
-func (a *App) freezeSession(run *runGeneration, key eventKey, reason string) {
-	a.markDelivery(key, "uncertain", reason)
-	a.emitSafeError(run, "delivery_uncertain", "Delivery is indeterminate. The session is frozen to prevent a second answer.", key.sessionID)
-}
-
-func (a *App) resolveEvent(key eventKey) {
-	a.mu.Lock()
-	item, exists := a.pending[key]
-	status := "running"
-	if exists {
-		delete(a.pending, key)
-		a.markResolvedLocked(key)
-		if a.hasPendingForSessionLocked(key.sessionID) {
-			a.setAgentWaitingLocked(key.sessionID)
-			status = "waiting"
-		} else {
-			a.restoreAgentRunningLocked(key.sessionID)
-		}
-		a.rebuildPendingLocked()
-		item.view.DeliveryStatus = "delivered"
-	}
-	a.mu.Unlock()
-	if exists {
-		a.emit(eventSemantic, item.view)
-		a.mu.RLock()
-		runID := a.state.RunID
-		a.mu.RUnlock()
-		a.emit(eventStatus, StatusEvent{RunID: runID, Scope: "session", SessionID: key.sessionID, Status: status})
-	}
-}
-
-func (a *App) hasPendingForSessionLocked(sessionKey string) bool {
-	for key := range a.pending {
-		if key.sessionID == sessionKey {
-			return true
-		}
-	}
-	return false
-}
-
-func (a *App) reconcilePending(run *runGeneration, sessionID string) {
-	ctx, cancel := context.WithTimeout(run.ctx, 2*time.Second)
-	pending, err := run.engine.PendingEvent(ctx, sessionID)
-	cancel()
-	if err != nil || pending == nil {
-		return
-	}
-	a.handleAdapterEventForRun(run, pending.Clone())
 }
 
 // SubmitDecision relays a manual value to the exact canonical occurrence. The
 // value is never copied into application state, events, errors or audit data.
 func (a *App) SubmitDecision(runID, sessionID, eventID, manualInput string) error {
-	if strings.TrimSpace(manualInput) == "" {
-		return errEmptyDecision
-	}
-	return a.applyHumanDecision(runID, sessionID, eventID, adapters.DecisionManual, manualInput)
+	return a.supervisor().SubmitDecision(runID, sessionID, eventID, manualInput)
 }
 
 // SubmitAutomaticDecision relays an answer the adapter encodes itself, so the
 // operator does not have to know the keystroke a given CLI expects.
-//
-// The set of answers a given occurrence accepts is reported on the event, and
-// the adapter is asked again here: a decision that arrived from a stale
-// interface must be refused by the core rather than by the screen that offered
-// it.
 func (a *App) SubmitAutomaticDecision(runID, sessionID, eventID, decision string) error {
-	switch adapters.Decision(decision) {
-	case adapters.DecisionAllow, adapters.DecisionDeny:
-	default:
-		return errUnsupportedDecision
-	}
-	run, runErr := a.activeRun(runID)
-	if runErr != nil {
-		return runErr
-	}
-	a.mu.RLock()
-	item, exists := a.pending[makeEventKey(sessionID, eventID)]
-	a.mu.RUnlock()
-	if !exists {
-		return errDecisionStale
-	}
-	offered := false
-	for _, supported := range run.engine.SupportedDecisions(item.event) {
-		if supported == adapters.Decision(decision) {
-			offered = true
-		}
-	}
-	if !offered {
-		return errUnsupportedDecision
-	}
-	return a.applyHumanDecision(runID, sessionID, eventID, adapters.Decision(decision), "")
-}
-
-func (a *App) applyHumanDecision(
-	runID, sessionID, eventID string,
-	decision adapters.Decision,
-	manualInput string,
-) error {
-	run, runErr := a.activeRun(runID)
-	if runErr != nil {
-		return runErr
-	}
-	key := makeEventKey(sessionID, eventID)
-	if !a.beginDelivery() {
-		a.mu.RLock()
-		frozen := a.auditFailed || a.frozen[key.sessionID]
-		a.mu.RUnlock()
-		if frozen {
-			return errDeliveryUncertain
-		}
-		return errRuntimeStopped
-	}
-	defer a.endDelivery()
-
-	a.mu.Lock()
-	item, exists := a.pending[key]
-	frozen := a.frozen[key.sessionID] || a.auditFailed
-	shuttingDown := a.shuttingDown
-	if !exists {
-		a.mu.Unlock()
-		return errDecisionStale
-	}
-	if shuttingDown {
-		a.mu.Unlock()
-		return errRuntimeStopped
-	}
-	if a.stoppingSessions[key.sessionID] {
-		a.mu.Unlock()
-		return errRuntimeStopped
-	}
-	if frozen || item.view.DeliveryStatus == "uncertain" || item.view.DeliveryStatus == "failed" {
-		a.mu.Unlock()
-		return errDeliveryUncertain
-	}
-	if _, busy := a.inFlight[key.sessionID]; busy || a.lineInFlight[key.sessionID] || item.view.DeliveryStatus != "pending" {
-		a.mu.Unlock()
-		return errDecisionInFlight
-	}
-	a.inFlight[key.sessionID] = key
-	item.view.DeliveryStatus = "delivering"
-	a.pending[key] = item
-	a.rebuildPendingLocked()
-	view := item.view
-	a.mu.Unlock()
-	a.emit(eventSemantic, view)
-	advance := false
-	defer func() { a.finishDecision(run, key, advance) }()
-
-	backend := a.backendFor(run, sessionID)
-	if !a.recordAudit(run, supervise.DecisionAuditEntry(item.event, backend, supervise.HumanAuditDecision(decision), audit.DecisionByHuman)) {
-		return errAuditUnavailable
-	}
-	ctx, cancel := context.WithTimeout(run.ctx, 8*time.Second)
-	err := run.engine.ApplyDecision(ctx, sessionID, item.event, decision, manualInput)
-	cancel()
-	if err != nil {
-		if errors.Is(err, adapters.ErrEventMismatch) {
-			if !a.recordAudit(run, supervise.DeliveryAuditEntry(item.event, backend, supervise.HumanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackStale, "fallback_stale")) {
-				return errAuditUnavailable
-			}
-			a.resolveEvent(key)
-			a.reconcilePending(run, sessionID)
-			advance = true
-			return errDecisionStale
-		}
-		if !a.recordAudit(run, supervise.DeliveryAuditEntry(item.event, backend, supervise.HumanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackDeliveryUncertain, "delivery_uncertain")) {
-			return errAuditUnavailable
-		}
-		a.freezeSession(run, key, "delivery_uncertain")
-		return errDeliveryUncertain
-	}
-	if !a.recordAudit(run, supervise.DeliveryAuditEntry(item.event, backend, supervise.HumanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeApplied, "delivery_applied")) {
-		return errAuditUnavailable
-	}
-	a.resolveEvent(key)
-	advance = true
-	return nil
+	return a.supervisor().SubmitAutomaticDecision(runID, sessionID, eventID, decision)
 }
 
 // SubmitLine sends one ordinary application line to a detached, running
 // session. The line crosses this method only as a call argument: it is never
 // copied into bridge state, events, errors or audit entries.
 func (a *App) SubmitLine(runID, sessionID, line string) error {
-	run, err := a.activeRun(runID)
-	if err != nil {
-		return err
-	}
-	// Delivery admission must precede the per-session claim so lifecycle
-	// shutdown cannot start waiting between those two operations.
-	if !a.beginDelivery() {
-		a.mu.RLock()
-		frozen := a.auditFailed || a.frozen[strings.ToLower(strings.TrimSpace(sessionID))]
-		a.mu.RUnlock()
-		if frozen {
-			return errDeliveryUncertain
-		}
-		return errRuntimeStopped
-	}
-	defer a.endDelivery()
-
-	sessionKey := strings.ToLower(strings.TrimSpace(sessionID))
-	a.mu.Lock()
-	if a.active != run || a.shuttingDown {
-		a.mu.Unlock()
-		return errRuntimeStopped
-	}
-	if a.auditFailed {
-		a.mu.Unlock()
-		return errAuditUnavailable
-	}
-	if a.frozen[sessionKey] {
-		a.mu.Unlock()
-		return errDeliveryUncertain
-	}
-	index, found := a.agentIndex[sessionKey]
-	if !found {
-		a.mu.Unlock()
-		return errLineUnavailable
-	}
-	agent := a.state.Agents[index]
-	if a.stoppingSessions[sessionKey] {
-		a.mu.Unlock()
-		return errLineUnavailable
-	}
-	if _, busy := a.inFlight[sessionKey]; busy || a.hasPendingForSessionLocked(sessionKey) {
-		a.mu.Unlock()
-		a.reconcilePending(run, sessionID)
-		a.emitSafeError(run, "line_prompt_pending", "Answer the supervision request before sending a line.", sessionID)
-		return errLinePromptPending
-	}
-	if !agent.Running || agent.Attached || (agent.Status != "running" && agent.Status != "detached") {
-		a.mu.Unlock()
-		return errLineUnavailable
-	}
-	if a.lineInFlight[sessionKey] {
-		a.mu.Unlock()
-		return errLineInFlight
-	}
-	a.lineInFlight[sessionKey] = true
-	a.mu.Unlock()
-	defer a.finishLine(run, sessionKey)
-
-	if !a.recordAudit(run, supervise.OperatorInputAuditEntry(agentSpecOf(agent), audit.OutcomeInFlight, "operator_input_started")) {
-		return errAuditUnavailable
-	}
-	ctx, cancel := context.WithTimeout(run.ctx, 8*time.Second)
-	err = run.engine.SendLine(ctx, sessionID, line)
-	line = ""
-	cancel()
-	if err == nil {
-		if !a.recordAudit(run, supervise.OperatorInputAuditEntry(agentSpecOf(agent), audit.OutcomeApplied, "operator_input_applied")) {
-			return errAuditUnavailable
-		}
-		return nil
-	}
-
-	switch {
-	case errors.Is(err, terminal.ErrEventPending):
-		if !a.recordAudit(run, supervise.OperatorInputAuditEntry(agentSpecOf(agent), audit.OutcomeFallbackStale, "operator_input_prompt_pending")) {
-			return errAuditUnavailable
-		}
-		a.reconcilePending(run, sessionID)
-		a.emitSafeError(run, "line_prompt_pending", "A supervision request arrived before the line. No free text was sent.", sessionID)
-		return errLinePromptPending
-	case errors.Is(err, terminal.ErrInvalidLine):
-		if !a.recordAudit(run, supervise.OperatorInputAuditEntry(agentSpecOf(agent), audit.OutcomeSkipped, "operator_input_invalid")) {
-			return errAuditUnavailable
-		}
-		a.emitSafeError(run, "line_invalid", "The input must be a single UTF-8 line, with no control characters and no more than 4096 bytes.", sessionID)
-		return errLineInvalid
-	case errors.Is(err, terminal.ErrLineUnsupported):
-		if !a.recordAudit(run, supervise.OperatorInputAuditEntry(agentSpecOf(agent), audit.OutcomeSkipped, "operator_input_unsupported")) {
-			return errAuditUnavailable
-		}
-		a.emitSafeError(run, "line_unsupported", "This backend cannot send a line reliably.", sessionID)
-		return errLineUnsupported
-	case errors.Is(err, terminal.ErrClosed):
-		if !a.recordAudit(run, supervise.OperatorInputAuditEntry(agentSpecOf(agent), audit.OutcomeSkipped, "operator_input_session_unavailable")) {
-			return errAuditUnavailable
-		}
-		a.markLineSessionUnavailable(run, sessionKey, "exited")
-		a.emitSafeError(run, "line_session_unavailable", "The session ended before delivery. No line was sent.", sessionID)
-		return errLineUnavailable
-	case errors.Is(err, terminal.ErrSessionNotFound):
-		if !a.recordAudit(run, supervise.OperatorInputAuditEntry(agentSpecOf(agent), audit.OutcomeSkipped, "operator_input_session_unavailable")) {
-			return errAuditUnavailable
-		}
-		a.markLineSessionUnavailable(run, sessionKey, "failed")
-		a.emitSafeError(run, "line_session_unavailable", "The session is no longer available. No line was sent.", sessionID)
-		return errLineUnavailable
-	default:
-		if !a.recordAudit(run, supervise.OperatorInputAuditEntry(agentSpecOf(agent), audit.OutcomeFallbackDeliveryUncertain, "operator_input_delivery_uncertain")) {
-			return errAuditUnavailable
-		}
-		a.freezeLineSession(run, sessionKey)
-		return errDeliveryUncertain
-	}
-}
-
-func (a *App) finishLine(run *runGeneration, sessionKey string) {
-	a.mu.Lock()
-	delete(a.lineInFlight, sessionKey)
-	advance := !a.shuttingDown
-	if index, found := a.agentIndex[sessionKey]; !found || !a.state.Agents[index].Running {
-		advance = false
-	}
-	a.mu.Unlock()
-	if advance && a.isActiveRun(run) {
-		a.scheduleAutomatic(run, sessionKey)
-	}
-}
-
-func (a *App) freezeLineSession(run *runGeneration, sessionKey string) {
-	a.mu.Lock()
-	if a.active != run {
-		a.mu.Unlock()
-		return
-	}
-	a.frozen[sessionKey] = true
-	displaySessionID := sessionKey
-	if index, found := a.agentIndex[sessionKey]; found {
-		a.state.Agents[index].InputFrozen = true
-		displaySessionID = a.state.Agents[index].SessionID
-	}
-	a.mu.Unlock()
-	a.emitSafeError(run, "delivery_uncertain", "Delivery is indeterminate. The session is frozen to prevent another send.", displaySessionID)
-}
-
-func (a *App) markLineSessionUnavailable(run *runGeneration, sessionKey, status string) {
-	a.mu.Lock()
-	if a.active != run {
-		a.mu.Unlock()
-		return
-	}
-	displaySessionID := sessionKey
-	if index, found := a.agentIndex[sessionKey]; found {
-		agent := &a.state.Agents[index]
-		agent.Running = false
-		agent.Attached = false
-		agent.Status = status
-		displaySessionID = agent.SessionID
-	}
-	a.mu.Unlock()
-	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: status})
+	return a.supervisor().SubmitLine(runID, sessionID, line)
 }
 
 func (a *App) ResizeSession(runID, sessionID string, columns, rows int) error {
@@ -1300,10 +505,11 @@ func (a *App) ResizeSession(runID, sessionID string, columns, rows int) error {
 	if err != nil {
 		return err
 	}
-	if !a.beginDelivery() {
+	release, admitted := run.sup.Admit()
+	if !admitted {
 		return errRuntimeStopped
 	}
-	defer a.endDelivery()
+	defer release()
 	ctx, cancel := context.WithTimeout(run.ctx, 3*time.Second)
 	err = run.engine.Resize(ctx, sessionID, terminal.Size{Columns: columns, Rows: rows})
 	cancel()
@@ -1314,239 +520,24 @@ func (a *App) ResizeSession(runID, sessionID string, columns, rows int) error {
 	return nil
 }
 
+// StopSession strictly stops one agent while the other agents of the run keep
+// running.
 func (a *App) StopSession(runID, sessionID string) error {
-	run, err := a.activeRun(runID)
-	if err != nil {
-		return err
-	}
-	if !a.beginDelivery() {
-		return errRuntimeStopped
-	}
-	defer a.endDelivery()
-	sessionKey := strings.ToLower(strings.TrimSpace(sessionID))
-	a.mu.Lock()
-	if a.active != run || a.shuttingDown {
-		a.mu.Unlock()
-		return errRuntimeStopped
-	}
-	if a.lineInFlight[sessionKey] {
-		a.mu.Unlock()
-		return errLineInFlight
-	}
-	if _, busy := a.inFlight[sessionKey]; busy {
-		a.mu.Unlock()
-		return errDecisionInFlight
-	}
-	if a.stoppingSessions[sessionKey] {
-		a.mu.Unlock()
-		return errLineUnavailable
-	}
-	index, found := a.agentIndex[sessionKey]
-	if !found || !a.state.Agents[index].Running {
-		a.mu.Unlock()
-		return errLineUnavailable
-	}
-	a.stoppingSessions[sessionKey] = true
-	a.state.Agents[index].Status = "stopping"
-	displaySessionID := a.state.Agents[index].SessionID
-	a.mu.Unlock()
-	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "stopping"})
-	ctx, cancel := context.WithTimeout(run.ctx, session.StopBudget+2*time.Second)
-	err = run.engine.StopAgent(ctx, sessionID)
-	cancel()
-	if err != nil {
-		a.mu.Lock()
-		delete(a.stoppingSessions, sessionKey)
-		a.mu.Unlock()
-		a.freezeLineSession(run, sessionKey)
-		a.emitSafeError(run, "stop_failed", "session could not be stopped cleanly", sessionID)
-		return errors.New("session could not be stopped cleanly")
-	}
-	a.mu.Lock()
-	delete(a.stoppingSessions, sessionKey)
-	a.mu.Unlock()
-	a.markLineSessionUnavailable(run, sessionKey, "exited")
-	return nil
+	return a.supervisor().StopSession(runID, sessionID)
 }
 
 // StartSession launches a fresh process for one stopped or exited agent under
 // its unchanged identity and plan specification, without interrupting the
 // other agents of the run.
 func (a *App) StartSession(runID, sessionID string) error {
-	run, err := a.activeRun(runID)
-	if err != nil {
-		return err
-	}
-	if !a.beginDelivery() {
-		return errRuntimeStopped
-	}
-	defer a.endDelivery()
-	sessionKey := strings.ToLower(strings.TrimSpace(sessionID))
-	a.mu.Lock()
-	if a.active != run || a.shuttingDown {
-		a.mu.Unlock()
-		return errRuntimeStopped
-	}
-	if a.auditFailed {
-		a.mu.Unlock()
-		return errAuditUnavailable
-	}
-	if a.stoppingSessions[sessionKey] {
-		a.mu.Unlock()
-		return errLineUnavailable
-	}
-	index, found := a.agentIndex[sessionKey]
-	if !found {
-		a.mu.Unlock()
-		return errAgentUnknown
-	}
-	if a.state.Agents[index].Running {
-		a.mu.Unlock()
-		return errAgentStillRunning
-	}
-	a.stoppingSessions[sessionKey] = true
-	a.startingSessions[sessionKey] = true
-	a.state.Agents[index].Status = "starting"
-	a.dropSessionPendingLocked(sessionKey)
-	displaySessionID := a.state.Agents[index].SessionID
-	a.mu.Unlock()
-	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "starting", ClearedBefore: clearedAll()})
-	startedAt := time.Now().UTC()
-	ctx, cancel := context.WithTimeout(run.ctx, 10*time.Second)
-	err = run.engine.StartAgent(ctx, sessionID)
-	cancel()
-	if err != nil {
-		a.mu.Lock()
-		delete(a.stoppingSessions, sessionKey)
-		delete(a.startingSessions, sessionKey)
-		if index, found := a.agentIndex[sessionKey]; found {
-			a.state.Agents[index].Status = "failed"
-		}
-		a.mu.Unlock()
-		a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: sessionID, Status: "failed"})
-		a.emitSafeError(run, "start_failed", "session could not be started", sessionID)
-		return errors.New("session could not be started")
-	}
-	a.completeAgentStart(run, sessionKey, startedAt)
-	return nil
+	return a.supervisor().StartSession(runID, sessionID)
 }
 
 // RestartSession transactionally stops then starts one agent in place. An
 // unconfirmed stop never produces a replacement process; a failed start
 // leaves the agent down with its identity locked for an explicit retry.
 func (a *App) RestartSession(runID, sessionID string) error {
-	run, err := a.activeRun(runID)
-	if err != nil {
-		return err
-	}
-	if !a.beginDelivery() {
-		return errRuntimeStopped
-	}
-	defer a.endDelivery()
-	sessionKey := strings.ToLower(strings.TrimSpace(sessionID))
-	a.mu.Lock()
-	if a.active != run || a.shuttingDown {
-		a.mu.Unlock()
-		return errRuntimeStopped
-	}
-	if a.auditFailed {
-		a.mu.Unlock()
-		return errAuditUnavailable
-	}
-	if a.lineInFlight[sessionKey] {
-		a.mu.Unlock()
-		return errLineInFlight
-	}
-	if _, busy := a.inFlight[sessionKey]; busy {
-		a.mu.Unlock()
-		return errDecisionInFlight
-	}
-	if a.stoppingSessions[sessionKey] {
-		a.mu.Unlock()
-		return errLineUnavailable
-	}
-	index, found := a.agentIndex[sessionKey]
-	if !found {
-		a.mu.Unlock()
-		return errAgentUnknown
-	}
-	a.stoppingSessions[sessionKey] = true
-	a.startingSessions[sessionKey] = true
-	a.state.Agents[index].Status = "stopping"
-	a.dropSessionPendingLocked(sessionKey)
-	displaySessionID := a.state.Agents[index].SessionID
-	a.mu.Unlock()
-	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "stopping", ClearedBefore: clearedAll()})
-	startedAt := time.Now().UTC()
-	ctx, cancel := context.WithTimeout(run.ctx, session.StopBudget+8*time.Second)
-	err = run.engine.RestartAgent(ctx, sessionID)
-	cancel()
-	if err != nil {
-		a.mu.Lock()
-		delete(a.stoppingSessions, sessionKey)
-		delete(a.startingSessions, sessionKey)
-		if index, found := a.agentIndex[sessionKey]; found {
-			a.state.Agents[index].Status = "failed"
-		}
-		a.mu.Unlock()
-		a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: sessionID, Status: "failed"})
-		a.freezeLineSession(run, sessionKey)
-		a.emitSafeError(run, "restart_failed", "session could not be restarted cleanly", sessionID)
-		return errors.New("session could not be restarted cleanly")
-	}
-	a.completeAgentStart(run, sessionKey, startedAt)
-	return nil
-}
-
-// completeAgentStart republishes a freshly started agent: output, freeze and
-// exit state belong to the previous process instance and never carry over.
-// Revision stays monotonic across process instances so the follow-up output
-// snapshot is accepted by the presentation's revision guard.
-// completeAgentStart marks the agent running. The previous process's prompts
-// are dropped: an exit that arrives during the start is the previous
-// process's and is set aside as stale, and its prompts used to stay pending,
-// blocking the new process's automatic decisions and hiding its first prompt,
-// which carries the same ID. Only prompts detected before startedAt go; the
-// new process may already have raised one.
-func (a *App) completeAgentStart(run *runGeneration, sessionKey string, startedAt time.Time) {
-	a.mu.Lock()
-	delete(a.stoppingSessions, sessionKey)
-	delete(a.startingSessions, sessionKey)
-	delete(a.frozen, sessionKey)
-	// Rounded to the millisecond, the resolution clients compare at, so the
-	// interface drops exactly the prompts dropped here.
-	bound := startedAt.Truncate(time.Millisecond)
-	for key, item := range a.pending {
-		if key.sessionID == sessionKey && promptDetectedAt(item).Before(bound) {
-			delete(a.pending, key)
-		}
-	}
-	a.rebuildPendingLocked()
-	// The previous process's answered prompts and its exit stay resolved: a
-	// new process gives every event an ID of its own, so nothing of the
-	// replacement's is mistaken for them, and a late copy of an old one is
-	// still refused.
-	displaySessionID := ""
-	if index, found := a.agentIndex[sessionKey]; found {
-		agent := &a.state.Agents[index]
-		agent.Running = true
-		agent.Attached = false
-		agent.Status = "running"
-		agent.ExitCode = nil
-		agent.InputFrozen = false
-		agent.Output = ""
-		agent.Revision++
-		displaySessionID = agent.SessionID
-	}
-	a.mu.Unlock()
-	if displaySessionID == "" {
-		return
-	}
-	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "running", ClearedBefore: bound.Format(time.RFC3339Nano)})
-	a.refreshOutputForRun(run, displaySessionID)
-	// A prompt the replacement raised while it was starting waited: no
-	// automatic decision is taken while a session is changing.
-	a.scheduleAutomatic(run, displaySessionID)
+	return a.supervisor().RestartSession(runID, sessionID)
 }
 
 func (a *App) Shutdown() error {
@@ -1578,209 +569,6 @@ func (a *App) onShutdown(_ context.Context) {
 	_ = a.Shutdown()
 }
 
-func (a *App) recordAudit(run *runGeneration, entry audit.Entry) bool {
-	if run == nil || run.engine == nil {
-		return false
-	}
-	if err := run.engine.RecordAudit(entry); err != nil {
-		a.freezeAudit(run)
-		return false
-	}
-	return true
-}
-
-func (a *App) freezeAudit(run *runGeneration) {
-	if !a.isActiveRun(run) {
-		return
-	}
-	a.closeDelivery()
-	a.mu.Lock()
-	if a.auditFailed {
-		a.mu.Unlock()
-		return
-	}
-	a.auditFailed = true
-	a.state.Audit.Status = "failed"
-	for _, agent := range a.state.Agents {
-		if agent.Running {
-			a.frozen[strings.ToLower(agent.SessionID)] = true
-		}
-	}
-	for index := range a.state.Agents {
-		if a.state.Agents[index].Running {
-			a.state.Agents[index].InputFrozen = true
-		}
-	}
-	for key, item := range a.pending {
-		item.view.DeliveryStatus = "failed"
-		item.view.Evaluation.Reason = "audit_unavailable"
-		a.pending[key] = item
-	}
-	a.rebuildPendingLocked()
-	a.mu.Unlock()
-	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "audit", Status: "failed"})
-	a.emitSafeError(run, "audit_unavailable", "The local audit journal is unavailable. No further decision will be sent.", "")
-}
-
-func (a *App) beginDelivery() bool {
-	a.deliveryMu.Lock()
-	defer a.deliveryMu.Unlock()
-	if !a.deliveryAvailable {
-		return false
-	}
-	a.deliveryWG.Add(1)
-	return true
-}
-
-func (a *App) endDelivery() { a.deliveryWG.Done() }
-
-func (a *App) closeDelivery() {
-	a.deliveryMu.Lock()
-	a.deliveryAvailable = false
-	a.deliveryMu.Unlock()
-}
-
-func (a *App) openDelivery() {
-	a.deliveryMu.Lock()
-	a.deliveryAvailable = true
-	a.deliveryMu.Unlock()
-}
-
-func (a *App) markSessionError(run *runGeneration, sessionID, reason string) {
-	backend := a.backendFor(run, sessionID)
-	_ = a.recordAudit(run, audit.Entry{
-		Kind:       audit.KindBackendError,
-		SessionID:  sessionID,
-		AgentID:    sessionID,
-		Backend:    backend,
-		DecisionBy: audit.DecisionBySystem,
-		Outcome:    audit.OutcomeFailed,
-		Reason:     reason,
-	})
-	a.mu.Lock()
-	if index, found := a.agentIndex[strings.ToLower(sessionID)]; found {
-		a.state.Agents[index].Status = "failed"
-	}
-	a.mu.Unlock()
-	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: sessionID, Status: "failed"})
-	a.emitSafeError(run, "backend_stream_failed", "The backend stream failed.", sessionID)
-}
-
-func (a *App) markLegacyExit(run *runGeneration, sessionID string) {
-	a.mu.Lock()
-	if index, found := a.agentIndex[strings.ToLower(sessionID)]; found {
-		a.state.Agents[index].Status = "failed"
-		a.state.Agents[index].Running = false
-	}
-	a.clearSessionPendingLocked(sessionID)
-	a.rebuildPendingLocked()
-	a.mu.Unlock()
-	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: sessionID, Status: "failed", ClearedBefore: clearedAll()})
-}
-
-func (a *App) backendFor(run *runGeneration, sessionID string) string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	if a.active != run {
-		return ""
-	}
-	if index, found := a.agentIndex[strings.ToLower(sessionID)]; found {
-		return a.state.Agents[index].Backend
-	}
-	return ""
-}
-
-func (a *App) pendingExists(key eventKey) bool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	_, exists := a.pending[key]
-	return exists
-}
-
-func (a *App) setAgentWaitingLocked(sessionID string) {
-	if index, found := a.agentIndex[strings.ToLower(sessionID)]; found && a.state.Agents[index].Running {
-		a.state.Agents[index].Status = "waiting"
-	}
-}
-
-func (a *App) restoreAgentRunningLocked(sessionID string) {
-	if index, found := a.agentIndex[strings.ToLower(sessionID)]; found && a.state.Agents[index].Running {
-		a.state.Agents[index].Status = "running"
-	}
-}
-
-// promptDetectedAt is when a prompt was detected. An adapter stamps every
-// event, but the view falls back to the time it was received, and the
-// interface compares that: taking a zero timestamp as older than any start
-// dropped such a prompt here while the interface kept showing it.
-func promptDetectedAt(item pendingEvent) time.Time {
-	if !item.event.Timestamp.IsZero() {
-		return item.event.Timestamp
-	}
-	detected, _ := time.Parse(time.RFC3339Nano, item.view.Timestamp)
-	return detected
-}
-
-// clearedAll is the ClearedBefore of a status that dropped every prompt of the
-// session: a millisecond past now, the resolution clients compare at.
-func clearedAll() string {
-	return time.Now().UTC().Truncate(time.Millisecond).Add(time.Millisecond).Format(time.RFC3339Nano)
-}
-
-// dropSessionPendingLocked removes a session's prompts when a Start or a
-// Restart begins: none of them can be answered while it runs, and left
-// pending they blocked the replacement's automatic decisions.
-func (a *App) dropSessionPendingLocked(sessionKey string) {
-	for key := range a.pending {
-		if key.sessionID == sessionKey {
-			delete(a.pending, key)
-		}
-	}
-	a.rebuildPendingLocked()
-}
-
-func (a *App) clearSessionPendingLocked(sessionID string) {
-	normalized := strings.ToLower(strings.TrimSpace(sessionID))
-	delete(a.inFlight, normalized)
-	for key := range a.pending {
-		if key.sessionID == normalized {
-			delete(a.pending, key)
-			a.markResolvedLocked(key)
-		}
-	}
-}
-
-func (a *App) markResolvedLocked(key eventKey) {
-	if _, exists := a.resolved[key]; exists {
-		return
-	}
-	a.resolved[key] = struct{}{}
-	a.resolvedOrder = append(a.resolvedOrder, key)
-	if len(a.resolvedOrder) <= maxResolvedEvents {
-		return
-	}
-	oldest := a.resolvedOrder[0]
-	a.resolvedOrder = append(a.resolvedOrder[:0], a.resolvedOrder[1:]...)
-	delete(a.resolved, oldest)
-}
-
-func (a *App) rebuildPendingLocked() {
-	items := make([]SupervisionEvent, 0, len(a.pending))
-	for _, item := range a.pending {
-		items = append(items, item.view)
-	}
-	sort.Slice(items, func(left, right int) bool {
-		if items[left].Timestamp == items[right].Timestamp {
-			if items[left].SessionID == items[right].SessionID {
-				return items[left].ID < items[right].ID
-			}
-			return items[left].SessionID < items[right].SessionID
-		}
-		return items[left].Timestamp < items[right].Timestamp
-	})
-	a.state.PendingEvents = items
-}
-
 func (a *App) emitSafeError(run *runGeneration, code, message, sessionID string) {
 	runID := ""
 	if run != nil {
@@ -1799,23 +587,6 @@ func (a *App) emit(name string, payload interface{}) {
 	if a.ctx != nil && a.emitFn != nil {
 		a.emitFn(a.ctx, name, payload)
 	}
-}
-
-func makeEventKey(sessionID, eventID string) eventKey {
-	return eventKey{
-		sessionID: strings.ToLower(strings.TrimSpace(sessionID)),
-		eventID:   strings.TrimSpace(eventID),
-	}
-}
-
-func supervisionView(
-	runID string,
-	event adapters.Event,
-	evaluation policy.Evaluation,
-	delivery string,
-	decisions []adapters.Decision,
-) SupervisionEvent {
-	return supervisionEventFromView(supervise.NewView(runID, event, evaluation, delivery, decisions))
 }
 
 func snapshotFromAgent(runID string, agent AgentState) SnapshotEvent {
