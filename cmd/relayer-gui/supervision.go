@@ -16,7 +16,25 @@ type desktopSink struct {
 	run *runGeneration
 }
 
+// current reports whether the sink's run is still the bridge's active run.
+// Before the state machine moved into internal/supervise, every entry point
+// checked that its run was the active one before it emitted. The core checks
+// only that its run is not draining, which is the same today: a run's core is
+// drained and waited for before stopGenerationLocked forgets the run, and so
+// before activateRun can replace it, and the run stays the active one
+// throughout its drain. That guarantee rests on the drain's ordering alone, so
+// the sink checks again: this is defence in depth, and it changes nothing
+// while the ordering holds.
+func (s desktopSink) current() bool {
+	s.app.mu.RLock()
+	defer s.app.mu.RUnlock()
+	return s.app.active == s.run
+}
+
 func (s desktopSink) Prompt(view supervise.View) {
+	if !s.current() {
+		return
+	}
 	s.app.emit(eventSemantic, supervisionEventFromView(view))
 }
 
@@ -25,15 +43,24 @@ func (s desktopSink) Status(status supervise.Status) {
 		// The journal's failure outlives the run on screen: after a shutdown
 		// the last run's audit state is still what the window shows.
 		s.app.mu.Lock()
-		if s.app.active == s.run {
+		current := s.app.active == s.run
+		if current {
 			s.app.state.Audit.Status = status.Status
 		}
 		s.app.mu.Unlock()
+		if !current {
+			return
+		}
+	} else if !s.current() {
+		return
 	}
 	s.app.emit(eventStatus, StatusEvent(status))
 }
 
 func (s desktopSink) Error(failure supervise.SafeError) {
+	if !s.current() {
+		return
+	}
 	s.app.emit(eventError, SafeErrorEvent(failure))
 }
 
@@ -60,6 +87,11 @@ func (s desktopSink) Lifecycle(sessionID string, phase supervise.Phase) {
 }
 
 func (s desktopSink) Notify(notice supervise.Notice) {
+	// A stale run's notice is dropped for the same reason as its emissions:
+	// the desktop only notified from a prompt its active run took in.
+	if !s.current() {
+		return
+	}
 	notifier := s.app.currentNotifier()
 	if notifier == nil {
 		return

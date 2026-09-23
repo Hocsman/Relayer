@@ -319,7 +319,10 @@ func (a *App) stopGenerationLocked(run *runGeneration, strict bool, status strin
 	cancel()
 
 	// The run's supervision state goes with its core, which is dropped with
-	// the run.
+	// the run. The run is forgotten only now, once its core has drained and
+	// Wait has returned: until here its sink, which emits only for the active
+	// run, still shows the outcomes the drain waited for, and from here the
+	// core has nothing left to show.
 	a.mu.Lock()
 	if a.active == run {
 		a.active = nil
