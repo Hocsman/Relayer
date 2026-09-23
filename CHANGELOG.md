@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.7] - 2026-09-23
+
+Patch release that fixes the cause of the ghost prompts v0.8.6 worked around. A prompt's occurrence ID did not tell two processes of an agent apart, so an answer given to a prompt before a restart could be delivered to a different question after it, whenever a short pattern gave both the same signature. Every occurrence ID now carries a token of its own process, a decision on a previous process's prompt is refused, and the front ends no longer need to forget answered prompts at each start. `relayer_events_pending` and the decision-duration histogram now measure what their documentation says. The gaps that remain are listed below.
+
 ### Security
 
 - **A decision on a prompt of a previous process could be delivered to its replacement**: a prompt's occurrence ID was its signature and its number within the process, and the number starts again with each process. A signature can be as little as the `[y/n]` a pattern captured, so a restarted agent's first prompt could carry exactly the ID of the previous process's, whatever each one asked: "Run 'npm test'? [y/n]" and "Run 'rm -rf build' as root? [y/n]" had the same ID, and the processor accepted an answer given to the first as the answer to the second. Every occurrence ID now carries a random token drawn when the agent's process starts, as process exits already did, and a decision naming the previous process's prompt is refused. The token is never recorded, so the IDs of sensitive prompts, withheld from the journal because they derive from the match, stay unguessable.
@@ -894,7 +898,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.6...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.7...main
+[0.8.7]: https://github.com/Hocsman/Relayer/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/Hocsman/Relayer/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/Hocsman/Relayer/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/Hocsman/Relayer/compare/v0.8.3...v0.8.4
