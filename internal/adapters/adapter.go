@@ -90,17 +90,20 @@ type DetectionState struct {
 // was detected on.
 //
 // The row decides when the entry EXPIRES: once that row stops carrying the
-// question, the entry goes. On the rendered screen it also decides what the
-// entry SUPPRESSES, see answeredAt and answeredOnItsRow: the answered question
-// is the one on its own row, and the same words on another row are another
-// question. The generic adapter makes one exception, for an answered row that
-// has been blanked. A snapshot, whose text maps onto no row, and the Codex
-// adapter still compare the line alone, see answersTheSameQuestion.
+// question, the entry goes. A row parked with the primary screen while a
+// full-screen program shows the alternate one has not stopped carrying it.
+// On the rendered screen the row also decides what the entry SUPPRESSES, see
+// answeredAt and answeredOnItsRow: the answered question is the one on its own
+// row, and the same words on another row are another question. The generic
+// adapter makes one exception, for an answered row that has been blanked. A
+// snapshot, whose text maps onto no row, and the Codex adapter still compare
+// the line alone, see answersTheSameQuestion.
 //
 // anchor is the row the MATCH was found on at detection time, carried here from
 // the detector rather than searched for afterwards. A zero anchor means the
-// occurrence reached the state without ever crossing a screen — restored from a
-// snapshot — and is the only case that still has to fall back to text.
+// occurrence reached the state without ever crossing a screen — raised on the
+// byte window before the agent first repainted, or restored from a snapshot —
+// and is the only case that still has to be found by its text.
 //
 // rowBlank records that the row was blank at the last write: a frame caught
 // between its erase and its repaint. The Processor sets it, because only the

@@ -237,6 +237,19 @@ func (p *Processor) Consume(chunk []byte) error {
 						live = append(live, entry)
 						continue
 					}
+					if p.screen.RowParked(entry.anchor) {
+						// A full-screen program — an editor, a pager, opened
+						// because of the answer — has the alternate screen, and
+						// the answered row is parked with the primary one. It
+						// comes back unchanged, still showing the question, and
+						// the next write after it read that question as a new
+						// one: under an automatic policy the desktop typed a
+						// second answer into the agent. The row has not stopped
+						// carrying the question; it is out of view. Nothing
+						// about it changes while parked, rowBlank included.
+						live = append(live, entry)
+						continue
+					}
 					// The anchored row no longer carries the question, so the
 					// entry goes. It deliberately does not go looking for the
 					// words elsewhere: on a screen where the answered question
@@ -258,7 +271,30 @@ func (p *Processor) Consume(chunk []byte) error {
 				// which is unbounded in time and is the defect this change is
 				// about. Searching the whole visible grid for the text, which
 				// is what stood here, is that unbounded case.
-				if row, line, unique := p.screen.UniqueRowShowing(entry.match); unique &&
+				if p.screen.OnAlternate() {
+					// Not while a full-screen program has the alternate screen.
+					// The question is on the primary one, which comes back
+					// unchanged; looked for on the alternate grid it is found
+					// nowhere, the entry went, and the question still painted
+					// underneath was asked again the moment the program exited.
+					// It is looked for once the primary screen is back.
+					live = append(live, entry)
+					continue
+				}
+				// By the line the question was asked on first, and by the match
+				// only when that line is not painted, as refreshPendingAnchor
+				// does for the same reason. A vendor match is the label of a
+				// kind of prompt, "Apply changes?" for "Apply edit to
+				// notes.py?", and may never be painted at all: looked for by
+				// its label alone, the entry of a question raised before the
+				// agent's first repaint went on that repaint, and the question
+				// was asked again. A line painted twice is ambiguous, and is not
+				// then looked up by its label either.
+				located := strings.TrimSpace(entry.line)
+				if _, _, painted := p.screen.VisibleRowOf(located); !painted {
+					located = entry.match
+				}
+				if row, line, unique := p.screen.UniqueRowShowing(located); unique &&
 					!ignoredContext(line, false) {
 					entry.anchor = row
 					entry.rowBlank = false

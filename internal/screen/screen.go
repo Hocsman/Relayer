@@ -224,21 +224,48 @@ func (s *Screen) resizeTo(width, height int, keep bool) {
 	for index := range s.rows {
 		s.rows[index] = s.newRow(width)
 	}
+	// offset is how many rows leave the top of the grid, see below.
+	offset := 0
 	if keep {
 		// A resize cannot be aligned with a byte offset in the stream, so there
 		// is no correct reflow: the agent will repaint, and until it does the
 		// old rows are the best available. Copy what fits and let the repaint
 		// replace it.
-		for index := 0; index < len(previous) && index < height; index++ {
-			copy(s.rows[index].cells, previous[index].cells)
-			s.rows[index].wrapped = previous[index].wrapped
+		//
+		// What fits is what a terminal keeps: the cursor's row stays in view.
+		// A terminal that loses height drops the rows below the cursor first,
+		// and when that is not enough pushes the rows above it into the
+		// scrollback, xterm and conhost alike. Keeping the top rows instead
+		// dropped the cursor's row, which is where an agent that has stopped to
+		// ask leaves its question, and every row between it and the new
+		// bottom. ConPTY repaints its whole viewport after a resize, with the
+		// question at its new place: that was a row the answered memory did not
+		// know, so a question answered a moment before was asked again, and
+		// under an automatic policy answered twice. A view of the screen lost
+		// the same rows, the ones the agent was working on.
+		if s.cursor.row >= height {
+			offset = s.cursor.row - (height - 1)
+		}
+		if offset > 0 && s.alternate == nil {
+			// Only the main screen keeps history, as in scrollUp. The rows keep
+			// their identity there, as they do when they scroll off.
+			s.scrollback = append(s.scrollback, previous[:offset]...)
+			if len(s.scrollback) > MaxScrollback {
+				s.scrollback = s.scrollback[len(s.scrollback)-MaxScrollback:]
+			}
+		}
+		for index := 0; index+offset < len(previous) && index < height; index++ {
+			kept := previous[index+offset]
+			copy(s.rows[index].cells, kept.cells)
+			s.rows[index].wrapped = kept.wrapped
 			// The identity survives the resize with the content. A resize that
 			// renamed every line would release every answered-question memory
 			// at once, and a question still painted would be put to the
 			// operator a second time for no reason but a window drag.
-			s.rows[index].id = previous[index].id
+			s.rows[index].id = kept.id
 		}
 	}
+	s.cursor.row -= offset
 	// Rows that did not fit the new height are gone, and every row may have
 	// been truncated in width.
 	if len(previous) > 0 {

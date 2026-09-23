@@ -224,11 +224,80 @@ an entry that goes looking for its words elsewhere would, on a screen where the
 answered question has scrolled away and the same words have been asked again
 lower down, suppress the new question. Two tests pin that case.
 
-The row decides when an entry EXPIRES, not what it suppresses. While an entry is
-alive it silences any candidate of the same signature, wherever that candidate
-sits, because the comparison is still on signature and text. Two questions that
-share a captured fragment are one question to this memory — which is the
-identity of a question rather than its anchor, and is tracked separately.
+Two things that looked like a move are not one, and each asked an answered
+question again, which under an automatic policy means a second answer typed into
+the agent. A full-screen program run after the answer, an editor or a pager,
+takes the alternate screen, and the primary one comes back unchanged with the
+answered question still on its row. While the program runs, that row is parked
+with the primary screen: it is on no visible grid, but it is not gone, and the
+entry stays. An entry that has no row yet stays too, and is looked for once the
+primary screen is back rather than on the program's grid. And a terminal that
+loses height keeps the cursor's row in view and pushes the rows above it into
+the scrollback, as xterm and conhost do. The screen kept the top rows instead,
+which dropped the row the agent had just asked on, and ConPTY's repaint after
+the resize drew the answered question on a row the memory did not know.
+
+On the rendered screen the row also decides what an entry SUPPRESSES: the
+answered question is the one on its own row.
+
+- On the answered row, a line that still BEGINS with the answered question is
+  that question, whatever follows it. What follows is the echo of the answer. A
+  terminal in cooked mode echoes the keystrokes after the question, ConPTY
+  flushes that echo as a write of its own whenever the agent is slow to print,
+  and a comparison of whole lines could not see through it: every such question
+  was asked again on the next write.
+- On another row, the identical line is the agent asking again, and the operator
+  is asked. The generic adapter, and so Claude and the configured
+  `intercept_patterns` a vendor adapter tries first, make one exception: while
+  the answered row is blank — a frame caught between an erase and a repaint that
+  may be drawing the question a row higher or lower — the identical line
+  elsewhere is taken for the answered question moved. Aider, Goose and Open
+  Interpreter make none. They never consulted the memory before, and a clear
+  (Ctrl+L at Aider's prompt, `clear`, a test runner) leaves the answered row
+  blank for as long as nothing is written on it, while Aider asks for every
+  shell command with one and the same line. The exception would silence the next
+  command's question, and a question put to nobody blocks the agent without a
+  sign. They ask the moved question again instead, as they always did.
+- When either side has no row, the line alone decides.
+
+An entry with no row — a question raised on the byte window before the agent
+first repainted, or restored from a snapshot — adopts one the first time exactly
+one visible row shows it. It is looked for by the line it was asked on first,
+and by its match only when that line is not painted: a vendor match is the label
+of a kind of prompt, "Apply changes?" for "Apply edit to notes.py?", which may
+never be painted, and an entry looked for by it was dropped on the first repaint.
+
+The tmux resync compares whole lines, and so does the Codex adapter, whose footer
+must end the line so that nothing typed after the question can still match. A
+snapshot is another text than the one the live screen rendered, so the live rows
+cannot be used to read it: used, they mapped an offset in the snapshot onto
+whatever live row sat at that offset, took the pending question for the answered
+one's echo, and discarded it.
+
+What is left, knowingly:
+
+- An agent that rejects the answer and asks again on the SAME row, with the
+  rejected input still showing after the question, is taken for the echo and is
+  not asked. So is the identical question drawn again on the very row the
+  answered one occupied, whether the input was erased first or a clear homed the
+  cursor there. A re-ask on a new row is asked.
+- For the generic adapter and Claude, after a clear, the identical question drawn
+  above the answered row, which the clear left blank, is not asked until
+  something is written on that row. The whole-line comparison they used before
+  lost it too, anywhere on the screen.
+- A frame that moves the answered question to another row while painting its old
+  row with something else, in one write, asks it again; so does one that moves it
+  off a blank row with the echo after it, since the exception wants the identical
+  line. For Aider, Goose and Open Interpreter any move off the row asks it again.
+- A question whose line changes after it is detected — a countdown, a hint drawn
+  after the cursor that the echo overwrites, a spinner glyph at the start of the
+  line — no longer begins its row, and is asked again.
+- The memory keeps one entry per signature and match, and a vendor match is a
+  label shared by every question of its kind. Answering a second Aider question
+  of the same kind moves the entry to the second one's row; if the agent then
+  erases the second, the first is the last line again, and it is asked again.
+- On the tmux resync, the answered question with its echo after it is another
+  line, and is asked again.
 
 A match is not always one line. The vendor rules are regexes that run across a
 whole prompt block, so the row check joins as many logical lines as the match
@@ -285,8 +354,10 @@ it does not pass through this screen and cannot report a burst. Reconciliation
 after a native attach therefore still compares whole normalized text.
 
 Resizing cannot be aligned with a byte offset in the stream, so the grid does
-not reflow: it keeps what fits and waits for the agent to repaint. Until that
-repaint, a wrapped line is wrapped at the old width.
+not reflow: it keeps what fits and waits for the agent to repaint. What fits is
+what a terminal keeps: the cursor's row stays in view, the rows below it go
+first, and the rows above it go into the scrollback when that is not enough.
+Until the repaint, a wrapped line is wrapped at the old width.
 
 Withdrawal is narrow on purpose, and everything it cannot prove keeps the
 occurrence pending, which is the behaviour that existed before it. An agent that

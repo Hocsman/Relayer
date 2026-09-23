@@ -495,14 +495,6 @@ func (s *Screen) VisibleText() string {
 	return strings.Join(lines, "\n")
 }
 
-// RowShows reports whether the named row is still on the visible grid and still
-// carries text.
-//
-// The pair is the point. The row alone would answer yes to a line the agent
-// rewrote with something else; the text alone would answer yes to the same
-// words on another line. A row that scrolled away, that was erased, or that now
-// says something different answers false — which is how a caller learns that
-// what it remembered about that question no longer holds.
 // RowState reports whether the named row is present on the visible grid,
 // and whether its content is currently blank.
 func (s *Screen) RowState(id RowID) (present bool, blank bool) {
@@ -517,6 +509,38 @@ func (s *Screen) RowState(id RowID) (present bool, blank bool) {
 	return false, false
 }
 
+// OnAlternate reports whether the alternate screen is shown: a full-screen
+// program has the grid, and the primary one is parked until it exits.
+func (s *Screen) OnAlternate() bool { return s.alternate != nil }
+
+// RowParked reports whether the named row belongs to the primary screen, parked
+// while the alternate one is shown.
+//
+// Such a row is on no visible grid, so RowState and RowShows answer as they do
+// for a row that is gone. It is not gone: the primary screen comes back
+// unchanged when the program exits, and a caller that took the row's absence
+// for its end forgot what it knew about a line that is about to be shown again
+// exactly as it was.
+func (s *Screen) RowParked(id RowID) bool {
+	if id == 0 || s.alternate == nil {
+		return false
+	}
+	for index := range s.alternate.rows {
+		if s.alternate.rows[index].id == id {
+			return true
+		}
+	}
+	return false
+}
+
+// RowShows reports whether the named row is still on the visible grid and still
+// carries text.
+//
+// The pair is the point. The row alone would answer yes to a line the agent
+// rewrote with something else; the text alone would answer yes to the same
+// words on another line. A row that scrolled away, that was erased, or that now
+// says something different answers false — which is how a caller learns that
+// what it remembered about that question no longer holds.
 func (s *Screen) RowShows(id RowID, text string) bool {
 	if id == 0 || text == "" {
 		return false

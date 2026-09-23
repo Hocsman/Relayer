@@ -18,6 +18,12 @@ import (
 
 const (
 	askOnceHelperEnv = "RELAYER_TEST_ASK_ONCE_AGENT"
+	// askOnceAfterEnv names what the helper does once it has the answer, before
+	// it prints anything of its own. Empty, it works on the answer for a while.
+	askOnceAfterEnv = "RELAYER_TEST_ASK_ONCE_AFTER"
+	// askOnceFullScreen runs a full-screen program first: an editor or a pager
+	// on the alternate screen, which gives the primary one back unchanged.
+	askOnceFullScreen = "full-screen"
 
 	// The helper's reports. Everything it reads after the first answer, for as
 	// long as it keeps listening, is an extra answer.
@@ -67,10 +73,26 @@ func TestHelperProcessAskOnceAgent(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 		os.Exit(3)
 	}
-	// A real agent works on the answer before printing anything. Meanwhile the
-	// terminal has echoed it, and ConPTY flushes that echo as a write of its
-	// own: the write that used to raise the question a second time.
-	time.Sleep(500 * time.Millisecond)
+	if os.Getenv(askOnceAfterEnv) == askOnceFullScreen {
+		// The alternate screen, then back to the primary one, which still
+		// shows the answered question. ConPTY passes the switch through and
+		// repaints the primary screen after it; a Unix PTY passes the bytes as
+		// they are, and the terminal restores the primary screen itself. The
+		// switch is written by the agent, as an editor does, and ConPTY honours
+		// it without the agent enabling anything on its console.
+		time.Sleep(200 * time.Millisecond)
+		fmt.Print("\x1b[?1049h\x1b[H\x1b[2Jeditor contents\r\n~\r\n~")
+		time.Sleep(400 * time.Millisecond)
+		fmt.Print("\x1b[?1049l")
+		// Long enough for a repeat of the question to be raised, allowed and
+		// typed, so that the listening below would read it.
+		time.Sleep(1500 * time.Millisecond)
+	} else {
+		// A real agent works on the answer before printing anything. Meanwhile
+		// the terminal has echoed it, and ConPTY flushes that echo as a write of
+		// its own: the write that used to raise the question a second time.
+		time.Sleep(500 * time.Millisecond)
+	}
 	fmt.Printf("\r\n%s%q\r\n", askOnceAnswer, first)
 	listen := time.After(1500 * time.Millisecond)
 	for {
@@ -94,10 +116,27 @@ func TestHelperProcessAskOnceAgent(t *testing.T) {
 // whatever the agent asked next received an answer nobody gave. This runs the
 // real desktop runtime against a real terminal, ConPTY on Windows and a PTY
 // elsewhere, and counts the answers where they land, in the agent.
+//
+// A full-screen program run after the answer did the same by another road: the
+// answered question's row was parked with the primary screen, taken for a row
+// that was gone, and forgotten, and the primary screen came back with the
+// question still on it.
 func TestTheDesktopAnswersAnAutomaticQuestionOnce(t *testing.T) {
 	if !desktopAgentExecutionSupported() {
 		t.Skip(desktopUnsupportedReason())
 	}
+	t.Run("the echo of the answer", func(t *testing.T) {
+		desktopAnswersOnce(t, "")
+	})
+	t.Run("a full-screen program after the answer", func(t *testing.T) {
+		desktopAnswersOnce(t, askOnceFullScreen)
+	})
+}
+
+// desktopAnswersOnce runs the helper agent under the desktop runtime, with after
+// telling the helper what to do once it has the answer, and asserts that the
+// agent received exactly one answer.
+func desktopAnswersOnce(t *testing.T, after string) {
 	dir := t.TempDir()
 	for _, name := range []string{"APPDATA", "LOCALAPPDATA", "HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
 		t.Setenv(name, dir)
@@ -112,6 +151,10 @@ func TestTheDesktopAnswersAnAutomaticQuestionOnce(t *testing.T) {
 	}
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
 	const agentID = "ask-once"
+	environment := "      " + askOnceHelperEnv + ": '1'\n"
+	if after != "" {
+		environment += "      " + askOnceAfterEnv + ": " + quote(after) + "\n"
+	}
 	configuration := "version: 1\nbackend: pty\n" +
 		"sessions:\n  persist_on_exit: false\n  cleanup_on_success: true\n" +
 		"policies:\n  default_action: allow\n  dry_run: false\n  rules: []\n" +
@@ -119,7 +162,7 @@ func TestTheDesktopAnswersAnAutomaticQuestionOnce(t *testing.T) {
 		"\n  max_file_size_mb: 10\n  max_files: 5\n" +
 		"agents:\n  - id: " + agentID + "\n    name: " + agentID + "\n" +
 		"    command: [" + quote(executable) + ", " + quote("-test.run=^TestHelperProcessAskOnceAgent$") + "]\n" +
-		"    cwd: " + quote(dir) + "\n    env:\n      " + askOnceHelperEnv + ": '1'\n" +
+		"    cwd: " + quote(dir) + "\n    env:\n" + environment +
 		"    adapter: aider\n    backend: pty\n" +
 		"intercept_patterns:\n" +
 		"  - pattern: (?i)overwrite.*\\[y/n\\]\n    description: overwrite confirmation\n" +
