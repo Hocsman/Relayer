@@ -1,4 +1,4 @@
-package main
+package supervise
 
 import (
 	"strings"
@@ -14,29 +14,38 @@ const (
 	maxDisplayErrorRunes   = 180
 )
 
-func requiresSecretHandling(event adapters.Event) bool {
+// RequiresSecretHandling reports whether an event's text must never be shown
+// or journaled: the adapter marked it sensitive, it asks for a credential, or
+// its risk is high.
+func RequiresSecretHandling(event adapters.Event) bool {
 	return event.Sensitive || event.Type == adapters.EventCredential || event.Risk == adapters.RiskHigh
 }
 
-func safeEventSummary(event adapters.Event) string {
-	if requiresSecretHandling(event) {
+// SafeEventSummary is the only form of an event's summary that may be shown
+// or journaled.
+func SafeEventSummary(event adapters.Event) string {
+	if RequiresSecretHandling(event) {
 		return "Sensitive input required"
 	}
-	return boundedDisplayText(audit.Redact(event.Summary), maxDisplaySummaryRunes, "Event detected")
+	return BoundedDisplayText(audit.Redact(event.Summary), maxDisplaySummaryRunes, "Event detected")
 }
 
-func safeRuleName(value string) string {
-	return boundedDisplayText(audit.Redact(value), 64, "")
+// SafeRuleName bounds and redacts a policy rule name for display.
+func SafeRuleName(value string) string {
+	return BoundedDisplayText(audit.Redact(value), 64, "")
 }
 
-func safeDisplayError(err error) string {
+// SafeDisplayError bounds and redacts an error for display.
+func SafeDisplayError(err error) string {
 	if err == nil {
 		return "Unknown error"
 	}
-	return boundedDisplayText(audit.Redact(err.Error()), maxDisplayErrorRunes, "Operation failed")
+	return BoundedDisplayText(audit.Redact(err.Error()), maxDisplayErrorRunes, "Operation failed")
 }
 
-func boundedDisplayText(value string, limit int, fallback string) string {
+// BoundedDisplayText flattens a text to one line of at most limit runes, or
+// returns fallback when nothing printable is left.
+func BoundedDisplayText(value string, limit int, fallback string) string {
 	value = strings.Map(func(character rune) rune {
 		if character == '\n' || character == '\r' || character == '\t' || unicode.IsControl(character) {
 			return ' '
@@ -54,7 +63,9 @@ func boundedDisplayText(value string, limit int, fallback string) string {
 	return string(runes[:limit-1]) + "…"
 }
 
-func safeReason(value string) string {
+// SafeReason passes a reason code through only when it is one the core
+// itself produces, and replaces anything else with "unknown".
+func SafeReason(value string) string {
 	switch value {
 	case "default_action", "rule_match", "invalid_event", "non_actionable",
 		"sensitive_event", "risk_not_low", "dry_run", "engine_unavailable",

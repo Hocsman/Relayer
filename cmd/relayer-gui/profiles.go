@@ -16,6 +16,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/config"
+	"github.com/Hocsman/Relayer/internal/supervise"
 	"github.com/Hocsman/Relayer/internal/toolcatalog"
 )
 
@@ -197,7 +198,7 @@ func (a *App) loadAgentProfilesLocked() (AgentProfilesView, error) {
 	}
 	loaded, err := config.LoadExisting(path)
 	if err != nil {
-		return AgentProfilesView{}, errors.New(safeDisplayError(err))
+		return AgentProfilesView{}, errors.New(supervise.SafeDisplayError(err))
 	}
 	if a.profileRevisionHash != loaded.Revision || a.profileRevisionToken == "" {
 		token, tokenErr := a.profileTokenGenerator()

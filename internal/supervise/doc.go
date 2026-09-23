@@ -1,0 +1,18 @@
+// Package supervise is the supervision core shared by Relayer's front ends.
+//
+// It holds what decides whether a byte reaches a supervised agent: the
+// prompts a run is waiting on, the policy's automatic decisions and their
+// serialisation per session, human decisions and free-text lines, the
+// fail-closed audit journal, and the display-safe form in which all of it is
+// shown. A front end brings the transport — Wails events on the desktop, a
+// websocket on the gateway — and nothing that bears on delivery.
+//
+// The desktop kept this state machine in its Wails bridge, and the gateway a
+// second, diverging copy of it. The code here is the desktop's, moved without
+// a change in behaviour, so the desktop's tests pin it before either front end
+// is changed to rely on it.
+//
+// The package deliberately depends only on the adapter, audit, policy, session
+// and terminal vocabularies and the standard library (imports_test.go enforces
+// it): no notifier, no telemetry, no network and no user interface toolkit.
+package supervise

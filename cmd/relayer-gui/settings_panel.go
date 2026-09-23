@@ -9,6 +9,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/notify"
 	"github.com/Hocsman/Relayer/internal/policy"
+	"github.com/Hocsman/Relayer/internal/supervise"
 )
 
 type SecuritySettings struct {
@@ -106,7 +107,7 @@ func (a *App) loadFullSettingsLocked() (FullSettingsView, error) {
 	}
 	loaded, err := config.LoadExisting(path)
 	if err != nil {
-		return FullSettingsView{}, errors.New(safeDisplayError(err))
+		return FullSettingsView{}, errors.New(supervise.SafeDisplayError(err))
 	}
 
 	sec := extractSecuritySettings(loaded.Policies)

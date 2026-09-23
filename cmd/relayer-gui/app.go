@@ -20,6 +20,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/preflight"
 	"github.com/Hocsman/Relayer/internal/session"
+	"github.com/Hocsman/Relayer/internal/supervise"
 	"github.com/Hocsman/Relayer/internal/telemetry"
 	"github.com/Hocsman/Relayer/internal/terminal"
 	"github.com/Hocsman/Relayer/internal/toolcatalog"
@@ -35,22 +36,24 @@ const (
 	outputFrameDelay  = 40 * time.Millisecond
 )
 
+// The bridge's refusals are the supervision core's: the same values, so every
+// errors.Is against them holds on either side of the package boundary.
 var (
-	errAuditUnavailable    = errors.New("audit journal unavailable, no decision was sent")
-	errDecisionStale       = errors.New("request is no longer the awaited event")
-	errDecisionInFlight    = errors.New("a decision is already in progress for this agent")
-	errEmptyDecision       = errors.New("an empty answer is not a decision")
-	errUnsupportedDecision = errors.New("answer cannot be encoded for this request")
-	errDeliveryUncertain   = errors.New("delivery state is indeterminate, stop the session before further input")
-	errLineInFlight        = errors.New("a line is already being delivered to this agent")
-	errLinePromptPending   = errors.New("a supervision request must be answered before free-text input")
-	errLineUnavailable     = errors.New("session does not accept free-text input in its current state")
-	errLineInvalid         = errors.New("invalid line")
-	errLineUnsupported     = errors.New("backend does not support free-text input")
-	errRuntimeStopped      = errors.New("the Relayer engine is stopped")
-	errRunStale            = errors.New("this Relayer run is no longer active")
-	errAgentUnknown        = errors.New("unknown agent for this run")
-	errAgentStillRunning   = errors.New("the agent process is still running")
+	errAuditUnavailable    = supervise.ErrAuditUnavailable
+	errDecisionStale       = supervise.ErrDecisionStale
+	errDecisionInFlight    = supervise.ErrDecisionInFlight
+	errEmptyDecision       = supervise.ErrEmptyDecision
+	errUnsupportedDecision = supervise.ErrUnsupportedDecision
+	errDeliveryUncertain   = supervise.ErrDeliveryUncertain
+	errLineInFlight        = supervise.ErrLineInFlight
+	errLinePromptPending   = supervise.ErrLinePromptPending
+	errLineUnavailable     = supervise.ErrLineUnavailable
+	errLineInvalid         = supervise.ErrLineInvalid
+	errLineUnsupported     = supervise.ErrLineUnsupported
+	errRuntimeStopped      = supervise.ErrRuntimeStopped
+	errRunStale            = supervise.ErrRunStale
+	errAgentUnknown        = supervise.ErrAgentUnknown
+	errAgentStillRunning   = supervise.ErrAgentStillRunning
 )
 
 type eventKey struct {
@@ -199,7 +202,7 @@ func (a *App) startup(ctx context.Context) {
 
 	configPath, err := desktopConfigPath()
 	if err != nil {
-		a.failStartup(errors.New(safeDisplayError(err)))
+		a.failStartup(errors.New(supervise.SafeDisplayError(err)))
 		return
 	}
 	a.profilesMu.Lock()
@@ -489,7 +492,7 @@ func (a *App) handleAdapterEventWithdrawnForRun(run *runGeneration, event adapte
 	}
 
 	backend := a.backendFor(run, event.SessionID)
-	_ = a.recordAudit(run, eventWithdrawnEntry(event, backend, "agent_withdrew_occurrence"))
+	_ = a.recordAudit(run, supervise.EventWithdrawnEntry(event, backend, "agent_withdrew_occurrence"))
 
 	a.mu.Lock()
 	if _, duplicate := a.resolved[key]; duplicate {
@@ -565,12 +568,12 @@ func (a *App) handleAdapterEventForRun(run *runGeneration, event adapters.Event)
 	// that an essential semantic event still brings the latest bounded tail to
 	// the WebView even when its preceding output invalidation was dropped.
 	a.refreshOutputForRun(run, event.SessionID)
-	if !a.recordAudit(run, eventDetectedEntry(event, backend)) {
+	if !a.recordAudit(run, supervise.EventDetectedEntry(event, backend)) {
 		a.addFrozenEvent(run, event, policy.Evaluation{Action: policy.ActionAsk, ProposedAction: policy.ActionAsk, Reason: policy.ReasonNoEngine})
 		return
 	}
 	evaluation := run.engine.Evaluate(event)
-	if !a.recordAudit(run, policyAuditEntry(event, backend, evaluation)) {
+	if !a.recordAudit(run, supervise.PolicyAuditEntry(event, backend, evaluation)) {
 		a.addFrozenEvent(run, event, evaluation)
 		return
 	}
@@ -606,7 +609,7 @@ func (a *App) handleAdapterEventForRun(run *runGeneration, event adapters.Event)
 			})
 		} else if !evaluation.Automatic {
 			reason := "confirmation required"
-			if requiresSecretHandling(event) || evaluation.Reason == "sensitive" {
+			if supervise.RequiresSecretHandling(event) || evaluation.Reason == "sensitive" {
 				reason = "sensitive input required"
 			}
 			notifier.Notify(notify.Notification{
@@ -659,13 +662,6 @@ func (a *App) releaseEventReservation(key eventKey) {
 	a.mu.Unlock()
 }
 
-func eventDetectedEntry(event adapters.Event, backend string) audit.Entry {
-	entry := eventAuditEntry(audit.KindEventDetected, event, backend)
-	entry.Outcome = audit.OutcomeDetected
-	entry.Reason = "event_detected"
-	return entry
-}
-
 func (a *App) handleProcessExit(run *runGeneration, event adapters.Event, backend string) {
 	current := true
 	if run != nil && run.engine != nil {
@@ -677,8 +673,8 @@ func (a *App) handleProcessExit(run *runGeneration, event adapters.Event, backen
 		// it, which can be emitted after the replacement started. It is still
 		// a finished session and is journaled, but showing the agent stopped
 		// would hide a live process and offer to start a second one.
-		_ = a.recordAudit(run, eventDetectedEntry(event, backend))
-		finished := eventAuditEntry(audit.KindSessionFinished, event, backend)
+		_ = a.recordAudit(run, supervise.EventDetectedEntry(event, backend))
+		finished := supervise.EventAuditEntry(audit.KindSessionFinished, event, backend)
 		finished.Outcome = audit.OutcomeFinished
 		finished.Reason = "process_exit"
 		_ = a.recordAudit(run, finished)
@@ -689,8 +685,8 @@ func (a *App) handleProcessExit(run *runGeneration, event adapters.Event, backen
 	}
 	// Lifecycle state still has to converge even when audit has failed, so the
 	// result is deliberately ignored rather than short-circuiting the exit.
-	_ = a.recordAudit(run, eventDetectedEntry(event, backend))
-	finished := eventAuditEntry(audit.KindSessionFinished, event, backend)
+	_ = a.recordAudit(run, supervise.EventDetectedEntry(event, backend))
+	finished := supervise.EventAuditEntry(audit.KindSessionFinished, event, backend)
 	finished.Outcome = audit.OutcomeFinished
 	if event.Metadata["failed"] == "true" {
 		finished.Outcome = audit.OutcomeFailed
@@ -825,19 +821,19 @@ func (a *App) applyAutomatic(key eventKey, event adapters.Event, evaluation poli
 func (a *App) applyAutomaticForRun(run *runGeneration, key eventKey, event adapters.Event, evaluation policy.Evaluation) {
 	advance := false
 	defer func() { a.finishDecision(run, key, advance) }()
-	decision, supported := adapterDecisionForPolicy(evaluation.Action)
+	decision, supported := supervise.AdapterDecisionForPolicy(evaluation.Action)
 	if !supported {
 		a.fallbackToAsk(key, "fallback_unsupported")
 		return
 	}
 	backend := a.backendFor(run, event.SessionID)
-	auditDecision := auditDecisionForPolicy(evaluation.Action)
-	if !a.recordAudit(run, decisionAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy)) {
+	auditDecision := supervise.AuditDecisionForPolicy(evaluation.Action)
+	if !a.recordAudit(run, supervise.DecisionAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy)) {
 		a.markDelivery(key, "failed", "audit_unavailable")
 		return
 	}
 	if !a.beginDelivery() {
-		if !a.recordAudit(run, deliveryAuditEntry(
+		if !a.recordAudit(run, supervise.DeliveryAuditEntry(
 			event,
 			backend,
 			auditDecision,
@@ -855,7 +851,7 @@ func (a *App) applyAutomaticForRun(run *runGeneration, key eventKey, event adapt
 	err := run.engine.ApplyDecision(ctx, event.SessionID, event, decision, "")
 	cancel()
 	if err == nil {
-		if !a.recordAudit(run, deliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeApplied, "delivery_applied")) {
+		if !a.recordAudit(run, supervise.DeliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeApplied, "delivery_applied")) {
 			return
 		}
 		if a.pendingExists(key) {
@@ -865,7 +861,7 @@ func (a *App) applyAutomaticForRun(run *runGeneration, key eventKey, event adapt
 		return
 	}
 	if errors.Is(err, adapters.ErrDecisionUnsupported) {
-		if !a.recordAudit(run, deliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackUnsupported, "fallback_unsupported")) {
+		if !a.recordAudit(run, supervise.DeliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackUnsupported, "fallback_unsupported")) {
 			return
 		}
 		if a.pendingExists(key) {
@@ -874,7 +870,7 @@ func (a *App) applyAutomaticForRun(run *runGeneration, key eventKey, event adapt
 		return
 	}
 	if errors.Is(err, adapters.ErrEventMismatch) {
-		if !a.recordAudit(run, deliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackStale, "fallback_stale")) {
+		if !a.recordAudit(run, supervise.DeliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackStale, "fallback_stale")) {
 			return
 		}
 		if a.pendingExists(key) {
@@ -884,7 +880,7 @@ func (a *App) applyAutomaticForRun(run *runGeneration, key eventKey, event adapt
 		}
 		return
 	}
-	if !a.recordAudit(run, deliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackDeliveryUncertain, "delivery_uncertain")) {
+	if !a.recordAudit(run, supervise.DeliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackDeliveryUncertain, "delivery_uncertain")) {
 		return
 	}
 	if a.pendingExists(key) {
@@ -1099,7 +1095,7 @@ func (a *App) applyHumanDecision(
 	defer func() { a.finishDecision(run, key, advance) }()
 
 	backend := a.backendFor(run, sessionID)
-	if !a.recordAudit(run, decisionAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman)) {
+	if !a.recordAudit(run, supervise.DecisionAuditEntry(item.event, backend, supervise.HumanAuditDecision(decision), audit.DecisionByHuman)) {
 		return errAuditUnavailable
 	}
 	ctx, cancel := context.WithTimeout(run.ctx, 8*time.Second)
@@ -1107,7 +1103,7 @@ func (a *App) applyHumanDecision(
 	cancel()
 	if err != nil {
 		if errors.Is(err, adapters.ErrEventMismatch) {
-			if !a.recordAudit(run, deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackStale, "fallback_stale")) {
+			if !a.recordAudit(run, supervise.DeliveryAuditEntry(item.event, backend, supervise.HumanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackStale, "fallback_stale")) {
 				return errAuditUnavailable
 			}
 			a.resolveEvent(key)
@@ -1115,13 +1111,13 @@ func (a *App) applyHumanDecision(
 			advance = true
 			return errDecisionStale
 		}
-		if !a.recordAudit(run, deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackDeliveryUncertain, "delivery_uncertain")) {
+		if !a.recordAudit(run, supervise.DeliveryAuditEntry(item.event, backend, supervise.HumanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackDeliveryUncertain, "delivery_uncertain")) {
 			return errAuditUnavailable
 		}
 		a.freezeSession(run, key, "delivery_uncertain")
 		return errDeliveryUncertain
 	}
-	if !a.recordAudit(run, deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeApplied, "delivery_applied")) {
+	if !a.recordAudit(run, supervise.DeliveryAuditEntry(item.event, backend, supervise.HumanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeApplied, "delivery_applied")) {
 		return errAuditUnavailable
 	}
 	a.resolveEvent(key)
@@ -1192,7 +1188,7 @@ func (a *App) SubmitLine(runID, sessionID, line string) error {
 	a.mu.Unlock()
 	defer a.finishLine(run, sessionKey)
 
-	if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeInFlight, "operator_input_started")) {
+	if !a.recordAudit(run, supervise.OperatorInputAuditEntry(agentSpecOf(agent), audit.OutcomeInFlight, "operator_input_started")) {
 		return errAuditUnavailable
 	}
 	ctx, cancel := context.WithTimeout(run.ctx, 8*time.Second)
@@ -1200,7 +1196,7 @@ func (a *App) SubmitLine(runID, sessionID, line string) error {
 	line = ""
 	cancel()
 	if err == nil {
-		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeApplied, "operator_input_applied")) {
+		if !a.recordAudit(run, supervise.OperatorInputAuditEntry(agentSpecOf(agent), audit.OutcomeApplied, "operator_input_applied")) {
 			return errAuditUnavailable
 		}
 		return nil
@@ -1208,40 +1204,40 @@ func (a *App) SubmitLine(runID, sessionID, line string) error {
 
 	switch {
 	case errors.Is(err, terminal.ErrEventPending):
-		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeFallbackStale, "operator_input_prompt_pending")) {
+		if !a.recordAudit(run, supervise.OperatorInputAuditEntry(agentSpecOf(agent), audit.OutcomeFallbackStale, "operator_input_prompt_pending")) {
 			return errAuditUnavailable
 		}
 		a.reconcilePending(run, sessionID)
 		a.emitSafeError(run, "line_prompt_pending", "A supervision request arrived before the line. No free text was sent.", sessionID)
 		return errLinePromptPending
 	case errors.Is(err, terminal.ErrInvalidLine):
-		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeSkipped, "operator_input_invalid")) {
+		if !a.recordAudit(run, supervise.OperatorInputAuditEntry(agentSpecOf(agent), audit.OutcomeSkipped, "operator_input_invalid")) {
 			return errAuditUnavailable
 		}
 		a.emitSafeError(run, "line_invalid", "The input must be a single UTF-8 line, with no control characters and no more than 4096 bytes.", sessionID)
 		return errLineInvalid
 	case errors.Is(err, terminal.ErrLineUnsupported):
-		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeSkipped, "operator_input_unsupported")) {
+		if !a.recordAudit(run, supervise.OperatorInputAuditEntry(agentSpecOf(agent), audit.OutcomeSkipped, "operator_input_unsupported")) {
 			return errAuditUnavailable
 		}
 		a.emitSafeError(run, "line_unsupported", "This backend cannot send a line reliably.", sessionID)
 		return errLineUnsupported
 	case errors.Is(err, terminal.ErrClosed):
-		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeSkipped, "operator_input_session_unavailable")) {
+		if !a.recordAudit(run, supervise.OperatorInputAuditEntry(agentSpecOf(agent), audit.OutcomeSkipped, "operator_input_session_unavailable")) {
 			return errAuditUnavailable
 		}
 		a.markLineSessionUnavailable(run, sessionKey, "exited")
 		a.emitSafeError(run, "line_session_unavailable", "The session ended before delivery. No line was sent.", sessionID)
 		return errLineUnavailable
 	case errors.Is(err, terminal.ErrSessionNotFound):
-		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeSkipped, "operator_input_session_unavailable")) {
+		if !a.recordAudit(run, supervise.OperatorInputAuditEntry(agentSpecOf(agent), audit.OutcomeSkipped, "operator_input_session_unavailable")) {
 			return errAuditUnavailable
 		}
 		a.markLineSessionUnavailable(run, sessionKey, "failed")
 		a.emitSafeError(run, "line_session_unavailable", "The session is no longer available. No line was sent.", sessionID)
 		return errLineUnavailable
 	default:
-		if !a.recordAudit(run, operatorInputAuditEntry(agent, audit.OutcomeFallbackDeliveryUncertain, "operator_input_delivery_uncertain")) {
+		if !a.recordAudit(run, supervise.OperatorInputAuditEntry(agentSpecOf(agent), audit.OutcomeFallbackDeliveryUncertain, "operator_input_delivery_uncertain")) {
 			return errAuditUnavailable
 		}
 		a.freezeLineSession(run, sessionKey)
@@ -1713,11 +1709,6 @@ func (a *App) restoreAgentRunningLocked(sessionID string) {
 	}
 }
 
-// eventTimestampLayout is RFC 3339 with a fixed nine-digit fraction. Prompts are
-// ordered by comparing their timestamps as text, here and in the interface;
-// RFC3339Nano drops trailing zeros, so a prompt at .1 sorted after one at .12.
-const eventTimestampLayout = "2006-01-02T15:04:05.000000000Z07:00"
-
 // promptDetectedAt is when a prompt was detected. An adapter stamps every
 // event, but the view falls back to the time it was received, and the
 // interface compares that: taking a zero timestamp as older than any start
@@ -1824,39 +1815,7 @@ func supervisionView(
 	delivery string,
 	decisions []adapters.Decision,
 ) SupervisionEvent {
-	offered := make([]string, 0, len(decisions))
-	for _, decision := range decisions {
-		switch decision {
-		case adapters.DecisionAllow, adapters.DecisionDeny:
-			offered = append(offered, string(decision))
-		}
-	}
-	timestamp := event.Timestamp
-	if timestamp.IsZero() {
-		timestamp = time.Now().UTC()
-	}
-	return SupervisionEvent{
-		RunID:     runID,
-		ID:        event.ID,
-		SessionID: event.SessionID,
-		AgentID:   event.AgentID,
-		Adapter:   event.Adapter,
-		Type:      string(event.Type),
-		Summary:   safeEventSummary(event),
-		Sensitive: requiresSecretHandling(event),
-		Risk:      string(event.Risk),
-		Timestamp: timestamp.UTC().Format(eventTimestampLayout),
-		Evaluation: PolicyEvaluation{
-			Action:         string(evaluation.Action),
-			ProposedAction: string(evaluation.ProposedAction),
-			RuleName:       safeRuleName(evaluation.RuleName),
-			Reason:         safeReason(evaluation.Reason),
-			Automatic:      evaluation.Automatic,
-			DryRun:         evaluation.DryRun,
-		},
-		DeliveryStatus: delivery,
-		Decisions:      offered,
-	}
+	return supervisionEventFromView(supervise.NewView(runID, event, evaluation, delivery, decisions))
 }
 
 func snapshotFromAgent(runID string, agent AgentState) SnapshotEvent {
@@ -1922,21 +1881,6 @@ func safeNotices(logs []string) []string {
 		notices = append(notices, cleaned)
 	}
 	return notices
-}
-
-// humanAuditDecision names the answer a human actually gave. A free-text reply
-// stays "ask": the journal records that a human was consulted and answered, not
-// that the answer permitted anything — only the adapter knows what the bytes
-// mean.
-func humanAuditDecision(decision adapters.Decision) audit.Decision {
-	switch decision {
-	case adapters.DecisionAllow:
-		return audit.DecisionAllow
-	case adapters.DecisionDeny:
-		return audit.DecisionDeny
-	default:
-		return audit.DecisionAsk
-	}
 }
 
 func (a *App) currentNotifier() notify.Notifier {
