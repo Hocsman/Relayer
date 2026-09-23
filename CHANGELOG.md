@@ -4,6 +4,19 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+### Security
+
+- **A decision on a prompt of a previous process could be delivered to its replacement**: a prompt's occurrence ID was its signature and its number within the process, and the number starts again with each process. A signature can be as little as the `[y/n]` a pattern captured, so a restarted agent's first prompt could carry exactly the ID of the previous process's, whatever each one asked: "Run 'npm test'? [y/n]" and "Run 'rm -rf build' as root? [y/n]" had the same ID, and the processor accepted an answer given to the first as the answer to the second. Every occurrence ID now carries a random token drawn when the agent's process starts, as process exits already did, and a decision naming the previous process's prompt is refused. The token is never recorded, so the IDs of sensitive prompts, withheld from the journal because they derive from the match, stay unguessable.
+  - All six adapters build their IDs through one helper, including the five that rebuild the ID after the generic detection, and a test fails if new code builds one without the token. `TestEveryAdapterGivesEachProcessItsOwnPromptIDs` and `TestAProcessRefusesADecisionOnItsPredecessorsPrompt` fail against v0.8.6.
+  - An occurrence ID is no longer the same across restarts of an agent. Nothing in Relayer relied on that; a consumer of the journal or of webhook payloads that matched a prompt's `event_id` across restarts sees a new value for each process.
+
+### Fixed
+
+- **The ghost prompts v0.8.6 described no longer collide with the replacement's**: a late prompt of the previous process, or one it raised while a Restart stopped it, carried the ID of the replacement's first prompt, which was then refused as a duplicate before it was shown or journaled. With IDs of their own, the replacement's prompts are no longer mistaken for them, and answering a late prompt of the previous process is refused instead of reaching the new process.
+  - The desktop and the TUI no longer forget a session's answered prompts at each start, which only existed because IDs repeated; a late copy of an answered prompt of the previous process is now refused.
+  - Desktop: a prompt the new process raises while its Start is still in progress is kept, and its automatic decision taken once the start completes; it used to be dropped as the prompt of a stopped agent.
+- **Prompts that were never decided stayed counted**: the telemetry gauge `relayer_events_pending` kept every prompt pending when its process exited or was replaced, and the TUI kept each one's detection time. Colliding IDs used to overwrite some of them. Both are now dropped when a session's process ends or starts again.
+
 ## [0.8.6] - 2026-09-22
 
 Patch release that makes the v0.8.4 and v0.8.5 fixes true. A verification of those two releases found each of their eight fixes partial, two of them critical: a web page could take over a tokenless gateway through DNS rebinding, and on Windows stopping an agent could kill an unrelated process. Both are closed. The settings editor no longer weakens the policy it saves, every PTY stop path gives agents their grace period, an agent that exits on its own can be restarted any number of times, and viewer tokens no longer receive command lines or file paths. The entries below say only what the code does, and the overstatements in earlier entries are corrected at the end of this section.

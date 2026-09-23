@@ -187,7 +187,10 @@ process, tmux's own history, the operating system, or external files.
 Adapter events carry a unique occurrence ID and stable signature. The processor
 deduplicates repeated live/snapshot observation of the same occurrence,
 acknowledges resolved events, and permits a later identical occurrence to get a
-new ID. The TUI keys pending and resolved state by session plus event identity.
+new ID. Each process of an agent draws its own token into every occurrence ID,
+so a decision on a prompt of a previous process never matches its replacement's
+prompt, even when a short pattern gives both the same signature. The TUI keys
+pending and resolved state by session plus event identity.
 
 Delivery is attempted only for the exact pending session. A stale event,
 finished session, unsupported adapter encoding, audit failure, attach

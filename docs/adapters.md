@@ -100,6 +100,13 @@ only the same historical occurrence does not reblock. A genuinely new identical
 prompt receives a different occurrence ID. Two identical prompts in sequence
 are therefore distinguishable without inventing vendor-specific markers.
 
+An occurrence ID also carries a random token drawn when the agent's process
+starts. The sequence in an ID starts again with each process, and a signature
+can be as little as the `[y/n]` a pattern captured, so without the token a
+restarted agent's first prompt had the previous process's ID: a decision on the
+old prompt was delivered to the new one. The token is never recorded, and a
+decision that names the previous process's ID is refused.
+
 ## Generic regex adapter
 
 `intercept_patterns` is compiled before any agent starts. Pattern order is

@@ -228,8 +228,10 @@ events. The per-session processor:
 
 Events carry an occurrence ID, a stable signature, sequence, session and agent
 IDs, adapter, type, bounded summary, match, sensitivity, risk, timestamp, and
-copied metadata. The ID distinguishes two successive identical prompts; the
-signature supports replay deduplication. Acknowledging an event permits a later
+copied metadata. The ID distinguishes two successive identical prompts, and two
+processes of one agent: it carries a token drawn when the process starts, since
+the sequence starts again with each process. The signature supports replay
+deduplication. Acknowledging an event permits a later
 occurrence of the same text to become actionable again.
 
 The stable generic adapter applies ordered regular expressions only to the

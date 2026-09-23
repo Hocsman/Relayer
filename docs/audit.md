@@ -129,7 +129,7 @@ The centralized redactor removes or replaces:
 
 For `sensitive`, `credential`, or high-risk events, `summary` is the constant `sensitive_event` and metadata is omitted. The audit never records the length of a submitted secret. Maps are copied before serialization so later mutation cannot alter an accepted entry.
 
-Sensitive event IDs are omitted too: generic occurrence IDs are derived from a fingerprint that includes the normalized match, so persisting them could enable offline guessing of a low-entropy OTP or password. Such records remain ordered and correlated by their session and audit sequence without retaining that derivative.
+Sensitive event IDs are omitted too: generic occurrence IDs are derived from a fingerprint that includes the normalized match, so persisting them could enable offline guessing of a low-entropy OTP or password. Such records remain ordered and correlated by their session and audit sequence without retaining that derivative. Every occurrence ID also carries a random per-process token that is never recorded, so an ID differs between two processes of the same agent; journals and webhooks that correlated a prompt's `event_id` across restarts of an agent will see a new value for each process.
 
 ## Anonymized example
 
