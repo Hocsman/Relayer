@@ -824,6 +824,108 @@ func TestALineRefusedForAWaitingPromptBringsInThePromptTheAgentShows(t *testing.
 	}
 }
 
+// An automatic decision the journal could not record is not attempted: the
+// prompt is failed for the journal, not merely cancelled, and no delivery is
+// journaled for it.
+func TestAnAutomaticDecisionTheJournalCouldNotRecordIsNotAttempted(t *testing.T) {
+	engine := newFakeEngine()
+	engine.evaluation = automaticAllow()
+	// The prompt's detection and evaluation are journaled; its decision is not.
+	engine.auditFailAt = 3
+	sup, _ := newCoreForTest(t, engine, "agent-a")
+
+	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "automatic-1")})
+	waitFor(t, 2*time.Second, "the prompt to fail", func() bool {
+		pending := sup.State().Pending
+		return len(pending) == 1 && pending[0].DeliveryStatus == "failed"
+	})
+	sup.BeginDrain()
+	sup.Wait()
+	if view := sup.State().Pending[0]; view.Evaluation.Reason != "audit_unavailable" {
+		t.Fatalf("prompt = %#v, want it failed for the journal", view)
+	}
+	if deliveries := engine.auditFor(audit.KindDelivery, "automatic-1"); len(deliveries) != 0 {
+		t.Fatalf("delivery entries = %#v, want none", deliveries)
+	}
+	if calls := engine.applySnapshot(); len(calls) != 0 {
+		t.Fatalf("deliveries = %#v, want none", calls)
+	}
+}
+
+// No automatic decision is started once the journal has failed, not even for
+// an agent that was starting when it failed: that agent was not running, so
+// nothing froze it, and its start clears what froze it anyway.
+func TestNoAutomaticDecisionIsStartedAfterTheJournalFails(t *testing.T) {
+	engine := newFakeEngine()
+	engine.evaluationByID["automatic-1"] = automaticAllow()
+	started := make(chan string, 1)
+	release := make(chan struct{})
+	engine.agentStartStarted = started
+	engine.agentStartRelease = release
+	sup, _ := newCoreForTest(t, engine, "agent-a", "agent-b")
+	releaseStart := releaser(t, release)
+	sup.Handle(session.AdapterEvent{Event: exitEvent("agent-a", 0, false)})
+	done := make(chan error, 1)
+	go func() { done <- sup.StartSession(testRunID, "agent-a") }()
+	<-started
+	engine.set(func(f *fakeEngine) { f.auditFailAt = f.auditCalls + 1 })
+	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-b", "journal-fails")})
+	if !sup.State().AuditFailed {
+		t.Fatal("the journal did not fail")
+	}
+	// The fixture's journal takes entries again; the core must not rely on it.
+	prompt := promptEvent("agent-a", "automatic-1")
+	prompt.Timestamp = time.Now().UTC()
+	sup.Handle(session.AdapterEvent{Event: prompt})
+
+	releaseStart()
+	if err := <-done; err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	sup.BeginDrain()
+	sup.Wait()
+	if decisions := engine.auditFor(audit.KindDecision, "automatic-1"); len(decisions) != 0 {
+		t.Fatalf("an automatic decision was started after the journal failed: %#v", decisions)
+	}
+	if calls := engine.applySnapshot(); len(calls) != 0 {
+		t.Fatalf("deliveries = %#v, want none", calls)
+	}
+}
+
+// A drain starts no automatic decision, not even for a start it admitted
+// before it began and that completes during it: the prompt the new process
+// raised stays pending, and nothing is journaled for it.
+func TestADrainStartsNoAutomaticDecision(t *testing.T) {
+	engine := newFakeEngine()
+	engine.evaluation = automaticAllow()
+	started := make(chan string, 1)
+	release := make(chan struct{})
+	engine.agentStartStarted = started
+	engine.agentStartRelease = release
+	sup, _ := newCoreForTest(t, engine, "agent-a")
+	releaseStart := releaser(t, release)
+	sup.Handle(session.AdapterEvent{Event: exitEvent("agent-a", 0, false)})
+	done := make(chan error, 1)
+	go func() { done <- sup.StartSession(testRunID, "agent-a") }()
+	<-started
+	prompt := promptEvent("agent-a", "automatic-1")
+	prompt.Timestamp = time.Now().UTC()
+	sup.Handle(session.AdapterEvent{Event: prompt})
+
+	sup.BeginDrain()
+	releaseStart()
+	if err := <-done; err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	sup.Wait()
+	if state := sup.State(); len(state.Pending) != 1 || state.Pending[0].DeliveryStatus != "pending" {
+		t.Fatalf("the prompt after the drain = %#v, want it still pending", state.Pending)
+	}
+	if decisions := engine.auditFor(audit.KindDecision, "automatic-1"); len(decisions) != 0 {
+		t.Fatalf("an automatic decision was started during the drain: %#v", decisions)
+	}
+}
+
 // Once the journal fails, the gate a drain closes is closed too: no write the
 // core does not make itself, a terminal resize for instance, is admitted.
 func TestAFailedJournalAdmitsNoOtherWrite(t *testing.T) {
