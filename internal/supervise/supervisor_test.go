@@ -573,7 +573,14 @@ func TestAnUnsupportedAutomaticDecisionFallsBackToAsk(t *testing.T) {
 		pending := sup.State().Pending
 		return len(pending) == 1 && pending[0].Evaluation.Reason == "fallback_unsupported"
 	})
+	// The counts below are exact only once the automatic decision has
+	// finished: drained, a late second delivery or entry would be counted.
+	sup.BeginDrain()
+	sup.Wait()
 
+	if calls := engine.applySnapshot(); len(calls) != 1 || calls[0].decision != adapters.DecisionAllow {
+		t.Fatalf("deliveries = %#v, want the one automatic attempt", calls)
+	}
 	view := sup.State().Pending[0]
 	if view.Evaluation.Action != string(policy.ActionAsk) || view.Evaluation.ProposedAction != string(policy.ActionAllow) ||
 		view.Evaluation.Automatic || view.DeliveryStatus != "pending" {
@@ -590,7 +597,11 @@ func TestAnUnsupportedAutomaticDecisionFallsBackToAsk(t *testing.T) {
 
 // The desktop's TestProcessExitDuringAutomaticDeliveryStillRecordsTerminalOutcome,
 // through the core: the process exits while the answer is written, and the
-// delivery still gets exactly one terminal journal entry.
+// delivery still gets exactly one terminal journal entry. The desktop decided
+// synchronously, so its count was final when the test read it; the core
+// decides on a goroutine of its own, and the count is final only once the run
+// has drained. Counted at the first entry, a second one written a moment
+// later went unseen.
 func TestAProcessExitDuringAnAutomaticDeliveryLeavesOneTerminalEntry(t *testing.T) {
 	engine := newFakeEngine()
 	engine.evaluation = automaticAllow()
@@ -604,6 +615,8 @@ func TestAProcessExitDuringAnAutomaticDeliveryLeavesOneTerminalEntry(t *testing.
 	waitFor(t, 2*time.Second, "the terminal delivery entry", func() bool {
 		return len(engine.auditFor(audit.KindDelivery, "automatic-exit")) > 0
 	})
+	sup.BeginDrain()
+	sup.Wait()
 
 	deliveries := engine.auditFor(audit.KindDelivery, "automatic-exit")
 	if len(deliveries) != 1 || deliveries[0].Outcome != audit.OutcomeApplied || deliveries[0].Reason != "delivery_applied" {

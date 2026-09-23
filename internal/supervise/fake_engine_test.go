@@ -41,13 +41,24 @@ type fakeEngine struct {
 
 	lineCalls []lineCall
 	lineErr   error
+	// lineStarted receives the session of each line the moment it is written;
+	// lineRelease, when set, holds the write until it is closed.
+	lineStarted chan string
+	lineRelease <-chan struct{}
 
 	auditEntries []audit.Entry
 	auditCalls   int
 	auditFailAt  int
+	// auditBlockKind holds each entry of that kind, before it is journaled,
+	// until auditRelease is closed; auditStarted is signalled as each waits.
+	auditBlockKind audit.Kind
+	auditStarted   chan struct{}
+	auditRelease   <-chan struct{}
 
 	stopErr           error
 	stopCalls         []string
+	stopStarted       chan string
+	stopRelease       <-chan struct{}
 	agentStartErr     error
 	agentStartCalls   []string
 	agentStartStarted chan string
@@ -164,17 +175,38 @@ func (f *fakeEngine) ApplyDecision(
 
 func (f *fakeEngine) SendLine(_ context.Context, sessionID, line string) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.lineCalls = append(f.lineCalls, lineCall{sessionID: sessionID, line: line})
-	f.operations = append(f.operations, "line:"+strings.ToLower(sessionID))
-	return f.lineErr
+	f.operations = append(f.operations, "line:start:"+strings.ToLower(sessionID))
+	started := f.lineStarted
+	release := f.lineRelease
+	err := f.lineErr
+	f.mu.Unlock()
+	if started != nil {
+		started <- sessionID
+	}
+	if release != nil {
+		<-release
+	}
+	f.mu.Lock()
+	f.operations = append(f.operations, "line:return:"+strings.ToLower(sessionID))
+	f.mu.Unlock()
+	return err
 }
 
 func (f *fakeEngine) StopAgent(_ context.Context, agentID string) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.stopCalls = append(f.stopCalls, agentID)
-	return f.stopErr
+	started := f.stopStarted
+	release := f.stopRelease
+	err := f.stopErr
+	f.mu.Unlock()
+	if started != nil {
+		started <- agentID
+	}
+	if release != nil {
+		<-release
+	}
+	return err
 }
 
 func (f *fakeEngine) StartAgent(_ context.Context, agentID string) error {
@@ -208,6 +240,20 @@ func (f *fakeEngine) MarkProcessExited(string) bool {
 
 func (f *fakeEngine) RecordAudit(entry audit.Entry) error {
 	f.mu.Lock()
+	block := f.auditBlockKind != "" && entry.Kind == f.auditBlockKind
+	started := f.auditStarted
+	release := f.auditRelease
+	f.mu.Unlock()
+	if block {
+		if started != nil {
+			started <- struct{}{}
+		}
+		if release != nil {
+			<-release
+		}
+	}
+
+	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.auditCalls++
 	f.operations = append(f.operations, "audit:"+string(entry.Kind)+":"+string(entry.Outcome))
@@ -235,6 +281,19 @@ func (f *fakeEngine) lineSnapshot() []lineCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]lineCall(nil), f.lineCalls...)
+}
+
+// lifecycleCalls is how many stops, starts and restarts reached the runtime.
+func (f *fakeEngine) lifecycleCalls() (stops, starts, restarts int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.stopCalls), len(f.agentStartCalls), len(f.agentRestartCalls)
+}
+
+func (f *fakeEngine) operationSnapshot() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.operations...)
 }
 
 func (f *fakeEngine) auditSnapshot() []audit.Entry {
