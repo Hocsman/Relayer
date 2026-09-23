@@ -109,11 +109,13 @@ func (r *Registry) Observe(entry audit.Entry) {
 
 	switch entry.Kind {
 	case audit.KindSessionStarted:
+		r.dropSessionPending(entry.RunID, entry.SessionID)
 		r.sessionsActive[backend]++
 		key := fmt.Sprintf("adapter=%s,agent_id=%s,backend=%s", adapter, agentID, backend)
 		r.sessionsTotal[key]++
 
 	case audit.KindSessionFinished, audit.KindSupervisionFinished:
+		r.dropSessionPending(entry.RunID, entry.SessionID)
 		if r.sessionsActive[backend] > 0 {
 			r.sessionsActive[backend]--
 		}
@@ -287,6 +289,21 @@ func (r *Registry) Snapshot() Snapshot {
 	}
 
 	return snap
+}
+
+// dropSessionPending forgets the prompts of a session whose process ended or
+// was replaced: they can no longer be decided, and each one stayed in
+// events_pending for good. Its caller holds the registry's lock.
+func (r *Registry) dropSessionPending(runID, sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	prefix := runID + ":" + sessionID + ":"
+	for key := range r.pendingEvents {
+		if strings.HasPrefix(key, prefix) {
+			delete(r.pendingEvents, key)
+		}
+	}
 }
 
 func makeEventKey(runID, sessionID, eventID string) string {

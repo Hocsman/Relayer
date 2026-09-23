@@ -389,3 +389,21 @@ func TestProcessExitsAreNeverPending(t *testing.T) {
 		t.Fatalf("events_pending after three process exits = %d, want 0", pending)
 	}
 }
+
+// TestPromptsOfAnEndedProcessAreNotPending: a prompt pending when its process
+// exits, or when a restart replaces it, is never decided, and each one stayed
+// in events_pending for good.
+func TestPromptsOfAnEndedProcessAreNotPending(t *testing.T) {
+	reg := NewRegistry()
+	detect := func(session, id string) {
+		reg.Observe(audit.Entry{RunID: "run-1", SessionID: session, EventID: id, Kind: audit.KindEventDetected, EventType: adapters.EventConfirmation, Timestamp: time.Now().UTC()})
+	}
+	detect("exits", "evt-1")
+	detect("restarts", "evt-2")
+	detect("keeps", "evt-3")
+	reg.Observe(audit.Entry{RunID: "run-1", SessionID: "exits", Kind: audit.KindSessionFinished, Timestamp: time.Now().UTC()})
+	reg.Observe(audit.Entry{RunID: "run-1", SessionID: "restarts", Kind: audit.KindSessionStarted, Timestamp: time.Now().UTC()})
+	if pending := reg.Snapshot().EventsPending; pending != 1 {
+		t.Fatalf("events_pending = %d, want only the live session's prompt", pending)
+	}
+}
