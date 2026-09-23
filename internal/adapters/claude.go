@@ -168,7 +168,7 @@ func (a *ClaudeAdapter) Detect(state *DetectionState, chunk []byte) ([]Event, er
 			patternName,
 			signatureMatch,
 		)
-		event.ID = occurrenceID(event.Signature, event.Sequence)
+		event.ID = state.occurrenceIDFor(event.Signature, event.Sequence)
 		events[index] = event.Clone()
 		if state != nil && state.pending != nil && state.pending.Sequence == event.Sequence {
 			pending := event.Clone()

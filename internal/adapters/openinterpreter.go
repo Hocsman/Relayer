@@ -207,7 +207,7 @@ func (a *OpenInterpreterAdapter) rewriteGenericEvents(state *DetectionState, eve
 			event.Summary,
 			event.Match,
 		)
-		event.ID = occurrenceID(event.Signature, event.Sequence)
+		event.ID = state.occurrenceIDFor(event.Signature, event.Sequence)
 		result[index] = event
 	}
 	if state.pending != nil && state.pending.Adapter != OpenInterpreterID {
@@ -220,7 +220,7 @@ func (a *OpenInterpreterAdapter) rewriteGenericEvents(state *DetectionState, eve
 			pending.Summary,
 			pending.Match,
 		)
-		pending.ID = occurrenceID(pending.Signature, pending.Sequence)
+		pending.ID = state.occurrenceIDFor(pending.Signature, pending.Sequence)
 		state.pending = &pending
 	}
 	return result

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -35,11 +36,16 @@ type DetectionState struct {
 	AdapterID string
 
 	// instance tells this process apart from any earlier one under the same
-	// session. Occurrence IDs derive from the session and a sequence that
-	// starts again with each process, so a restarted agent's exit carried the
-	// same ID as the exit before it, and a front end that remembered the first
-	// dropped the second as a duplicate. Only the exit ID uses it: prompt IDs
-	// stay stable, which their chunking and replay tests rely on.
+	// session, and is part of every occurrence ID it produces. The sequence in
+	// an ID starts again with each process, and the signature of a prompt can
+	// be as little as its "[y/n]": without the instance, a restarted agent's
+	// first prompt had the same ID as the previous process's, so a decision on
+	// the old prompt passed the ID check and was delivered to the new one, a
+	// late prompt of the old process shadowed the new one, and its exit was
+	// dropped as a duplicate. Probes built to rescan the screen carry the same
+	// instance, so an ID never depends on which state computed it. The token is
+	// never written anywhere: IDs of sensitive prompts are withheld from the
+	// journal because they derive from the match, and must stay unguessable.
 	instance string
 
 	detectionText string
@@ -231,15 +237,19 @@ func NewDetectionState(sessionID, agentID, adapterID string) *DetectionState {
 	}
 }
 
-// newInstanceToken returns a random token for one process instance. A failed
-// read leaves it empty, which only makes exit IDs deterministic again.
+// newInstanceToken returns a token for one process instance. It is never
+// empty: an empty token would make a replacement's IDs repeat its
+// predecessor's. If the system cannot supply randomness, a counter and the
+// clock still tell every instance of this Relayer apart.
 func newInstanceToken() string {
 	var raw [8]byte
 	if _, err := rand.Read(raw[:]); err != nil {
-		return ""
+		return fmt.Sprintf("c%x-%x", time.Now().UnixNano(), instanceFallback.Add(1))
 	}
 	return hex.EncodeToString(raw[:])
 }
+
+var instanceFallback atomic.Uint64
 
 // Pending returns a defensive copy of the current actionable event.
 func (s *DetectionState) Pending() *Event {
@@ -341,7 +351,7 @@ func (s *DetectionState) restore(event Event) error {
 func (s *DetectionState) replacePending(candidate Event) Event {
 	s.sequence++
 	candidate.Sequence = s.sequence
-	candidate.ID = occurrenceID(candidate.Signature, s.sequence)
+	candidate.ID = s.occurrenceIDFor(candidate.Signature, s.sequence)
 	candidate.Timestamp = time.Now().UTC()
 	clone := candidate.Clone()
 	s.pending = &clone
@@ -423,6 +433,18 @@ func stableSignature(sessionID, adapterID string, eventType EventType, pattern, 
 	return hex.EncodeToString(digest[:16])
 }
 
+// occurrenceIDFor is the ID of this process's occurrence number sequence of
+// an event with the given signature. Every ID an adapter emits or stores must
+// come from here, so that it carries the process instance; see instance.
+func (s *DetectionState) occurrenceIDFor(signature string, sequence uint64) string {
+	if s == nil || s.instance == "" {
+		return occurrenceID(signature, sequence)
+	}
+	return occurrenceID(signature+"\x00"+s.instance, sequence)
+}
+
+// occurrenceID is the unsalted derivation. Only occurrenceIDFor and the
+// provisional exit ID of NewProcessExitEvent call it.
 func occurrenceID(signature string, sequence uint64) string {
 	digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d", signature, sequence)))
 	return "evt-" + hex.EncodeToString(digest[:12])

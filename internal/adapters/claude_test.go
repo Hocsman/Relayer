@@ -207,8 +207,11 @@ func TestClaudeAdapterSnapshotDeduplicationAndDisappearance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Another detection state is another process: the same screen is the same
+	// question, but not the same occurrence, and a decision on the first must
+	// not be accepted for this one.
 	resumedEvent, changed, err := resumed.ReconcileSnapshot(resized)
-	if err != nil || !changed || resumedEvent == nil || resumedEvent.ID != first.ID ||
+	if err != nil || !changed || resumedEvent == nil || resumedEvent.ID == first.ID ||
 		resumedEvent.Signature != first.Signature {
 		t.Fatalf("resumed snapshot identity = %#v, %t, %v", resumedEvent, changed, err)
 	}

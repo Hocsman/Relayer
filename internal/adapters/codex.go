@@ -203,7 +203,7 @@ func (a *CodexAdapter) rewriteGenericEvents(state *DetectionState, events []Even
 			"generic:"+pattern,
 			event.Match,
 		)
-		event.ID = occurrenceID(event.Signature, event.Sequence)
+		event.ID = state.occurrenceIDFor(event.Signature, event.Sequence)
 		events[index] = event
 		stored := event.Clone()
 		state.pending = &stored

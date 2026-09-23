@@ -356,6 +356,7 @@ func (p *Processor) ReconcileSnapshot(raw []byte) (*Event, bool, error) {
 		return nil, changed, nil
 	}
 	probeState := NewDetectionState(p.state.SessionID, p.state.AgentID, p.adapter.ID())
+	probeState.instance = p.state.instance
 	probeState.answered = p.state.pendingAnswers()
 	probeState.hasRendered = true
 	probeState.rendered = normalized
@@ -444,6 +445,7 @@ func (p *Processor) rescanRetainedWindow(resolved string) []Event {
 	}()
 
 	probe := NewDetectionState(p.state.SessionID, p.state.AgentID, p.adapter.ID())
+	probe.instance = p.state.instance
 	// The probe must know what has already been answered, or it re-reports every
 	// still-painted question the operator has dealt with — which is exactly what
 	// resolving a second question did to the first.
@@ -637,11 +639,9 @@ func (p *Processor) MarkProcessExitEvent(exitCode *int, failed bool) Event {
 	adapterID := p.adapter.ID()
 	p.terminated = true
 	event := NewProcessExitEvent(sessionID, agentID, adapterID, sequence, exitCode, failed)
-	if instance := p.state.instance; instance != "" {
-		// See DetectionState.instance: one exit per process, and no two
-		// processes under this session share its ID.
-		event.ID = occurrenceID(event.Signature+"\x00"+instance, sequence)
-	}
+	// See DetectionState.instance: one exit per process, and no two processes
+	// under this session share its ID.
+	event.ID = p.state.occurrenceIDFor(event.Signature, sequence)
 	stored := event.Clone()
 	p.terminalEvent = &stored
 	p.mu.Unlock()
