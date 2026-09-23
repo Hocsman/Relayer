@@ -209,16 +209,21 @@ func (a *App) initializeState(engine desktopEngine) {
 	if strings.TrimSpace(run.id) == "" {
 		run.id = "test-run"
 	}
-	a.activateRun(run)
+	if err := a.activateRun(run); err != nil {
+		cancel()
+	}
 }
 
-func (a *App) activateRun(run *runGeneration) {
+// activateRun makes run the active run, with a supervision core of its own.
+// It changes nothing when it fails, and the caller still owns the run's
+// runtime: a run that is not active is never drained or closed by
+// stopGenerationLocked or Shutdown.
+func (a *App) activateRun(run *runGeneration) error {
 	if run == nil || run.engine == nil {
-		return
+		return errLifecycleFailed
 	}
 	engine := run.engine
 	metadata := engine.Metadata()
-	a.setNotifier(newNotifier(metadata.Notifications))
 	sessions := engine.Sessions()
 	agents := make([]AgentState, 0, len(sessions))
 	specs := make([]supervise.AgentSpec, 0, len(sessions))
@@ -255,9 +260,10 @@ func (a *App) activateRun(run *runGeneration) {
 		Sink:   desktopSink{app: a, run: run},
 	})
 	if err != nil {
-		return
+		return errLifecycleFailed
 	}
 	run.sup = sup
+	a.setNotifier(newNotifier(metadata.Notifications))
 	a.mu.Lock()
 	a.active = run
 	a.engine = engine
@@ -283,6 +289,7 @@ func (a *App) activateRun(run *runGeneration) {
 		PendingEvents: []SupervisionEvent{},
 	}
 	a.mu.Unlock()
+	return nil
 }
 
 // isActiveRun reports whether run is the active run and is not draining.

@@ -249,11 +249,40 @@ func (a *App) startGenerationLocked(plan *appcore.DesktopPlan) (*runGeneration, 
 		engine:     engine,
 		plan:       plan,
 	}
-	a.activateRun(run)
+	if err := a.activateRun(run); err != nil {
+		// No supervision core could be made for the run, which never became
+		// the active one. It used to be started regardless: its event loop
+		// then ran on a nil core, and a run that is not active is never
+		// stopped by StopRun or Shutdown, so its agents outlived the window.
+		// The real runtime cannot get here: every argument the core checks is
+		// checked above, and StartDesktopRuntime returns a runtime or an
+		// error. A runtime that started processes is still never left behind:
+		// it is stopped strictly and closed here, and a stop that is not
+		// confirmed blocks the lifecycle like any uncertain cleanup.
+		cancel()
+		if engine != nil {
+			if stopErr := stopUnactivatedEngine(engine); stopErr != nil {
+				return nil, errors.Join(errLifecycleFailed, appcore.ErrCleanupUncertain)
+			}
+		}
+		return nil, errLifecycleFailed
+	}
 	a.eventWG.Add(1)
 	go a.consumeEvents(run)
 	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "run", Status: "running"})
 	return run, nil
+}
+
+// stopUnactivatedEngine strictly stops and closes a runtime that never became
+// the active run. Nothing of it was admitted, so there is nothing to drain.
+func stopUnactivatedEngine(engine desktopEngine) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	result := engine.BeginRestart(ctx)
+	cancel()
+	ctx, cancel = context.WithTimeout(context.Background(), 12*time.Second)
+	result = errors.Join(result, engine.Close(ctx))
+	cancel()
+	return result
 }
 
 func (a *App) stopGenerationLocked(run *runGeneration, strict bool, status string) error {

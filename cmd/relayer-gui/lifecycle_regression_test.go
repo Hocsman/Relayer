@@ -927,3 +927,69 @@ func TestRestartWritesTheOtherTabsWithTheAgents(t *testing.T) {
 		t.Fatal("the security tab sent with the restart did not reach the file")
 	}
 }
+
+// TestAStartThatYieldsNoRuntimeFailsWithoutActivatingTheRun: a run is started
+// only once its supervision core exists. A runtime factory that returned no
+// runtime used to be activated regardless, and the run's event loop then
+// crashed on it. The run's context is cancelled, nothing is active, and the
+// lifecycle is not blocked: nothing was started that could be left behind.
+func TestAStartThatYieldsNoRuntimeFailsWithoutActivatingTheRun(t *testing.T) {
+	application, path, view, _ := newLifecycleApp(t, nil)
+	application.runIDGenerator = lifecycleRunIDs("run-empty")
+	application.prepareEngine = func(appcore.DesktopOptions) (*appcore.DesktopPlan, error) {
+		return &appcore.DesktopPlan{}, nil
+	}
+	var runCtx context.Context
+	application.startEngine = func(ctx context.Context, _ *appcore.DesktopPlan, _ string) (desktopEngine, error) {
+		runCtx = ctx
+		return nil, nil
+	}
+
+	if _, err := application.SaveAgentProfilesAndRestart(lifecycleRequest("", view, path, "agent-a")); !errors.Is(err, errLifecycleFailed) {
+		t.Fatalf("a start without a runtime = %v, want errLifecycleFailed", err)
+	}
+	if runCtx == nil || runCtx.Err() == nil {
+		t.Fatal("the run's context was left running")
+	}
+	if run := activeRunForTest(application); run != nil {
+		t.Fatalf("a run without a runtime was activated: %#v", run)
+	}
+	if application.lifecycleBlocked {
+		t.Fatal("a start that started nothing blocked the lifecycle")
+	}
+	if state, err := application.GetState(); err != nil || state.RunStatus != "idle" || state.RunID != "" || len(state.Agents) != 0 {
+		t.Fatalf("state after the failed start = %#v, %v", state, err)
+	}
+}
+
+// TestARunWhoseCoreCannotBeMadeChangesNothing: activateRun refuses a run the
+// supervision core refuses before it touches the bridge. It used to return
+// silently, after replacing the notifier, and the run was started without a
+// core.
+func TestARunWhoseCoreCannotBeMadeChangesNothing(t *testing.T) {
+	application := NewApp()
+	recorder := &fakeAppNotifier{}
+	application.setNotifier(recorder)
+	before, err := application.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	for name, run := range map[string]*runGeneration{
+		"no run":       nil,
+		"no runtime":   {id: "run-x", ctx: context.Background()},
+		"blank run ID": {id: "  ", ctx: context.Background(), engine: newFakeDesktopEngine("agent-a")},
+	} {
+		if err := application.activateRun(run); !errors.Is(err, errLifecycleFailed) {
+			t.Errorf("%s: activateRun = %v, want errLifecycleFailed", name, err)
+		}
+	}
+	if application.currentNotifier() != recorder {
+		t.Error("a refused run replaced the notifier")
+	}
+	if run := activeRunForTest(application); run != nil {
+		t.Fatalf("a refused run was activated: %#v", run)
+	}
+	if after, err := application.GetState(); err != nil || !reflect.DeepEqual(after, before) {
+		t.Fatalf("state after the refused runs = %#v, %v, want %#v", after, err, before)
+	}
+}
