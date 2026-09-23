@@ -140,10 +140,19 @@ func (a *GenericRegexAdapter) Detect(state *DetectionState, chunk []byte) ([]Eve
 			if cmd := extractQuotedCommand(matchLine); cmd != "" {
 				candidate.Command = cmd
 			}
+			// WHERE the question is, taken from the offset this loop already
+			// holds. The screen converted that offset while the text it
+			// rendered was still the text being searched; asking it again after
+			// the operator has answered would be asking about a screen that has
+			// moved on, and asking it by TEXT would find the last row carrying
+			// "[y/n]" rather than this one.
+			candidate.anchor = state.anchorAt(matchLineStart)
 			// On a rendered screen the answered question stays painted until
 			// the agent redraws without it, so the answer has to be remembered
-			// rather than the text forgotten.
-			if state.hasRendered && state.answersTheSameQuestion(matchLine) {
+			// rather than the text forgotten. Remembered on its row: the answer
+			// echoed after it is still that question, the same words asked on
+			// a new row are not.
+			if state.hasRendered && state.answeredAt(matchLine, candidate.anchor) {
 				continue
 			}
 			candidate.Signature = stableSignature(
@@ -153,13 +162,6 @@ func (a *GenericRegexAdapter) Detect(state *DetectionState, chunk []byte) ([]Eve
 				pattern.Name,
 				match,
 			)
-			// WHERE the question is, taken from the offset this loop already
-			// holds. The screen converted that offset while the text it
-			// rendered was still the text being searched; asking it again after
-			// the operator has answered would be asking about a screen that has
-			// moved on, and asking it by TEXT would find the last row carrying
-			// "[y/n]" rather than this one.
-			candidate.anchor = state.anchorAt(matchLineStart)
 			return []Event{state.replacePending(candidate)}, nil
 		}
 	}

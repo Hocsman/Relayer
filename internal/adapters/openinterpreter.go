@@ -162,15 +162,26 @@ func (a *OpenInterpreterAdapter) Detect(state *DetectionState, chunk []byte) ([]
 	if ok {
 		activeLine := vendorProbe.detectionText[start:end]
 		if prompt, found := detectOpenInterpreterPrompt(vendorProbe.detectionText, activeLine, vendorProbe.inCodeFence); found {
+			lineAnchor := state.anchorAt(start)
+			// The footer is found anywhere on the line, so the answer echoed
+			// after "(y/n)" still matches, and on a rendered screen the
+			// answered question stays painted. Only the memory of it, on its
+			// row, keeps the next write from asking it again.
+			if state.hasRendered && state.answeredAt(activeLine, lineAnchor) {
+				state.appendDetectionText(chunk)
+				return nil, nil
+			}
 			state.appendDetectionText(chunk)
 			candidate := Event{
-				SessionID: state.SessionID,
-				AgentID:   state.AgentID,
-				Adapter:   OpenInterpreterID,
-				Type:      prompt.eventType,
-				Summary:   prompt.summary,
-				Match:     prompt.match,
-				Risk:      prompt.risk,
+				questionLine: activeLine,
+				anchor:       lineAnchor,
+				SessionID:    state.SessionID,
+				AgentID:      state.AgentID,
+				Adapter:      OpenInterpreterID,
+				Type:         prompt.eventType,
+				Summary:      prompt.summary,
+				Match:        prompt.match,
+				Risk:         prompt.risk,
 				Metadata: map[string]string{
 					openinterpreterInteractionMetadata: prompt.interaction,
 				},

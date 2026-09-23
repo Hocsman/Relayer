@@ -215,7 +215,15 @@ func (p *Processor) Consume(chunk []byte) error {
 			live := make([]answeredQuestion, 0, len(p.state.answered))
 			for _, entry := range p.state.pendingAnswers() {
 				if entry.anchor != 0 {
-					if p.screen.RowShows(entry.anchor, entry.match) {
+					// The match, or the line it was asked on. A vendor match is
+					// the label of a kind of prompt — "Apply changes?" for
+					// "Apply edit to foo.py?" — and may never be painted at all;
+					// the line is what the row actually carries. Checked by the
+					// match alone, such an entry was dropped on the next write
+					// and the question it remembered was asked again.
+					if p.screen.RowShows(entry.anchor, entry.match) ||
+						p.screen.RowShows(entry.anchor, strings.TrimSpace(entry.line)) {
+						entry.rowBlank = false
 						live = append(live, entry)
 						continue
 					}
@@ -223,6 +231,9 @@ func (p *Processor) Consume(chunk []byte) error {
 					if present && blank {
 						// Row was blanked mid-frame during an erase/repaint. Keep it alive
 						// until new content arrives on that row or it scrolls away.
+						// Detection needs to know, see answeredAt: while its row is
+						// blank, the question may be being redrawn on another one.
+						entry.rowBlank = true
 						live = append(live, entry)
 						continue
 					}
@@ -250,6 +261,7 @@ func (p *Processor) Consume(chunk []byte) error {
 				if row, line, unique := p.screen.UniqueRowShowing(entry.match); unique &&
 					!ignoredContext(line, false) {
 					entry.anchor = row
+					entry.rowBlank = false
 					live = append(live, entry)
 				}
 			}
@@ -831,7 +843,22 @@ func (p *Processor) refreshPendingAnchor() {
 	if p.state.pending.Match == "" {
 		return
 	}
-	row, line, unique := p.screen.UniqueRowShowing(p.state.pending.Match)
+	// Located by the line the question was asked on while that line is painted,
+	// and by the match only when it is not. A vendor match is the label of a
+	// kind of prompt, which this question may never show while another row
+	// does: "Apply edit to bar.py?" is reported as "Apply changes?", and an
+	// earlier "Apply changes?", answered, can still be painted above it. Found
+	// by the label, the pending question moved onto that row, the answer was
+	// remembered there, and its echo on the real row asked the question again.
+	// The match remains for an occurrence that carries no line, such as a
+	// restored one, and for a line the agent has changed since, a countdown for
+	// instance. A line painted twice is ambiguous, and is NOT then looked up by
+	// its label, which could only be less precise.
+	located := strings.TrimSpace(p.state.pending.questionLine)
+	if _, _, painted := p.screen.VisibleRowOf(located); !painted {
+		located = p.state.pending.Match
+	}
+	row, line, unique := p.screen.UniqueRowShowing(located)
 	if !unique {
 		return
 	}

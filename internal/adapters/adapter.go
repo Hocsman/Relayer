@@ -90,22 +90,26 @@ type DetectionState struct {
 // was detected on.
 //
 // The row decides when the entry EXPIRES: once that row stops carrying the
-// question, the entry goes. It does not decide what the entry SUPPRESSES —
-// answersTheSameQuestion still compares signature and text, so while an entry
-// is alive it silences any candidate of the same signature, wherever that
-// candidate sits. Two questions that share a captured fragment are therefore
-// still one question to this memory, which is #30 and not the anchor: nothing
-// here can tell them apart while "[y/n]" is what a question is called.
+// question, the entry goes. On the rendered screen it also decides what the
+// entry SUPPRESSES, see answeredAt: the answered question is the one on its
+// own row, and the same words on another row are another question unless the
+// answered row has been blanked. A snapshot, whose text maps onto no row, and
+// the Codex adapter still compare the line alone, see answersTheSameQuestion.
 //
 // anchor is the row the MATCH was found on at detection time, carried here from
 // the detector rather than searched for afterwards. A zero anchor means the
 // occurrence reached the state without ever crossing a screen — restored from a
 // snapshot — and is the only case that still has to fall back to text.
+//
+// rowBlank records that the row was blank at the last write: a frame caught
+// between its erase and its repaint. The Processor sets it, because only the
+// screen knows; see answeredAt for the one thing it changes.
 type answeredQuestion struct {
 	signature string
 	match     string
 	line      string
 	anchor    screen.RowID
+	rowBlank  bool
 }
 
 // maxAnsweredMemory bounds the set. A screen cannot show an unbounded number of
@@ -143,6 +147,8 @@ func (s *DetectionState) rememberAnswered(signature, match string, anchor screen
 			// watching a line the operator has finished with.
 			if anchor != 0 {
 				s.answered[index].anchor = anchor
+				// The occurrence was just seen on that row, so it is not blank.
+				s.answered[index].rowBlank = false
 			}
 			if line != "" {
 				s.answered[index].line = line
@@ -171,6 +177,11 @@ func (s *DetectionState) rememberAnswered(signature, match string, anchor screen
 // file? [Y/n]" as an overwrite AND as a yes/no confirmation — and suppressing
 // only the answered signature let it come straight back under the other
 // pattern's name. Same line, same question, whichever pattern found it.
+//
+// It knows no row, which is right only where there is none to know: a
+// snapshot, whose text maps onto no grid, and the Codex adapter, whose footer
+// must end the line, so that nothing typed after the question can still match.
+// Detection on the rendered screen asks answeredAt, which knows the row.
 func (s *DetectionState) answersTheSameQuestion(line string) bool {
 	if s == nil {
 		return false
@@ -181,6 +192,69 @@ func (s *DetectionState) answersTheSameQuestion(line string) bool {
 	}
 	for _, entry := range s.answered {
 		if entry.line != "" && strings.TrimSpace(entry.line) == asked {
+			return true
+		}
+	}
+	return false
+}
+
+// answeredAt reports whether a candidate found on the rendered screen, on the
+// row anchor, is a question the operator already dealt with.
+//
+// An answer is typed at the question, so whatever shows it again shows it on
+// the question's own row. A terminal in cooked mode echoes the keystrokes after
+// the cursor, and ConPTY, which renders every Windows session, flushes that echo
+// as a write of its own as soon as the agent is slow to print. Even with no
+// echo at all, the next write re-reads a screen that still shows the question.
+// The whole-line comparison could not see the echo, since "Overwrite file? [y/n]
+// y" is not "Overwrite file? [y/n]", and the Aider, Goose and Open Interpreter
+// prompts were never compared with anything. The answered question therefore
+// came back under a new ID on the very next write: a second card for a human,
+// and under an automatic policy a second "y" typed into an agent that had
+// already consumed the first.
+//
+// So the row decides, in two ways:
+//
+//  1. On the answered row, a line that still BEGINS with the answered question
+//     is that question, whatever follows it. What follows is the echo.
+//  2. On another row, the same line is the answered question only when that
+//     question cannot be accounted for on its own row: one side carries no
+//     row, or the answered row is blank. A blank row is a frame caught between
+//     its erase and its repaint, which may be drawing the same question a row
+//     higher or lower, and asking there would type a second answer. This is
+//     all the row-less comparison ever protected: an entry whose row shows
+//     something else has expired before detection runs.
+//
+// While the answered row still shows the question, the same words on another
+// row are the agent asking again, and the operator is asked. The row-less
+// comparison swallowed that question; after an echo, the repeat of the answered
+// one stood in for it, so nothing seemed lost.
+//
+// What is left, knowingly: an agent that rejects the answer and asks again on
+// the SAME row, with the rejected input still showing after the question, is
+// taken for the echo and not asked. A re-ask on a new row is asked. And a frame
+// that moves the answered question to another row while painting its old row
+// with something else, in one write, asks it again, as it did before.
+func (s *DetectionState) answeredAt(line string, anchor screen.RowID) bool {
+	if s == nil {
+		return false
+	}
+	asked := strings.TrimSpace(line)
+	if asked == "" {
+		return false
+	}
+	for _, entry := range s.answered {
+		answered := strings.TrimSpace(entry.line)
+		if answered == "" {
+			continue
+		}
+		if anchor != 0 && entry.anchor == anchor {
+			if strings.HasPrefix(asked, answered) {
+				return true
+			}
+			continue
+		}
+		if asked == answered && (anchor == 0 || entry.anchor == 0 || entry.rowBlank) {
 			return true
 		}
 	}

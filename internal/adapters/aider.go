@@ -233,15 +233,26 @@ func (a *AiderAdapter) Detect(state *DetectionState, chunk []byte) ([]Event, err
 	if ok {
 		activeLine := vendorProbe.detectionText[start:end]
 		if prompt, found := detectAiderPrompt(vendorProbe.detectionText, activeLine, vendorProbe.inCodeFence); found {
+			lineAnchor := state.anchorAt(start)
+			// The footer is found anywhere on the line, so the answer echoed
+			// after "[Yes]:" still matches, and on a rendered screen the
+			// answered question stays painted. Only the memory of it, on its
+			// row, keeps the next write from asking it again.
+			if state.hasRendered && state.answeredAt(activeLine, lineAnchor) {
+				state.appendDetectionText(chunk)
+				return nil, nil
+			}
 			state.appendDetectionText(chunk)
 			candidate := Event{
-				SessionID: state.SessionID,
-				AgentID:   state.AgentID,
-				Adapter:   AiderID,
-				Type:      prompt.eventType,
-				Summary:   prompt.summary,
-				Match:     prompt.match,
-				Risk:      prompt.risk,
+				questionLine: activeLine,
+				anchor:       lineAnchor,
+				SessionID:    state.SessionID,
+				AgentID:      state.AgentID,
+				Adapter:      AiderID,
+				Type:         prompt.eventType,
+				Summary:      prompt.summary,
+				Match:        prompt.match,
+				Risk:         prompt.risk,
 				Metadata: map[string]string{
 					aiderInteractionMetadata: prompt.interaction,
 				},
