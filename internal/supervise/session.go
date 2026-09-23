@@ -202,6 +202,23 @@ func (s *Supervisor) RestartSession(runID, sessionID string) error {
 // which carries the same ID. Only prompts detected before startedAt go; the
 // new process may already have raised one.
 func (s *Supervisor) completeAgentStart(sessionKey string, startedAt time.Time) {
+	// The front end drops the previous process's output before the core shows
+	// the new one running. The desktop reset the output and marked the agent
+	// running under one lock; the core's state and the front end's output are
+	// now under two, and a front end reading between the two steps showed the
+	// new process running with its predecessor's output. In this order a reader
+	// between them sees the agent still starting, or stopping for a Restart,
+	// with no output yet, which is true. A session's identity never changes
+	// after New, so reading it first is safe.
+	s.mu.RLock()
+	displaySessionID := ""
+	if index, found := s.agentIndex[sessionKey]; found {
+		displaySessionID = s.agents[index].SessionID
+	}
+	s.mu.RUnlock()
+	if displaySessionID != "" {
+		s.sink.Lifecycle(displaySessionID, PhaseStarted)
+	}
 	s.mu.Lock()
 	delete(s.stoppingSessions, sessionKey)
 	delete(s.startingSessions, sessionKey)
@@ -219,7 +236,6 @@ func (s *Supervisor) completeAgentStart(sessionKey string, startedAt time.Time) 
 	// new process gives every event an ID of its own, so nothing of the
 	// replacement's is mistaken for them, and a late copy of an old one is
 	// still refused.
-	displaySessionID := ""
 	if index, found := s.agentIndex[sessionKey]; found {
 		agent := &s.agents[index]
 		agent.Running = true
@@ -227,13 +243,11 @@ func (s *Supervisor) completeAgentStart(sessionKey string, startedAt time.Time) 
 		agent.Status = "running"
 		agent.ExitCode = nil
 		agent.InputFrozen = false
-		displaySessionID = agent.SessionID
 	}
 	s.mu.Unlock()
 	if displaySessionID == "" {
 		return
 	}
-	s.sink.Lifecycle(displaySessionID, PhaseStarted)
 	s.sink.Status(Status{RunID: s.runID, Scope: "session", SessionID: displaySessionID, Status: "running", ClearedBefore: bound.Format(time.RFC3339Nano)})
 	s.sink.Refresh(displaySessionID)
 	// A prompt the replacement raised while it was starting waited: no

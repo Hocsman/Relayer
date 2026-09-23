@@ -358,3 +358,55 @@ func TestAnAutomaticPromptRaisedWhileTheAgentStartsIsDecidedAfterIt(t *testing.T
 		t.Fatalf("automatic decisions after the start = %d, want exactly 1", len(calls))
 	}
 }
+
+// TestARestartedAgentIsNeverShownRunningWithItsPredecessorsOutput: the bridge
+// drops a session's output, under its own lock, when the core reports the new
+// process, and GetState lays the core's agent over that output. The core used
+// to show the agent running first, so a GetState between the two steps showed
+// the new process running with the previous process's output. The test holds
+// the bridge's lock, which parks the start on the output reset, and reads what
+// a GetState would show at that moment.
+func TestARestartedAgentIsNeverShownRunningWithItsPredecessorsOutput(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	application := newBridgeForTest(engine)
+	runID := activeRunIDForTest(application)
+	run := activeRunForTest(application)
+	markAgentExitedForTest(application, "agent-a")
+	before := agentStateForTest(application, "agent-a")
+	engine.mu.Lock()
+	engine.outputs["agent-a"] = []string{"new process"}
+	engine.outputReads["agent-a"] = 0
+	engine.mu.Unlock()
+
+	application.mu.RLock()
+	started := make(chan error, 1)
+	go func() { started <- application.StartSession(runID, "agent-a") }()
+	// A writer waiting on the bridge's lock makes TryRLock fail. Nothing but
+	// the output reset takes that lock for writing on a start's way.
+	deadline := time.Now().Add(2 * time.Second)
+	for application.mu.TryRLock() {
+		application.mu.RUnlock()
+		if time.Now().After(deadline) {
+			application.mu.RUnlock()
+			t.Fatal("the start never reached the output reset")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	supervised, _ := run.sup.Agent("agent-a")
+	shown := application.stateLocked()
+	application.mu.RUnlock()
+	if err := <-started; err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+
+	if supervised.Running || supervised.Status == "running" {
+		t.Fatalf("the core showed the new process running before its predecessor's output was dropped: %#v", supervised)
+	}
+	if len(shown.Agents) != 1 || shown.Agents[0].Running || shown.Agents[0].Status != "starting" {
+		t.Fatalf("shown during the start = %#v, want the agent still starting", shown.Agents)
+	}
+	after := agentStateForTest(application, "agent-a")
+	if !after.Running || after.Status != "running" || after.Output != "new process" || after.Revision != before.Revision+2 {
+		t.Fatalf("after the start = %#v, want the new process's output at revision %d", after, before.Revision+2)
+	}
+}

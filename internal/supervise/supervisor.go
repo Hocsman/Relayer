@@ -62,7 +62,9 @@ type Sink interface {
 type Phase string
 
 // PhaseStarted: a new process replaced the session's previous one. Its output
-// belongs to the previous process and does not carry over.
+// belongs to the previous process and does not carry over. It is reported
+// before the core shows the agent running, so a front end that drops the
+// output on it never shows the new process with its predecessor's output.
 const PhaseStarted Phase = "started"
 
 // Status is a session-scoped status, or the audit-scoped one that reports a

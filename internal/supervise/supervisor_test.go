@@ -664,6 +664,64 @@ func TestTheSinkSeesTheDesktopsEmissionOrder(t *testing.T) {
 	})
 }
 
+// A front end drops a session's output when the core reports its new process,
+// and shows the agent from the core's state. The report comes before the core
+// shows the agent running: in the other order a front end reading between the
+// two steps showed the new process running with its predecessor's output. The
+// sink reads the core at the report, as a front end's GetState may.
+func TestANewProcessIsReportedBeforeTheAgentIsShownRunning(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		wantStatus string
+		replace    func(*supervise.Supervisor) error
+	}{
+		{
+			name:       "start",
+			wantStatus: "starting",
+			replace: func(sup *supervise.Supervisor) error {
+				sup.Handle(session.AdapterEvent{Event: exitEvent("agent-a", 0, false)})
+				return sup.StartSession(testRunID, "agent-a")
+			},
+		},
+		{
+			name:       "restart",
+			wantStatus: "stopping",
+			replace: func(sup *supervise.Supervisor) error {
+				return sup.RestartSession(testRunID, "agent-a")
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sup, sink := newCoreForTest(t, newFakeEngine(), "agent-a")
+			var atReport []supervise.Agent
+			sink.mu.Lock()
+			sink.probe = func() {
+				// No automatic decision runs here, so the last call is the one
+				// that ran this probe.
+				calls := sink.snapshot()
+				if calls[len(calls)-1].kind == "lifecycle" {
+					agent, _ := sup.Agent("agent-a")
+					atReport = append(atReport, agent)
+				}
+			}
+			sink.mu.Unlock()
+
+			if err := test.replace(sup); err != nil {
+				t.Fatalf("%s: %v", test.name, err)
+			}
+			if len(atReport) != 1 {
+				t.Fatalf("the new process was reported %d times, want once", len(atReport))
+			}
+			if agent := atReport[0]; agent.Status != test.wantStatus {
+				t.Fatalf("agent when its new process was reported = %#v, want still %s", agent, test.wantStatus)
+			}
+			if agent := agentOf(t, sup, "agent-a"); !agent.Running || agent.Status != "running" {
+				t.Fatalf("agent after the %s = %#v", test.name, agent)
+			}
+		})
+	}
+}
+
 // The notices a front end turns into notifications. A guardrail notice is sent
 // even when the policy decides alone; a pending one only when a human must.
 func TestNoticesFollowTheDesktopsRules(t *testing.T) {
