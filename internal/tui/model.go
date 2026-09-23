@@ -328,23 +328,6 @@ func (m *Model) rememberResolved(sessionID, eventID string) {
 	delete(m.resolvedEventIDs, oldest)
 }
 
-// forgetResolved drops a session's resolved IDs. A fresh process numbers its
-// prompts from 1 again, so its first prompt carries the ID the previous
-// process's first prompt had; remembered as resolved, it was dropped, and the
-// restarted agent could not be answered at all.
-func (m *Model) forgetResolved(sessionID string) {
-	session := semanticEventKey(sessionID, "").sessionID
-	kept := m.resolvedEventOrder[:0]
-	for _, key := range m.resolvedEventOrder {
-		if key.sessionID == session {
-			delete(m.resolvedEventIDs, key)
-			continue
-		}
-		kept = append(kept, key)
-	}
-	m.resolvedEventOrder = kept
-}
-
 func (m *Model) Init() tea.Cmd {
 	return waitForBackendEvent(m.backend.Context(), m.events)
 }

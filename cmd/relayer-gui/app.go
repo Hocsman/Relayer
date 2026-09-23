@@ -124,6 +124,10 @@ type App struct {
 	inFlight         map[string]eventKey
 	lineInFlight     map[string]bool
 	stoppingSessions map[string]bool
+	// startingSessions marks a Start or Restart in progress. The agent is not
+	// yet marked running, and a prompt its replacement raised then used to be
+	// dropped as the prompt of a stopped agent.
+	startingSessions map[string]bool
 	outputRunning    map[string]bool
 	outputDirty      map[string]bool
 	frozen           map[string]bool
@@ -171,6 +175,7 @@ func NewApp() *App {
 		inFlight:              make(map[string]eventKey),
 		lineInFlight:          make(map[string]bool),
 		stoppingSessions:      make(map[string]bool),
+		startingSessions:      make(map[string]bool),
 		outputRunning:         make(map[string]bool),
 		outputDirty:           make(map[string]bool),
 		frozen:                make(map[string]bool),
@@ -279,6 +284,7 @@ func (a *App) activateRun(run *runGeneration) {
 	a.inFlight = make(map[string]eventKey)
 	a.lineInFlight = make(map[string]bool)
 	a.stoppingSessions = make(map[string]bool)
+	a.startingSessions = make(map[string]bool)
 	a.outputRunning = make(map[string]bool)
 	a.outputDirty = make(map[string]bool)
 	a.frozen = make(map[string]bool)
@@ -549,7 +555,7 @@ func (a *App) handleAdapterEventForRun(run *runGeneration, event adapters.Event)
 	if !event.Actionable() {
 		return
 	}
-	if !a.sessionRunning(event.SessionID) {
+	if !a.sessionRunning(event.SessionID) && !a.sessionStarting(key.sessionID) {
 		a.mu.Lock()
 		a.markResolvedLocked(key)
 		a.mu.Unlock()
@@ -623,6 +629,12 @@ func (a *App) sessionRunning(sessionID string) bool {
 	defer a.mu.RUnlock()
 	index, found := a.agentIndex[strings.ToLower(strings.TrimSpace(sessionID))]
 	return found && a.state.Agents[index].Running
+}
+
+func (a *App) sessionStarting(sessionKey string) bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.startingSessions[sessionKey]
 }
 
 func (a *App) reserveEvent(key eventKey) bool {
@@ -1397,6 +1409,7 @@ func (a *App) StartSession(runID, sessionID string) error {
 		return errAgentStillRunning
 	}
 	a.stoppingSessions[sessionKey] = true
+	a.startingSessions[sessionKey] = true
 	a.state.Agents[index].Status = "starting"
 	a.dropSessionPendingLocked(sessionKey)
 	displaySessionID := a.state.Agents[index].SessionID
@@ -1409,6 +1422,7 @@ func (a *App) StartSession(runID, sessionID string) error {
 	if err != nil {
 		a.mu.Lock()
 		delete(a.stoppingSessions, sessionKey)
+		delete(a.startingSessions, sessionKey)
 		if index, found := a.agentIndex[sessionKey]; found {
 			a.state.Agents[index].Status = "failed"
 		}
@@ -1461,6 +1475,7 @@ func (a *App) RestartSession(runID, sessionID string) error {
 		return errAgentUnknown
 	}
 	a.stoppingSessions[sessionKey] = true
+	a.startingSessions[sessionKey] = true
 	a.state.Agents[index].Status = "stopping"
 	a.dropSessionPendingLocked(sessionKey)
 	displaySessionID := a.state.Agents[index].SessionID
@@ -1473,6 +1488,7 @@ func (a *App) RestartSession(runID, sessionID string) error {
 	if err != nil {
 		a.mu.Lock()
 		delete(a.stoppingSessions, sessionKey)
+		delete(a.startingSessions, sessionKey)
 		if index, found := a.agentIndex[sessionKey]; found {
 			a.state.Agents[index].Status = "failed"
 		}
@@ -1499,6 +1515,7 @@ func (a *App) RestartSession(runID, sessionID string) error {
 func (a *App) completeAgentStart(run *runGeneration, sessionKey string, startedAt time.Time) {
 	a.mu.Lock()
 	delete(a.stoppingSessions, sessionKey)
+	delete(a.startingSessions, sessionKey)
 	delete(a.frozen, sessionKey)
 	// Rounded to the millisecond, the resolution clients compare at, so the
 	// interface drops exactly the prompts dropped here.
@@ -1509,12 +1526,10 @@ func (a *App) completeAgentStart(run *runGeneration, sessionKey string, startedA
 		}
 	}
 	a.rebuildPendingLocked()
-	// A fresh process numbers its events from the start again, and event IDs
-	// derive from that sequence, so the new process's exit — or a prompt it
-	// repeats — carries an ID the previous process already used. v0.8.5 kept
-	// those IDs as resolved and dropped the second exit as a duplicate: the
-	// agent then looked running forever and could not be started again.
-	a.forgetResolvedLocked(sessionKey)
+	// The previous process's answered prompts and its exit stay resolved: a
+	// new process gives every event an ID of its own, so nothing of the
+	// replacement's is mistaken for them, and a late copy of an old one is
+	// still refused.
 	displaySessionID := ""
 	if index, found := a.agentIndex[sessionKey]; found {
 		agent := &a.state.Agents[index]
@@ -1533,6 +1548,9 @@ func (a *App) completeAgentStart(run *runGeneration, sessionKey string, startedA
 	}
 	a.emit(eventStatus, StatusEvent{RunID: run.id, Scope: "session", SessionID: displaySessionID, Status: "running", ClearedBefore: bound.Format(time.RFC3339Nano)})
 	a.refreshOutputForRun(run, displaySessionID)
+	// A prompt the replacement raised while it was starting waited: no
+	// automatic decision is taken while a session is changing.
+	a.scheduleAutomatic(run, displaySessionID)
 }
 
 func (a *App) Shutdown() error {
@@ -1719,17 +1737,14 @@ func clearedAll() string {
 }
 
 // dropSessionPendingLocked removes a session's prompts when a Start or a
-// Restart begins, and forgets the ones already answered. None can be answered
-// while it runs, and the replacement's first prompt usually carries the ID of
-// the previous process's: left pending, or remembered as answered, the old one
-// made the new one a duplicate, refused before it was shown or journaled.
+// Restart begins: none of them can be answered while it runs, and left
+// pending they blocked the replacement's automatic decisions.
 func (a *App) dropSessionPendingLocked(sessionKey string) {
 	for key := range a.pending {
 		if key.sessionID == sessionKey {
 			delete(a.pending, key)
 		}
 	}
-	a.forgetResolvedLocked(sessionKey)
 	a.rebuildPendingLocked()
 }
 
@@ -1756,21 +1771,6 @@ func (a *App) markResolvedLocked(key eventKey) {
 	oldest := a.resolvedOrder[0]
 	a.resolvedOrder = append(a.resolvedOrder[:0], a.resolvedOrder[1:]...)
 	delete(a.resolved, oldest)
-}
-
-// forgetResolvedLocked drops the resolved events of one session, so the next
-// process under that identity is not mistaken for the one before it.
-func (a *App) forgetResolvedLocked(sessionKey string) {
-	sessionKey = strings.ToLower(strings.TrimSpace(sessionKey))
-	kept := a.resolvedOrder[:0]
-	for _, key := range a.resolvedOrder {
-		if key.sessionID == sessionKey {
-			delete(a.resolved, key)
-			continue
-		}
-		kept = append(kept, key)
-	}
-	a.resolvedOrder = kept
 }
 
 func (a *App) rebuildPendingLocked() {

@@ -422,3 +422,14 @@ func (m *Model) recordEventWithdrawn(paneIndex int, event adapters.Event, reason
 	entry.Reason = reason
 	m.recordAudit(paneIndex, entry)
 }
+
+// forgetPromptTimes drops the detection times of a session's prompts when its
+// process ends or is replaced: those prompts are never decided, and each
+// entry stayed in the map for good.
+func (m *Model) forgetPromptTimes(sessionID string) {
+	for key := range m.promptDetectedAt {
+		if strings.EqualFold(key.sessionID, sessionID) {
+			delete(m.promptDetectedAt, key)
+		}
+	}
+}

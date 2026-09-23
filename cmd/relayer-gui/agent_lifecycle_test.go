@@ -2,7 +2,9 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -95,12 +97,17 @@ func TestStartSessionFailureMarksTheAgentFailed(t *testing.T) {
 	}
 }
 
+// exitEventForTest is the exit of one process. Each call is another process:
+// its exit carries the same sequence as the one before, but an ID of its own,
+// as the processor salts it with the process instance.
 func exitEventForTest(sessionID string) adapters.Event {
-	// A fresh process numbers its events from 1 again, so each instance's
-	// first exit carries the same ID.
 	code := 0
-	return adapters.NewProcessExitEvent(sessionID, sessionID, "generic", 1, &code, false)
+	event := adapters.NewProcessExitEvent(sessionID, sessionID, "generic", 1, &code, false)
+	event.ID = fmt.Sprintf("%s-process-%d", event.ID, processesForTest.Add(1))
+	return event
 }
+
+var processesForTest atomic.Uint64
 
 func activeRunForTest(application *App) *runGeneration {
 	application.mu.RLock()
@@ -225,37 +232,65 @@ func TestTheReplacementsFirstPromptSurvivesItsRestart(t *testing.T) {
 	}
 }
 
-// TestTheReplacementsFirstPromptSurvivesAnAnsweredOne: when the previous
-// process's prompt had been answered, its ID was remembered as resolved until
-// the restart completed, and the replacement's first prompt, with the same ID,
-// was refused before it was shown or journaled.
-func TestTheReplacementsFirstPromptSurvivesAnAnsweredOne(t *testing.T) {
+// TestAnAnsweredPromptOfThePreviousProcessStaysAnswered: the replacement's
+// first prompt has an ID of its own, so it is taken in although the previous
+// process's prompt was answered; and a late copy of that old prompt is still
+// refused. v0.8.6 forgot the answered IDs at each start, which let the copy in.
+func TestAnAnsweredPromptOfThePreviousProcessStaysAnswered(t *testing.T) {
 	engine := newFakeDesktopEngine("agent-a")
-	started := make(chan string, 1)
-	release := make(chan struct{})
-	engine.mu.Lock()
-	engine.agentRestartStarted = started
-	engine.agentRestartRelease = release
-	engine.mu.Unlock()
 	application := newBridgeForTest(engine)
 	runID := activeRunIDForTest(application)
 	run := activeRunForTest(application)
 
 	application.mu.Lock()
-	application.markResolvedLocked(makeEventKey("agent-a", "prompt-1"))
+	application.markResolvedLocked(makeEventKey("agent-a", "prompt-previous"))
 	application.mu.Unlock()
-	restarted := make(chan error, 1)
-	go func() { restarted <- application.RestartSession(runID, "agent-a") }()
-	<-started
-	replacement := bridgeEvent("agent-a", "prompt-1")
-	replacement.Timestamp = time.Now().UTC()
-	application.handleAdapterEventForRun(run, replacement)
-	close(release)
-	if err := <-restarted; err != nil {
+	if err := application.RestartSession(runID, "agent-a"); err != nil {
 		t.Fatalf("RestartSession: %v", err)
 	}
-	if state, _ := application.GetState(); len(state.PendingEvents) != 1 {
-		t.Fatalf("pending after the restart = %#v, want the replacement's prompt", state.PendingEvents)
+
+	late := bridgeEvent("agent-a", "prompt-previous")
+	application.handleAdapterEventForRun(run, late)
+	if state, _ := application.GetState(); len(state.PendingEvents) != 0 {
+		t.Fatalf("a late copy of an answered prompt was taken in again: %#v", state.PendingEvents)
+	}
+
+	replacement := bridgeEvent("agent-a", "prompt-replacement")
+	replacement.Timestamp = time.Now().UTC()
+	application.handleAdapterEventForRun(run, replacement)
+	if state, _ := application.GetState(); len(state.PendingEvents) != 1 || state.PendingEvents[0].ID != "prompt-replacement" {
+		t.Fatalf("pending after the replacement's prompt = %#v, want it", state.PendingEvents)
+	}
+}
+
+// TestAPromptRaisedWhileTheAgentStartsIsKept: during a Start the agent is not
+// yet marked running, and a prompt its new process raised then was dropped as
+// the prompt of a stopped agent, and remembered as answered.
+func TestAPromptRaisedWhileTheAgentStartsIsKept(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	started := make(chan string, 1)
+	release := make(chan struct{})
+	engine.mu.Lock()
+	engine.agentStartStarted = started
+	engine.agentStartRelease = release
+	engine.mu.Unlock()
+	application := newBridgeForTest(engine)
+	runID := activeRunIDForTest(application)
+	run := activeRunForTest(application)
+
+	application.handleAdapterEventForRun(run, exitEventForTest("agent-a"))
+	startDone := make(chan error, 1)
+	go func() { startDone <- application.StartSession(runID, "agent-a") }()
+	<-started
+	prompt := bridgeEvent("agent-a", "prompt-early")
+	prompt.Timestamp = time.Now().UTC()
+	application.handleAdapterEventForRun(run, prompt)
+	close(release)
+	if err := <-startDone; err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	if state, _ := application.GetState(); len(state.PendingEvents) != 1 || state.PendingEvents[0].ID != "prompt-early" {
+		t.Fatalf("pending after the start = %#v, want the prompt raised while it started", state.PendingEvents)
 	}
 }
 

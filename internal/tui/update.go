@@ -979,6 +979,7 @@ func (m *Model) applyProcessExit(event adapters.Event) tea.Cmd {
 	if paneIndex < 0 || m.panes[paneIndex].exited {
 		return nil
 	}
+	m.forgetPromptTimes(event.SessionID)
 	m.finishLineInputOnExit(paneIndex)
 	// The canonical adapter event is the only source of a session_finished
 	// fact. Legacy Exited messages only reduce UI state and never duplicate it.

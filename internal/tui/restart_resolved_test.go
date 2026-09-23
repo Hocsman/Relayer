@@ -1,22 +1,46 @@
 package tui
 
-import "testing"
+import (
+	"testing"
+	"time"
 
-// TestRestartForgetsTheSessionsResolvedPrompts: a fresh process numbers its
-// prompts from 1 again, so the restarted agent's first prompt had the ID of the
-// one the previous process left pending at its exit. That ID was remembered as
-// resolved, so the new prompt was dropped and the agent could not be answered.
-func TestRestartForgetsTheSessionsResolvedPrompts(t *testing.T) {
+	"github.com/Hocsman/Relayer/internal/adapters"
+)
+
+// TestARestartKeepsThePreviousProcesssAnsweredPrompts: a new process gives its
+// prompts IDs of their own, so the TUI no longer forgets a session's answered
+// prompts at a restart. Remembering them keeps a late copy of an old prompt
+// from being queued on the replacement, while the replacement's own prompt,
+// with its new ID, is taken in.
+func TestARestartKeepsThePreviousProcesssAnsweredPrompts(t *testing.T) {
 	application, _, _ := newModelHarness(t)
-	application.rememberResolved("agent-a", "evt-1")
-	application.rememberResolved("agent-b", "evt-1")
+	application.rememberResolved("agent-a", "evt-previous")
 
 	application.applyLifecycleResult(agentLifecycleMsg{Action: "restart", SessionID: "agent-a", Name: "Agent A"})
 
-	if application.eventResolved("agent-a", "evt-1") {
-		t.Fatal("the restarted agent's first prompt would be dropped as already resolved")
+	if !application.eventResolved("agent-a", "evt-previous") {
+		t.Fatal("a restart forgot the previous process's answered prompt, so a late copy of it would be queued again")
 	}
-	if !application.eventResolved("agent-b", "evt-1") {
-		t.Fatal("restarting one agent forgot another agent's resolved prompts")
+	if application.eventResolved("agent-a", "evt-replacement") {
+		t.Fatal("the replacement's own prompt is treated as answered")
+	}
+}
+
+// TestAnEndedProcessLeavesNoPromptTimes: the time a prompt was detected is kept
+// until it is decided, and a prompt pending when its process exits is never
+// decided; each one stayed in the map for good.
+func TestAnEndedProcessLeavesNoPromptTimes(t *testing.T) {
+	application, _, _ := newModelHarness(t)
+	application.promptDetectedAt[eventKey{sessionID: "agent-a", eventID: "evt-pending"}] = time.Now()
+	application.promptDetectedAt[eventKey{sessionID: "agent-b", eventID: "evt-live"}] = time.Now()
+
+	code := 0
+	application.applyProcessExit(adapters.NewProcessExitEvent("agent-a", "agent-a", adapters.GenericID, 1, &code, false))
+
+	if _, kept := application.promptDetectedAt[eventKey{sessionID: "agent-a", eventID: "evt-pending"}]; kept {
+		t.Fatal("the exited process's prompt time is still kept")
+	}
+	if _, kept := application.promptDetectedAt[eventKey{sessionID: "agent-b", eventID: "evt-live"}]; !kept {
+		t.Fatal("another session's prompt time was dropped")
 	}
 }
