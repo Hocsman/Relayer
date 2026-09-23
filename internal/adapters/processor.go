@@ -373,7 +373,15 @@ func (p *Processor) ReconcileSnapshot(raw []byte) (*Event, bool, error) {
 	probeState.hasRendered = true
 	probeState.rendered = normalized
 	probeState.renderedBurst = 0
-	probeState.renderedAnchors = p.state.renderedAnchors
+	// No anchors. The live screen's anchors turn an offset in the text THAT
+	// screen rendered into one of its rows, and this text is a snapshot of
+	// another length and another layout: an offset in it named whatever live row
+	// happened to sit at the same offset. When that was the answered question's
+	// row, the snapshot's own question, the identical one still pending with the
+	// operator's unsent keystroke after it, was taken for the answered question's
+	// echo; detection then found nothing, and the pending question was discarded
+	// with the memory. Without a row, the answered memory compares whole lines,
+	// which is all a snapshot can support.
 	candidates, err := p.adapter.Detect(probeState, []byte(normalized))
 	if err != nil {
 		return nil, false, err

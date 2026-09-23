@@ -237,8 +237,11 @@ func (a *AiderAdapter) Detect(state *DetectionState, chunk []byte) ([]Event, err
 			// The footer is found anywhere on the line, so the answer echoed
 			// after "[Yes]:" still matches, and on a rendered screen the
 			// answered question stays painted. Only the memory of it, on its
-			// row, keeps the next write from asking it again.
-			if state.hasRendered && state.answeredAt(activeLine, lineAnchor) {
+			// row, keeps the next write from asking it again. On its row only:
+			// Aider asks for every shell command with the same line, and after
+			// a clear the next one is drawn above the answered row the clear
+			// left blank. See answeredOnItsRow.
+			if state.hasRendered && state.answeredOnItsRow(activeLine, lineAnchor) {
 				state.appendDetectionText(chunk)
 				return nil, nil
 			}

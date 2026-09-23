@@ -309,30 +309,43 @@ func TestAVendorQuestionWhoseLabelIsNotPaintedStaysAnswered(t *testing.T) {
 	}
 }
 
-// What the row-less comparison was protecting, and still is.
+// What the row-less comparison was protecting, and still is for the generic
+// adapter.
 //
 // A full-screen agent erases its frame and repaints it; the erase keeps each
 // row's identity and the repaint may put the question a row higher or lower.
 // Caught between the two, the answered question's own row is blank and the
 // same words are on another row, and they are the answered question moved, not
 // a new one. Asking there would type a second answer.
+//
+// Aider, Goose and Open Interpreter ask it again, and are meant to. From the
+// screen alone this frame cannot be told from the one after a clear, where the
+// answered row is blank and the agent asks the identical question on another
+// row: Aider asks for every shell command with the same line. The generic
+// adapter already lost that question before it knew rows, so for it the blank
+// row costs nothing new. The vendor adapters never compared anything, so for
+// them it would silence a question that used to be asked, and a question put to
+// nobody blocks the agent without a sign. The cost here is what those adapters
+// always did in this frame: the moved question is asked a second time.
 func TestARepaintThatMovesTheAnsweredQuestionOffItsBlankRowDoesNotAskItAgain(t *testing.T) {
 	for _, testCase := range []struct {
-		adapter string
-		prompt  string
+		name       string
+		adapter    string
+		prompt     string
+		wantRaised int
 	}{
-		{adapter: GenericID, prompt: overwritePrompt},
-		{adapter: AiderID, prompt: aiderApplyPrompt},
+		{name: "generic does not ask it again", adapter: GenericID, prompt: overwritePrompt, wantRaised: 1},
+		{name: "aider asks it again", adapter: AiderID, prompt: aiderApplyPrompt, wantRaised: 2},
 	} {
-		t.Run(testCase.adapter, func(t *testing.T) {
+		t.Run(testCase.name, func(t *testing.T) {
 			processor := replayAfterTheAnswer(t, testCase.adapter, testCase.prompt, []guardStep{
 				// The question was on row 2. The frame is erased and redrawn
 				// with it on row 4, and rows 1 to 3 are left for later writes.
-				{"\x1b[2J\x1b[4;1H" + testCase.prompt, 1},
-				{"\x1b[1;1Hagent ready", 1},
+				{"\x1b[2J\x1b[4;1H" + testCase.prompt, testCase.wantRaised},
+				{"\x1b[1;1Hagent ready", testCase.wantRaised},
 			})
-			if processor.Pending() != nil {
-				t.Fatal("the session is blocked on an answered question")
+			if asked := processor.Pending() != nil; asked != (testCase.wantRaised > 1) {
+				t.Fatalf("the moved question is pending: %t, want %t", asked, testCase.wantRaised > 1)
 			}
 		})
 	}

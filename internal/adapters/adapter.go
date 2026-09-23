@@ -91,10 +91,11 @@ type DetectionState struct {
 //
 // The row decides when the entry EXPIRES: once that row stops carrying the
 // question, the entry goes. On the rendered screen it also decides what the
-// entry SUPPRESSES, see answeredAt: the answered question is the one on its
-// own row, and the same words on another row are another question unless the
-// answered row has been blanked. A snapshot, whose text maps onto no row, and
-// the Codex adapter still compare the line alone, see answersTheSameQuestion.
+// entry SUPPRESSES, see answeredAt and answeredOnItsRow: the answered question
+// is the one on its own row, and the same words on another row are another
+// question. The generic adapter makes one exception, for an answered row that
+// has been blanked. A snapshot, whose text maps onto no row, and the Codex
+// adapter still compare the line alone, see answersTheSameQuestion.
 //
 // anchor is the row the MATCH was found on at detection time, carried here from
 // the detector rather than searched for afterwards. A zero anchor means the
@@ -230,12 +231,61 @@ func (s *DetectionState) answersTheSameQuestion(line string) bool {
 // comparison swallowed that question; after an echo, the repeat of the answered
 // one stood in for it, so nothing seemed lost.
 //
-// What is left, knowingly: an agent that rejects the answer and asks again on
-// the SAME row, with the rejected input still showing after the question, is
-// taken for the echo and not asked. A re-ask on a new row is asked. And a frame
-// that moves the answered question to another row while painting its old row
-// with something else, in one write, asks it again, as it did before.
+// This is the generic adapter's rule: Claude's through it, and that of the
+// configured intercept_patterns every vendor adapter tries first. The Aider,
+// Goose and Open Interpreter prompts themselves use answeredOnItsRow, which is
+// rule 1 alone; see there for why the blank row is not an excuse for them.
+//
+// What is left, knowingly:
+//
+//   - An agent that rejects the answer and asks again on the SAME row, with the
+//     rejected input still showing after the question, is taken for the echo
+//     and not asked. So is the identical question drawn again on the very row
+//     the answered one occupied, whether the input was erased first or a clear
+//     homed the cursor there. A re-ask on a new row is asked.
+//   - A blank row stays blank for as long as nothing is written on it. After a
+//     clear, the identical question drawn above the answered row, which the
+//     clear left blank, is taken for the answered one moved, and is not asked.
+//     The row-less comparison lost that question too, anywhere on the screen.
+//   - A frame that moves the answered question to another row while painting
+//     its old row with something else, in one write, asks it again, as it did
+//     before. So does one that moves it off its blank row with the echo after
+//     it, since the second rule wants the identical line.
 func (s *DetectionState) answeredAt(line string, anchor screen.RowID) bool {
+	return s.answeredOnTheScreen(line, anchor, true)
+}
+
+// answeredOnItsRow is answeredAt without its second rule's blank row: the
+// answered question is the one on its own row, and nowhere else.
+//
+// It is the rule for the Aider, Goose and Open Interpreter prompts, and the
+// difference is what each adapter did before it had one. The generic adapter
+// compared whole lines anywhere, so it already took the identical question
+// after a clear for the answered one; the blank row keeps the one case that
+// comparison protected and loses nothing it did not lose. These three never
+// consulted the memory at all, so the blank row would be a loss of its own,
+// and not a rare one. Clears are common: Ctrl+L at Aider's prompt, `clear`, a
+// test runner. A clear leaves the answered row blank for as long as nothing is
+// written on it, which on a full screen is twenty lines of output or more, and
+// Aider asks for every shell command with one and the same line. The next
+// command's question was taken for the answered one and nobody was asked: the
+// agent waited for an answer that no card was offering.
+//
+// What they give up is the frame caught between an erase and a repaint that
+// draws the answered question on another row. That asks it again, as it did
+// before for every one of their questions. Of the two failures, a question
+// never put to anyone is the worse: it blocks the agent without a sign.
+//
+// When either side carries no row, the line alone decides, as it does for the
+// generic adapter: nothing else is left to tell two questions apart.
+func (s *DetectionState) answeredOnItsRow(line string, anchor screen.RowID) bool {
+	return s.answeredOnTheScreen(line, anchor, false)
+}
+
+// answeredOnTheScreen is the body of answeredAt and answeredOnItsRow.
+// overABlankRow says whether a blank answered row lets the same line on another
+// row stand for the answered question.
+func (s *DetectionState) answeredOnTheScreen(line string, anchor screen.RowID, overABlankRow bool) bool {
 	if s == nil {
 		return false
 	}
@@ -254,7 +304,10 @@ func (s *DetectionState) answeredAt(line string, anchor screen.RowID) bool {
 			}
 			continue
 		}
-		if asked == answered && (anchor == 0 || entry.anchor == 0 || entry.rowBlank) {
+		if asked != answered {
+			continue
+		}
+		if anchor == 0 || entry.anchor == 0 || (overABlankRow && entry.rowBlank) {
 			return true
 		}
 	}

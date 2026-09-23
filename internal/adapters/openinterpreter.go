@@ -166,8 +166,10 @@ func (a *OpenInterpreterAdapter) Detect(state *DetectionState, chunk []byte) ([]
 			// The footer is found anywhere on the line, so the answer echoed
 			// after "(y/n)" still matches, and on a rendered screen the
 			// answered question stays painted. Only the memory of it, on its
-			// row, keeps the next write from asking it again.
-			if state.hasRendered && state.answeredAt(activeLine, lineAnchor) {
+			// row, keeps the next write from asking it again. On its row only:
+			// the same question drawn elsewhere after a clear is asked again,
+			// see answeredOnItsRow.
+			if state.hasRendered && state.answeredOnItsRow(activeLine, lineAnchor) {
 				state.appendDetectionText(chunk)
 				return nil, nil
 			}
