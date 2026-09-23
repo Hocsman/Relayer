@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
-	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -237,19 +236,15 @@ func NewDetectionState(sessionID, agentID, adapterID string) *DetectionState {
 	}
 }
 
-// newInstanceToken returns a token for one process instance. It is never
-// empty: an empty token would make a replacement's IDs repeat its
-// predecessor's. If the system cannot supply randomness, a counter and the
-// clock still tell every instance of this Relayer apart.
+// newInstanceToken returns a random token for one process instance. It is
+// never empty, which would make a replacement's IDs repeat its predecessor's:
+// since Go 1.24 crypto/rand.Read does not return an error, it stops the
+// program if the system cannot supply randomness.
 func newInstanceToken() string {
 	var raw [8]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return fmt.Sprintf("c%x-%x", time.Now().UnixNano(), instanceFallback.Add(1))
-	}
+	_, _ = rand.Read(raw[:])
 	return hex.EncodeToString(raw[:])
 }
-
-var instanceFallback atomic.Uint64
 
 // Pending returns a defensive copy of the current actionable event.
 func (s *DetectionState) Pending() *Event {

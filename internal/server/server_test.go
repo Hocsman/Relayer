@@ -599,7 +599,10 @@ func TestSaveFullSettingsNotificationsAndBroadcast(t *testing.T) {
 			return nil, err
 		}
 
-		timeout := time.After(5 * time.Second)
+		// testNotification really sends: a desktop notification through
+		// PowerShell on Windows and a webhook allowed five seconds of its own,
+		// so five seconds for the whole call failed on a loaded machine.
+		timeout := time.After(15 * time.Second)
 		for {
 			select {
 			case resp := <-rpcRespCh:

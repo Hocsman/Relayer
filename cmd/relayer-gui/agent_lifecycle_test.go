@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
+	"github.com/Hocsman/Relayer/internal/policy"
 )
 
 func markAgentExitedForTest(application *App, sessionID string) {
@@ -314,5 +316,50 @@ func TestALivePromptStampedBeforeTheStartIsStillShown(t *testing.T) {
 	state, _ := application.GetState()
 	if len(state.PendingEvents) != 1 || state.PendingEvents[0].ID != "prompt-stepped" {
 		t.Fatalf("pending = %#v, want the live agent's prompt", state.PendingEvents)
+	}
+}
+
+// TestAnAutomaticPromptRaisedWhileTheAgentStartsIsDecidedAfterIt: no automatic
+// decision is taken while a session is changing, so a prompt the new process
+// raised during its Start waited for a human although the policy decides it.
+// It is decided once, when the start completes.
+func TestAnAutomaticPromptRaisedWhileTheAgentStartsIsDecidedAfterIt(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	engine.evaluation = policy.Evaluation{
+		Action:         policy.ActionAllow,
+		ProposedAction: policy.ActionAllow,
+		RuleName:       "allow-safe",
+		Reason:         policy.ReasonRule,
+		Automatic:      true,
+	}
+	started := make(chan string, 1)
+	release := make(chan struct{})
+	engine.mu.Lock()
+	engine.agentStartStarted = started
+	engine.agentStartRelease = release
+	engine.mu.Unlock()
+	application := newBridgeForTest(engine)
+	application.ctx = context.Background()
+	runID := activeRunIDForTest(application)
+	run := activeRunForTest(application)
+
+	application.handleAdapterEventForRun(run, exitEventForTest("agent-a"))
+	startDone := make(chan error, 1)
+	go func() { startDone <- application.StartSession(runID, "agent-a") }()
+	<-started
+	prompt := bridgeEvent("agent-a", "prompt-automatic")
+	prompt.Timestamp = time.Now().UTC()
+	application.handleAdapterEventForRun(run, prompt)
+	if applied := len(engine.applySnapshot()); applied != 0 {
+		t.Fatalf("an automatic decision was taken while the agent was starting (%d)", applied)
+	}
+	close(release)
+	if err := <-startDone; err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	waitForCondition(t, 2*time.Second, func() bool { return len(engine.applySnapshot()) == 1 })
+	time.Sleep(50 * time.Millisecond)
+	if calls := engine.applySnapshot(); len(calls) != 1 {
+		t.Fatalf("automatic decisions after the start = %d, want exactly 1", len(calls))
 	}
 }
