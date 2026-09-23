@@ -1929,3 +1929,50 @@ func TestAResizeIsRefusedOnceTheJournalFails(t *testing.T) {
 		t.Fatalf("resizes reaching the backend = %d, want only the one before the failure", resizes)
 	}
 }
+
+// TestGetStateShowsTheJournalsFailureBeforeTheBridgeRecordsIt: the core fails
+// the run's journal under its own lock, then reports it, and the sink records
+// it in the bridge's state under the bridge's lock. GetState lays the core's
+// failure over that state, so a GetState between the two steps already shows
+// the failure rather than "ready". The test holds the bridge's lock, which
+// parks the report on the bridge's copy, and reads what GetState would show.
+func TestGetStateShowsTheJournalsFailureBeforeTheBridgeRecordsIt(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	application := newBridgeForTest(engine)
+	engine.mu.Lock()
+	engine.auditFailAt = engine.auditCalls + 1
+	// A prompt first refreshes the output. Failing that read keeps the
+	// bridge's lock free of writers until the failure is reported.
+	engine.outputErr = errors.New("fixture output unavailable")
+	engine.mu.Unlock()
+
+	application.mu.RLock()
+	handled := make(chan struct{})
+	go func() {
+		defer close(handled)
+		application.handleAdapterEvent(bridgeEvent("agent-a", "prompt-1"))
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for application.mu.TryRLock() {
+		application.mu.RUnlock()
+		if time.Now().After(deadline) {
+			application.mu.RUnlock()
+			t.Fatal("the journal's failure was never reported to the bridge")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	shown := application.stateLocked()
+	application.mu.RUnlock()
+	select {
+	case <-handled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the prompt was never handled")
+	}
+
+	if shown.Audit.Status != "failed" {
+		t.Fatalf("journal state before the bridge recorded the failure = %q, want failed", shown.Audit.Status)
+	}
+	if state, _ := application.GetState(); state.Audit.Status != "failed" {
+		t.Fatalf("journal state after = %q, want failed", state.Audit.Status)
+	}
+}

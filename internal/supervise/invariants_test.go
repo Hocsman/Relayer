@@ -486,6 +486,43 @@ func TestAHumanAnswerIsRefusedWhileTheAgentIsStopped(t *testing.T) {
 	}
 }
 
+// A line is refused while the agent is being stopped, whatever its status
+// shows. A prompt raised during the Stop sets the agent waiting over
+// "stopping", and its withdrawal sets it running, so the status check alone
+// then lets a line through to a process on its way out; the Stop's own claim
+// on the session does not. The test does not rely on that status: were it
+// kept at "stopping", the line would still be refused.
+func TestALineIsRefusedWhileTheAgentIsStoppedWhateverItsStatusShows(t *testing.T) {
+	engine := newFakeEngine()
+	stopStarted := make(chan string, 1)
+	release := make(chan struct{})
+	engine.stopStarted = stopStarted
+	engine.stopRelease = release
+	sup, _ := newCoreForTest(t, engine, "agent-a")
+	releaseStop := releaser(t, release)
+	stopped := make(chan error, 1)
+	go func() { stopped <- sup.StopSession(testRunID, "agent-a") }()
+	select {
+	case <-stopStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the stop never reached the runtime")
+	}
+	prompt := promptEvent("agent-a", "prompt-1")
+	sup.Handle(session.AdapterEvent{Event: prompt})
+	sup.Handle(session.AdapterEventWithdrawn{Event: prompt})
+
+	if err := sup.SubmitLine(testRunID, "agent-a", "hello"); !errors.Is(err, supervise.ErrLineUnavailable) {
+		t.Fatalf("a line during the stop = %v, want ErrLineUnavailable", err)
+	}
+	if lines := engine.lineSnapshot(); len(lines) != 0 {
+		t.Fatalf("a line reached a stopping agent: %#v", lines)
+	}
+	releaseStop()
+	if err := <-stopped; err != nil {
+		t.Fatalf("StopSession: %v", err)
+	}
+}
+
 // An agent is neither stopped nor restarted while an answer is written to it:
 // the answer's outcome would be lost with the process.
 func TestAStopOrRestartIsRefusedWhileAnAnswerIsWritten(t *testing.T) {
