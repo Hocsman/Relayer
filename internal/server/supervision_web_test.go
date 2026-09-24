@@ -302,12 +302,10 @@ func TestTheWebJournalSaysWhatBecameOfEachPrompt(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	shownGone := false
-	for _, frame := range g.broadcast(eventSemantic) {
-		if view, ok := frame.payload.(SupervisionEvent); ok && view.ID == prompt.ID && view.DeliveryStatus == "delivered" {
-			shownGone = true
-		}
-	}
+	shownGone := g.awaitBroadcast(eventSemantic, 5*time.Second, func(payload any) bool {
+		view, ok := payload.(SupervisionEvent)
+		return ok && view.ID == prompt.ID && view.DeliveryStatus == "delivered"
+	})
 	if !shownGone {
 		t.Fatal("no client was told the withdrawn prompt is gone: its card stays until a reload")
 	}
@@ -335,6 +333,10 @@ func TestTheWebGatewayReportsAStreamErrorByAFixedMessage(t *testing.T) {
 	const leaked = `read C:\Users\alice\.relayer\token=sk-live-0123456789abcdef: broken pipe`
 	g.inject(session.Error{SessionID: "web-listen", Err: errors.New(leaked)})
 
+	g.awaitBroadcast(eventError, 5*time.Second, func(payload any) bool {
+		failure, ok := payload.(SafeErrorEvent)
+		return ok && failure.SessionID == "web-listen"
+	})
 	var failures []SafeErrorEvent
 	for _, frame := range g.broadcast(eventError) {
 		if failure, ok := frame.payload.(SafeErrorEvent); ok && failure.SessionID == "web-listen" {
@@ -382,10 +384,17 @@ func TestTheWebGatewayShowsAToolCallOnlyAsItMayBeShown(t *testing.T) {
 	if values["repo"] != "Hocsman/Relayer" || values["auth"] != "[REDACTED]" {
 		t.Fatalf("parameters = %v, want the repository shown and the token redacted", values)
 	}
+	// The state holds the prompt as soon as the core stores it; its broadcast
+	// follows once the core's lock is released, so it is waited for.
 	shown := false
-	for _, frame := range g.broadcast(eventSemantic) {
-		if view, ok := frame.payload.(SupervisionEvent); ok && view.ID == prompt.ID {
-			shown = shown || view.ToolCall != nil
+	for deadline := time.Now().Add(5 * time.Second); !shown && time.Now().Before(deadline); {
+		for _, frame := range g.broadcast(eventSemantic) {
+			if view, ok := frame.payload.(SupervisionEvent); ok && view.ID == prompt.ID {
+				shown = shown || view.ToolCall != nil
+			}
+		}
+		if !shown {
+			time.Sleep(20 * time.Millisecond)
 		}
 	}
 	if !shown {
@@ -525,12 +534,10 @@ func TestAWebJournalThatFailsStopsEveryAnswer(t *testing.T) {
 			t.Fatalf("the agent takes input with a failed journal: %+v", agent)
 		}
 	}
-	told := false
-	for _, frame := range g.broadcast(eventStatus) {
-		if status, ok := frame.payload.(StatusEvent); ok && status.Scope == "audit" && status.Status == "failed" {
-			told = true
-		}
-	}
+	told := g.awaitBroadcast(eventStatus, 5*time.Second, func(payload any) bool {
+		status, ok := payload.(StatusEvent)
+		return ok && status.Scope == "audit" && status.Status == "failed"
+	})
 	if !told {
 		t.Fatal("no client was told the journal failed")
 	}
@@ -563,12 +570,10 @@ func TestAnUncertainWebWriteFreezesTheSession(t *testing.T) {
 	if len(prompts) != 1 || prompts[0].DeliveryStatus != "uncertain" {
 		t.Fatalf("prompts = %+v, want the prompt shown uncertain", prompts)
 	}
-	shown := false
-	for _, frame := range g.broadcast(eventError) {
-		if failure, ok := frame.payload.(SafeErrorEvent); ok && failure.Code == "delivery_uncertain" {
-			shown = true
-		}
-	}
+	shown := g.awaitBroadcast(eventError, 5*time.Second, func(payload any) bool {
+		failure, ok := payload.(SafeErrorEvent)
+		return ok && failure.Code == "delivery_uncertain"
+	})
 	if !shown {
 		t.Fatal("no client was told the delivery is indeterminate")
 	}
@@ -643,6 +648,11 @@ func TestAWebAgentIsShownStoppingAndStarting(t *testing.T) {
 	}
 	g.awaitAgent("web-listen", 10*time.Second, func(agent AgentState) bool { return agent.Running && agent.Status == "running" })
 
+	// The running status follows the state the wait above saw.
+	g.awaitBroadcast(eventStatus, 5*time.Second, func(payload any) bool {
+		status, ok := payload.(StatusEvent)
+		return ok && status.SessionID == "web-listen" && status.Status == "running"
+	})
 	var statuses []string
 	for _, frame := range g.broadcast(eventStatus) {
 		if status, ok := frame.payload.(StatusEvent); ok && status.SessionID == "web-listen" {
@@ -677,12 +687,10 @@ func TestAWebStopThatFailedFreezesTheSession(t *testing.T) {
 	if agent := g.agent("web-listen"); !agent.InputFrozen {
 		t.Fatalf("the session of a failed stop takes input: %+v", agent)
 	}
-	shown := false
-	for _, frame := range g.broadcast(eventError) {
-		if failure, ok := frame.payload.(SafeErrorEvent); ok && failure.Code == "stop_failed" && failure.SessionID == "web-listen" {
-			shown = true
-		}
-	}
+	shown := g.awaitBroadcast(eventError, 5*time.Second, func(payload any) bool {
+		failure, ok := payload.(SafeErrorEvent)
+		return ok && failure.Code == "stop_failed" && failure.SessionID == "web-listen"
+	})
 	if !shown {
 		t.Fatal("no client was told the stop failed")
 	}

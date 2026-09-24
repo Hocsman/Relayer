@@ -510,6 +510,26 @@ func (g *webGateway) broadcast(event string) []webFrame {
 	return frames
 }
 
+// awaitBroadcast reports whether a frame of event that match accepts is
+// broadcast within the time given. The state every client reads changes under
+// the core's lock, and the frame that tells the clients follows once the lock
+// is released, possibly from another goroutine: a test that found the state
+// changed has not necessarily seen the frame yet.
+func (g *webGateway) awaitBroadcast(event string, within time.Duration, match func(any) bool) bool {
+	deadline := time.Now().Add(within)
+	for {
+		for _, frame := range g.broadcast(event) {
+			if match(frame.payload) {
+				return true
+			}
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // broadcastText is every frame the gateway broadcast so far but the output
 // snapshots, as its clients received them, for leak checks. A snapshot is the
 // agent's own screen, which every client watches as the agent painted it; the
