@@ -10,7 +10,13 @@ import (
 )
 
 // StopSession strictly stops one agent's process while its siblings keep
-// running. Its prompts stay until the process's exit arrives.
+// running. Its prompts stay until the process's exit arrives. It is refused
+// while anything is being written to the session (ErrLineInFlight for a
+// line, ErrDecisionInFlight for an answer or the holder's keystrokes): the
+// write's outcome would be lost with the process. Keystrokes are refused like
+// an answer rather than cut short, although a Stop takes nothing more to the
+// agent: they are bounded and their write returns at once, and the session's
+// one write slot is simpler to reason about when nothing overtakes it.
 func (s *Supervisor) StopSession(runID, sessionID string) error {
 	if err := s.activeRun(runID); err != nil {
 		return err
@@ -29,7 +35,7 @@ func (s *Supervisor) StopSession(runID, sessionID string) error {
 		s.mu.Unlock()
 		return ErrLineInFlight
 	}
-	if _, busy := s.inFlight[sessionKey]; busy {
+	if _, busy := s.inFlight[sessionKey]; busy || s.rawInFlight[sessionKey] {
 		s.mu.Unlock()
 		return ErrDecisionInFlight
 	}
@@ -67,7 +73,12 @@ func (s *Supervisor) StopSession(runID, sessionID string) error {
 
 // StartSession launches a fresh process for one stopped or exited agent under
 // its unchanged identity and plan specification, without interrupting the
-// other agents of the run.
+// other agents of the run. It is refused (ErrDecisionInFlight) while a write
+// to the previous process has not returned, an answer, a line or the
+// holder's keystrokes: what it still sends would reach the replacement, and
+// the replacement's first answer would be written beside it. A process that
+// exits during a write leaves the session to that write, which releases it
+// when it returns.
 func (s *Supervisor) StartSession(runID, sessionID string) error {
 	if err := s.activeRun(runID); err != nil {
 		return err
@@ -99,6 +110,10 @@ func (s *Supervisor) StartSession(runID, sessionID string) error {
 		s.mu.Unlock()
 		return ErrAgentStillRunning
 	}
+	if _, busy := s.inFlight[sessionKey]; busy || s.lineInFlight[sessionKey] || s.rawInFlight[sessionKey] {
+		s.mu.Unlock()
+		return ErrDecisionInFlight
+	}
 	s.stoppingSessions[sessionKey] = true
 	s.startingSessions[sessionKey] = true
 	s.agents[index].Status = "starting"
@@ -129,7 +144,9 @@ func (s *Supervisor) StartSession(runID, sessionID string) error {
 
 // RestartSession transactionally stops then starts one agent in place. An
 // unconfirmed stop never produces a replacement process; a failed start
-// leaves the agent down with its identity locked for an explicit retry.
+// leaves the agent down with its identity locked for an explicit retry. It is
+// refused, as a Stop is, while anything is being written to the session: the
+// old process's keystrokes could otherwise reach its replacement.
 func (s *Supervisor) RestartSession(runID, sessionID string) error {
 	if err := s.activeRun(runID); err != nil {
 		return err
@@ -152,7 +169,7 @@ func (s *Supervisor) RestartSession(runID, sessionID string) error {
 		s.mu.Unlock()
 		return ErrLineInFlight
 	}
-	if _, busy := s.inFlight[sessionKey]; busy {
+	if _, busy := s.inFlight[sessionKey]; busy || s.rawInFlight[sessionKey] {
 		s.mu.Unlock()
 		return ErrDecisionInFlight
 	}
@@ -298,9 +315,15 @@ func (s *Supervisor) dropSessionPendingLocked(sessionKey string) {
 	s.rebuildPendingLocked()
 }
 
+// clearSessionPendingLocked drops the prompts of a session whose process
+// ended, and remembers them so a late copy is refused. It leaves the
+// session's write claim alone: a write still in progress holds the session
+// until it returns (finishDecision), whatever the process did meanwhile.
+// Released here, the claim let a Start, and its replacement's first automatic
+// answer, go while the write had not returned, and lost the Signature the
+// repeat guard reads from it.
 func (s *Supervisor) clearSessionPendingLocked(sessionID string) {
 	normalized := strings.ToLower(strings.TrimSpace(sessionID))
-	delete(s.inFlight, normalized)
 	for key := range s.pending {
 		if key.sessionID == normalized {
 			delete(s.pending, key)

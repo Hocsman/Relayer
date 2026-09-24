@@ -601,6 +601,119 @@ func TestAStopOrRestartIsRefusedWhileAnAnswerIsWritten(t *testing.T) {
 	}
 }
 
+// Nor are they while the holder's keystrokes are being written: the session
+// takes one write at a time, and a Stop or a Restart is one. A Restart let the
+// old process's keystrokes reach its replacement.
+func TestAStopOrRestartIsRefusedWhileTheHoldersKeystrokesAreWritten(t *testing.T) {
+	engine := newFakeEngine()
+	sup, _ := newCoreForTest(t, engine, "agent-a")
+	sup.SetHolder("agent-a", "conn-1")
+	release := admitted(t, sup, "agent-a", "conn-1")
+	t.Cleanup(release)
+
+	if err := sup.StopSession(testRunID, "agent-a"); !errors.Is(err, supervise.ErrDecisionInFlight) {
+		t.Fatalf("a stop during the holder's keystrokes = %v, want ErrDecisionInFlight", err)
+	}
+	if err := sup.RestartSession(testRunID, "agent-a"); !errors.Is(err, supervise.ErrDecisionInFlight) {
+		t.Fatalf("a restart during the holder's keystrokes = %v, want ErrDecisionInFlight", err)
+	}
+	if stops, _, restarts := engine.lifecycleCalls(); stops != 0 || restarts != 0 {
+		t.Fatalf("stops = %d, restarts = %d reached the runtime during the holder's keystrokes", stops, restarts)
+	}
+	if agent := agentOf(t, sup, "agent-a"); !agent.Running || agent.Status != "running" {
+		t.Fatalf("a refused stop changed the agent: %#v", agent)
+	}
+	release()
+	if err := sup.StopSession(testRunID, "agent-a"); err != nil {
+		t.Fatalf("a stop once the keystrokes are written = %v", err)
+	}
+}
+
+// A process that exits while something is being written to its terminal
+// leaves the session to that write until it returns, and no new process is
+// started meanwhile: whatever the write still sends would reach the
+// replacement, and the replacement's first automatic answer would be written
+// beside it. The exit used to release a decision's claim on the session at
+// once, with the Signature the repeat guard reads from it, and a Start looked
+// at no write at all, so a person's answer, the policy's, a line or the
+// holder's keystrokes could all still be on their way when the replacement
+// came up.
+func TestAnExitLeavesTheSessionToTheWriteStillInProgress(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		// write starts a write to agent-a and holds it; it returns what lets
+		// the write return.
+		write func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine) func()
+	}{
+		{name: "a person's answer", write: func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine) func() {
+			applyStarted, releaseWrites := holdTheFirstWrite(t, engine)
+			sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "asked-1")})
+			answered := make(chan error, 1)
+			go func() { answered <- sup.SubmitDecision(testRunID, "agent-a", "asked-1", "y", desktop) }()
+			awaitWrite(t, applyStarted, "the person's answer")
+			return func() {
+				releaseWrites()
+				if err := <-answered; err != nil {
+					t.Fatalf("the person's answer = %v", err)
+				}
+			}
+		}},
+		{name: "the policy's answer", write: func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine) func() {
+			engine.evaluationByID["automatic-1"] = automaticAllow()
+			applyStarted, releaseWrites := holdTheFirstWrite(t, engine)
+			sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "automatic-1")})
+			awaitWrite(t, applyStarted, "the policy's answer")
+			return func() {
+				releaseWrites()
+				waitFor(t, 2*time.Second, "the policy's answer to return", func() bool {
+					return len(engine.auditFor(audit.KindDelivery, "automatic-1")) == 1
+				})
+			}
+		}},
+		{name: "a line", write: func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine) func() {
+			return holdWithALine(t, engine, sup, "agent-a")
+		}},
+		{name: "the holder's keystrokes", write: func(t *testing.T, sup *supervise.Supervisor, _ *fakeEngine) func() {
+			sup.SetHolder("agent-a", "conn-1")
+			release := admitted(t, sup, "agent-a", "conn-1")
+			t.Cleanup(release)
+			return release
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newFakeEngine()
+			sup, _ := newCoreForTest(t, engine, "agent-a")
+			letTheWriteReturn := test.write(t, sup, engine)
+
+			sup.Handle(session.AdapterEvent{Event: exitEvent("agent-a", 0, false)})
+			if agent := agentOf(t, sup, "agent-a"); agent.Running {
+				t.Fatalf("the agent after its exit = %#v", agent)
+			}
+			if err := sup.StartSession(testRunID, "agent-a"); !errors.Is(err, supervise.ErrDecisionInFlight) {
+				t.Fatalf("a start with %s in progress = %v, want ErrDecisionInFlight", test.name, err)
+			}
+			if _, starts, _ := engine.lifecycleCalls(); starts != 0 {
+				t.Fatalf("a start reached the runtime with %s in progress", test.name)
+			}
+			if agent := agentOf(t, sup, "agent-a"); agent.Status != "exited" {
+				t.Fatalf("a refused start changed the agent: %#v", agent)
+			}
+
+			letTheWriteReturn()
+			waitFor(t, 2*time.Second, "the start once the write returned", func() bool {
+				err := sup.StartSession(testRunID, "agent-a")
+				if err != nil && !errors.Is(err, supervise.ErrDecisionInFlight) {
+					t.Fatalf("a start once the write returned = %v", err)
+				}
+				return err == nil
+			})
+			if _, starts, _ := engine.lifecycleCalls(); starts != 1 {
+				t.Fatalf("starts reaching the runtime = %d, want 1", starts)
+			}
+		})
+	}
+}
+
 // While a Stop runs, another Stop, a Restart and a Start of the same agent are
 // all refused before they reach the runtime.
 func TestWhileAStopRunsTheAgentTakesNoOtherLifecycleOperation(t *testing.T) {

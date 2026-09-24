@@ -105,6 +105,12 @@
 //     of the prompt it answered: a prompt the agent withdrew while its answer
 //     was being written left the session writable, and the next answer
 //     followed the uncertain one.
+//   - A process that exits while something is written to its terminal leaves
+//     the session to that write until it returns, and a Start is refused
+//     (ErrDecisionInFlight) while an answer, a line or the holder's keystrokes
+//     are still being written; a Stop and a Restart are refused the same way
+//     while keystrokes are. The exit used to release an answer's claim at
+//     once, and the replacement's first answer could be written beside it.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces
