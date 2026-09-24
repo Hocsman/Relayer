@@ -32,6 +32,24 @@ type View struct {
 	// and every answer but deny when the policy denies the prompt but it goes
 	// to the operator all the same. An answer not offered is refused.
 	Decisions []string `json:"decisions"`
+	// toolCall is the MCP tool call the prompt asks about, in the form that
+	// may be shown (displayToolCall), or nil. It is not part of the JSON: the
+	// desktop's interface has no badge for it, and its SupervisionEvent stays
+	// what it always was. The web gateway shows it, through ToolCall.
+	toolCall *adapters.ToolCall
+}
+
+// ToolCall is the MCP tool call the prompt asks about, as it may be shown to
+// anyone who may see the prompt, or nil. A prompt whose text must not be shown
+// carries none, and a call's names and parameter values are redacted as the
+// journal redacts text and bounded. The result is the caller's own copy.
+func (v View) ToolCall() *adapters.ToolCall {
+	if v.toolCall == nil {
+		return nil
+	}
+	call := *v.toolCall
+	call.Params = append([]adapters.ToolCallParam(nil), v.toolCall.Params...)
+	return &call
 }
 
 // EvaluationView is the display-safe form of a policy evaluation.
@@ -83,6 +101,7 @@ func supervisionView(
 		Evaluation:     evaluationView(evaluation),
 		DeliveryStatus: delivery,
 		Decisions:      offered,
+		toolCall:       displayToolCall(event),
 	}
 }
 

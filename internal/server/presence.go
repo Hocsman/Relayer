@@ -676,7 +676,17 @@ func (c *Controller) recordControlAudit(change handTransition, rec controlRecord
 }
 
 // setAttachedLocked keeps AgentState.Attached meaning "somebody holds this
-// terminal". It is the single writer of that field on the sharing path.
+// terminal". It is the single writer of that field on the sharing path, and
+// so where the run's supervision core learns who holds the hand: under the
+// lock the hand changed under, before any other goroutine can see it moved.
+//
+// The holder types into the agent directly, and raw keystrokes never resolve
+// the runtime's pending prompt. The core answers nothing automatically on a
+// terminal somebody holds, and never again a prompt that was pending while it
+// was held; told late, or not at all, it answered a prompt its holder had
+// just answered by typing, and the agent received a second answer. SetHolder
+// never calls the sink on its caller's goroutine, which is what makes it safe
+// under c.mu.
 func (c *Controller) setAttachedLocked(key string, attached bool) {
 	idx, found := c.agentIndex[key]
 	if !found || idx >= len(c.state.Agents) {
@@ -684,10 +694,13 @@ func (c *Controller) setAttachedLocked(key string, attached bool) {
 	}
 	c.state.Agents[idx].Attached = attached
 	c.state.Agents[idx].HolderIdentity = ""
+	holder := ""
 	if attached {
 		c.state.Agents[idx].HolderIdentity = c.hands[key].holderIdentity
+		holder = c.hands[key].holderConnID
 	}
 	c.state.Agents[idx].ObserverCount = c.observerCountLocked(key)
+	c.sup.SetHolder(c.state.Agents[idx].SessionID, holder)
 }
 
 func (c *Controller) observerCountLocked(key string) int {

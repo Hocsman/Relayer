@@ -9,10 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/notify"
-	"github.com/Hocsman/Relayer/internal/session"
 )
 
 func TestSecuritySettingsSaveAndReloadWithoutLoss(t *testing.T) {
@@ -213,81 +211,81 @@ func TestRestartRequiredAndSaveAndRestart(t *testing.T) {
 	}
 }
 
+// TestNotificationsDisabledActuallyDisabled: a prompt that waits on a person is
+// not broadcast as a notification while notifications are off. The prompt is a
+// real session's, and the test first proves the prompt was taken in, and that
+// the same run with notifications on does broadcast one: a prompt for a session
+// the run does not have is dropped before anything could notify it, and the
+// test passed without testing anything.
 func TestNotificationsDisabledActuallyDisabled(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath := filepath.Join(tempDir, "config.yaml")
+	for _, enabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "off", true: "on"}[enabled], func(t *testing.T) {
+			tempDir := t.TempDir()
+			configPath := filepath.Join(tempDir, "config.yaml")
 
-	loaded, err := config.LoadOrCreate(configPath)
-	if err != nil {
-		t.Fatalf("LoadOrCreate: %v", err)
-	}
+			loaded, err := config.LoadOrCreate(configPath)
+			if err != nil {
+				t.Fatalf("LoadOrCreate: %v", err)
+			}
+			_, _, err = config.UpdateFullConfiguration(configPath, loaded.Revision, config.FullConfigurationUpdate{
+				Notifications: &notify.Config{Enabled: enabled},
+			})
+			if err != nil {
+				t.Fatalf("UpdateFullConfiguration: %v", err)
+			}
 
-	// Explicitly disable notifications in config file
-	_, _, err = config.UpdateFullConfiguration(configPath, loaded.Revision, config.FullConfigurationUpdate{
-		Notifications: &notify.Config{
-			Enabled: false,
-		},
-	})
-	if err != nil {
-		t.Fatalf("UpdateFullConfiguration: %v", err)
-	}
+			ctrl, err := NewController(configPath, io.Discard)
+			if err != nil {
+				t.Fatalf("NewController: %v", err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if err := ctrl.Start(ctx); err != nil {
+				t.Fatalf("Start controller: %v", err)
+			}
+			defer func() {
+				shutdownCtx, sCancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer sCancel()
+				_ = ctrl.Close(shutdownCtx)
+			}()
 
-	ctrl, err := NewController(configPath, io.Discard)
-	if err != nil {
-		t.Fatalf("NewController: %v", err)
-	}
+			ctrl.mu.RLock()
+			notifEnabled := ctrl.notificationConfig.Enabled
+			ctrl.mu.RUnlock()
+			if notifEnabled != enabled {
+				t.Fatalf("notificationConfig.Enabled = %v, want %v", notifEnabled, enabled)
+			}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+			var mu sync.Mutex
+			receivedNotifications := 0
+			unsubscribe := ctrl.Subscribe(func(event string, payload any) {
+				if event == eventNotification {
+					mu.Lock()
+					receivedNotifications++
+					mu.Unlock()
+				}
+			})
+			defer unsubscribe()
 
-	if err := ctrl.Start(ctx); err != nil {
-		t.Fatalf("Start controller: %v", err)
-	}
-	defer func() {
-		shutdownCtx, sCancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer sCancel()
-		_ = ctrl.Close(shutdownCtx)
-	}()
+			agents := ctrl.GetState().Agents
+			if len(agents) == 0 {
+				t.Fatal("the default configuration started no agent")
+			}
+			prompt := livePrompt(ctrl, agents[0].SessionID, "test-event-1", time.Now().UTC())
+			if !promptOffered(ctrl, prompt.ID) {
+				t.Fatal("the prompt was not taken in, so nothing could have notified it")
+			}
 
-	// Verify notificationConfig is disabled
-	ctrl.mu.RLock()
-	notifEnabled := ctrl.notificationConfig.Enabled
-	ctrl.mu.RUnlock()
-	if notifEnabled {
-		t.Fatalf("notificationConfig.Enabled = true, want false")
-	}
+			// Wait briefly to ensure no notification event was broadcast
+			time.Sleep(50 * time.Millisecond)
 
-	var mu sync.Mutex
-	receivedNotifications := 0
-
-	unsubscribe := ctrl.Subscribe(func(event string, payload any) {
-		if event == eventNotification {
 			mu.Lock()
-			receivedNotifications++
+			count := receivedNotifications
 			mu.Unlock()
-		}
-	})
-	defer unsubscribe()
-
-	// Dispatch an actionable adapter event requiring arbitration
-	arbitrationEv := adapters.Event{
-		ID:        "test-event-1",
-		SessionID: "agent-1",
-		AgentID:   "agent-1",
-		Type:      adapters.EventConfirmation,
-		Summary:   "Do you confirm this action?",
-	}
-
-	ctrl.handleEvent(ctx, ctrl.runtime, session.AdapterEvent{Event: arbitrationEv})
-
-	// Wait briefly to ensure no notification event was broadcast
-	time.Sleep(50 * time.Millisecond)
-
-	mu.Lock()
-	count := receivedNotifications
-	mu.Unlock()
-
-	if count != 0 {
-		t.Errorf("received %d notification event(s) when notifications were disabled, want 0", count)
+			want := map[bool]int{false: 0, true: 1}[enabled]
+			if count != want {
+				t.Errorf("received %d notification event(s) with notifications %v, want %d", count, map[bool]string{false: "off", true: "on"}[enabled], want)
+			}
+		})
 	}
 }

@@ -149,6 +149,12 @@
 //     it from then on: the hand leaves it alone, a person's answer is refused
 //     as stale (ErrDecisionStale), and the policy does not claim it, so that
 //     nothing about it is journaled after the entry that says it is gone.
+//   - A view carries the MCP tool call its prompt asks about, in the form it
+//     may be shown (View.ToolCall): none for a prompt whose text must not be
+//     shown, and otherwise its names and parameter values redacted, each value
+//     as the assignment it is, and bounded. The web gateway shows it to every
+//     client, viewers included, and showed the arguments as the agent printed
+//     them. It is not part of a view's JSON, which stays the desktop's.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

@@ -14,7 +14,6 @@ func newPresenceController() *Controller {
 	return &Controller{
 		runID:       "run-test",
 		agentIndex:  map[string]int{"alpha": 0, "beta": 1},
-		pending:     make(map[string]pendingItem),
 		subscribers: make(map[uint64]func(event string, payload any)),
 		state: AppState{
 			RunID: "run-test",

@@ -41,6 +41,11 @@ func TestSupervisionEventCarriesEveryFieldOfTheCoreView(t *testing.T) {
 		Decisions:      []string{"allow", "deny"},
 	}
 	for index := 0; index < reflect.TypeOf(view).NumField(); index++ {
+		// An unexported field, the tool call the web gateway shows, is not
+		// part of the JSON, and the desktop has no place for it.
+		if !reflect.TypeOf(view).Field(index).IsExported() {
+			continue
+		}
 		if reflect.ValueOf(view).Field(index).IsZero() {
 			t.Fatalf("fixture leaves View.%s unset", reflect.TypeOf(view).Field(index).Name)
 		}

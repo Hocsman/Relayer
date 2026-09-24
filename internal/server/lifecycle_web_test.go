@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -62,6 +61,37 @@ func TestWebAgentCanBeStoppedAndStartedAgainAndAgain(t *testing.T) {
 	}
 }
 
+// livePrompt is a question of the given session, detected at the given time,
+// taken in through the run's event handling as the event loop takes one in.
+// The gateway's tests seeded the gateway's own table of prompts instead; the
+// prompts are the supervision core's now, and a seeded one would test nothing
+// the gateway does.
+func livePrompt(ctrl *Controller, sessionID, id string, detected time.Time) adapters.Event {
+	prompt := adapters.Event{
+		ID:        id,
+		Signature: "signature-" + id,
+		SessionID: sessionID,
+		AgentID:   sessionID,
+		Adapter:   "generic",
+		Type:      adapters.EventConfirmation,
+		Summary:   "a live question",
+		Risk:      adapters.RiskLow,
+		Timestamp: detected,
+	}
+	injectEvent(ctrl, session.AdapterEvent{Event: prompt})
+	return prompt
+}
+
+// promptOffered reports whether a prompt is among those every client reads.
+func promptOffered(ctrl *Controller, id string) bool {
+	for _, pending := range ctrl.GetState().PendingEvents {
+		if pending.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 // TestLosingATmuxSessionClearsRunning: when Relayer loses ownership of a tmux
 // session, the gateway marked the agent "stopped", a status the interface does
 // not clear Running on, so the card kept a Stop button that could only fail.
@@ -73,13 +103,12 @@ func TestLosingATmuxSessionClearsRunning(t *testing.T) {
 	}
 	id := agents[0].SessionID
 	// A prompt was waiting when the session was lost.
-	prompt := adapters.Event{ID: "evt-1", SessionID: id, Type: adapters.EventConfirmation}
-	ctrl.mu.Lock()
-	ctrl.pending[id+":"+prompt.ID] = pendingItem{event: prompt, view: SupervisionEvent{ID: prompt.ID, SessionID: id}}
-	ctrl.rebuildPendingEventsLocked()
-	ctrl.mu.Unlock()
+	prompt := livePrompt(ctrl, id, "evt-1", time.Now().UTC())
+	if !promptOffered(ctrl, prompt.ID) {
+		t.Fatal("the prompt of a live session was not taken in")
+	}
 
-	ctrl.handleEvent(context.Background(), nil, session.Exited{SessionID: id, Err: errors.New("tmux supervision interrupted")})
+	injectEvent(ctrl, session.Exited{SessionID: id, Err: errors.New("tmux supervision interrupted")})
 
 	assertLost := func(when string) {
 		t.Helper()
@@ -89,26 +118,17 @@ func TestLosingATmuxSessionClearsRunning(t *testing.T) {
 				t.Fatalf("%s: agent = running %v, status %q; want not running and failed", when, agent.Running, agent.Status)
 			}
 		}
-		if len(state.PendingEvents) != 0 {
-			t.Fatalf("%s: %d prompt(s) of the lost session still pending, and answering one marked the agent running", when, len(state.PendingEvents))
+		for _, pending := range state.PendingEvents {
+			if strings.EqualFold(pending.SessionID, id) {
+				t.Fatalf("%s: a prompt of the lost session is still pending, and answering it marked the agent running", when)
+			}
 		}
 	}
 	assertLost("after the loss")
 
 	// A withdrawal that arrives afterwards must not revive the agent.
-	ctrl.handleEvent(context.Background(), nil, session.AdapterEventWithdrawn{Event: prompt})
+	injectEvent(ctrl, session.AdapterEventWithdrawn{Event: prompt})
 	assertLost("after a late withdrawal")
-}
-
-// seedPrompt makes a prompt of the given session pending, detected at the
-// given time, as if the event pump had just queued it.
-func seedPrompt(ctrl *Controller, sessionID, id string, detected time.Time) adapters.Event {
-	prompt := adapters.Event{ID: id, SessionID: sessionID, Type: adapters.EventConfirmation, Timestamp: detected}
-	ctrl.mu.Lock()
-	ctrl.pending[sessionID+":"+id] = pendingItem{event: prompt, view: SupervisionEvent{ID: id, SessionID: sessionID, Timestamp: detected.Format(time.RFC3339Nano)}}
-	ctrl.rebuildPendingEventsLocked()
-	ctrl.mu.Unlock()
-	return prompt
 }
 
 // TestAnExitedAgentLosesItsPromptsOnTheWeb: the prompts of an agent that
@@ -120,22 +140,24 @@ func TestAnExitedAgentLosesItsPromptsOnTheWeb(t *testing.T) {
 		t.Skip("the default configuration started no agent on this platform")
 	}
 	id := state.Agents[0].SessionID
+	prompt := livePrompt(ctrl, id, "evt-exit", time.Now().UTC())
+	if !promptOffered(ctrl, prompt.ID) {
+		t.Fatal("the prompt of a live session was not taken in")
+	}
 	if err := ctrl.StopSession(state.RunID, id); err != nil {
 		t.Fatalf("StopSession: %v", err)
 	}
 	agentStateEventually(t, ctrl, id, func(agent AgentState) bool { return !agent.Running })
-
-	prompt := seedPrompt(ctrl, id, "evt-exit", time.Now().UTC())
-	ctrl.mu.RLock()
-	rt := ctrl.runtime
-	ctrl.mu.RUnlock()
-	exit := adapters.Event{ID: "exit-1", SessionID: id, Type: adapters.EventProcessExit, Timestamp: time.Now().UTC()}
-	ctrl.handleEvent(context.Background(), rt, session.AdapterEvent{Event: exit})
-	if pending := ctrl.GetState().PendingEvents; len(pending) != 0 {
-		t.Fatalf("%d prompt(s) of the exited agent still pending", len(pending))
+	// The stop shows the agent exited once it returns; its prompts go with
+	// the process's exit, which follows.
+	for deadline := time.Now().Add(10 * time.Second); promptOffered(ctrl, prompt.ID); {
+		if time.Now().After(deadline) {
+			t.Fatal("the prompt of the exited agent is still pending")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 
-	ctrl.handleEvent(context.Background(), rt, session.AdapterEventWithdrawn{Event: prompt})
+	injectEvent(ctrl, session.AdapterEventWithdrawn{Event: prompt})
 	for _, agent := range ctrl.GetState().Agents {
 		if strings.EqualFold(agent.SessionID, id) && agent.Running {
 			t.Fatal("a late withdrawal marked the exited agent running")
@@ -153,14 +175,15 @@ func TestARestartDropsThePreviousProcesssPrompts(t *testing.T) {
 		t.Skip("the default configuration started no agent on this platform")
 	}
 	id := state.Agents[0].SessionID
-	seedPrompt(ctrl, id, "evt-old", time.Now().UTC().Add(-time.Second))
+	livePrompt(ctrl, id, "evt-old", time.Now().UTC().Add(-time.Second))
+	if !promptOffered(ctrl, "evt-old") {
+		t.Fatal("the prompt of a live session was not taken in")
+	}
 	if err := ctrl.RestartSession(state.RunID, id); err != nil {
 		t.Fatalf("RestartSession: %v", err)
 	}
-	for _, pending := range ctrl.GetState().PendingEvents {
-		if pending.ID == "evt-old" {
-			t.Fatal("the previous process's prompt is still offered after the restart")
-		}
+	if promptOffered(ctrl, "evt-old") {
+		t.Fatal("the previous process's prompt is still offered after the restart")
 	}
 }
 
@@ -177,19 +200,8 @@ func TestAWebLivePromptStampedBeforeTheStartIsStillShown(t *testing.T) {
 	if err := ctrl.RestartSession(state.RunID, id); err != nil {
 		t.Fatalf("RestartSession: %v", err)
 	}
-	ctrl.mu.RLock()
-	rt := ctrl.runtime
-	ctrl.mu.RUnlock()
-	stepped := adapters.Event{ID: "evt-stepped", SessionID: id, AgentID: id, Type: adapters.EventConfirmation, Summary: "a live question", Timestamp: time.Now().UTC().Add(-time.Minute)}
-	ctrl.handleEvent(context.Background(), rt, session.AdapterEvent{Event: stepped})
-
-	shown := false
-	for _, pending := range ctrl.GetState().PendingEvents {
-		if pending.ID == "evt-stepped" {
-			shown = true
-		}
-	}
-	if !shown {
+	livePrompt(ctrl, id, "evt-stepped", time.Now().UTC().Add(-time.Minute))
+	if !promptOffered(ctrl, "evt-stepped") {
 		t.Fatal("a live agent's prompt was dropped because its timestamp preceded the last start")
 	}
 }

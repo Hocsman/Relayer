@@ -29,6 +29,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/preflight"
 	"github.com/Hocsman/Relayer/internal/session"
+	"github.com/Hocsman/Relayer/internal/supervise"
 	"github.com/Hocsman/Relayer/internal/telemetry"
 	"github.com/Hocsman/Relayer/internal/terminal"
 	"github.com/Hocsman/Relayer/internal/toolcatalog"
@@ -55,13 +56,16 @@ var (
 	errUnknownSession = errors.New("unknown session")
 )
 
-type pendingItem struct {
-	event adapters.Event
-	view  SupervisionEvent
-}
-
 // Controller owns the headless supervisor runtime and provides thread-safe
 // query and mutation methods mirroring the RelayerBridge interface.
+//
+// c.mu guards the gateway's own state: the run, its agents' output and
+// presence, the hands and the subscribers. What decides whether a byte reaches
+// an agent — its prompts, the policy's decisions, the agents' supervision
+// state and the journal's failure — is the run's supervision core's, which
+// GetState lays over the gateway's own. The core's sink takes c.mu (see
+// gatewaySink): c.mu is held while reading the core or calling SetHolder and
+// BeginDrain, never while calling an operation that changes the core, or Wait.
 type Controller struct {
 	mu          sync.RWMutex
 	configPath  string
@@ -73,10 +77,16 @@ type Controller struct {
 	plan    *app.DesktopPlan
 	runtime *app.DesktopRuntime
 	runID   string
+	// sup is the run's supervision core, replaced with its runtime: nothing of
+	// a run's prompts, answers or freezes outlives it.
+	sup *supervise.Supervisor
+	// engineWrap, when a test sets it before Start, wraps each run's runtime
+	// where the supervision core meets it: the gateway tests' seam for a
+	// journal, a write or a stop that fails.
+	engineWrap func(supervise.Engine) supervise.Engine
 
 	state       AppState
 	agentIndex  map[string]int // lowercase sessionID -> slice index
-	pending     map[string]pendingItem
 	subscribers map[uint64]func(event string, payload any)
 	nextSubID   uint64
 
@@ -124,7 +134,6 @@ func NewController(configPath string, diagnostics io.Writer) (*Controller, error
 		configPath:         configPath,
 		diagnostics:        diagnostics,
 		agentIndex:         make(map[string]int),
-		pending:            make(map[string]pendingItem),
 		subscribers:        make(map[uint64]func(event string, payload any)),
 		detector:           toolcatalog.DefaultDetector(),
 		notificationConfig: notify.DefaultConfig(),
@@ -164,24 +173,51 @@ func (c *Controller) startLocked(ctx context.Context) error {
 		return fmt.Errorf("starting desktop runtime: %w", err)
 	}
 
+	sessions := rt.Sessions()
+	specs := make([]supervise.AgentSpec, 0, len(sessions))
+	for _, s := range sessions {
+		specs = append(specs, supervise.AgentSpec{
+			SessionID: s.ID,
+			AgentID:   s.ID,
+			Name:      s.Name,
+			Backend:   s.Backend,
+			Adapter:   s.Adapter,
+		})
+	}
+	// Each run gets a supervision core of its own, over its own runtime.
+	var engine supervise.Engine = rt
+	if c.engineWrap != nil {
+		engine = c.engineWrap(engine)
+	}
+	sink := &gatewaySink{c: c, rt: rt}
+	sup, err := supervise.New(runCtx, engine, supervise.Options{RunID: runID, Agents: specs, Sink: sink})
+	if err != nil {
+		cancel()
+		_ = rt.Close(context.Background())
+		return fmt.Errorf("starting the supervision core: %w", err)
+	}
+	sink.sup = sup
+
 	c.ctx = runCtx
 	c.cancel = cancel
 	c.plan = plan
 	c.runtime = rt
 	c.runID = runID
+	c.sup = sup
 
 	metadata := rt.Metadata()
 	c.activeConfigRevision = metadata.ConfigRevision
 	c.notificationConfig = metadata.Notifications
 	c.notifier = notify.NewWithDiagnostics(metadata.Notifications, c.diagnostics, c.diagnostics)
 
-	sessions := rt.Sessions()
 	agents := make([]AgentState, 0, len(sessions))
 	c.agentIndex = make(map[string]int, len(sessions))
 
 	for i, s := range sessions {
 		out, _ := rt.Output(s.ID)
 		c.agentIndex[strings.ToLower(s.ID)] = i
+		// Status, Running and the other supervision fields are the core's,
+		// which starts every agent running.
 		agents = append(agents, AgentState{
 			SessionID:      s.ID,
 			AgentID:        s.ID,
@@ -216,7 +252,17 @@ func (c *Controller) startLocked(ctx context.Context) error {
 		Notices:       rt.StartupLogs(),
 	}
 
-	go c.eventLoop(runCtx, rt)
+	// The hands are the gateway's and outlive a run, so the new core learns
+	// who holds each terminal before it takes in a prompt: a core that did not
+	// know would answer, automatically, a prompt its holder may be answering
+	// by typing. The agents' Attached is rebuilt with it.
+	for key, hand := range c.hands {
+		if hand.held() {
+			c.setAttachedLocked(key, true)
+		}
+	}
+
+	go c.eventLoop(runCtx, rt, sup)
 
 	return nil
 }
@@ -227,6 +273,7 @@ func (c *Controller) Close(ctx context.Context) error {
 	defer c.mu.Unlock()
 
 	if atomic.CompareAndSwapInt32(&c.stopped, 0, 1) {
+		c.beginDrainLocked()
 		if c.cancel != nil {
 			c.cancel()
 		}
@@ -267,7 +314,7 @@ func (c *Controller) broadcast(event string, payload any) {
 	}
 }
 
-func (c *Controller) eventLoop(ctx context.Context, rt *app.DesktopRuntime) {
+func (c *Controller) eventLoop(ctx context.Context, rt *app.DesktopRuntime, sup *supervise.Supervisor) {
 	events := rt.Events()
 	for {
 		select {
@@ -277,279 +324,90 @@ func (c *Controller) eventLoop(ctx context.Context, rt *app.DesktopRuntime) {
 			if !ok {
 				return
 			}
-			c.handleEvent(ctx, rt, ev)
+			c.handleEvent(rt, sup, ev)
 		}
 	}
 }
 
-func (c *Controller) handleEvent(ctx context.Context, rt *app.DesktopRuntime, rawEvent session.Event) {
+// handleEvent takes in one event of a run's session stream. Output stays with
+// the gateway, which reads it again at once; everything else is the core's:
+// a prompt, its withdrawal, a process exit, a lost tmux session and a backend
+// stream error. The core journals each, takes the policy's decision, shows the
+// prompt display-safe and notifies by its rules, through the gateway's sink.
+func (c *Controller) handleEvent(rt *app.DesktopRuntime, sup *supervise.Supervisor, rawEvent session.Event) {
 	switch ev := rawEvent.(type) {
 	case session.OutputAvailable:
-		out, err := rt.AnsiOutput(ev.SessionID)
-		if err != nil {
-			out, err = rt.Output(ev.SessionID)
-		}
-		if err != nil {
-			return
-		}
-		c.mu.Lock()
-		idx, found := c.agentIndex[strings.ToLower(ev.SessionID)]
-		if !found {
-			c.mu.Unlock()
-			return
-		}
-		c.state.Agents[idx].Output = out
-		c.state.Agents[idx].Revision++
-		snap := SnapshotEvent{
-			RunID:       c.runID,
-			SessionID:   ev.SessionID,
-			Revision:    c.state.Agents[idx].Revision,
-			Output:      out,
-			Status:      c.state.Agents[idx].Status,
-			Running:     c.state.Agents[idx].Running,
-			Attached:    c.state.Agents[idx].Attached,
-			InputFrozen: c.state.Agents[idx].InputFrozen,
-			ExitCode:    c.state.Agents[idx].ExitCode,
-		}
-		c.mu.Unlock()
-
-		c.broadcast(eventSnapshot, snap)
-
-	case session.AdapterEvent:
-		adapterEv := ev.Event
-		if adapterEv.Type == adapters.EventProcessExit {
-			if !rt.MarkProcessExited(adapterEv.SessionID) {
-				// The exit of the process before a replacement that already
-				// runs. Showing the agent stopped would hide the live process.
-				return
-			}
-			// "exited" or "failed" are the statuses the interface clears
-			// Running on; v0.8.5 broadcast "stopped", so the card kept a Stop
-			// button that could only fail.
-			status := "exited"
-			if adapterEv.Metadata["failed"] == "true" {
-				status = "failed"
-			}
-			c.mu.Lock()
-			idx, found := c.agentIndex[strings.ToLower(adapterEv.SessionID)]
-			if found {
-				c.state.Agents[idx].Running = false
-				c.state.Agents[idx].Status = status
-			}
-			cleared := c.clearSessionPendingLocked(adapterEv.SessionID)
-			runID := c.runID
-			c.mu.Unlock()
-
-			c.broadcast(eventStatus, StatusEvent{
-				RunID:         runID,
-				Scope:         "session",
-				SessionID:     adapterEv.SessionID,
-				Status:        status,
-				ClearedBefore: cleared,
-			})
-			return
-		}
-
-		if !adapterEv.Actionable() {
-			return
-		}
-
-		evaluation := rt.Evaluate(adapterEv)
-		decisions := rt.SupportedDecisions(adapterEv)
-		decisionStrings := make([]string, 0, len(decisions))
-		for _, d := range decisions {
-			decisionStrings = append(decisionStrings, string(d))
-		}
-
-		ts := adapterEv.Timestamp
-		if ts.IsZero() {
-			ts = time.Now().UTC()
-		}
-		view := SupervisionEvent{
-			RunID:     c.runID,
-			ID:        adapterEv.ID,
-			SessionID: adapterEv.SessionID,
-			AgentID:   adapterEv.AgentID,
-			Adapter:   adapterEv.Adapter,
-			Type:      string(adapterEv.Type),
-			Summary:   adapterEv.Summary,
-			Sensitive: adapterEv.Sensitive,
-			Risk:      string(adapterEv.Risk),
-			Timestamp: ts.UTC().Format(eventTimestampLayout),
-			Evaluation: PolicyEvaluation{
-				Action:         string(evaluation.Action),
-				ProposedAction: string(evaluation.ProposedAction),
-				RuleName:       evaluation.RuleName,
-				Reason:         evaluation.Reason,
-				Automatic:      evaluation.Automatic,
-				DryRun:         evaluation.DryRun,
-			},
-			DeliveryStatus: "pending",
-			Decisions:      decisionStrings,
-			ToolCall:       toolCallView(adapterEv.ToolCall),
-		}
-
-		c.mu.Lock()
-		key := adapterEv.SessionID + ":" + adapterEv.ID
-		c.pending[key] = pendingItem{event: adapterEv, view: view}
-		if idx, found := c.agentIndex[strings.ToLower(adapterEv.SessionID)]; found {
-			c.state.Agents[idx].Status = "waiting"
-		}
-		c.rebuildPendingEventsLocked()
-		c.mu.Unlock()
-
-		c.broadcast(eventSemantic, view)
-		c.broadcast(eventStatus, StatusEvent{
-			RunID:     c.runID,
-			Scope:     "session",
-			SessionID: adapterEv.SessionID,
-			Status:    "waiting",
-		})
-
-		// Notification
-		notif := notify.Notification{
-			Title:     "Relayer Arbitration Required",
-			AgentName: adapterEv.AgentID,
-			SessionID: adapterEv.SessionID,
-			Reason:    evaluation.Reason,
-			EventID:   adapterEv.ID,
-			Kind:      notify.KindPendingDecision,
-			Severity:  notify.SeverityWarning,
-			Details:   adapterEv.Summary,
-			Timestamp: time.Now().UTC(),
-		}
-		// Both are replaced under c.mu when the settings are saved, so they are
-		// read under it too; the notifier was read without the lock.
-		c.mu.RLock()
-		notifier := c.notifier
-		notifConfig := c.notificationConfig
-		c.mu.RUnlock()
-		if notifier != nil {
-			notifier.Notify(notif)
-		}
-
-		if notifConfig.Enabled && notify.SeverityMeetsThreshold(notif.Severity, notifConfig.MinSeverity) {
-			c.broadcast(eventNotification, NotificationEvent{
-				Title:     notif.Title,
-				Body:      adapterEv.Summary,
-				AgentName: adapterEv.AgentID,
-				SessionID: adapterEv.SessionID,
-				EventID:   adapterEv.ID,
-				Kind:      notif.Kind,
-				Severity:  notif.Severity,
-				Reason:    evaluation.Reason,
-				Timestamp: notif.Timestamp.Format(time.RFC3339),
-			})
-		}
-
-	case session.AdapterEventWithdrawn:
-		adapterEv := ev.Event
-		key := adapterEv.SessionID + ":" + adapterEv.ID
-		c.mu.Lock()
-		delete(c.pending, key)
-		// Only a live agent goes back to "running": a withdrawal can arrive after
-		// its exit, and marking a dead agent running brought back a Stop button
-		// that could only fail.
-		running := false
-		if idx, found := c.agentIndex[strings.ToLower(adapterEv.SessionID)]; found && c.state.Agents[idx].Running {
-			c.state.Agents[idx].Status = "running"
-			running = true
-		}
-		c.rebuildPendingEventsLocked()
-		c.mu.Unlock()
-
-		if running {
-			c.broadcast(eventStatus, StatusEvent{
-				RunID:     c.runID,
-				Scope:     "session",
-				SessionID: adapterEv.SessionID,
-				Status:    "running",
-			})
-		}
-
+		c.refreshOutput(rt, sup, ev.SessionID)
 	case session.Exited:
-		// Emitted when Relayer loses ownership of a tmux session: supervision
-		// ended, not necessarily the process. "failed", as on the desktop, is a
-		// status the interface clears Running on; "stopped" left the card
-		// offering a Stop that could only fail.
-		c.mu.Lock()
-		idx, found := c.agentIndex[strings.ToLower(ev.SessionID)]
-		if found {
-			c.state.Agents[idx].Running = false
-			c.state.Agents[idx].Status = "failed"
-		}
-		cleared := c.clearSessionPendingLocked(ev.SessionID)
-		c.mu.Unlock()
-
-		c.broadcast(eventStatus, StatusEvent{
-			RunID:         c.runID,
-			Scope:         "session",
-			SessionID:     ev.SessionID,
-			Status:        "failed",
-			ClearedBefore: cleared,
-		})
+		sup.Handle(ev)
 		c.announceFinishedRecording(ev.SessionID)
-
-	case session.Error:
-		c.broadcast(eventError, SafeErrorEvent{
-			RunID:     c.runID,
-			Code:      "session_error",
-			Message:   ev.Err.Error(),
-			SessionID: ev.SessionID,
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-		})
+	default:
+		sup.Handle(rawEvent)
 	}
 }
 
-// clearSessionPendingLocked drops every prompt of a session that ended: none
-// of them can be answered any more, and the desktop drops them the same way.
-// It returns the StatusEvent ClearedBefore that tells clients to do the same:
-// a millisecond past now, the resolution clients compare at, so it covers
-// every prompt already detected.
-func (c *Controller) clearSessionPendingLocked(sessionID string) string {
-	for key, item := range c.pending {
-		if strings.EqualFold(item.view.SessionID, sessionID) {
-			delete(c.pending, key)
-		}
+// refreshOutput reads a session's bounded output again and shows it to every
+// client, with the agent's supervision state as the core has it. The output is
+// read under c.mu, so that of two refreshes the later revision always carries
+// the later output: the core asks for one from any goroutine it writes on,
+// beside the event loop's.
+func (c *Controller) refreshOutput(rt *app.DesktopRuntime, sup *supervise.Supervisor, sessionID string) {
+	c.mu.Lock()
+	if sup == nil || c.sup != sup {
+		c.mu.Unlock()
+		return
 	}
-	c.rebuildPendingEventsLocked()
-	return time.Now().UTC().Truncate(time.Millisecond).Add(time.Millisecond).Format(time.RFC3339Nano)
+	idx, found := c.agentIndex[strings.ToLower(sessionID)]
+	if !found || idx >= len(c.state.Agents) {
+		c.mu.Unlock()
+		return
+	}
+	out, err := rt.AnsiOutput(sessionID)
+	if err != nil {
+		out, err = rt.Output(sessionID)
+	}
+	if err != nil {
+		c.mu.Unlock()
+		return
+	}
+	agent := &c.state.Agents[idx]
+	agent.Output = out
+	agent.Revision++
+	shown := *agent
+	if supervised, known := sup.Agent(agent.SessionID); known {
+		shown = withSupervision(shown, supervised)
+	}
+	snap := SnapshotEvent{
+		RunID:       c.runID,
+		SessionID:   shown.SessionID,
+		Revision:    shown.Revision,
+		Output:      shown.Output,
+		Status:      shown.Status,
+		Running:     shown.Running,
+		Attached:    shown.Attached,
+		InputFrozen: shown.InputFrozen,
+		ExitCode:    shown.ExitCode,
+	}
+	c.mu.Unlock()
+
+	c.broadcast(eventSnapshot, snap)
 }
 
-// clearSessionPendingBeforeLocked drops the session's prompts detected before
-// the given time, which callers round to the millisecond so that clients,
-// comparing at that resolution, drop exactly the same prompts.
-func (c *Controller) clearSessionPendingBeforeLocked(sessionID string, before time.Time) {
-	for key, item := range c.pending {
-		if strings.EqualFold(item.view.SessionID, sessionID) && pendingDetectedAt(item).Before(before) {
-			delete(c.pending, key)
-		}
+// beginDrainLocked closes the run's core: from here on it takes nothing in and
+// starts no write. BeginDrain never calls the sink, so it is made under c.mu.
+func (c *Controller) beginDrainLocked() {
+	if c.sup != nil {
+		c.sup.BeginDrain()
 	}
-	c.rebuildPendingEventsLocked()
 }
 
-// eventTimestampLayout is RFC 3339 with a fixed nine-digit fraction. Prompts are
-// ordered by comparing their timestamps as text, here and in the interface;
-// RFC3339Nano drops trailing zeros, so a prompt at .1 sorted after one at .12.
-const eventTimestampLayout = "2006-01-02T15:04:05.000000000Z07:00"
-
-func pendingDetectedAt(item pendingItem) time.Time {
-	if !item.event.Timestamp.IsZero() {
-		return item.event.Timestamp
-	}
-	detected, _ := time.Parse(time.RFC3339Nano, item.view.Timestamp)
-	return detected
-}
-
-func (c *Controller) rebuildPendingEventsLocked() {
-	list := make([]SupervisionEvent, 0, len(c.pending))
-	for _, item := range c.pending {
-		list = append(list, item.view)
-	}
-	sort.Slice(list, func(i, j int) bool {
-		return list[i].Timestamp < list[j].Timestamp
-	})
-	c.state.PendingEvents = list
+// supervisor returns the run's supervision core and its run ID, or nil between
+// runs. The core refuses a nil receiver's operations as a stopped run's, once
+// it has checked their arguments.
+func (c *Controller) supervisor() (*supervise.Supervisor, string) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.sup, c.runID
 }
 
 // -------------------------------------------------------------
@@ -560,6 +418,9 @@ func (c *Controller) cloneStateLocked() AppState {
 	cloned := c.state
 	cloned.Agents = make([]AgentState, len(c.state.Agents))
 	copy(cloned.Agents, c.state.Agents)
+	for index := range cloned.Agents {
+		cloned.Agents[index].ExitCode = cloneExitCode(c.state.Agents[index].ExitCode)
+	}
 	cloned.PendingEvents = make([]SupervisionEvent, len(c.state.PendingEvents))
 	copy(cloned.PendingEvents, c.state.PendingEvents)
 	if c.state.Notices != nil {
@@ -569,10 +430,38 @@ func (c *Controller) cloneStateLocked() AppState {
 	return cloned
 }
 
+// stateLocked is a deep copy of the display state: the gateway's own fields,
+// with the run's supervision state laid over them from one reading of its
+// core. The caller holds c.mu.
+func (c *Controller) stateLocked() AppState {
+	state := c.cloneStateLocked()
+	if c.sup == nil {
+		return state
+	}
+	core := c.sup.State()
+	agents := make(map[string]supervise.Agent, len(core.Agents))
+	for _, agent := range core.Agents {
+		agents[strings.ToLower(agent.SessionID)] = agent
+	}
+	for index := range state.Agents {
+		if agent, found := agents[strings.ToLower(state.Agents[index].SessionID)]; found {
+			state.Agents[index] = withSupervision(state.Agents[index], agent)
+		}
+	}
+	state.PendingEvents = make([]SupervisionEvent, 0, len(core.Pending))
+	for _, view := range core.Pending {
+		state.PendingEvents = append(state.PendingEvents, supervisionEventFromView(view))
+	}
+	if core.AuditFailed {
+		state.Audit.Status = "failed"
+	}
+	return state
+}
+
 func (c *Controller) GetState() AppState {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.cloneStateLocked()
+	return c.stateLocked()
 }
 
 func (c *Controller) RunPreflight(ctx context.Context) (PreflightReport, error) {
@@ -595,147 +484,30 @@ func (c *Controller) SubmitDecision(runID, sessionID, eventID, value string) err
 	return c.SubmitDecisionWithOperator(runID, sessionID, eventID, value, "operator")
 }
 
+// SubmitDecisionWithOperator answers a prompt through the run's supervision
+// core, which journals the decision before it writes it, keeps the prompt
+// pending until the write has an outcome, writes one answer at a time to a
+// session, and freezes the session when a write's outcome is unknown.
+//
+// The gateway deleted the prompt before the answer was written, so a failed
+// write lost it on every screen, journaled the answer after the fact with the
+// journal's errors ignored, and wrote two answers to one terminal at once.
 func (c *Controller) SubmitDecisionWithOperator(runID, sessionID, eventID, value, operator string) error {
-	c.mu.Lock()
-	if c.runID != runID && runID != "" {
-		c.mu.Unlock()
-		return errors.New("run is no longer active")
+	sup, currentRun := c.supervisor()
+	if strings.TrimSpace(runID) == "" {
+		runID = currentRun
 	}
-
-	key := sessionID + ":" + eventID
-	item, found := c.pending[key]
-	if !found {
-		c.mu.Unlock()
-		return errors.New("pending event not found")
-	}
-
-	rt := c.runtime
-	delete(c.pending, key)
-	backend := ""
-	if idx, ok := c.agentIndex[strings.ToLower(sessionID)]; ok {
-		if c.state.Agents[idx].Running {
-			c.state.Agents[idx].Status = "running"
-		}
-		backend = c.state.Agents[idx].Backend
-	}
-	c.rebuildPendingEventsLocked()
-	c.mu.Unlock()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
 	if strings.TrimSpace(operator) == "" {
 		operator = "operator"
 	}
-
-	var (
-		decision      adapters.Decision
-		manualInput   string
-		auditDecision audit.Decision
-	)
+	actor := supervise.Actor{Identity: operator, Role: supervise.RoleOperator}
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "allow", "yes", "y":
-		decision = adapters.DecisionAllow
-		auditDecision = audit.DecisionAllow
+		return sup.SubmitAutomaticDecision(runID, sessionID, eventID, string(adapters.DecisionAllow), actor)
 	case "deny", "no", "n":
-		decision = adapters.DecisionDeny
-		auditDecision = audit.DecisionDeny
-	default:
-		decision = adapters.DecisionManual
-		manualInput = strings.TrimRight(value, "\r\n")
-		auditDecision = audit.DecisionAllow
+		return sup.SubmitAutomaticDecision(runID, sessionID, eventID, string(adapters.DecisionDeny), actor)
 	}
-
-	ruleName := item.view.Evaluation.RuleName
-
-	// 1. Record decision audit entry with operator attribution
-	_ = rt.RecordAudit(audit.Entry{
-		Kind:       audit.KindDecision,
-		SessionID:  strings.TrimSpace(sessionID),
-		AgentID:    strings.TrimSpace(item.event.AgentID),
-		Backend:    strings.ToLower(strings.TrimSpace(backend)),
-		Adapter:    strings.ToLower(strings.TrimSpace(item.event.Adapter)),
-		EventID:    strings.TrimSpace(eventID),
-		EventType:  item.event.Type,
-		Risk:       item.event.Risk,
-		Rule:       ruleName,
-		Decision:   auditDecision,
-		DecisionBy: audit.DecisionByHuman,
-		Operator:   operator,
-		Outcome:    audit.OutcomeInFlight,
-		Reason:     "decision_selected",
-		Metadata: map[string]string{
-			"operator": operator,
-			"role":     "operator",
-		},
-	})
-
-	err := rt.ApplyDecision(ctx, sessionID, item.event, decision, manualInput)
-	if err != nil {
-		_ = rt.RecordAudit(audit.Entry{
-			Kind:       audit.KindDelivery,
-			SessionID:  strings.TrimSpace(sessionID),
-			AgentID:    strings.TrimSpace(item.event.AgentID),
-			Backend:    strings.ToLower(strings.TrimSpace(backend)),
-			Adapter:    strings.ToLower(strings.TrimSpace(item.event.Adapter)),
-			EventID:    strings.TrimSpace(eventID),
-			EventType:  item.event.Type,
-			Risk:       item.event.Risk,
-			Rule:       ruleName,
-			Decision:   auditDecision,
-			DecisionBy: audit.DecisionByHuman,
-			Operator:   operator,
-			Outcome:    audit.OutcomeFailed,
-			Reason:     "delivery_failed",
-			Metadata: map[string]string{
-				"operator": operator,
-				"role":     "operator",
-			},
-		})
-		return err
-	}
-
-	_ = rt.RecordAudit(audit.Entry{
-		Kind:       audit.KindDelivery,
-		SessionID:  strings.TrimSpace(sessionID),
-		AgentID:    strings.TrimSpace(item.event.AgentID),
-		Backend:    strings.ToLower(strings.TrimSpace(backend)),
-		Adapter:    strings.ToLower(strings.TrimSpace(item.event.Adapter)),
-		EventID:    strings.TrimSpace(eventID),
-		EventType:  item.event.Type,
-		Risk:       item.event.Risk,
-		Rule:       ruleName,
-		Decision:   auditDecision,
-		DecisionBy: audit.DecisionByHuman,
-		Operator:   operator,
-		Outcome:    audit.OutcomeApplied,
-		Reason:     "delivery_applied",
-		Metadata: map[string]string{
-			"operator": operator,
-			"role":     "operator",
-		},
-	})
-
-	item.view.DeliveryStatus = "delivered"
-	c.broadcast(eventSemantic, item.view)
-	// The agent may have exited on the answer, and its exit already said so:
-	// a "running" after it revived the dead agent's card on every client.
-	c.mu.RLock()
-	stillRunning := false
-	if idx, ok := c.agentIndex[strings.ToLower(sessionID)]; ok {
-		stillRunning = c.state.Agents[idx].Running
-	}
-	c.mu.RUnlock()
-	if stillRunning {
-		c.broadcast(eventStatus, StatusEvent{
-			RunID:     runID,
-			Scope:     "session",
-			SessionID: sessionID,
-			Status:    "running",
-		})
-	}
-
-	return nil
+	return sup.SubmitDecision(runID, sessionID, eventID, strings.TrimRight(value, "\r\n"), actor)
 }
 
 func (c *Controller) SubmitAutomaticDecision(runID, sessionID, eventID, decision string) error {
@@ -882,11 +654,20 @@ func (c *Controller) SetInteractiveSession(runID, sessionID string, active bool,
 		},
 	})
 
+	// The status is the core's: the gateway's own copy of it is never updated,
+	// and a prompt the hand just turned into an ask leaves the agent waiting.
+	status := agent.Status
+	sup, currentRun := c.supervisor()
+	if sup != nil {
+		if supervised, known := sup.Agent(sessionID); known {
+			status = supervised.Status
+		}
+	}
 	c.broadcast(eventStatus, StatusEvent{
-		RunID:     runID,
+		RunID:     currentRun,
 		Scope:     "session",
-		SessionID: sessionID,
-		Status:    agent.Status,
+		SessionID: agent.SessionID,
+		Status:    status,
 	})
 
 	return nil
@@ -927,97 +708,34 @@ func (c *Controller) roleFor(connID string) string {
 	return entry.role
 }
 
+// StopSession, StartSession and RestartSession go through the run's
+// supervision core, which owns whether an agent runs: it takes in only the
+// prompts of a running agent, so a start it did not see left the new process's
+// prompts unsupervised. The core shows the agent stopping or starting while the
+// operation runs, refuses one while an answer or a line is still being written
+// to the session, drops the previous process's prompts when a start begins,
+// freezes a session whose stop failed, and reports a failure by a fixed
+// message rather than the backend's own text.
 func (c *Controller) StopSession(runID, sessionID string) error {
-	c.mu.RLock()
-	rt := c.runtime
-	c.mu.RUnlock()
-
-	if rt == nil {
-		return errors.New("supervisor runtime not ready")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), session.StopBudget+2*time.Second)
-	defer cancel()
-
-	return rt.StopAgent(ctx, sessionID)
+	sup, currentRun := c.supervisor()
+	return sup.StopSession(currentRun, sessionID)
 }
 
 func (c *Controller) StartSession(runID, sessionID string) error {
-	c.mu.RLock()
-	rt := c.runtime
-	c.mu.RUnlock()
-
-	if rt == nil {
-		return errors.New("supervisor runtime not ready")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	startedAt := time.Now().UTC()
-	if err := rt.StartAgent(ctx, sessionID); err != nil {
-		return err
-	}
-	c.markSessionStarted(sessionID, startedAt)
-	return nil
-}
-
-// markSessionStarted shows a freshly started agent as running and tells every
-// client. v0.8.5 never did: Running stayed false after a start, so the card
-// offered Start for an agent that was running, and a second click hit the
-// lifecycle's "still running" refusal.
-func (c *Controller) markSessionStarted(sessionID string, startedAt time.Time) {
-	c.mu.Lock()
-	idx, found := c.agentIndex[strings.ToLower(strings.TrimSpace(sessionID))]
-	if found && idx < len(c.state.Agents) {
-		c.state.Agents[idx].Running = true
-		c.state.Agents[idx].Status = "running"
-		c.state.Agents[idx].ExitCode = nil
-	}
-	// The previous process's prompts go. Its exit, arriving during the start,
-	// is set aside as stale, and they used to stay offered on a replacement
-	// that never raised them. The new process's own are kept.
-	bound := startedAt.Truncate(time.Millisecond)
-	c.clearSessionPendingBeforeLocked(sessionID, bound)
-	runID := c.runID
-	c.mu.Unlock()
-	if !found {
-		return
-	}
-	c.broadcast(eventStatus, StatusEvent{
-		RunID:         runID,
-		Scope:         "session",
-		SessionID:     sessionID,
-		Status:        "running",
-		ClearedBefore: bound.Format(time.RFC3339Nano),
-	})
+	sup, currentRun := c.supervisor()
+	return sup.StartSession(currentRun, sessionID)
 }
 
 func (c *Controller) RestartSession(runID, sessionID string) error {
-	c.mu.RLock()
-	rt := c.runtime
-	c.mu.RUnlock()
-
-	if rt == nil {
-		return errors.New("supervisor runtime not ready")
-	}
-
-	// The stop, the wait for its session to settle, then the start.
-	ctx, cancel := context.WithTimeout(context.Background(), session.StopBudget+5*time.Second)
-	defer cancel()
-
-	startedAt := time.Now().UTC()
-	if err := rt.RestartAgent(ctx, sessionID); err != nil {
-		return err
-	}
-	c.markSessionStarted(sessionID, startedAt)
-	return nil
+	sup, currentRun := c.supervisor()
+	return sup.RestartSession(currentRun, sessionID)
 }
 
 func (c *Controller) StopRun(runID string) (AppState, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	c.beginDrainLocked()
 	if c.cancel != nil {
 		c.cancel()
 	}
@@ -1025,7 +743,7 @@ func (c *Controller) StopRun(runID string) (AppState, error) {
 		_ = c.runtime.Close(context.Background())
 	}
 	c.state.RunStatus = "stopped"
-	return c.cloneStateLocked(), nil
+	return c.stateLocked(), nil
 }
 
 // -------------------------------------------------------------
@@ -1230,7 +948,9 @@ func (c *Controller) SaveAgentProfilesAndRestart(req SaveAgentProfilesAndRestart
 	_, _ = rand.Read(tokenBytes)
 	c.revisionToken = hex.EncodeToString(tokenBytes)
 
-	// Stop existing runtime
+	// Stop existing runtime. Its core takes nothing more in and starts no
+	// write, and what it still shows is dropped once the new run replaces it.
+	c.beginDrainLocked()
 	if c.cancel != nil {
 		c.cancel()
 	}
@@ -1246,7 +966,7 @@ func (c *Controller) SaveAgentProfilesAndRestart(req SaveAgentProfilesAndRestart
 	profilesView, _ := c.loadAgentProfilesLocked()
 	return LifecycleResult{
 		Outcome:  "restarted",
-		State:    c.cloneStateLocked(),
+		State:    c.stateLocked(),
 		Profiles: profilesView,
 	}, nil
 }
