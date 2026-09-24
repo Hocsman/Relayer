@@ -691,3 +691,83 @@ func TestAJournalThatRefusesTheHandsEntryFreezesTheRun(t *testing.T) {
 		t.Fatalf("an answer once the journal failed = %v, want ErrDeliveryUncertain", err)
 	}
 }
+
+// The hand may be taken, released and taken again while the entries of its
+// first taking are still being journaled. A person's answer waits only for
+// the entries its session owes last, so those of the second taking wait for
+// the first's: the journal still says why each prompt was asked before who
+// answered it.
+func TestTheHandTakenAgainJournalsAfterItsFirstEntries(t *testing.T) {
+	engine := newFakeEngine()
+	for _, id := range []string{"automatic-0", "automatic-1", "automatic-2"} {
+		engine.evaluationByID[id] = automaticAllow()
+	}
+	applyStarted, releaseWrites := holdTheFirstWrite(t, engine)
+	defer releaseWrites()
+	sup, _ := newCoreForTest(t, engine, "agent-a")
+	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "automatic-0")})
+	awaitWrite(t, applyStarted, "the first automatic answer")
+	first := promptEvent("agent-a", "automatic-1")
+	first.Sequence = 2
+	sup.Handle(session.AdapterEvent{Event: first})
+
+	journalStarted := make(chan struct{}, 1)
+	journalRelease := make(chan struct{})
+	releaseJournal := releaser(t, journalRelease)
+	defer releaseJournal()
+	engine.set(func(f *fakeEngine) {
+		f.auditBlockKind = audit.KindPolicyEvaluated
+		f.auditBlockEventID = "automatic-1"
+		f.auditStarted = journalStarted
+		f.auditRelease = journalRelease
+		f.applyStarted = nil
+	})
+	sup.SetHolder("agent-a", "conn-1")
+	select {
+	case <-journalStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the first hand's entry was never journaled")
+	}
+	sup.SetHolder("agent-a", "")
+	second := promptEvent("agent-a", "automatic-2")
+	second.Sequence = 3
+	sup.Handle(session.AdapterEvent{Event: second})
+	sup.SetHolder("agent-a", "conn-1")
+	assertShownAskedForTheHand(t, sup, "automatic-2")
+	releaseWrites()
+	waitFor(t, 2*time.Second, "the first answer", func() bool {
+		return len(engine.auditFor(audit.KindDelivery, "automatic-0")) == 1
+	})
+
+	done := make(chan error, 1)
+	go func() { done <- answerOnceFree(sup, "automatic-1") }()
+	time.Sleep(50 * time.Millisecond)
+	if decisions := engine.auditFor(audit.KindDecision, "automatic-1"); len(decisions) != 0 {
+		t.Fatalf("the answer was journaled before the first hand's entry: %#v", decisions)
+	}
+	releaseJournal()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("the answer: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the prompt was never answered")
+	}
+	asked, answered := -1, -1
+	for index, entry := range engine.auditSnapshot() {
+		if entry.EventID != "automatic-1" {
+			continue
+		}
+		if entry.Kind == audit.KindPolicyEvaluated && entry.Reason == supervise.ReasonOperatorAttached {
+			asked = index
+		}
+		if entry.Kind == audit.KindDecision {
+			answered = index
+		}
+	}
+	if asked < 0 || answered < asked {
+		t.Fatalf("journal = %v, want the first hand's entry (%d) before the answer (%d)", kindsOf(engine.auditSnapshot()), asked, answered)
+	}
+	assertAskedForTheHand(t, engine, sup, "automatic-2", 2)
+}

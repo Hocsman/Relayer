@@ -59,9 +59,11 @@ type fakeEngine struct {
 	auditFailAt  int
 	// auditBlockKind holds each entry of that kind, before it is journaled,
 	// until auditRelease is closed; auditStarted is signalled as each waits.
-	auditBlockKind audit.Kind
-	auditStarted   chan struct{}
-	auditRelease   <-chan struct{}
+	// auditBlockEventID, when set, holds only that event's entries.
+	auditBlockKind    audit.Kind
+	auditBlockEventID string
+	auditStarted      chan struct{}
+	auditRelease      <-chan struct{}
 
 	stopErr           error
 	stopCalls         []string
@@ -268,7 +270,8 @@ func (f *fakeEngine) MarkProcessExited(string) bool {
 
 func (f *fakeEngine) RecordAudit(entry audit.Entry) error {
 	f.mu.Lock()
-	block := f.auditBlockKind != "" && entry.Kind == f.auditBlockKind
+	block := f.auditBlockKind != "" && entry.Kind == f.auditBlockKind &&
+		(f.auditBlockEventID == "" || entry.EventID == f.auditBlockEventID)
 	started := f.auditStarted
 	release := f.auditRelease
 	f.mu.Unlock()
