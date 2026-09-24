@@ -222,6 +222,48 @@ describe("webBridge", () => {
     }
   });
 
+  // A request that timed out was reported to the operator as failed. Sending
+  // it once the socket is back would deliver an answer to a prompt minutes
+  // later, after the page had said it was not sent and taken the server's
+  // state again.
+  it("never sends a request it already gave up on", async () => {
+    vi.useFakeTimers();
+    try {
+      const bridge = createWebBridge({ token: "tok", rpcTimeoutMs: 500 });
+      await vi.advanceTimersByTimeAsync(10);
+      MockWebSocket.instances[0].close();
+
+      const answer = bridge.submitAutomaticDecision("run-1", "agent-a", "prompt-1", "allow");
+      const rejected = expect(answer).rejects.toThrow(/timed out/);
+      await vi.advanceTimersByTimeAsync(600);
+      await rejected;
+
+      await vi.advanceTimersByTimeAsync(1600);
+      expect(MockWebSocket.instances).toHaveLength(2);
+      const sent = MockWebSocket.instances[1].sentMessages.map((message) => JSON.parse(message).method);
+      expect(sent).not.toContain("submitAutomaticDecision");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still sends a queued request that has not timed out", async () => {
+    vi.useFakeTimers();
+    try {
+      const bridge = createWebBridge({ token: "tok", rpcTimeoutMs: 5000 });
+      await vi.advanceTimersByTimeAsync(10);
+      MockWebSocket.instances[0].close();
+
+      void bridge.submitAutomaticDecision("run-1", "agent-a", "prompt-1", "allow");
+      await vi.advanceTimersByTimeAsync(1600);
+
+      const sent = MockWebSocket.instances[1].sentMessages.map((message) => JSON.parse(message).method);
+      expect(sent).toEqual(["submitAutomaticDecision"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("queues requests before connection opens and flushes on open", async () => {
     const bridge = createWebBridge({ token: "tok" });
     const ws = MockWebSocket.instances[0];

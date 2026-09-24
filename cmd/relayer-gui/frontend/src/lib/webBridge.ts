@@ -175,9 +175,17 @@ export function createWebBridge(options: WebBridgeOptions = {}): RelayerBridge {
     return new Promise<T>((resolve, reject) => {
       const id = String(nextRpcId++);
       const timeoutMs = options.rpcTimeoutMs ?? 15000;
+      const message = JSON.stringify({ id, method, params });
 
       const timeoutId = setTimeout(() => {
         pendingRpcs.delete(id);
+        // A request still waiting for the socket when it times out is taken
+        // out of the queue. The caller has been told it failed, and for an
+        // answer the page then takes the server's state again; sending it once
+        // the socket is back would answer a prompt minutes later, behind the
+        // operator's back.
+        const queued = sendQueue.indexOf(message);
+        if (queued >= 0) sendQueue.splice(queued, 1);
         reject(new Error(`RPC request ${method} (id=${id}) timed out after ${timeoutMs}ms`));
       }, timeoutMs);
 
@@ -187,7 +195,6 @@ export function createWebBridge(options: WebBridgeOptions = {}): RelayerBridge {
         timeoutId,
       });
 
-      const message = JSON.stringify({ id, method, params });
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(message);
       } else {
