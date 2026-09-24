@@ -4,6 +4,8 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.8] - 2026-09-24
+
 Patch release that stops Relayer answering one prompt twice. Once an answer was delivered, the answered question stayed painted on the rendered screen, which every Windows session and every agent that repaints uses, and the next write raised it again as a new prompt with a new ID. Under an automatic policy the desktop typed a second answer into the agent; a human was shown a card for a question already answered, and while it was pending the agent's next real question stayed hidden. Adapters now remember an answered question on its row, across a clear, a full-screen program and a resize. The desktop's supervision now runs on a shared core, which the web gateway adopts in v0.8.9. The gaps that remain are listed below.
 
 ### Security
@@ -919,7 +921,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.7...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.8...main
+[0.8.8]: https://github.com/Hocsman/Relayer/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/Hocsman/Relayer/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/Hocsman/Relayer/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/Hocsman/Relayer/compare/v0.8.4...v0.8.5
