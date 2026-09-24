@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ToolCallBadge } from "./ToolCallBadge";
 import { useDialogKeyboard } from "../hooks/useDialogKeyboard";
 import { promptContextLines, safeEventSummary } from "../lib/safety";
-import { deliveryRequiresResync } from "../lib/delivery";
+import { answerLocked, deliveryRequiresResync, policyDecisionInProgress } from "../lib/delivery";
 import type { AgentState, SemanticDecision, SupervisionEvent } from "../types/relayer";
 
 interface DecisionModalProps {
@@ -65,13 +65,18 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
   }, [event?.runID, event?.sessionID, event?.id]);
 
   const indeterminateDelivery = event ? deliveryRequiresResync(event) : false;
+  // Every path that sends something checks `locked`: the buttons, the form,
+  // Ctrl+Enter and Esc. A prompt the server is delivering, or one the policy is
+  // about to answer, is not this operator's to answer, whoever started it.
+  const policyDeciding = event ? policyDecisionInProgress(event) : false;
+  const locked = event ? answerLocked(event) : false;
   const context = event?.sensitive ? [] : promptContextLines(agent?.output ?? "");
   const offered = (event?.decisions ?? []).filter(
     (decision): decision is SemanticDecision => decision === "allow" || decision === "deny",
   );
 
   const decide = async (decision: SemanticDecision) => {
-    if (busy || indeterminateDelivery || readOnly || !event) return;
+    if (busy || locked || readOnly || !event) return;
     setBusy(true);
     try {
       const delivered = await onDecide(event.runID, event.sessionID, event.id, decision);
@@ -82,7 +87,7 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
   };
 
   const submitDirect = async (value: string) => {
-    if (!inputRef.current || value.length === 0 || busy || indeterminateDelivery || readOnly || !event) return;
+    if (!inputRef.current || value.length === 0 || busy || locked || readOnly || !event) return;
     inputRef.current.value = "";
     setBusy(true);
     try {
@@ -101,8 +106,11 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
     await submitDirect(input.value);
   };
 
+  // Esc is the Deny shortcut, and Deny is an answer. On a prompt nobody may
+  // answer from here it falls back to what Esc means everywhere else, which is
+  // to minimize, and sends nothing.
   const handleEscape = () => {
-    if (readOnly) {
+    if (readOnly || locked) {
       onClose();
       return;
     }
@@ -121,7 +129,7 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
   });
 
   useEffect(() => {
-    if (!event || busy || indeterminateDelivery || readOnly) return;
+    if (!event || busy || locked || readOnly) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
@@ -138,7 +146,7 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [event, busy, indeterminateDelivery, offered, readOnly]);
+  }, [event, busy, locked, offered, readOnly]);
 
   if (!event) return null;
 
@@ -155,7 +163,7 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
         <header className="decision-modal__header">
           <div className="decision-modal__signal" aria-hidden="true">!</div>
           <div>
-            <span className="eyebrow">Human action required</span>
+            <span className="eyebrow">{policyDeciding ? "Policy decision in progress" : "Human action required"}</span>
             <h2 id="decision-title">{safeEventSummary(event)}</h2>
           </div>
           <button className="icon-button" type="button" onClick={onClose} disabled={busy} aria-label="Minimize">
@@ -206,6 +214,18 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
           </p>
         )}
 
+        {!indeterminateDelivery && policyDeciding && (
+          <p className="delivery-progress" role="status">
+            The policy answers this prompt itself ({event.evaluation.action}). Nothing can be sent from here meanwhile.
+          </p>
+        )}
+
+        {!indeterminateDelivery && !policyDeciding && event.deliveryStatus === "delivering" && (
+          <p className="delivery-progress" role="status">
+            An answer to this prompt is being delivered. Nothing more can be sent until it is confirmed.
+          </p>
+        )}
+
         {readOnly && (
           <p className="decision-modal__viewer-notice" role="alert">
             Mode Lecture Seule — En attente d'un arbitrage par un opérateur.
@@ -219,7 +239,7 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
                 key={decision}
                 type="button"
                 className={`button button--decision button--decision-${decision}`}
-                disabled={busy || indeterminateDelivery || readOnly}
+                disabled={busy || locked || readOnly}
                 onClick={() => void decide(decision)}
               >
                 <span>{decisionLabels[decision]}</span>
@@ -254,12 +274,12 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
               spellCheck={false}
               data-1p-ignore
               placeholder={readOnly ? "Read-only (viewer)" : event.sensitive ? "••••••••" : "Type your answer…"}
-              disabled={busy || indeterminateDelivery || readOnly}
+              disabled={busy || locked || readOnly}
             />
             <button
               className={`button button--${offered.length > 0 ? "ghost" : "primary"}`}
               type="submit"
-              disabled={busy || indeterminateDelivery || readOnly}
+              disabled={busy || locked || readOnly}
             >
               {busy ? "Submitting…" : "Submit"}
             </button>

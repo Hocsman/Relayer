@@ -136,6 +136,69 @@ describe("DecisionModal answer weighting", () => {
   });
 });
 
+// Once an answer is on its way, a second one can only be refused, or worse,
+// typed into whatever the agent prints next. The server now delivers the
+// policy's own answers, so "on its way" also covers an automatic prompt that
+// is still pending: the server is about to decide it.
+describe("DecisionModal while an answer is on its way", () => {
+  function controls(markup: string) {
+    const actions = markup.slice(markup.indexOf("decision-actions"));
+    return {
+      decisions: actions.slice(0, actions.indexOf("</div>")).match(/disabled/g)?.length ?? 0,
+      input: /<input[^>]*id="manual-decision"[^>]*disabled/.test(markup),
+      submit: markup.includes('type="submit" disabled'),
+    };
+  }
+
+  const automatic = {
+    action: "allow" as const,
+    proposedAction: "allow" as const,
+    ruleName: "safe-reads",
+    reason: "rule_match",
+    automatic: true,
+    dryRun: false,
+  };
+
+  it("leaves a person's pending prompt answerable", () => {
+    expect(controls(render(event({ decisions: ["allow", "deny"] })))).toEqual({
+      decisions: 0,
+      input: false,
+      submit: false,
+    });
+  });
+
+  it("disables every answer while the prompt is being delivered", () => {
+    const markup = render(event({ decisions: ["allow", "deny"], deliveryStatus: "delivering" }));
+    expect(controls(markup)).toEqual({ decisions: 2, input: true, submit: true });
+    expect(markup).toContain("being delivered");
+  });
+
+  it("disables every answer while the policy is about to decide the prompt", () => {
+    const markup = render(event({ decisions: ["allow", "deny"], evaluation: automatic }));
+    expect(controls(markup)).toEqual({ decisions: 2, input: true, submit: true });
+    expect(markup).toContain("Policy decision in progress");
+    expect(markup).not.toContain("Human action required");
+  });
+
+  it("disables every answer while the policy's answer is being delivered", () => {
+    const markup = render(event({
+      decisions: ["allow", "deny"],
+      evaluation: automatic,
+      deliveryStatus: "delivering",
+    }));
+    expect(controls(markup)).toEqual({ decisions: 2, input: true, submit: true });
+  });
+
+  it("asks a person again once the policy hands the prompt back", () => {
+    const markup = render(event({
+      decisions: ["allow", "deny"],
+      evaluation: { ...automatic, action: "ask", automatic: false, reason: "fallback_unsupported" },
+    }));
+    expect(controls(markup)).toEqual({ decisions: 0, input: false, submit: false });
+    expect(markup).toContain("Human action required");
+  });
+});
+
 describe("DecisionModal readOnly mode (Viewer)", () => {
   it("renders viewer notice and disables all arbitration controls when readOnly", () => {
     const markup = renderToStaticMarkup(

@@ -1363,6 +1363,20 @@ input:focus-visible {
   font-weight: 650;
 }
 
+/* An answer on its way — the policy's or anybody's. Cyan, not red: nothing is
+   wrong, the controls are only waiting for the server to say how it ended. */
+.delivery-progress {
+  margin: 12px 20px 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(66, 217, 232, 0.24);
+  border-radius: 8px;
+  color: var(--cyan);
+  background: var(--cyan-soft);
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
 .delivery-lock {
   margin: 12px 20px 0;
   padding: 9px 10px;
