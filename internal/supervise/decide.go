@@ -121,7 +121,7 @@ func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluati
 	// journal and write its answer once a hand taken meanwhile held the
 	// terminal. Nothing can be typed while the claim holds the session's
 	// write slot, so who holds the hand now is all there is to check.
-	current := s.guardHeld(key.sessionID, s.guardRepeat(key, event, s.engine.Evaluate(event)))
+	current := s.guardRepeat(key, event, s.guardHeld(key.sessionID, s.engine.Evaluate(event)))
 	if !current.Automatic || current.Action != evaluation.Action {
 		if !s.recordAudit(policyAuditEntry(event, backend, askEvaluation(current, current.Reason))) {
 			s.markDelivery(key, "failed", "audit_unavailable")

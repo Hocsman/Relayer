@@ -189,8 +189,11 @@ type writeClaim struct {
 // ingestion is a prompt being taken in (reserveEvent), until it is pending or
 // set aside. hand is the session's hand generation when it was reserved: a
 // hand taken since, even one released again, may have typed its answer.
+// signature is the prompt's, which keystrokes written meanwhile count as
+// answered (finishRaw).
 type ingestion struct {
-	hand uint64
+	hand      uint64
+	signature string
 }
 
 // pendingEvent is a prompt the run waits on. evaluation is the policy's, as

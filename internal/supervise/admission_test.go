@@ -202,6 +202,12 @@ func TestRawInputIsRefusedWhenTheSessionCannotTakeAWrite(t *testing.T) {
 // write slot: a person's answer and a line are refused as while an answer is
 // being written, and so is more raw input; the policy's answer waits and is
 // written once the keystrokes are released. Other sessions are not held up.
+//
+// The policy's prompt has no Signature. The keystrokes count as an answer to
+// every prompt pending while they are written, and a prompt with a Signature
+// is then asked as a repeat rather than answered
+// (TestAPromptRaisedWhileKeystrokesAreWrittenIsAskedOnceTheyAre); one without
+// repeats nothing.
 func TestAdmittedRawInputHoldsTheSessionsWriteSlot(t *testing.T) {
 	engine := newFakeEngine()
 	engine.evaluationByID["automatic-2"] = automaticAllow()
@@ -248,6 +254,7 @@ func TestAdmittedRawInputHoldsTheSessionsWriteSlot(t *testing.T) {
 	}
 	automatic := promptEvent("agent-a", "automatic-2")
 	automatic.Sequence = 2
+	automatic.Signature = ""
 	sup.Handle(session.AdapterEvent{Event: automatic})
 	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-b", "other-1")})
 	waitFor(t, 2*time.Second, "the other session's automatic answer", func() bool {
@@ -302,7 +309,8 @@ func TestADrainWaitsForAdmittedRawInput(t *testing.T) {
 // A front end admits and releases keystrokes as they come, possibly under a
 // lock of its own that its sink takes. Neither Admit nor its release calls
 // the sink on the caller's goroutine, even when the release lets the policy
-// answer a prompt that waited for it.
+// answer a prompt that waited for it: one without a Signature, which the
+// keystrokes cannot be taken to have answered already.
 func TestReleasingRawInputShowsNothingOnItsCaller(t *testing.T) {
 	engine := newFakeEngine()
 	engine.evaluationByID["automatic-1"] = automaticAllow()
@@ -310,7 +318,9 @@ func TestReleasingRawInputShowsNothingOnItsCaller(t *testing.T) {
 	sup.SetHolder("agent-a", "conn-1")
 	release := admitted(t, sup, "agent-a", "conn-1")
 	sup.SetHolder("agent-a", "")
-	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "automatic-1")})
+	unsigned := promptEvent("agent-a", "automatic-1")
+	unsigned.Signature = ""
+	sup.Handle(session.AdapterEvent{Event: unsigned})
 
 	var host sync.Mutex
 	sink.mu.Lock()

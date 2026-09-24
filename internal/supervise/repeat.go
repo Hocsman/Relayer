@@ -58,6 +58,15 @@ func (s *Supervisor) recordAnswered(sessionKey, signature string) {
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.recordAnsweredLocked(sessionKey, signature, now)
+}
+
+// recordAnsweredLocked is recordAnswered, under the core's lock, for an
+// answer written at now.
+func (s *Supervisor) recordAnsweredLocked(sessionKey, signature string, now time.Time) {
+	if signature == "" {
+		return
+	}
 	answered := s.answered[sessionKey]
 	if answered == nil {
 		answered = make(map[string]time.Time)

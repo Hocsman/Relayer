@@ -100,9 +100,29 @@ func (s *Supervisor) rawRefusalLocked(sessionKey, connID string) error {
 // and considers on another goroutine the automatic answer that waited for it.
 // The goroutine is counted before the write's admission is released, so a
 // drain waits for it too.
+//
+// The keystrokes count as an answer, for the repeat guard, to every prompt of
+// the session they may have answered: those pending, and those still being
+// taken in. Raw keystrokes never resolve the runtime's prompt, and nothing
+// else tells the core that the holder answered one by typing; the repeat the
+// agent's echo raises once the hand is released was the policy's to answer,
+// a second answer. The core cannot tell which prompt, if any, they answered,
+// and takes them for an answer to each: the cost is a question asked again
+// within the window going to the operator, the guard's usual one.
 func (s *Supervisor) finishRaw(sessionKey string) {
+	now := s.now()
 	s.mu.Lock()
 	delete(s.rawInFlight, sessionKey)
+	for key, item := range s.pending {
+		if key.sessionID == sessionKey {
+			s.recordAnsweredLocked(sessionKey, item.event.Signature, now)
+		}
+	}
+	for key, taking := range s.ingesting {
+		if key.sessionID == sessionKey {
+			s.recordAnsweredLocked(sessionKey, taking.signature, now)
+		}
+	}
 	s.eventWG.Add(1)
 	s.mu.Unlock()
 	go func() {

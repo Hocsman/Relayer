@@ -96,7 +96,7 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 		s.emitSafeError("invalid_event", "An invalid event was ignored.", event.SessionID)
 		return
 	}
-	hand, reserved := s.reserveEvent(key)
+	hand, reserved := s.reserveEvent(key, event.Signature)
 	if !reserved {
 		return
 	}
@@ -124,12 +124,16 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 		s.addFrozenEvent(event, policy.Evaluation{Action: policy.ActionAsk, ProposedAction: policy.ActionAsk, Reason: policy.ReasonNoEngine})
 		return
 	}
-	// A repeat of a prompt just answered is asked, never answered, and is
-	// journaled as asked: the guard applies before the evaluation entry.
-	evaluation := s.guardRepeat(key, event, s.engine.Evaluate(event))
-	// So is a prompt raised while somebody holds the terminal, who may answer
-	// it by typing, or took it since the prompt started being taken in.
-	evaluation = s.guardHeldSince(key.sessionID, hand, evaluation)
+	// A prompt raised while somebody holds the terminal, who may answer it by
+	// typing, or took it since the prompt started being taken in, is asked,
+	// never answered, and is journaled as asked: the guard applies before the
+	// evaluation entry. So is a repeat of a prompt just answered. The hand is
+	// asked first, so that its reason is the one given when both apply: the
+	// holder's keystrokes count as an answer to the prompts they may have
+	// answered, the prompt being taken in among them, which then repeats its
+	// own Signature.
+	evaluation := s.guardHeldSince(key.sessionID, hand, s.engine.Evaluate(event))
+	evaluation = s.guardRepeat(key, event, evaluation)
 	if !s.recordAudit(policyAuditEntry(event, backend, evaluation)) {
 		s.addFrozenEvent(event, evaluation)
 		return
@@ -223,7 +227,7 @@ func (s *Supervisor) sessionStarting(sessionKey string) bool {
 // reserveEvent reserves an event for the goroutine taking it in, unless the
 // core knows it already, and returns the session's hand generation at that
 // moment.
-func (s *Supervisor) reserveEvent(key eventKey) (hand uint64, reserved bool) {
+func (s *Supervisor) reserveEvent(key eventKey, signature string) (hand uint64, reserved bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.resolved[key]; exists {
@@ -236,7 +240,7 @@ func (s *Supervisor) reserveEvent(key eventKey) (hand uint64, reserved bool) {
 		return 0, false
 	}
 	hand = s.handGenerations[key.sessionID]
-	s.ingesting[key] = ingestion{hand: hand}
+	s.ingesting[key] = ingestion{hand: hand, signature: signature}
 	return hand, true
 }
 

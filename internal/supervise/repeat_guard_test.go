@@ -368,3 +368,118 @@ func TestARepeatQueuedBehindThePromptItRepeatsIsCheckedAgainBeforeItsAnswer(t *t
 	}
 	assertAskedAsARepeat(t, engine, sup, "repeat-2", 2)
 }
+
+// Keystrokes the holder typed count as an answer to every prompt of the
+// session they may have answered: those pending when the keystrokes are
+// written, and those still being taken in. Raw keystrokes never resolve the
+// runtime's prompt, and a repeat of one the holder answered by typing, read
+// again from the answer's echo once the hand was released, was answered by
+// the policy: a second answer, which the agent took for whatever it asked
+// next. It is asked for repeat_after_delivery within the window from the
+// moment the keystrokes were written, as after any answer; once the window is
+// over the policy answers as usual.
+func TestKeystrokesCountAsAnAnswerForTheRepeatGuard(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		// raise takes prompt-1 in, while the hand is held, and has the holder
+		// type into the session at the moment under test.
+		raise func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine, first adapters.Event)
+	}{
+		{name: "a prompt pending when they are written", raise: func(t *testing.T, sup *supervise.Supervisor, _ *fakeEngine, first adapters.Event) {
+			sup.Handle(session.AdapterEvent{Event: first})
+			admitted(t, sup, "agent-a", "conn-1")()
+		}},
+		{name: "a prompt still being taken in when they are written", raise: func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine, first adapters.Event) {
+			journalStarted := make(chan struct{}, 1)
+			journalRelease := make(chan struct{})
+			releaseJournal := releaser(t, journalRelease)
+			engine.set(func(f *fakeEngine) {
+				f.auditBlockKind = audit.KindEventDetected
+				f.auditBlockEventID = first.ID
+				f.auditStarted = journalStarted
+				f.auditRelease = journalRelease
+			})
+			handled := make(chan struct{})
+			go func() {
+				sup.Handle(session.AdapterEvent{Event: first})
+				close(handled)
+			}()
+			select {
+			case <-journalStarted:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the prompt's detection was never journaled")
+			}
+			admitted(t, sup, "agent-a", "conn-1")()
+			releaseJournal()
+			select {
+			case <-handled:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the prompt was never taken in")
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newFakeEngine()
+			engine.evaluation = automaticAllow()
+			clock := newTestClock()
+			sup, _ := newCoreWithOptions(t, engine, supervise.Options{Now: clock.Now}, "agent-a")
+			first := promptEvent("agent-a", "prompt-1")
+			sup.SetHolder("agent-a", "conn-1")
+			test.raise(t, sup, engine, first)
+			if shown := viewOf(sup, "prompt-1"); shown == nil || shown.Evaluation.Reason != supervise.ReasonOperatorAttached {
+				t.Fatalf("the prompt the holder typed into is shown as %#v", shown)
+			}
+			// The agent consumed the typed answer and took its question back;
+			// the holder lets go of the terminal.
+			sup.Handle(session.AdapterEventWithdrawn{Event: first})
+			sup.SetHolder("agent-a", "")
+
+			clock.advance(supervise.DefaultRepeatWindow - time.Millisecond)
+			sup.Handle(session.AdapterEvent{Event: repeatOf(first, "repeat-2")})
+			assertAskedAsARepeat(t, engine, sup, "repeat-2", 1)
+			if calls := engine.applySnapshot(); len(calls) != 0 {
+				t.Fatalf("the policy answered the repeat of a prompt the holder typed into: %#v", calls)
+			}
+
+			sup.Handle(session.AdapterEventWithdrawn{Event: repeatOf(first, "repeat-2")})
+			clock.advance(time.Millisecond)
+			later := repeatOf(first, "later-3")
+			later.Sequence = 3
+			sup.Handle(session.AdapterEvent{Event: later})
+			waitFor(t, 2*time.Second, "the policy's answer once the window is over", func() bool {
+				return len(engine.auditFor(audit.KindDelivery, "later-3")) == 1
+			})
+		})
+	}
+}
+
+// A prompt raised while the holder's keystrokes are written, once the hand
+// was released, waits for them as the policy's answer always does, and is
+// then asked rather than answered: the keystrokes count as an answer to it,
+// since the holder may have typed ahead of the question reaching the core. A
+// prompt without a Signature repeats nothing, and the policy answers it once
+// the keystrokes are written (TestAdmittedRawInputHoldsTheSessionsWriteSlot).
+func TestAPromptRaisedWhileKeystrokesAreWrittenIsAskedOnceTheyAre(t *testing.T) {
+	engine := newFakeEngine()
+	engine.evaluation = automaticAllow()
+	sup, _ := newCoreWithOptions(t, engine, supervise.Options{Now: newTestClock().Now}, "agent-a")
+	sup.SetHolder("agent-a", "conn-1")
+	release := admitted(t, sup, "agent-a", "conn-1")
+	sup.SetHolder("agent-a", "")
+	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "automatic-1")})
+	if shown := viewOf(sup, "automatic-1"); shown == nil || !shown.Evaluation.Automatic || shown.DeliveryStatus != "pending" {
+		t.Fatalf("the prompt raised while the keystrokes are written = %#v, want it waiting for them", shown)
+	}
+
+	release()
+	waitFor(t, 2*time.Second, "the prompt to go to the operator", func() bool {
+		shown := viewOf(sup, "automatic-1")
+		return shown != nil && !shown.Evaluation.Automatic && shown.DeliveryStatus == "pending"
+	})
+	sup.BeginDrain()
+	sup.Wait()
+	assertAskedAsARepeat(t, engine, sup, "automatic-1", 2)
+	if calls := engine.applySnapshot(); len(calls) != 0 {
+		t.Fatalf("the policy answered a prompt the keystrokes may have answered: %#v", calls)
+	}
+}
