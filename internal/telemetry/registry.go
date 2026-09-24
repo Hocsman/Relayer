@@ -178,9 +178,15 @@ func (r *Registry) Observe(entry audit.Entry) {
 			ruleStr = "default"
 		}
 
-		key := fmt.Sprintf("adapter=%s,agent_id=%s,decision=%s,decision_by=%s,outcome=%s,rule=%s",
-			adapter, agentID, decisionStr, byStr, outcomeStr, ruleStr)
-		r.decisionsTotal[key]++
+		// Only the decision entry is a decision. Every prompt is journaled
+		// policy_evaluated first, and its decision, by the policy or a human,
+		// is journaled once more as a decision: counting both counted each
+		// decision twice, and a prompt still waiting on a human as decided.
+		if entry.Kind == audit.KindDecision {
+			key := fmt.Sprintf("adapter=%s,agent_id=%s,decision=%s,decision_by=%s,outcome=%s,rule=%s",
+				adapter, agentID, decisionStr, byStr, outcomeStr, ruleStr)
+			r.decisionsTotal[key]++
+		}
 
 		// A prompt stays pending until it is decided. The policy's evaluation
 		// is not a decision: it follows every detection within microseconds,

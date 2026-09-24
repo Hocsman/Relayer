@@ -408,6 +408,72 @@ func TestPromptsOfAnEndedProcessAreNotPending(t *testing.T) {
 	}
 }
 
+// TestEachDecisionIsCountedOnce: every prompt is journaled policy_evaluated,
+// and the prompt's decision, by the policy or a human, is journaled once more
+// as a decision. relayer_decisions_total counted both, so each decision was
+// counted twice, the policy's evaluation of a prompt a human then answered
+// was counted as a decision of its own, and a prompt nobody answered yet
+// already counted as decided. It counts decision entries alone; the guardrail
+// counter still reads the policy's evaluations, where a guardrail's reason is.
+func TestEachDecisionIsCountedOnce(t *testing.T) {
+	reg := NewRegistry()
+	now := time.Now().UTC()
+	observe := func(entry audit.Entry) {
+		now = now.Add(time.Millisecond)
+		entry.RunID, entry.SessionID, entry.AgentID, entry.Adapter = "run-1", "agent", "agent", "generic"
+		entry.Timestamp = now
+		reg.Observe(entry)
+	}
+	// The policy answers one prompt on its own.
+	observe(audit.Entry{Kind: audit.KindEventDetected, EventID: "evt-auto"})
+	observe(audit.Entry{
+		Kind: audit.KindPolicyEvaluated, EventID: "evt-auto", Decision: audit.DecisionAllow,
+		DecisionBy: audit.DecisionByPolicy, Outcome: audit.OutcomeInFlight, Rule: "allow-safe", Reason: "rule_match",
+	})
+	observe(audit.Entry{
+		Kind: audit.KindDecision, EventID: "evt-auto", Decision: audit.DecisionAllow,
+		DecisionBy: audit.DecisionByPolicy, Outcome: audit.OutcomeInFlight, Rule: "allow-safe", Reason: "decision_selected",
+	})
+	// A guardrail sends one to a human, who answers it.
+	observe(audit.Entry{Kind: audit.KindEventDetected, EventID: "evt-ask"})
+	observe(audit.Entry{
+		Kind: audit.KindPolicyEvaluated, EventID: "evt-ask", Decision: audit.DecisionDeny,
+		DecisionBy: audit.DecisionByPolicy, Outcome: audit.OutcomeAsk, Rule: "no-rm", Reason: "destructive_command_blocked",
+	})
+	observe(audit.Entry{
+		Kind: audit.KindDecision, EventID: "evt-ask", Decision: audit.DecisionDeny,
+		DecisionBy: audit.DecisionByHuman, Outcome: audit.OutcomeInFlight, Reason: "decision_selected",
+	})
+	// A third waits on a human.
+	observe(audit.Entry{Kind: audit.KindEventDetected, EventID: "evt-waiting"})
+	observe(audit.Entry{
+		Kind: audit.KindPolicyEvaluated, EventID: "evt-waiting", Decision: audit.DecisionAsk,
+		DecisionBy: audit.DecisionByPolicy, Outcome: audit.OutcomeAsk, Reason: "default_action",
+	})
+
+	snapshot := reg.Snapshot()
+	total := 0.0
+	for _, sample := range snapshot.DecisionsTotal {
+		total += sample.Value
+	}
+	if total != 2 || len(snapshot.DecisionsTotal) != 2 {
+		t.Fatalf("decisions_total = %#v, want the two decisions once each", snapshot.DecisionsTotal)
+	}
+	promText := string(RenderPrometheus(snapshot))
+	for _, marker := range []string{
+		`relayer_decisions_total{adapter="generic",agent_id="agent",decision="allow",decision_by="policy",outcome="in_flight",rule="allow-safe"} 1`,
+		`relayer_decisions_total{adapter="generic",agent_id="agent",decision="deny",decision_by="human",outcome="in_flight",rule="default"} 1`,
+		`relayer_guardrail_violations_total{reason="destructive_command_blocked",rule="no-rm"} 1`,
+	} {
+		if !strings.Contains(promText, marker) {
+			t.Errorf("rendered Prometheus text missing %q:\n%s", marker, promText)
+		}
+	}
+	if snapshot.EventsPending != 1 {
+		t.Fatalf("events_pending = %d, want the prompt still waiting on a human", snapshot.EventsPending)
+	}
+}
+
 // TestAStaleExitLeavesTheReplacementCounted: a restart journals the previous
 // process's end (operator_restart) and the replacement's start, and the
 // previous process's own exit can reach the journal after both. The core
