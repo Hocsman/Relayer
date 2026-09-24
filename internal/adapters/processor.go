@@ -302,13 +302,18 @@ func (p *Processor) Consume(chunk []byte) error {
 					// took the grid. One remembered while the program had it
 					// is about a question on the program's own grid: raised
 					// from a tmux snapshot of it, and answered before any
-					// write could find its row. Parked, it answered for
-					// nothing there, and the next write, which still showed
-					// the question it had just answered, asked it again.
-					// It goes on comparing its line, as it always did.
-					entry.parked = wasParked || !p.alternateShown
-					live = append(live, entry)
-					continue
+					// write could find its row. It is looked for on that
+					// grid, as one is on the primary screen: adopted by the
+					// row that shows it, or kept for the primary screen when
+					// no row does. Kept without a row, it matched its line
+					// anywhere on the program's grid for as long as the
+					// program ran, and the same question asked there later
+					// was put to nobody.
+					if wasParked || !p.alternateShown {
+						entry.parked = true
+						live = append(live, entry)
+						continue
+					}
 				}
 				// By the line the question was asked on first, and by the match
 				// only when that line is not painted, as refreshPendingAnchor
@@ -327,6 +332,12 @@ func (p *Processor) Consume(chunk []byte) error {
 					!ignoredContext(line, false) {
 					entry.anchor = row
 					entry.rowBlank = false
+					live = append(live, entry)
+				} else if p.screen.OnAlternate() {
+					// Not on the program's grid, so its question is on the
+					// primary screen underneath: it is kept for that screen,
+					// like an entry from before the program.
+					entry.parked = true
 					live = append(live, entry)
 				}
 			}

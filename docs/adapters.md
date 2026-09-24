@@ -242,11 +242,27 @@ screen, which is not where it was answered: the identical question asked there
 is asked. Taking part, an answered row that was blank when the program started
 let the generic adapter take that question for the answered one moved, and an
 entry with no row matched it anywhere, since without a row the line alone
-decides; after a full reset, which leaves the screen on the program's grid for
-good, that lasted for the rest of the session. An entry with no row remembered
-while the program has the grid is not kept for the primary screen: its question
-is on the program's grid, raised from a tmux snapshot of it and answered before
-any write could find its row, and it goes on comparing its line there.
+decides; after a full reset, which on Unix leaves the screen on the program's
+grid for good, that lasted for the rest of the session. An entry with no row
+remembered while the program has the grid is about a question on that grid,
+raised from a tmux snapshot of it and answered before any write could find its
+row. It is looked for there as on the primary screen: adopted by the row that
+shows it, or kept for the primary screen when no row does. Kept without a row,
+it matched its line anywhere on the program's grid, and the agent asking that
+question again later was put to nobody. A question answered on the program's
+grid is not the one answered underneath either, even in the same words: taken
+for it, the primary screen's answer moved onto the program's row, went with it
+when the program exited, and the question still painted underneath was asked a
+second time.
+
+On ConPTY a program's full reset does not leave the screen on its grid:
+ConPTY turns it into leaving the alternate screen, a repaint of the primary
+one, a reset, and a blank repaint. The answered row is then blank, and the
+generic and Claude adapters' blank-row rule swallows the identical question
+drawn above it, as after a clear. And a question raised from a tmux snapshot of
+a program's grid, answered, then erased by a bare `ESC [H ESC [2J` before the
+agent writes anything else, is kept for the primary screen, and the redraw asks
+it again; v0.8.7 did the same.
 
 While the program runs, only its screen follows the terminal. The primary one
 is resized once, to the size then in force, when the program exits, which is

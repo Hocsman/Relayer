@@ -395,3 +395,89 @@ func TestAQuestionFromASnapshotOfAProgramsScreenIsNotAskedAgainOnceAnswered(t *t
 		})
 	}
 }
+
+// The same answer, once the dialog went: when the agent later asks that question
+// again on its program's grid, it is a new question. Kept without a row for as
+// long as the program ran, the answer matched its line anywhere on that grid,
+// and the question was put to nobody for the rest of the program.
+func TestAQuestionFromASnapshotOfAProgramsScreenIsAskedWhenTheAgentAsksItAgain(t *testing.T) {
+	for _, question := range []struct {
+		adapter string
+		prompt  string
+	}{
+		{adapter: GenericID, prompt: overwritePrompt},
+		{adapter: ClaudeID, prompt: overwritePrompt},
+		{adapter: AiderID, prompt: aiderApplyPrompt},
+	} {
+		for _, again := range []struct {
+			name  string
+			steps []sessionStep
+		}{
+			{name: "lower down", steps: []sessionStep{
+				agentWrites("\x1b[2;1H\x1b[2Kworking...", 0),
+				agentWrites("\x1b[2;1H\x1b[2Kdone\x1b[5;1H\x1b[2K> ", 0),
+				agentWrites("\x1b[8;1H\x1b[2K"+question.prompt, 1),
+			}},
+			{name: "after the frame is cleared", steps: []sessionStep{
+				agentWrites("\x1b[H\x1b[2Jfull-screen agent\r\nran it\r\n", 0),
+				agentWrites("\x1b[H\x1b[2Jfull-screen agent\r\nran it\r\n"+question.prompt, 1),
+			}},
+		} {
+			t.Run(question.adapter+"/"+again.name, func(t *testing.T) {
+				steps := []sessionStep{
+					agentWrites("\x1b[?1049h\x1b[H\x1b[2Jfull-screen agent\r\n", 0),
+					tmuxResyncsWith("full-screen agent\n"+strings.TrimSpace(question.prompt)+"\n", 0),
+					operatorAnswers(0),
+					agentWrites("\x1b[2;1H"+question.prompt, 0),
+					agentWrites(escapeOnlyWrite, 0),
+				}
+				processor := playSession(t, question.adapter, false, append(steps, again.steps...))
+				if processor.Pending() == nil {
+					t.Fatal("the question asked again is not pending")
+				}
+			})
+		}
+	}
+}
+
+// A question answered on a full-screen program's grid is not the one answered
+// on the primary screen underneath, even in the same words. Taken for it, the
+// primary screen's answer moved onto the program's row, went with that row
+// when the program exited, and the question still painted on the primary
+// screen was asked a second time: under an automatic policy, a second answer
+// typed into the agent. Any yes/no question will do for the generic adapter,
+// whose pattern captures only the "[y/n]".
+func TestAnAnswerOnAProgramsScreenLeavesThePrimaryScreensAnswerAlone(t *testing.T) {
+	for _, question := range []struct {
+		adapter string
+		prompt  string
+		program string
+	}{
+		{adapter: GenericID, prompt: overwritePrompt, program: overwritePrompt},
+		{adapter: GenericID, prompt: overwritePrompt, program: "Delete the backup too? [y/n] "},
+		{adapter: AiderID, prompt: aiderApplyPrompt, program: aiderApplyPrompt},
+	} {
+		for _, onConPTY := range []bool{true, false} {
+			name := fmt.Sprintf("%s/%s/conpty=%t", question.adapter, strings.TrimSpace(question.program), onConPTY)
+			t.Run(name, func(t *testing.T) {
+				processor := playSession(t, question.adapter, onConPTY, []sessionStep{
+					agentWrites(outputLines("agent output line %d", 0, 4), 0),
+					agentWrites(question.prompt, 1),
+					operatorAnswers(1),
+					agentWrites("y\r\n", 1),
+					agentWrites("\x1b[?1049h\x1b[H\x1b[2Jfull-screen tool\r\n", 1),
+					agentWrites("\x1b[5;1H"+question.program, 2),
+					operatorAnswers(2),
+					agentWrites("y\r\n", 2),
+					agentWrites("\x1b[H\x1b[2Jfull-screen tool\r\ndone", 2),
+					agentWrites("\x1b[?1049l", 2),
+					agentWrites("agent continues\r\n", 2),
+					agentWrites(escapeOnlyWrite, 2),
+				})
+				if pending := processor.Pending(); pending != nil {
+					t.Fatalf("the primary screen's answered question is pending again: %q", pending.Match)
+				}
+			})
+		}
+	}
+}

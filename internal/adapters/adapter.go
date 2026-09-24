@@ -115,13 +115,15 @@ type DetectionState struct {
 // looked for once that screen is back. The Processor sets it on every write,
 // because only the screen knows. Such an entry suppresses nothing: the question
 // it remembers is not on the grid being read, and what is on it, the program's
-// screen, is not where it was answered. Taking part, it did three things. An answered row that was blank when the
-// program started kept its blank flag, and the generic adapter's blank-row
-// exception took the identical question on the program's screen for the
-// answered one moved; an entry with no row matched the identical line anywhere
-// on the program's screen, since without a row the line alone decides; and
-// after a full reset, which leaves the screen on the alternate grid for good,
-// that lasted until the end of the session. Each was a question put to nobody.
+// screen, is not where it was answered. Taking part, it did three things. An
+// answered row that was blank when the program started kept its blank flag,
+// and the generic adapter's blank-row exception took the identical question on
+// the program's screen for the answered one moved; an entry with no row matched
+// the identical line anywhere on the program's screen, since without a row the
+// line alone decides; and after a full reset, which on Unix leaves the screen
+// on the alternate grid for good, that lasted until the end of the session.
+// Each was a question put to nobody. A parked entry is not merged with an
+// answer given on the program's screen either, see rememberAnswered.
 type answeredQuestion struct {
 	signature string
 	match     string
@@ -160,7 +162,11 @@ func (s *DetectionState) rememberAnswered(signature, match string, anchor screen
 		return
 	}
 	for index, entry := range s.answered {
-		if entry.signature == signature && entry.match == match {
+		// An entry kept for the parked primary screen is not the question just
+		// answered on a full-screen program's grid, even with the same words:
+		// moved onto the program's row, it went with that row when the program
+		// exited, and the primary screen's answered question was asked again.
+		if entry.signature == signature && entry.match == match && !entry.parked {
 			// The same question answered again on another row is that row's
 			// question now: keep the newer anchor, or the memory would go on
 			// watching a line the operator has finished with.
