@@ -259,3 +259,103 @@ describe("relayerReducer", () => {
     expect(failed.app?.pendingEvents).toHaveLength(2);
   });
 });
+
+// The core never offers an occurrence again once it resolved it, and emits a
+// prompt's frames in the order its state changed. The gateway can still
+// deliver a frame late (a slow client's buffer, a reconnection), and a state
+// read just before a delivery can arrive just after it. Either one used to put
+// an answered prompt back on screen, offering an answer to a question the
+// agent is no longer asking. Defence in depth: once this page has seen an
+// occurrence delivered, nothing brings it back.
+describe("relayerReducer after a prompt was delivered", () => {
+  function loaded() {
+    return relayerReducer(initialRelayerState, { type: "loaded", state: appState() });
+  }
+
+  function delivered(state = loaded()) {
+    return relayerReducer(state, {
+      type: "event",
+      event: { ...pending("a"), deliveryStatus: "delivered" },
+    });
+  }
+
+  it("does not bring it back on a late delivering frame", () => {
+    const answered = delivered();
+    const late = relayerReducer(answered, {
+      type: "event",
+      event: { ...pending("a"), deliveryStatus: "delivering" },
+    });
+    expect(late.app?.pendingEvents.map((event) => event.sessionID)).toEqual(["b"]);
+    expect(late.app?.agents.find((agent) => agent.sessionID === "a")?.status).toBe(
+      answered.app?.agents.find((agent) => agent.sessionID === "a")?.status,
+    );
+  });
+
+  it("does not bring it back on a late pending frame either", () => {
+    const late = relayerReducer(delivered(), { type: "event", event: pending("a") });
+    expect(late.app?.pendingEvents.map((event) => event.sessionID)).toEqual(["b"]);
+  });
+
+  it("does not bring back one this page answered itself", () => {
+    const answered = relayerReducer(loaded(), {
+      type: "delivery",
+      runID: "run-1",
+      sessionID: "a",
+      eventID: "same-id",
+      status: "delivered",
+    });
+    const late = relayerReducer(answered, {
+      type: "event",
+      event: { ...pending("a"), deliveryStatus: "delivering" },
+    });
+    expect(late.app?.pendingEvents.map((event) => event.sessionID)).toEqual(["b"]);
+  });
+
+  it("does not bring it back from a state read before the delivery", () => {
+    const stale = relayerReducer(delivered(), { type: "loaded", state: appState() });
+    expect(stale.app?.pendingEvents.map((event) => event.sessionID)).toEqual(["b"]);
+  });
+
+  // The core compares session ids without case; so does this.
+  it("recognises the occurrence whatever the case of its session id", () => {
+    const late = relayerReducer(delivered(), {
+      type: "event",
+      event: { ...pending("A"), deliveryStatus: "delivering" },
+    });
+    expect(late.app?.pendingEvents.map((event) => event.sessionID)).toEqual(["b"]);
+  });
+
+  it("still shows the next occurrence on the same session", () => {
+    const next = relayerReducer(delivered(), { type: "event", event: pending("a", "next-id") });
+    expect(next.app?.pendingEvents.map((event) => `${event.sessionID}/${event.id}`)).toEqual([
+      "b/same-id",
+      "a/next-id",
+    ]);
+  });
+
+  it("does not carry what it saw delivered into a new run", () => {
+    const answered = delivered();
+    const nextRun = relayerReducer(answered, {
+      type: "loaded",
+      state: { ...appState(), runID: "run-2", pendingEvents: [{ ...pending("a"), runID: "run-2" }] },
+    });
+    expect(nextRun.app?.pendingEvents).toHaveLength(1);
+    expect(nextRun.answered).toEqual([]);
+  });
+
+  it("remembers a bounded number of delivered occurrences", () => {
+    let state = loaded();
+    for (let index = 0; index < 400; index += 1) {
+      state = relayerReducer(state, {
+        type: "event",
+        event: { ...pending("a", `id-${index}`), deliveryStatus: "delivered" },
+      });
+    }
+    expect(state.answered.length).toBeLessThanOrEqual(256);
+    const newest = relayerReducer(state, {
+      type: "event",
+      event: { ...pending("a", "id-399"), deliveryStatus: "delivering" },
+    });
+    expect(newest.app?.pendingEvents.some((event) => event.id === "id-399")).toBe(false);
+  });
+});

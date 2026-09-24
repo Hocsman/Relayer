@@ -14,6 +14,9 @@ const MAX_OUTPUT_CHARS = 512 * 1024;
 const MAX_PENDING_EVENTS = 64;
 const MAX_ERRORS = 40;
 const MAX_SHARED_SESSIONS = 32;
+// Well under the core's own 1024 resolved occurrences: forgetting one here can
+// only let a very late frame through, never hide a prompt the core still has.
+const MAX_ANSWERED = 256;
 
 export interface RelayerUIState {
   connection: "loading" | "ready" | "failed";
@@ -23,6 +26,9 @@ export interface RelayerUIState {
   // sends a delta, so a replaced entry is always the whole truth.
   presence: Record<string, PresenceView>;
   hand: Record<string, HandView>;
+  // The occurrences of the current run this page has seen delivered, oldest
+  // first, keyed like the core keys them (see answeredKey).
+  answered: string[];
   fatalError?: string;
 }
 
@@ -49,7 +55,31 @@ export const initialRelayerState: RelayerUIState = {
   errors: [],
   presence: {},
   hand: {},
+  answered: [],
 };
+
+// A delivered occurrence never comes back. The core resolves it for good (it
+// drops any later detection of the same key), its occurrence ids are salted
+// with the process instance so a new process never reuses one, and it emits a
+// prompt's frames in the order its state changed. Yet a frame can still reach
+// this page late: the gateway buffers per client and a reconnection replays
+// nothing, and a getState read just before a delivery can land just after it.
+// A late "pending" or "delivering" would put an answered prompt back on
+// screen and offer an answer to a question the agent is no longer asking.
+//
+// So once this page has seen an occurrence delivered, from the server or from
+// its own confirmed answer, nothing puts it back: not a frame, and not a
+// state read. The key matches the core's (a session id without case, an
+// event id trimmed), so it cannot hide a different occurrence.
+function answeredKey(runID: string, sessionID: string, eventID: string): string {
+  return `${runID}\u0000${sessionID.trim().toLowerCase()}\u0000${eventID.trim()}`;
+}
+
+function withAnswered(answered: string[], key: string): string[] {
+  if (answered.includes(key)) return answered;
+  const next = [...answered, key];
+  return next.length > MAX_ANSWERED ? next.slice(next.length - MAX_ANSWERED) : next;
+}
 
 // Sharing snapshots are replaced wholesale rather than merged, and the map is
 // bounded like every other untrusted-growth surface in this reducer: a gateway
@@ -107,12 +137,22 @@ export function normalizeState(state: AppState): AppState {
 
 export function relayerReducer(state: RelayerUIState, action: RelayerAction): RelayerUIState {
   switch (action.type) {
-    case "loaded":
+    case "loaded": {
+      // What this page saw delivered belongs to its run; a new run starts
+      // with nothing answered.
+      const answered = state.app && state.app.runID === action.state.runID ? state.answered : [];
+      const app = normalizeState(action.state);
       return {
         ...state,
         connection: "ready",
         fatalError: undefined,
-        app: normalizeState(action.state),
+        app: {
+          ...app,
+          pendingEvents: app.pendingEvents.filter(
+            (event) => !answered.includes(answeredKey(event.runID, event.sessionID, event.id)),
+          ),
+        },
+        answered,
         errors: state.app && state.app.runID !== action.state.runID
           ? state.errors.filter((error) => error.runID === "" || error.runID === action.state.runID)
           : state.errors,
@@ -121,6 +161,7 @@ export function relayerReducer(state: RelayerUIState, action: RelayerAction): Re
         presence: state.app && state.app.runID !== action.state.runID ? {} : state.presence,
         hand: state.app && state.app.runID !== action.state.runID ? {} : state.hand,
       };
+    }
     case "loadFailed":
       return { ...state, connection: "failed", fatalError: action.message };
     case "snapshot": {
@@ -152,6 +193,11 @@ export function relayerReducer(state: RelayerUIState, action: RelayerAction): Re
         action.event.runID !== state.app.runID ||
         !actionable(action.event)
       ) return state;
+      const key = answeredKey(action.event.runID, action.event.sessionID, action.event.id);
+      const isDelivered = action.event.deliveryStatus === "delivered";
+      // A late frame for an occurrence already delivered changes nothing, not
+      // even the agent's waiting badge.
+      if (!isDelivered && state.answered.includes(key)) return state;
       const withoutOccurrence = state.app.pendingEvents.filter(
         (event) =>
           event.id !== action.event.id || event.sessionID !== action.event.sessionID,
@@ -162,6 +208,7 @@ export function relayerReducer(state: RelayerUIState, action: RelayerAction): Re
       ]);
       return {
         ...state,
+        answered: isDelivered ? withAnswered(state.answered, key) : state.answered,
         app: {
           ...state.app,
           pendingEvents,
@@ -291,7 +338,16 @@ export function relayerReducer(state: RelayerUIState, action: RelayerAction): Re
             : event,
         )
         .filter((event) => event.deliveryStatus !== "delivered");
-      return { ...state, app: { ...state.app, pendingEvents } };
+      return {
+        ...state,
+        // Only a confirmed answer reports "delivered" here: the bridge call
+        // returned without error, which the core does only once it resolved
+        // the occurrence.
+        answered: action.status === "delivered"
+          ? withAnswered(state.answered, answeredKey(action.runID, action.sessionID, action.eventID))
+          : state.answered,
+        app: { ...state.app, pendingEvents },
+      };
     }
     default:
       return state;

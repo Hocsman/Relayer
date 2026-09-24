@@ -179,15 +179,22 @@ function initialProfiles(): AgentProfilesView {
   };
 }
 
+// Every occurrence gets an id of its own, as the core's do (they are salted
+// with the process instance). The page never shows an occurrence again once it
+// saw it delivered, so a restarted demo session reusing its first id would ask
+// a question the page then hides.
+let demoPromptSequence = 0;
+
 function demoEvent(
   runID: string,
   sessionID: string,
   sensitive: boolean,
   adapter: string,
 ): SupervisionEvent {
+  demoPromptSequence += 1;
   return {
     runID,
-    id: `${sessionID}-prompt-1`,
+    id: `${sessionID}-prompt-${demoPromptSequence}`,
     sessionID,
     agentID: sessionID,
     adapter,
