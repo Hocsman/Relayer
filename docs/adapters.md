@@ -284,7 +284,11 @@ paints the primary screen back when the program exits. The answered question's
 row then shows the program's text, the memory lets it go, and the repaint draws
 the question again: it is asked a second time, and under an automatic policy a
 second answer is typed into the agent, as before this release. Nothing in the
-bytes tells that repaint from the agent asking the question again.
+bytes tells that repaint from the agent asking the question again. Since
+v0.8.9 the Desktop GUI and the web gateway ask, rather than answer, a question
+repeated less than two seconds after its answer (`repeat_after_delivery`),
+whatever the adapter; a program that stays open longer than that, as an editor
+or a pager does, is not covered by it.
 
 On the rendered screen the row also decides what an entry SUPPRESSES: the
 answered question is the one on its own row.
@@ -491,9 +495,12 @@ Policy implications:
 The generic adapter accepts only the internal manual decision form. It rejects
 automatic allow/deny and non-actionable event types. Valid manual text is
 encoded exactly with a trailing carriage return for the terminal; input
-containing a NUL byte is rejected.
+containing a NUL byte is rejected. On the Desktop GUI and the web gateway the
+supervision core refuses a typed answer before any adapter sees it unless it is
+one line of text of at most 4096 bytes with no control character, and refuses
+any typed answer to a prompt that offers Deny alone.
 
-The TUI does not log or audit the manual value. Delivery errors keep or restore
+No front end logs or audits the manual value. Delivery errors keep or restore
 human-pending state when it is safe to do so. An uncertain automatic delivery
 is not retried.
 

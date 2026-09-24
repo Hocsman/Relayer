@@ -415,9 +415,43 @@ with the manual value. Sensitive fields use a masked, uncontrolled input that
 is cleared before and after delivery and is never added to frontend logs or
 notifications.
 
-If delivery is uncertain, the GUI disables further input for that occurrence
-and asks the user to stop or resynchronize the session. It does not guess that
-the decision failed and does not send a second value automatically.
+A typed answer is sent as typed and journaled `ask`, whatever it says: only
+the Allow and Deny buttons send the adapter's own answers, and only those the
+prompt offers. A typed answer is one line of text of at most 4096 bytes with
+no control character, as an ordinary line is, and an empty one is refused. A
+prompt the policy denies that goes to you all the same, because a limit was
+reached, it repeats a question answered a moment ago, or the adapter could not
+encode the deny, offers Deny alone and takes no typed answer. With the generic
+and Claude adapters, which encode no deny, the desktop can then only stop the
+agent; on the web gateway, the holder of its terminal can also answer it by
+typing.
+
+### What the decision queue shows
+
+The desktop and the web gateway serve the same interface, and it behaves the
+same way on both:
+
+- a prompt the policy is answering stays in the supervisor list as "Policy ·
+  Allow" or "Policy · Deny", queued or delivering. The modal does not open for
+  it by itself, and the pending counts leave it out. It opens, and counts,
+  once the prompt comes back to a person: a limit, a repeat, the adapter, or on
+  the web gateway an operator holding the terminal;
+- every prompt says in one line why it was asked, from the reason the core
+  gives it: a policy rule, a guardrail, a limit, a repeat, a held terminal,
+  keys typed at the terminal, a confidential prompt, a dry run;
+- a prompt's answers are locked while its answer is being delivered, by
+  anybody, while the policy is answering it, and when keys were typed at its
+  terminal while it was shown. `Ctrl+Enter` and `Esc` send nothing then, and
+  `Esc` only minimizes the modal;
+- after a refused or failed answer the interface shows a fixed message for the
+  refusal, never the raw error, and reads the state again. An answer the core
+  never sent leaves the prompt answerable. One whose delivery is uncertain
+  leaves it locked and its session frozen: stop or resynchronize the session.
+  Relayer does not guess that the decision failed and does not send a second
+  value automatically;
+- a prompt shown delivered never comes back from a late update. The web
+  interface also reads the state again each time its connection comes back,
+  and after every run-level status, such as another tab's "Save and restart".
 
 Masking in Relayer does not prevent a target CLI from echoing a secret into its
 own output, files, or tmux history. The GUI is a supervision interface, not a
@@ -442,8 +476,8 @@ Operators can supervise and arbitrate without reaching for the mouse:
 | Shortcut | Context | Action |
 | --- | --- | --- |
 | `Alt+1` .. `Alt+8` | Global | Focus agent 1 to 8. If a decision is pending, immediately opens the arbitration modal. If idle, focuses direct line input. |
-| `Ctrl+Enter` | Decision Modal | Instantly approve with `Allow` (or submit manual input). |
-| `Esc` | Decision Modal | Instantly reject with `Deny`. |
+| `Ctrl+Enter` | Decision Modal | Instantly approve with `Allow` (or submit manual input). Sends nothing on a locked prompt. |
+| `Esc` | Decision Modal | Instantly reject with `Deny`. On a locked prompt, only minimizes the modal. |
 | `Ctrl+F` | Terminal Pane | Open interactive text search. |
 | `Esc` | Search Bar | Close terminal search. |
 

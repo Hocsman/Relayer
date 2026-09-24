@@ -17,17 +17,37 @@ particular terminal right now*.
 
 A viewer can never hold the hand. An operator who does not hold it can still
 arbitrate prompts, stop and restart agents, and change settings — the hand
-governs raw terminal input and geometry, not supervision. Two rules bound what
-an answer given this way can carry:
+governs raw terminal input and geometry, not who may answer. Two rules bound
+what an answer given this way can carry:
 
 - A typed answer is one line of text, as a line is: no control character — no
   carriage return, line feed or escape — and at most 4096 bytes. The adapter
   adds its own terminator. A typed answer that was a stream of keystrokes
   would be raw input that needs no hand.
 - A prompt the policy denies, that goes to a person all the same (because the
-  terminal is held, a limit was reached, or it repeats an answer just
-  written), takes the adapter's Deny alone: neither Allow nor a typed answer,
-  whose bytes only the adapter understands.
+  terminal is held, a limit was reached, it repeats an answer just written, or
+  the adapter could not encode the deny), takes the adapter's Deny alone:
+  neither Allow nor a typed answer, whose bytes only the adapter understands.
+  An adapter that encodes no deny, such as the generic one, leaves such a
+  prompt to be answered at the terminal, or its agent to be stopped.
+
+Holding a terminal does change what the policy does on it. Its holder types
+into the agent directly, and keystrokes never resolve the prompt Relayer is
+waiting on, so an automatic answer to a question the holder already answered by
+hand would be a second answer. While anybody holds a session's terminal, the
+policy answers none of that session's prompts:
+
+- each prompt it would have answered, and whose answer is not already being
+  written, is asked instead, journaled as a second `policy_evaluated` entry
+  with the reason `operator_attached`. Taking the terminal notifies nobody of
+  these: whoever took it is at it;
+- a prompt raised while the terminal is held is asked from the start, for the
+  same reason, and notified like any prompt that waits on a person;
+- releasing the terminal never makes such a prompt automatic again, since its
+  holder may have answered it. Prompts raised after the release are the
+  policy's as usual;
+- a line is refused while anybody holds the terminal: it would interleave with
+  the holder's keystrokes.
 
 A prompt that was shown while its terminal's holder typed into it is the
 terminal's: the keystrokes may have answered it, and the core cannot tell. It
@@ -35,7 +55,9 @@ offers no answer, anybody's answer to it is refused, the policy's included,
 and it stays shown, reason `typed_at_terminal`, until the agent takes it back
 or its process ends. Its holder answers it by typing, as they may have
 already. An answer given to it from a card used to be typed into whatever the
-agent asked next.
+agent asked next. Any keystroke counts, including the focus and mouse reports a
+browser terminal sends by itself to an agent that asked for them: clicking into
+the terminal of such an agent is enough to make its prompts the terminal's.
 
 A terminal nobody holds takes no keystrokes, from anybody: an operator takes
 the terminal first, which the bundled interface does when you open the
@@ -142,12 +164,13 @@ Those two steps cannot share a single lock acquisition without holding that lock
 across the write, which would let a saturated terminal block every other
 operator. The consequence:
 
-> After an operator releases or loses the terminal, at most one keystroke that
-> was already in flight may still land.
+> After an operator releases or loses the terminal, at most one write that
+> was already admitted may still land.
 
-One character, not a stream — the next keystroke is rejected, and the client is
-told once per session so a stale interface resynchronises without the socket
-being flooded by one rejection per character. If a deployment cannot tolerate
+One write, not a stream: a keystroke, or a paste the browser sent as one frame.
+The next one is rejected, and the client is told once per session so a stale
+interface resynchronises without the socket being flooded by one rejection per
+character. If a deployment cannot tolerate
 that window, it should not rely on the hand as a safety mechanism: it is a
 coordination tool between colleagues, not an enforcement boundary against one.
 
@@ -156,10 +179,12 @@ hold the terminal is delivered later.
 
 ## Resize
 
-A resize from a connection that does not hold the terminal is silently ignored.
-Two observers with different window sizes would otherwise fight over the pane
-geometry and make the agent's rendering thrash. Only the holder's window size
-reaches the pseudo-terminal.
+While somebody holds a terminal, a resize from any other connection is silently
+ignored. Two observers with different window sizes would otherwise fight over
+the pane geometry and make the agent's rendering thrash. Only the holder's
+window size reaches the pseudo-terminal. A terminal nobody holds takes any
+operator's resize, since a resize writes nothing the agent reads; a viewer's is
+always ignored.
 
 ## Audit trail
 
@@ -199,12 +224,14 @@ What the journal does say is who held each terminal, and it says so first.
 same lock: until it is on disk no client sees the terminal held and nobody can
 type into it. If it cannot be written, the terminal stays as it was and the
 attach fails; once the journal has failed, no terminal is attached. The
-control records and `attach_finished` are best effort: the hand has moved by
-the time they are written, and refusing the action then would leave the
-interface disagreeing with the gateway about who holds the terminal. Every one
-of them still goes through the supervision core, so a record the journal
-refuses freezes the run, as a refused decision entry does: no keystroke,
-answer or line follows it. Before v0.8.9 the gateway handed the terminal over
+control records and `attach_finished` are best effort: the action goes ahead
+even when its record cannot be written, since refusing it then would leave the
+interface disagreeing with the gateway about who holds the terminal. The
+records that give a terminal a new holder are written before the hand moves;
+the others, for a release, a refusal or a request left pending, after it. Every
+one of them goes through the supervision core, so a record the journal refuses
+freezes the run, as a refused decision entry does: no keystroke, answer or line
+follows it. Before v0.8.9 the gateway handed the terminal over
 first and wrote the record afterwards, and ignored a failed write, so a holder
 could type with no record of holding the terminal.
 

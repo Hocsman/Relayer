@@ -332,6 +332,15 @@ able to encode that action for the exact pending event. The generic adapter can
 currently encode only human manual input, so its automatic allow and deny both
 fall back to `ask`. Deny is an adapter response, not a process kill.
 
+On the Desktop GUI and the web gateway, a deny that falls back to `ask` stays a
+deny: the prompt offers the adapter's Deny alone and takes no typed answer.
+This covers a deny the adapter cannot encode, one held back by
+`max_consecutive_auto_decisions` or `rate_limit_per_minute`, one that repeats a
+question answered less than two seconds earlier, and one on a terminal an
+operator holds on the web gateway. For the generic and Claude adapters, which
+encode no deny, such a prompt is answered by typing into its web terminal, on
+the gateway, or its agent is stopped. The TUI asks without this restriction.
+
 ### Security Profiles and Guardrails
 
 Relayer provides presets for balancing autonomy and security:
@@ -341,8 +350,9 @@ Relayer provides presets for balancing autonomy and security:
 - `custom`: Explicit, granular customization of all guardrail flags and rule definitions.
 
 Guardrail options:
-- **`max_consecutive_auto_decisions`**: When set to $N > 0$, after $N$ consecutive automatic decisions for an agent session without human operator intervention, the policy engine forces an `ask` decision with audit reason `consecutive_auto_limit` and tag `LIMIT • ASK`. Any manual operator decision or direct line input resets the counter to zero.
-- **`rate_limit_per_minute`**: When set to $N > 0$, enforces a sliding window rate limit. If an agent attempts more than $N$ automatic decisions within any 60-second window, subsequent decisions fall back to `ask` with audit reason `rate_limit_exceeded` and tag `RATE LIMIT • ASK`.
+- **`max_consecutive_auto_decisions`**: When set to $N > 0$, after $N$ consecutive automatic decisions for an agent session without human operator intervention, the policy engine forces an `ask` decision with audit reason `consecutive_auto_limit`. The TUI tags the prompt `LIMIT • ASK`; the Desktop GUI and the web interface show the reason in one line on the prompt. Any manual operator decision resets the counter to zero, and so does starting or restarting the agent. In the TUI a direct line input resets it too; on the Desktop GUI and the web gateway it does not.
+- **`rate_limit_per_minute`**: When set to $N > 0$, enforces a sliding window rate limit. If an agent attempts more than $N$ automatic decisions within any 60-second window, subsequent decisions fall back to `ask` with audit reason `rate_limit_exceeded`, tagged `RATE LIMIT • ASK` in the TUI and shown as a reason line on the Desktop GUI and the web interface.
+- On the Desktop GUI and the web gateway both limits are checked when a prompt is detected and again just before the policy's decision is journaled, so a prompt that reached a limit while it waited behind other answers on its session goes to a person. A person is notified of such a prompt, as of any prompt that waits on one.
 - **`guardrails`**:
   - `block_destructive`: Intercepts destructive disk formatting or file deletion patterns (`rm -rf`, `mkfs`, `format`, `dd of=`, `del /s`, `rmdir /s`).
   - `block_exfiltration`: Intercepts piped remote shell executions or unauthorized credential reading (`curl | bash`, `.ssh`, `.aws`, `.env`).

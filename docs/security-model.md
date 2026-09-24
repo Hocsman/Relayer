@@ -114,6 +114,23 @@ into it, and never while an answer or a line is being written to it. Interactive
 attach is operator-only and should be treated as equivalent to sitting at the
 agent's terminal.
 
+Because keystrokes never resolve the prompt Relayer is waiting on, the policy
+answers nothing on a terminal somebody holds: its automatic prompts are asked
+instead (`operator_attached`), and stay asked once the terminal is released. A
+prompt shown while the holder typed is the terminal's (`typed_at_terminal`):
+nobody answers it through Relayer, since the keystrokes may have answered it
+already. Answers from operators who do not hold the terminal are still taken,
+but a typed answer is one line of text with no control character, so it cannot
+carry keystrokes.
+
+The gateway supervises prompts through the same core as the Desktop GUI, with
+the same fail-closed journal. Every request that acts on a run names it, and a
+request for a run that was replaced, or for none, is refused; a run's terminals
+are let go when it ends. Prompt cards, tool-call badges and notifications are
+redacted for every client, and a backend failure reaches them as a fixed
+message, but terminal output is not redacted: a viewer receives every agent's
+screen verbatim.
+
 ### tmux server
 
 tmux is a separate local process and trust domain under the same user. An old
@@ -198,7 +215,10 @@ pending and resolved state by session plus event identity.
 Delivery is attempted only for the exact pending session. A stale event,
 finished session, unsupported adapter encoding, audit failure, attach
 uncertainty, or transport error does not become a successful allow. Relayer does
-not retry an uncertain automatic delivery.
+not retry an uncertain automatic delivery. On the Desktop GUI and the web
+gateway a session takes one write at a time, whether an answer, a line or a web
+terminal's keystrokes, and a write whose outcome is uncertain freezes its
+session, even when the agent withdrew the prompt it answered meanwhile.
 
 Direct `operator_input` uses a separate CAS: it can proceed only when the same
 processor state has no actionable event. It never invokes the legacy empty-ID
@@ -220,9 +240,29 @@ Configuration can propose allow, ask, or deny. Independent invariants apply:
 - dry-run never delivers the proposed automatic action;
 - inability to encode the action falls back to ask.
 
+The Desktop GUI and the web gateway add three guards of their own, in the
+supervision core they share. The TUI keeps its own state machine: it evaluates
+a prompt only once its session is free, which the first guard makes up for,
+and has neither of the other two.
+
+- the policy is evaluated when a prompt is detected, and asked again just
+  before its decision is journaled, so a limit reached while the prompt waited
+  behind other answers hands it to a person;
+- a question asked again within two seconds of an answer to it, a person's or
+  the policy's, is asked rather than answered (`repeat_after_delivery`): an
+  adapter that reads an answered question again from its echo would otherwise
+  have it answered twice;
+- a prompt the policy denies, that goes to a person all the same because of a
+  limit, a repeat, a held terminal or an adapter that could not encode the
+  deny, offers Deny alone and takes no typed answer.
+
 The generic and Claude adapters support manual input only, so their policy
-allow and deny proposals cannot be automatically encoded. Codex supports
-verified command-approval allow/deny bytes and a selection-independent
+allow and deny proposals cannot be automatically encoded. On the Desktop GUI
+and the web gateway, a deny the policy would deliver on its own therefore
+leaves such a prompt with no answer Relayer can send: its web terminal's
+holder answers it by typing, on the gateway, or its agent is stopped.
+
+Codex supports verified command-approval allow/deny bytes and a selection-independent
 directory-trust deny; the directory-trust allow remains human-only. Both
 interactions carry unknown or high risk, so policy still blocks automatic
 allow; a configured non-sensitive deny can be delivered. Any future
@@ -254,10 +294,12 @@ centrally redacted. Sensitive events use a constant summary and omit derivative
 IDs.
 
 Audit initialization or the initial record failing aborts before backend
-startup. A runtime audit failure prevents further policy or manual delivery in
-the affected state and prevents new attach actions. This fail-closed behavior
-does not roll back actions the agent already performed and does not make the log
-tamper-evident.
+startup. A runtime audit failure prevents further policy or manual delivery and
+ordinary lines, and prevents new attach actions, on every front end; the web
+gateway also stops admitting keystrokes. On the Desktop GUI and the gateway an
+agent can still be stopped. Before v0.8.9 the gateway ignored every audit write
+failure and went on delivering. This fail-closed behavior does not roll back
+actions the agent already performed and does not make the log tamper-evident.
 
 ## Residual risks
 
@@ -271,7 +313,9 @@ tamper-evident.
 | Secret exposure to local authority | Same-user inspection, root, backups, memory, and tmux are outside protection. |
 | Shell injection | Explicit `shell` deliberately delegates parsing to `/bin/sh`. |
 | Persistent work after exit | tmux persistence intentionally permits owned processes to outlive supervision. |
-| PTY write cancellation | An in-flight blocked PTY write is interrupted by session stop/close, not by its request context alone. |
+| PTY write cancellation | A write to an agent that reads nothing waits for room in its terminal's input buffer, and its request context does not end it, except for the web gateway's keystrokes on Linux, which give up after five seconds. On Linux, stopping the agent ends such a write; on other Unix systems it waits until the agent reads again or every process holding the terminal has exited. |
+| Web terminal bypass | The holder of a web terminal types into the agent directly, unjournaled; the policy stands aside while the terminal is held. At most one write already admitted can land after the terminal changes hands. |
+| Viewer sees the terminals | Terminal output reaches every client verbatim, viewers included; only prompt cards and notifications are redacted. |
 | Audit disclosure or tampering | Redaction is heuristic and the local file is unsigned and unencrypted. |
 | Shared audit rotation races | Separate Relayer processes do not coordinate one audit path. |
 | Native attach bypass | Direct tmux input is outside policy and decision auditing. |

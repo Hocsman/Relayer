@@ -50,8 +50,12 @@ go run github.com/Hocsman/Relayer/cmd/relayer@latest
 - PTY, tmux, automatic tmux-to-PTY selection, and mixed concrete backends.
 - Native Windows Pseudo Console (ConPTY) support for full native Windows execution.
 - Headless web gateway (`relayer serve`) with role-based access control: `--token` grants
-  read-write operator authority, `--viewer-token` grants read-only observation. Named
-  tokens (`alice:secret`) attribute every decision to a human in the audit trail.
+  read-write operator authority, `--viewer-token` grants read-only observation. It
+  supervises prompts through the same core as the Desktop GUI: the policy's automatic
+  decisions are delivered, and a failed audit write stops every further answer. Named
+  tokens (`alice:secret`) put that name on every answer, line, attach and terminal
+  hand-over the token makes; the policy's own decisions name nobody, and a Stop, Start
+  or Restart is journaled as a person's without the name.
   See the [web gateway guide](docs/web-gateway.md).
 - Several operators can watch one interactive session at once, with exactly one
   holding the terminal. Asking for a terminal a colleague holds is a request they
@@ -63,6 +67,9 @@ go run github.com/Hocsman/Relayer/cmd/relayer@latest
 - Fully bidirectional interactive browser terminal: attach to an agent and type
   directly into its PTY, including arrow keys, VT escape sequences and `Ctrl+C`,
   streamed over WebSocket binary frames. Attach and detach are audited; keystrokes are not.
+  Only the connection holding the terminal can type into it, never while an answer or a
+  line is being written, and while anybody holds it the policy answers nothing on that
+  agent.
 - Visual configuration editor in the Desktop GUI and the web gateway for agents, policies, guardrails and webhooks. Notification changes apply at once; policy and agent changes apply when the run is restarted, and the editor says when one is due.
 - Interactive terminal text search (`Ctrl+F`) with circular navigation and highlighting via `@xterm/addon-search`.
 - Operator arbitration shortcuts: `Alt+1..8` (agent focus/modal), `Ctrl+Enter` (Allow), `Esc` (Deny).
@@ -494,9 +501,20 @@ values inside one list use OR. Conservative invariants always win:
 - dry-run mode records the proposal but asks instead of delivering it;
 - if an adapter cannot encode an automatic decision, Relayer asks instead.
 
+The Desktop GUI and the web gateway, which evaluate a prompt when it is
+detected, add three guards: the policy is asked again just before its
+decision, so a limit reached while a prompt waited is honoured; a question
+asked again within two seconds of an answer to it is asked, never answered
+automatically; and a deny the policy is kept from delivering, by a limit, a
+repeat, a held web terminal or the adapter, is offered to the operator as Deny
+alone.
+
 The current generic adapter encodes manual supervisor input only. Consequently,
 an `allow` or `deny` policy evaluated against a generic prompt falls back to a
-human ask. `deny` means an adapter-defined refusal, not process termination.
+human ask; on the Desktop GUI and the web gateway, a `deny` asked this way can
+only be answered by typing into the web terminal, on the gateway, or by
+stopping the agent. `deny` means an adapter-defined refusal, not process
+termination.
 
 Six adapters are implemented: stable `generic`, plus experimental `aider`,
 `claude`, `codex`, `goose` and `interpreter`. Claude Code coverage is limited
@@ -516,7 +534,8 @@ created before the audit block existed and legacy pattern-only configurations
 remain disabled for compatibility.
 
 The audit is JSONL and records Relayer lifecycle, event, policy, delivery,
-ordinary-input outcome, attach, and cleanup metadata. It never has fields for
+ordinary-input outcome, attach, terminal hand-over, recording, and cleanup
+metadata, from every front end. It never has fields for
 raw terminal output, commands, environment values, manual or ordinary input
 values, encoded decision bytes, or raw errors. Detailed summaries are bounded
 and redacted. Sensitive events use a constant summary and omit derivative
@@ -525,8 +544,9 @@ event IDs.
 On Unix, the dedicated audit directory and files are checked for restrictive
 ownership, type, and permissions. Writes are synchronized line by line, and
 files rotate within configured bounds. Audit failure is fail-closed for startup
-and further decision delivery, but the audit is not signed and redaction is not
-a data-loss-prevention guarantee.
+and for every further answer, line and attach, and on the web gateway for
+keystrokes too, but the audit is not signed and redaction is not a
+data-loss-prevention guarantee.
 
 See [audit logging](docs/audit.md) for the schema, default path, retention,
 failure behavior, and confidentiality limits.
@@ -566,9 +586,13 @@ sensitive repositories.
 - Terminal rendering is intentionally bounded and not a complete emulator.
 - tmux persistence can intentionally leave processes running after Relayer
   exits; inspect them with `tmux list-sessions`.
-- Cancellation of an already blocked PTY input write relies on session
-  `Stop`/`Close` closing the PTY descriptor; a request context alone cannot yet
-  interrupt that in-flight Unix `write`.
+- A write to an agent that reads nothing waits for room in its terminal's
+  input buffer, and its request context cannot interrupt it, except for the web
+  terminal's keystrokes on Linux, which give up after five seconds. On Linux,
+  stopping the agent ends such a write; on other Unix systems it waits until
+  the agent reads again or every process holding the terminal has exited.
+- Terminal output reaches every web client verbatim, viewers included; only
+  prompt cards and notifications are redacted.
 - Separate Relayer processes do not coordinate rotation of one shared audit
   path.
 - Configuration files and command-line arguments are not secret stores.

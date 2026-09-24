@@ -30,7 +30,9 @@ terminal backend router ───────────────► PTY man
 
 No adapter or policy owns a process. Backends own process/session lifecycle;
 adapters turn output into typed events; the policy engine proposes an action;
-the TUI coordinates human input and delivery.
+the front end's supervision coordinates human input and delivery: the TUI's own
+state machine, or `internal/supervise`, which the Desktop GUI and the web
+gateway share.
 
 `internal/preflight` accepts an already effective agent plan.
 `internal/app.RunPreflight` is the shared composition facade: it reads an
@@ -248,11 +250,27 @@ the same bounded concepts; new app flow uses adapter events.
 evaluation. It contains no process, adapter, audit, or transport side effects.
 It returns both a configured proposal and an effective action.
 
-The TUI receives actionable events and serializes human prompts. Simultaneous
-events from different sessions remain identified by event and session IDs;
-successive identical occurrences remain distinct. Before a delivery, the TUI
-records policy and decision state. It then asks the session's adapter to encode
-the action and sends bytes through the backend assigned to that ID.
+Each front end receives actionable events and serializes human prompts.
+Simultaneous events from different sessions remain identified by event and
+session IDs; successive identical occurrences remain distinct. Before a
+delivery, the front end records policy and decision state. It then asks the
+session's adapter to encode the action and sends bytes through the backend
+assigned to that ID.
+
+The TUI does this in its own update loop. The Desktop GUI and the web gateway
+do it through `internal/supervise`, one supervision core over the run's
+runtime, which brings no transport of its own: each front end gives it a sink
+that turns what it shows into Wails events or websocket frames. The core keeps
+the prompts a run is waiting on, delivers the policy's automatic decisions one
+write at a time per session, journals a decision or a line before writing it
+and stops writing once the journal fails, and shows every prompt in a
+display-safe form. It also carries what only the gateway needs: who asked
+for a decision or a line (an actor: identity, role and connection, refused
+when the role may only watch), who holds a session's terminal, on which the
+policy then answers nothing, and the admission of that holder's keystrokes
+through the session's one write slot. Until v0.8.9 the gateway kept a second
+copy of the state machine, which had drifted from the desktop's; see
+[web-gateway.md](web-gateway.md#supervision).
 
 Unsupported encoding, stale or resolved events, exited sessions, audit failure,
 transport failure, and post-attach uncertainty do not silently become an
@@ -304,26 +322,28 @@ manual keyboard or mouse scrolling preserves position.
 
 ## Audit boundaries
 
-`internal/audit` synchronously accepts versioned entries from the app and TUI.
-An accepted sequence gives a total order inside one recorder. It does not claim
-distributed causality between concurrently executing agents.
+`internal/audit` synchronously accepts versioned entries from the app, the TUI
+and the supervision core. An accepted sequence gives a total order inside one
+recorder. It does not claim distributed causality between concurrently
+executing agents.
 
 The audit deliberately distinguishes:
 
 - `supervision_finished`: Relayer stopped supervising a session;
-- `session_finished`: the canonical process-exit event was observed;
+- `session_finished`: a process ended, by its exit or by an operator's or the
+  run's confirmed stop, as its reason says;
 - `session_cleanup`: what backend cleanup or persistence could be established.
 
 That distinction prevents a detached persistent session from being reported as
-terminated merely because the TUI exited. See [audit.md](audit.md).
+terminated merely because a front end exited. See [audit.md](audit.md).
 
 ## Per-Agent Process Lifecycle
 
-The `internal/app.agentLifecycle` controller coordinates operator-initiated per-agent stop, start, and restart operations across both presentations (TUI and Desktop GUI):
+The `internal/app.agentLifecycle` controller coordinates operator-initiated per-agent stop, start, and restart operations across every front end (TUI, Desktop GUI and web gateway, the last two through the supervision core, which also refuses a Start or a Restart while something is still being written to the old process):
 
 - **Zero shared identity**: A replacement process is never started while the previous stop is unconfirmed;
 - **Audit ordering**: `session_started` is durably recorded in the audit journal before any process launches, preserving the foundational invariant that audit precedes execution;
-- **Operator attribution**: Every lifecycle transition explicitly attributes the human operator as the decision actor;
+- **Human actor**: Every lifecycle transition is journaled with `decision_by: human`. It names no operator, even on the web gateway, where the token's identity is known: a Stop, Start or Restart is not attributed to a person the way an answer is;
 - **Safe backend release**: Backends implement `terminal.SessionRemover` to ensure operating system processes are fully reaped and removed before an identity can be reused.
 
 ## Shutdown

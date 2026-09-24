@@ -179,6 +179,45 @@ That is intentional: it will not guess whether a prompt changed while direct
 attach bypassed interception. Inspect tmux and restart supervision rather than
 forcing a stale response.
 
+## The web terminal takes no keystrokes
+
+On the web gateway only the connection that holds a terminal can type into it.
+Open the interactive session, which takes the terminal, or ask its holder for
+it. Keystrokes are also dropped, never queued, when:
+
+- somebody else holds the terminal, or it was handed over;
+- an answer or a line is being written to that agent;
+- the audit journal has failed;
+- the session is frozen after a write whose outcome is unknown;
+- the agent is stopped, stopping or starting, or the run is ending;
+- the tab still shows a run that "Save and restart" replaced: reload it.
+
+Since v0.8.9 a terminal nobody holds takes no keystrokes at all; before, any
+operator connection could type into it. See [sharing.md](sharing.md).
+
+## The web interface refuses an answer
+
+The web interface and the Desktop GUI show a fixed message for each refusal,
+then read the state again. The refusals come from the supervision core:
+
+- another answer to that agent is being delivered, or the prompt was answered,
+  withdrawn or replaced meanwhile;
+- the adapter cannot encode the chosen answer, or the prompt no longer offers
+  it: nothing was sent, and the prompt offers what is left;
+- a typed answer is empty, spans several lines, holds a control character or
+  exceeds 4096 bytes: a typed answer is one line of text;
+- the prompt offers Deny alone, because the policy denies it: only Deny is
+  taken, never Allow or a typed answer. With the generic and Claude adapters,
+  which encode no deny, type the answer into the web terminal, on the gateway,
+  or stop the agent;
+- keys were typed at the prompt's terminal while it was shown (reason
+  `typed_at_terminal`): answer it at the terminal;
+- the audit journal has failed, or the session is frozen: stop the agent;
+- the page shows a run that was replaced: reload it.
+
+A prompt the policy is answering is locked on screen until its answer is
+delivered, and one being delivered is locked for everybody.
+
 ## Ordinary line input is unavailable
 
 In the TUI, focus an agent and press `i`; use Enter to send or Escape to erase
@@ -186,9 +225,11 @@ the composer. In the GUI, use the one-line field below the bounded output.
 Relayer refuses ordinary input when:
 
 - that session has a detected prompt or decision in flight;
-- the session is attached, exited, stopping, or restarting;
-- another line for the same presentation is still being delivered;
-- audit or transport uncertainty froze the session;
+- the session is attached, exited, stopping, or restarting; on the web
+  gateway, attached means that anybody holds its terminal;
+- another line for the same presentation is still being delivered, or, on the
+  web gateway, the terminal's holder's keystrokes are;
+- audit or transport uncertainty froze the session, or the audit journal failed;
 - the text is not valid UTF-8, contains a Unicode control character, or
   exceeds 4096 bytes;
 - the backend does not implement the atomic line capability.
@@ -253,10 +294,26 @@ This can be correct for several reasons:
 - the event is invalid, incomplete, non-actionable, or no longer pending;
 - `policies.dry_run` is true;
 - audit delivery is frozen after a write failure;
-- the adapter cannot encode the proposed action.
+- the adapter cannot encode the proposed action;
+- a guardrail matched, or `max_consecutive_auto_decisions` or
+  `rate_limit_per_minute` was reached, possibly while the prompt waited behind
+  other answers on the same agent;
+- on the Desktop GUI and the web gateway, the prompt repeats a question of the
+  same agent answered less than two seconds earlier (`repeat_after_delivery`);
+- on the web gateway, somebody holds the agent's terminal, or took it while
+  the prompt arrived (`operator_attached`), or typed into it while the prompt
+  was shown (`typed_at_terminal`).
+
+The Desktop GUI and the web interface show the reason in one line on the
+prompt; the TUI tags a limit `LIMIT • ASK` or `RATE LIMIT • ASK`. On the first
+two, a deny held back by a limit, a repeat, a held terminal or the adapter
+offers Deny alone.
 
 The generic and Claude adapters can encode manual input only. Their allow and
-deny proposals therefore fall back to a human ask. Codex automatic encoding is
+deny proposals therefore fall back to a human ask. On the Desktop GUI and the
+web gateway, a deny the policy would have delivered on its own then offers
+nothing the adapter can send: type the answer into the web terminal, on the
+gateway, or stop the agent. Codex automatic encoding is
 limited to command-approval allow/deny and the selection-independent
 directory-trust deny documented in [adapters](adapters.md). This is not a
 policy parser failure. A configured deny is not a request to terminate the
@@ -332,9 +389,12 @@ do not coordinate rotation.
 ## Audit writes fail during a run
 
 Recorder write failure becomes sticky. Relayer reports an audit failure and
-freezes new decisions and attaches instead of continuing with an uncertain
-record. Free disk space and repair the storage issue, then restart Relayer; do
-not assume an in-flight response was safely delivered or retry it blindly.
+freezes new decisions, lines and attaches instead of continuing with an
+uncertain record; the web gateway also stops taking keystrokes, and the
+Desktop GUI and the web interface show every pending prompt failed. An agent
+can still be stopped from the Desktop GUI or the web interface. Free disk space
+and repair the storage issue, then restart Relayer; do not assume an in-flight
+response was safely delivered or retry it blindly.
 
 A final partial JSONL line from an interrupted append can be recovered by the
 file sink on the next open. Complete earlier lines remain independently

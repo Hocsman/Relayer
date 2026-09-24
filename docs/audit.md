@@ -44,6 +44,15 @@ supervision gate with nothing recorded, and the journal could not distinguish
 The record carries the occurrence identity, adapter, event type and risk. Like
 every other kind, it has no field for the matched terminal text.
 
+The Desktop GUI and the web gateway journal every withdrawal the adapter
+reports, with the reason `agent_withdrew_occurrence`, including that of a
+prompt already answered, whose question left the screen once the agent read
+its answer. What became of the prompt is told by the entries before it: a
+withdrawal with no `decision` entry for the same occurrence is a prompt nobody
+answered through Relayer. No `decision` entry follows the withdrawal of the
+prompt it would answer; the `delivery` entry of an answer that was being
+written when the agent withdrew the prompt does, since the write ends after.
+
 ## Configuration
 
 ```yaml
@@ -85,20 +94,81 @@ is local crash recovery, not tamper detection.
 Entries may contain:
 
 - `schema_version`, `sequence`, `timestamp`, `entry_id`, and `run_id`;
-- `kind` such as `run_started`, `session_started`, `supervision_finished`, `session_finished`, `event_detected`, `policy_evaluated`, `decision`, `delivery`, `operator_input`, `attach_started`, `attach_finished`, `backend_error`, or `session_cleanup`;
+- `kind`, from the closed set listed under [which front end writes what](#which-front-end-writes-what);
 - session, agent, backend, and adapter identifiers;
 - event ID, implemented event type, and risk level;
 - selected rule, decision, actor (`human`, `policy`, or `system`), outcome, and a fixed reason code;
+- `operator`, the identity of the person who acted, when the front end knows one: the web gateway's named token (`alice` for `alice:s3cret`), or `operator` or `local-operator` without one. The desktop and the TUI have a single operator and name nobody;
 - `sensitive` classification;
 - in `detailed` mode only, a bounded redacted `summary` and bounded filtered `metadata`.
 
 Sequences define the order in which the synchronous recorder accepted entries. They provide a total order inside one Relayer run, but do not claim a distributed causal order between agents running concurrently.
 
-`supervision_finished` means the TUI stopped supervising that session. It does not claim that a detached tmux process exited. `session_finished` is emitted only from the canonical `process_exit` event. Cleanup records distinguish a completed backend cleanup, a requested tmux persistence, and an incomplete/unknown aggregate cleanup; they do not claim per-session removal when the backend cannot prove it.
+`supervision_finished` means Relayer stopped supervising that session, when its run ended. It does not claim that a detached tmux process exited. `session_finished` means a process ended, and its reason says how:
 
-`operator_input` records an attempt and its terminal outcome with session,
-agent, backend, adapter, actor, outcome, and a fixed reason code only. It has no
-field for the submitted line or its length.
+- `process_exit`: the session's current process exited, on its own or because it was stopped; the outcome is `failed` when it failed, and in `detailed` mode `metadata` holds its exit code;
+- `process_exit_stale` (Desktop GUI and web gateway): a process exited after a replacement had already started, typically the process a Restart stopped. It keeps its real outcome, but it does not end the running session;
+- `operator_stop` and `operator_restart`: an operator stopped or restarted the agent, journaled as a person's (`decision_by: human`) with no `operator`, on every front end;
+- `restart_stop_confirmed` (Desktop GUI and web gateway): the whole run was stopped for **Stop the run** or **Save and restart**, and the stop was confirmed.
+
+An operator's Stop is usually followed by the stopped process's own `process_exit`, so one process can end with two `session_finished` entries. Cleanup records distinguish a completed backend cleanup, a requested tmux persistence, and an incomplete/unknown aggregate cleanup; they do not claim per-session removal when the backend cannot prove it.
+
+`operator_input` records an attempt and its terminal outcome, as two entries,
+with session, agent, backend, adapter, actor, outcome, a fixed reason code and,
+on the web gateway, the `operator`, and nothing else. It has no field for the
+submitted line or its length.
+
+A person's `decision`, and its `delivery` however it ends, carry the
+`operator` and, as metadata, the operator, their token's `role` and the
+connection (`conn_id`) the answer came from, so that an answer can be tied to
+the terminal hand-overs around it, which carry the same connection. Metadata is
+kept only in `detailed` mode: the default `metadata` mode keeps the `operator`
+field and drops the role and the connection. The policy's evaluations and
+decisions, a prompt's detection and withdrawal, and a process's exit name
+nobody.
+
+## Which front end writes what
+
+The TUI, the Desktop GUI and the web gateway write the same vocabulary. The
+Desktop GUI and the web gateway share one supervision core, `internal/supervise`,
+and write the same entries for the same prompt; the TUI has a state machine of
+its own.
+
+| Kind | TUI | Desktop GUI | Web gateway |
+| --- | --- | --- | --- |
+| `run_started`, `run_finished`, `session_started`, `supervision_finished`, `session_cleanup` | yes | yes | yes |
+| `session_finished` | yes | yes | yes; a natural exit only since v0.8.9 |
+| `event_detected`, `policy_evaluated` | yes | yes | since v0.8.9 |
+| `decision`, `delivery` | yes | yes | yes; the policy's own only since v0.8.9 |
+| `event_withdrawn` | yes | yes | since v0.8.9 |
+| `operator_input` | yes | yes | yes; before and after the write since v0.8.9 |
+| `backend_error` | yes | yes | yes; a stream failure only since v0.8.9 |
+| `attach_started`, `attach_finished` | native tmux attach | — | web terminal |
+| `control_requested`, `control_granted`, `control_declined`, `control_released`, `control_forced` | — | — | yes; see [sharing.md](sharing.md#audit-trail) |
+| `recording_started`, `recording_finished` | — | yes | yes; see [recording.md](recording.md) |
+| `recording_exported`, `recording_deleted` | — | — | yes |
+
+Before v0.8.9 the web gateway journaled no detection, evaluation or
+withdrawal, no natural exit and no stream failure, and none of the policy's
+decisions, which it never delivered.
+
+A prompt the policy would have answered on its own can go to a person all the
+same. Its `policy_evaluated` entry, `ask`, then says why, and when the reason
+arises after that entry was journaled, a second `policy_evaluated` entry gives
+it. The Desktop GUI and the web gateway write these reasons besides the
+policy's own:
+
+| Reason | Meaning |
+| --- | --- |
+| `consecutive_auto_limit`, `rate_limit_exceeded` | A limit of the policy was reached, possibly while the prompt waited behind other answers: the policy is asked again just before its decision. |
+| `repeat_after_delivery` | The prompt repeats one of its session answered, or being answered, less than two seconds earlier. |
+| `operator_attached` | Somebody holds the session's web terminal, or took it while the prompt was being taken in. |
+| `typed_at_terminal` | The terminal's holder typed while the prompt was shown; nobody answers it through Relayer. |
+
+On those two, a decision the adapter cannot encode, the policy's or a
+person's, is followed by a `delivery` entry with the outcome and reason
+`fallback_unsupported`: nothing reached the agent, and the prompt went back to
+a person.
 
 ## Fields never recorded
 
@@ -125,7 +195,7 @@ The centralized redactor removes or replaces:
 - strings shaped like JWTs and common prefixed tokens;
 - URL user information and sensitive query parameters or fragments;
 - the remainder of the normalized summary after a detected credential label, so newline-separated values and unquoted multi-word passphrases are not partially retained;
-- all metadata except a closed allowlist: policy mode/actions/automatic status and process-exit code/failure status.
+- all metadata except a closed allowlist per kind: policy mode/actions/automatic status, process-exit code/failure status, an MCP tool call's server, tool and argument count, the operator, role and connection of a decision, delivery, attach or hand-over (plus the other party's operator and connection for a hand-over), and a recording's counters and markers.
 
 For `sensitive`, `credential`, or high-risk events, `summary` is the constant `sensitive_event` and metadata is omitted. The audit never records the length of a submitted secret. Maps are copied before serialization so later mutation cannot alter an accepted entry.
 
@@ -168,7 +238,12 @@ If `--path` or a positional file argument is omitted, `relayer audit` inspects t
 
 ## Failure behavior
 
-Audit initialization and the initial run record complete before an agent process starts. A failure at that point aborts startup cleanly. During the TUI, an audit failure is shown in the supervisor and prevents further policy or manual delivery for the affected state. A failed audit write never changes a policy result into `allow`, and Relayer never retries an uncertain automatic delivery.
+Audit initialization and the initial run record complete before an agent process starts. A failure at that point aborts startup cleanly. During a run, an audit write that fails is sticky and stops supervision from writing anything more to an agent:
+
+- the TUI shows the failure in the supervisor and freezes every pane: no policy or manual delivery, line or attach;
+- the Desktop GUI and the web gateway stop every answer, the policy's included, and every line, show each pending prompt failed with the reason `audit_unavailable`, and report the journal failed. The gateway also refuses keystrokes and new attaches. An agent can still be stopped.
+
+Before v0.8.9 the web gateway ignored every failed audit write and went on delivering. A failed audit write never changes a policy result into `allow`, and Relayer never retries an uncertain automatic delivery.
 
 The recorder is local only. There is no remote service or upload.
 

@@ -84,9 +84,15 @@ A token may carry an identity:
 --viewer-token review:look-only,auditor:read-me
 ```
 
-The part before the colon is the identity recorded in the audit trail for every
-decision, line, attachment, and terminal transfer that token performs. Without a
-colon the identity is just `operator` or `viewer`.
+The part before the colon is the identity recorded in the audit trail, as the
+entry's `operator`, for every answer, line, attachment, and terminal transfer
+that token performs. Without a colon the identity is just `operator` or
+`viewer`. The token's role and the connection (`role`, `conn_id`) are journaled
+as metadata, which only the `detailed` audit mode keeps. The policy's own
+decisions name nobody, since nobody made them. A Stop, Start or Restart of an
+agent is journaled as a person's (`decision_by: human`) without saying whose,
+stopping or restarting the run is journaled as the system's, and a settings
+save is not journaled at all.
 
 An identity is only as meaningful as the secret's distribution. Relayer
 authenticates a token, never a person: two people sharing `alice:s3cret` are
@@ -133,6 +139,79 @@ another user on a shared machine, or a local program, can connect as
 `local-operator` without a secret. On a machine you do not have to yourself,
 pass `--token` even on loopback.
 
+## Supervision
+
+The gateway supervises prompts through the same core as the Desktop GUI
+(`internal/supervise`), so a prompt is decided, delivered and journaled the
+same way whichever of the two runs it:
+
+- the policy's automatic decisions are delivered, and count towards
+  `max_consecutive_auto_decisions` and `rate_limit_per_minute`. Before v0.8.9
+  the gateway only displayed them: every prompt waited on an operator, whose
+  click was journaled as a person's decision;
+- the journal holds each prompt's detection, the policy's evaluation, the
+  decision, its delivery or the agent's withdrawal, and each process exit and
+  stream failure; see [audit.md](audit.md#which-front-end-writes-what);
+- the journal is fail-closed: an entry it refuses stops every answer, the
+  policy's included, every line, every keystroke and every new attach, shows
+  each pending prompt failed and tells every client. An agent can still be
+  stopped;
+- a session takes one write at a time, whether an answer, a line or
+  keystrokes, and a write whose outcome is unknown freezes the session until
+  a new process replaces the agent's;
+- a typed answer is sent as typed and journaled `ask`. It is one line of text
+  of at most 4096 bytes with no control character, and an empty one is
+  refused. The Allow and Deny buttons send only an answer the prompt offers;
+- the policy never answers a question asked again within two seconds of an
+  answer to it (reason `repeat_after_delivery`), nor any prompt of an agent
+  whose terminal somebody holds (see [sharing.md](sharing.md)). A deny it is
+  kept from delivering this way, or by one of its limits, is offered to the
+  operator as Deny alone;
+- prompt cards, tool-call badges and notifications are display-safe: bounded,
+  redacted, and without text for a prompt whose text must not be shown. A
+  backend failure reaches clients as a fixed message. Terminal output does not
+  go through any of this: see [Security boundaries](#security-boundaries);
+- operators are notified of a prompt only when it waits on a person, and of a
+  guardrail as critical, by the agent's name.
+
+## Requests name their run
+
+Each run has an ID, which `getState` returns as `runID`. A request that acts on
+the run names it: an answer, a line, a Stop, Start or Restart of an agent,
+stopping the run, "Save and restart" (`expectedRunID`), and taking, asking for,
+handing over or seizing a terminal. A request that names another run, or none,
+is refused ("run has changed, reload before retrying", or "this Relayer run is
+no longer active") and changes nothing, so a tab still showing a run that "Save
+and restart" replaced cannot act on the run that replaced it. Declining a
+request for a terminal and letting go of one need no run.
+
+Keystrokes sent as binary frames carry no run. They need none: a run's
+terminals are let go when it ends, so keystrokes only ever reach a terminal the
+connection took in the current run. Before v0.8.9 most of these requests
+ignored the run or took an empty one for the current run; a script that calls
+the API must now send it.
+
+## Stopping and restarting the run
+
+Stopping the run, "Save and restart" and shutting the gateway down end a run
+one at a time, in the desktop's order: no new answer, line, keystroke or attach
+is taken; the agents are stopped, strictly for a stop or a restart; what was
+already being written to them reaches its journaled outcome; the run's
+terminals are let go, journaled as `control_released_run_end`; and only then is
+the runtime closed. Each step waits at most 12 seconds.
+
+A run whose writes did not all finish in time, or whose agents could not be
+confirmed stopped, is reported failed, and the gateway then refuses to start
+another run beside processes that may still be running: restart Relayer. The
+run that "Save and restart" starts holds no terminal and none of the previous
+run's prompts, and every client is told its ID, so a tab still on the previous
+run reloads. A restart whose new run fails to start is not rolled back: the
+saved configuration stays written and the run is shown failed.
+
+Before v0.8.9 the gateway closed the runtime without waiting for anything: an
+answer being written lost the journal entry that says how it ended, and the new
+run inherited the previous run's prompts and terminals.
+
 ## Multiple operators
 
 Several operators and viewers can watch the same session at once, with one
@@ -148,7 +227,10 @@ Sessions can be recorded to asciicast files and replayed in the interface. See
 The gateway is an authentication boundary, not a sandbox. A holder of an
 operator token has the same authority over the supervised agents as somebody
 sitting at the local Desktop GUI, including interactive attachment, which
-bypasses prompt detection, policy, and arbitration by design.
+bypasses prompt detection, policy, and arbitration by design. Keystrokes are
+never journaled or screened. The gateway bounds only who may type and when:
+the connection holding the terminal, whose taking is journaled before it can
+type, never beside an answer or a line, and not once the journal has failed.
 
 An operator also receives each agent's full command line, because it can edit
 and restart the agents: a credential passed as an argument is visible to every
