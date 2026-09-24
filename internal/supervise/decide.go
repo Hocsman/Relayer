@@ -372,9 +372,11 @@ func (s *Supervisor) SubmitDecision(runID, sessionID, eventID, manualInput strin
 // the adapter is asked again here: a decision that arrived from a stale
 // interface must be refused by the core rather than by the screen that offered
 // it. Only allow and deny are answers here, and only when the adapter offers
-// them for this occurrence; anything else is ErrUnsupportedDecision, with
-// nothing changed and nothing journaled. actor is who chose it; a read-only one
-// is refused before anything else.
+// them for this occurrence and the prompt still offers them: an answer the
+// core took off the prompt, one the adapter could not encode when it was
+// tried, is not taken again. Anything else is ErrUnsupportedDecision, with
+// nothing changed and nothing journaled. actor is who chose it; a read-only
+// one is refused before anything else.
 func (s *Supervisor) SubmitAutomaticDecision(runID, sessionID, eventID, decision string, actor Actor) error {
 	if actor.readOnly() {
 		return ErrReadOnlyActor
@@ -399,10 +401,23 @@ func (s *Supervisor) SubmitAutomaticDecision(runID, sessionID, eventID, decision
 			offered = true
 		}
 	}
-	if !offered {
+	// The adapter is asked what it can encode, and the prompt what is still
+	// on offer: asking the adapter alone accepted an answer the core had
+	// already refused, which was journaled and handed to the runtime again.
+	if !offered || !offers(item.view, adapters.Decision(decision)) {
 		return ErrUnsupportedDecision
 	}
 	return s.applyHumanDecision(runID, sessionID, eventID, adapters.Decision(decision), "", actor)
+}
+
+// offers reports whether the prompt offers decision among its answers.
+func offers(view View, decision adapters.Decision) bool {
+	for _, offered := range view.Decisions {
+		if offered == string(decision) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Supervisor) applyHumanDecision(
@@ -433,6 +448,12 @@ func (s *Supervisor) applyHumanDecision(
 	if !exists {
 		s.mu.Unlock()
 		return ErrDecisionStale
+	}
+	if decision != adapters.DecisionManual && !offers(item.view, decision) {
+		// The prompt stopped offering the answer since SubmitAutomaticDecision
+		// read it: another person's attempt at it was refused meanwhile.
+		s.mu.Unlock()
+		return ErrUnsupportedDecision
 	}
 	if shuttingDown {
 		s.mu.Unlock()

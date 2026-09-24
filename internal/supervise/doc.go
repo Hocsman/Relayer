@@ -121,6 +121,9 @@
 //     is taken as answered then, and a repeat of one within the window is
 //     asked. A repeat of a prompt the holder answered by typing was the
 //     policy's to answer once the hand was released.
+//   - A chosen answer is taken only if the prompt still offers it, not only
+//     the adapter: an answer the adapter could not encode, which the core
+//     took off the prompt, was accepted again from a stale screen.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

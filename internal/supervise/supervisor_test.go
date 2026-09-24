@@ -834,6 +834,52 @@ func TestAPromptRaisedWhileTheAgentStopsLeavesItShownStopping(t *testing.T) {
 	}
 }
 
+// An answer the core refused is not accepted again. Once the adapter could
+// not encode it, the prompt no longer offers it, and a screen that still
+// shows it, or a second operator's, is refused (ErrUnsupportedDecision) with
+// nothing claimed, journaled, shown or written. The core used to ask the
+// adapter again rather than read what the prompt offers, and the adapter
+// still claimed the answer: it was journaled a second time and handed to the
+// runtime again. The answers the prompt still offers are taken as ever.
+func TestAnAnswerThePromptNoLongerOffersIsRefused(t *testing.T) {
+	engine := newFakeEngine()
+	engine.supportedDecisions = []adapters.Decision{adapters.DecisionAllow, adapters.DecisionDeny}
+	engine.applyErrs = []error{adapters.ErrDecisionUnsupported}
+	sup, sink := newCoreForTest(t, engine, "agent-a")
+	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
+	if err := sup.SubmitAutomaticDecision(testRunID, "agent-a", "prompt-1", "allow", desktop); !errors.Is(err, supervise.ErrUnsupportedDecision) {
+		t.Fatalf("an answer the adapter cannot encode = %v, want ErrUnsupportedDecision", err)
+	}
+	if shown := viewOf(sup, "prompt-1"); shown == nil || !reflect.DeepEqual(shown.Decisions, []string{"deny"}) {
+		t.Fatalf("the prompt after the refusal = %#v, want it offering deny alone", shown)
+	}
+	journaled, written := len(engine.auditSnapshot()), len(engine.applySnapshot())
+	sink.reset()
+
+	if err := sup.SubmitAutomaticDecision(testRunID, "agent-a", "prompt-1", "allow", alice); !errors.Is(err, supervise.ErrUnsupportedDecision) {
+		t.Fatalf("the refused answer, again = %v, want ErrUnsupportedDecision", err)
+	}
+	if entries := engine.auditSnapshot(); len(entries) != journaled {
+		t.Fatalf("the refused answer was journaled again: %#v", entries[journaled:])
+	}
+	if calls := engine.applySnapshot(); len(calls) != written {
+		t.Fatalf("the refused answer reached the runtime again: %#v", calls[written:])
+	}
+	if calls := sink.snapshot(); len(calls) != 0 {
+		t.Fatalf("the refused answer showed %v", trace(calls))
+	}
+	if shown := viewOf(sup, "prompt-1"); shown == nil || shown.DeliveryStatus != "pending" {
+		t.Fatalf("the prompt after the second refusal = %#v", shown)
+	}
+
+	if err := sup.SubmitAutomaticDecision(testRunID, "agent-a", "prompt-1", "deny", alice); err != nil {
+		t.Fatalf("the answer the prompt still offers = %v", err)
+	}
+	if calls := engine.applySnapshot(); len(calls) != written+1 || calls[written].decision != adapters.DecisionDeny {
+		t.Fatalf("writes = %#v, want the refused allow then deny", calls)
+	}
+}
+
 // A human answer the adapter cannot encode goes back to the operator. The
 // runtime encodes an answer before it writes a byte of it (the router's
 // ApplyDecision), so the delivery is not uncertain: it is journaled
