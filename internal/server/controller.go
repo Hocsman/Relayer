@@ -104,6 +104,9 @@ type Controller struct {
 	// where the supervision core meets it: the gateway tests' seam for a
 	// journal, a write or a stop that fails.
 	engineWrap func(supervise.Engine) supervise.Engine
+	// drainBudget, when a test sets it, replaces runEndBudget for the phase
+	// of a run's end that waits for what its core admitted.
+	drainBudget time.Duration
 
 	state       AppState
 	agentIndex  map[string]int // lowercase sessionID -> slice index
@@ -322,8 +325,33 @@ type runEnd struct {
 }
 
 // runEndBudget bounds each phase of a run's end, as the desktop's does: the
-// backends' stop, then the runtime's close.
+// backends' stop, the wait for what the run's core admitted, then the
+// runtime's close.
 const runEndBudget = 12 * time.Second
+
+// errDrainIncomplete is a run's end whose core still had a write, or a
+// decision, in progress once its budget was spent: the run is not known to
+// have ended cleanly.
+var errDrainIncomplete = errors.New("the run's writes did not all finish before it ended")
+
+// waitWithin waits for wait to return, for at most budget, and reports
+// whether it did. A wait that outlives its budget goes on, on its own
+// goroutine, and returns whenever what it waits for does.
+func waitWithin(budget time.Duration, wait func()) bool {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		wait()
+	}()
+	timer := time.NewTimer(budget)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
 
 // beginRunEndLocked closes the current run to everything new, and returns
 // what ending it needs: its core admits nothing more and schedules no answer
@@ -352,8 +380,16 @@ func (c *Controller) beginRunEndLocked() runEnd {
 // without waiting at all: an answer being written lost its outcome with the
 // journal.
 //
-// Each phase is bounded by runEndBudget, and by parent when it is not nil. A
-// non-nil result means the run's processes may not all have stopped.
+// Each phase is bounded by runEndBudget, and by parent when it is not nil,
+// the wait for the event loop and the drain included. A non-nil result means
+// the run's processes may not all have stopped, or that what its core
+// admitted had not all finished (errDrainIncomplete): the runtime is closed
+// all the same, which ends what it can of such a write. The drain waited with
+// no bound, under lifecycleMu: keystrokes blocked in the terminal of an agent
+// that reads nothing, a write whose context the kernel ignores, held StopRun,
+// "Save and restart" and Close for good, the run shown stopping, Serve unable
+// to shut down and no run started or stopped again until the process was
+// killed.
 func (c *Controller) endRun(parent context.Context, end runEnd, strict bool) error {
 	if parent == nil {
 		parent = context.Background()
@@ -374,11 +410,18 @@ func (c *Controller) endRun(parent context.Context, end runEnd, strict bool) err
 	if end.cancel != nil {
 		end.cancel()
 	}
-	if end.loopDone != nil {
-		<-end.loopDone
+	drain := runEndBudget
+	if c.drainBudget > 0 {
+		drain = c.drainBudget
 	}
-	if end.sup != nil {
-		end.sup.Wait()
+	if deadline, bounded := parent.Deadline(); bounded && time.Until(deadline) < drain {
+		drain = max(time.Until(deadline), 0)
+	}
+	if end.loopDone != nil && !waitWithin(drain, func() { <-end.loopDone }) {
+		result = errors.Join(result, errDrainIncomplete)
+	}
+	if end.sup != nil && !waitWithin(drain, end.sup.Wait) {
+		result = errors.Join(result, errDrainIncomplete)
 	}
 	c.releaseHandsAtRunEnd()
 	if end.runtime != nil {

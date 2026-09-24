@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -299,5 +300,64 @@ func TestAStoppedWebRunTakesNothingUntilItIsStartedAgain(t *testing.T) {
 	}
 	if strings.Contains(g.screen("web-listen"), "to-the-stopped-run") {
 		t.Fatal("a line naming the stopped run reached the new run's agent")
+	}
+}
+
+// Ending a run waits for what its core admitted for at most its budget. A
+// write that never returns, as keystrokes blocked in the terminal of an agent
+// that reads nothing do, held StopRun, "Save and restart" and Close for good:
+// the drain waited with no bound, under the lock that serialises a run's end,
+// with the run shown stopping, Serve unable to shut down and no run started or
+// stopped again until the process was killed. Past its budget, the run's end
+// goes on and closes the runtime, and the run is shown failed, since it did not
+// end cleanly: no other run is started beside it.
+func TestEndingAWebRunIsBoundedWhenAWriteNeverReturns(t *testing.T) {
+	fault, wrap := newFaultEngine()
+	g := startWebRun(t, webRun{
+		engineWrap: wrap,
+		agents:     []webAgent{{id: "web-generic", mode: webAgentGeneric, adapter: "generic"}},
+	})
+	prompt := g.awaitPending("web-generic", 30*time.Second)
+	runID := g.runID()
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseWrite := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseWrite)
+	// A write that ignores its context, as a PTY write blocked in the kernel
+	// does.
+	fault.set(func(f *faultEngine) { f.holdApplyFirm = release })
+	go func() {
+		_ = g.ctrl.SubmitDecision(runID, prompt.SessionID, prompt.ID, "never delivered", webOperator)
+	}()
+	select {
+	case <-fault.applyStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the answer's write never started")
+	}
+
+	g.ctrl.drainBudget = 2 * time.Second
+	stopped := make(chan error, 1)
+	go func() {
+		_, err := g.ctrl.StopRun(runID)
+		stopped <- err
+	}()
+	// The strict stop, the bounded drain, then the runtime's close.
+	limit := runEndBudget + g.ctrl.drainBudget + 10*time.Second
+	select {
+	case err := <-stopped:
+		if !errors.Is(err, errLifecycleBlocked) {
+			t.Fatalf("StopRun of a run whose write never returned = %v, want it reported not cleanly ended", err)
+		}
+	case <-time.After(limit):
+		releaseWrite()
+		<-stopped
+		t.Fatalf("StopRun had not returned %s after it began: the drain waited on a write that never returns", limit)
+	}
+	g.awaitRunStatus(runID, "failed", 5*time.Second)
+	if status := g.ctrl.GetState().RunStatus; status != "failed" {
+		t.Fatalf("the run is shown %q, want failed", status)
+	}
+	if _, err := g.ctrl.StopRun(runID); !errors.Is(err, errLifecycleBlocked) {
+		t.Fatalf("a run started or stopped beside the one that did not end cleanly: %v", err)
 	}
 }
