@@ -201,7 +201,7 @@ func TestSessionSharingHandLifecycle(t *testing.T) {
 	sessionID := firstSessionID(t, alice)
 
 	alice.mustCall("setInteractiveSession",
-		map[string]any{"sessionID": sessionID, "active": true}, nil)
+		attachParams(t, alice, sessionID), nil)
 	// Every connected client learns who holds the terminal, not just the holder.
 	carol.awaitHand(func(view HandView) bool {
 		return view.State == HandHeld && view.HolderConnID == alice.connID
@@ -209,7 +209,7 @@ func TestSessionSharingHandLifecycle(t *testing.T) {
 
 	// Carol must not be able to take a terminal alice holds.
 	err := carol.call("setInteractiveSession",
-		map[string]any{"sessionID": sessionID, "active": true}, nil)
+		attachParams(t, carol, sessionID), nil)
 	if err == nil {
 		t.Fatal("carol took a terminal alice holds")
 	}
@@ -269,7 +269,7 @@ func TestSessionSharingViewerObservesButNeverHolds(t *testing.T) {
 
 	// An operator can still take the terminal while a viewer watches.
 	alice.mustCall("setInteractiveSession",
-		map[string]any{"sessionID": sessionID, "active": true}, nil)
+		attachParams(t, alice, sessionID), nil)
 	dave.awaitHand(func(view HandView) bool {
 		return view.State == HandHeld && view.HolderIdentity == "alice"
 	})
@@ -284,7 +284,7 @@ func TestSessionSharingDisconnectFreesTheTerminal(t *testing.T) {
 	sessionID := firstSessionID(t, alice)
 
 	alice.mustCall("setInteractiveSession",
-		map[string]any{"sessionID": sessionID, "active": true}, nil)
+		attachParams(t, alice, sessionID), nil)
 	carol.awaitHand(func(view HandView) bool {
 		return view.State == HandHeld && view.HolderConnID == alice.connID
 	})
@@ -315,18 +315,27 @@ func TestSessionSharingSecondTabDoesNotInheritTheTerminal(t *testing.T) {
 	sessionID := firstSessionID(t, firstTab)
 
 	firstTab.mustCall("setInteractiveSession",
-		map[string]any{"sessionID": sessionID, "active": true}, nil)
+		attachParams(t, firstTab, sessionID), nil)
 
 	// Keying the hand by identity rather than by connection would silently let
 	// the second tab type into a terminal the first one holds.
 	err := secondTab.call("setInteractiveSession",
-		map[string]any{"sessionID": sessionID, "active": true}, nil)
+		attachParams(t, secondTab, sessionID), nil)
 	if err == nil {
 		t.Fatal("the second tab inherited the first tab's terminal")
 	}
 	if !strings.Contains(err.Error(), "another operator holds the terminal") {
 		t.Fatalf("second tab takeover error = %v", err)
 	}
+}
+
+// attachParams is the parameters of the attach verb for a session, in the run
+// the client's state shows: a terminal is taken only for the run named.
+func attachParams(t *testing.T, client *sharedGatewayClient, sessionID string) map[string]any {
+	t.Helper()
+	var state AppState
+	client.mustCall("getState", map[string]any{}, &state)
+	return map[string]any{"runID": state.RunID, "sessionID": sessionID, "active": true}
 }
 
 // firstSessionID returns a session the run actually started. The write lock is

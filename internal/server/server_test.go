@@ -1108,8 +1108,10 @@ func TestInteractivePTYWebAndAudit(t *testing.T) {
 	}
 	sessionID := state.Agents[0].SessionID
 
-	// 2. Operator attaches interactively: setInteractiveSession -> true
+	// 2. Operator attaches interactively, to the run it names:
+	// setInteractiveSession -> true
 	_, err = callOpRPC("setInteractiveSession", map[string]any{
+		"runID":     state.RunID,
 		"sessionID": sessionID,
 		"active":    true,
 	})

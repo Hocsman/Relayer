@@ -51,9 +51,11 @@ stopped, stopping or starting, and while the run is stopping.
 A hand belongs to a run's terminal. Stopping the run, or restarting it with
 "Save and restart", lets go of every terminal once the run has drained, and
 the new run's terminals are free: whoever wants one takes it again, which is
-journaled. No terminal is taken while a run is stopping. Before v0.8.9 the
-new run inherited the previous run's hands, and a connection could type into
-a process it had never attached to.
+journaled. No terminal is taken while a run is stopping, and taking one names
+the run it is for: a tab still showing a run that has been replaced cannot
+attach to the new run's terminal. Before v0.8.9 the new run inherited the
+previous run's hands, the attach ignored the run it named, and a connection
+could type into a process it had never attached to.
 
 Taking a terminal someone else holds is **refused, not queued and not stolen**.
 An operator typing into an agent can be interrupted mid-command by a takeover,

@@ -765,9 +765,17 @@ func (c *Controller) SendTerminalInput(runID, sessionID string, data []byte, ope
 // journaled after the hand is let go, best effort, as the control records are
 // (recordControlAudit): a release that could not be journaled must still
 // release, and the core freezes the run all the same.
+//
+// A terminal is taken only for the run the caller names. The verb ignored the
+// run, so a tab left open on a run that "Save and restart" had replaced
+// attached to the new run's terminal, which it had never shown, and its
+// keystrokes, which name no run, went to the new process: a run's hands go
+// with it precisely so that such a tab holds nothing in the next one. Letting
+// go of a terminal needs no run, since it is always safe.
 func (c *Controller) SetInteractiveSession(runID, sessionID string, active bool, operator, connID string) error {
 	c.mu.RLock()
 	rt := c.runtime
+	currentRun := c.runID
 	idx, hasAgent := c.agentIndex[strings.ToLower(strings.TrimSpace(sessionID))]
 	var agent AgentState
 	if hasAgent && idx < len(c.state.Agents) {
@@ -777,6 +785,9 @@ func (c *Controller) SetInteractiveSession(runID, sessionID string, active bool,
 
 	if rt == nil {
 		return errors.New("supervisor runtime not ready")
+	}
+	if active && (strings.TrimSpace(runID) == "" || runID != currentRun) {
+		return supervise.ErrRunStale
 	}
 	if !hasAgent {
 		return errUnknownSession
@@ -817,6 +828,11 @@ func (c *Controller) SetInteractiveSession(runID, sessionID string, active bool,
 	// attach record, and one action must not appear in the journal twice.
 	if active {
 		_, _, err := c.mutateHandRecorded(sessionID, connID, takeHand, func(change handTransition) error {
+			// The run again, under the lock the hand is taken under: another
+			// run may have started since it was read.
+			if runID != c.runID {
+				return supervise.ErrRunStale
+			}
 			// Under c.mu, which the core's RecordAudit allows: it never shows
 			// anything on its caller's goroutine.
 			return c.sup.RecordAudit(attachEntry(change, true))

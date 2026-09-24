@@ -185,3 +185,40 @@ func TestAWebLineIsRefusedWhileAnybodyHoldsTheTerminal(t *testing.T) {
 	}
 	g.awaitScreen("web-listen", webAgentLine+`"free-line`, 10*time.Second)
 }
+
+// A terminal is attached only for the run the caller names. The attach verb
+// ignored the run: a tab left open on a run that "Save and restart" had
+// replaced attached to the new run's terminal, which it had never shown, and
+// its keystrokes, which name no run, then went to the new process. A run's
+// hands go with it so that such a tab holds nothing in the next one; an attach
+// naming the previous run, or none, must not hand it one back. Letting go of a
+// terminal needs no run: it is always safe.
+func TestAWebTerminalIsAttachedOnlyForTheRunItNames(t *testing.T) {
+	g := startWebRun(t, webRun{
+		agents: []webAgent{{id: "web-listen", mode: webAgentListen, adapter: "generic"}},
+	})
+	alice := dialSharedGateway(t, g.serve(), "opAlice")
+	g.awaitScreen("web-listen", "agent ready", 30*time.Second)
+	runID := g.runID()
+
+	for _, other := range []string{"", "a-run-that-was-replaced"} {
+		err := alice.call("setInteractiveSession", map[string]any{"runID": other, "sessionID": "web-listen", "active": true}, nil)
+		if err == nil || !strings.Contains(err.Error(), supervise.ErrRunStale.Error()) {
+			t.Fatalf("an attach naming run %q returned %v, want ErrRunStale", other, err)
+		}
+	}
+	if hand := g.ctrl.HandFor("web-listen"); hand.State != HandFree {
+		t.Fatalf("after attaches naming other runs the hand is %+v, want the terminal free", hand)
+	}
+	alice.sendKeys("web-listen", "stale-tab\r")
+	g.assertScreenLacks("web-listen", "stale-tab", 500*time.Millisecond)
+	if entries := entriesOf(g.sessionJournal("web-listen"), audit.KindAttachStarted); len(entries) != 0 {
+		t.Fatalf("attach entries = %s, want none", journalTrace(entries))
+	}
+
+	alice.mustCall("setInteractiveSession", map[string]any{"runID": runID, "sessionID": "web-listen", "active": true}, nil)
+	alice.mustCall("setInteractiveSession", map[string]any{"runID": "", "sessionID": "web-listen", "active": false}, nil)
+	if hand := g.ctrl.HandFor("web-listen"); hand.State != HandFree {
+		t.Fatalf("after the release the hand is %+v, want the terminal free", hand)
+	}
+}
