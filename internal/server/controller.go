@@ -567,6 +567,17 @@ func (c *Controller) handleEvent(rt *app.DesktopRuntime, sup *supervise.Supervis
 // read under c.mu, so that of two refreshes the later revision always carries
 // the later output: the core asks for one from any goroutine it writes on,
 // beside the event loop's.
+//
+// The snapshot is broadcast once c.mu is released, outside the core's ordered
+// flush, and the core's own statuses go out in that flush: a status shown
+// between the snapshot's reading and its broadcast was followed by the
+// snapshot's older one, which a client takes, its revision being the newest.
+// A start that failed showed the agent failed, then starting again, and
+// nothing corrected it: every client hid its Start button until it reloaded.
+// The supervision state is therefore read again once the snapshot is out, and
+// a snapshot that no longer says what the core holds is followed by one that
+// does, under a newer revision (correctSnapshot). A change made after that
+// reading is shown by the core, after the correction.
 func (c *Controller) refreshOutput(rt *app.DesktopRuntime, sup *supervise.Supervisor, sessionID string) {
 	c.mu.Lock()
 	if sup == nil || c.sup != sup {
@@ -589,11 +600,27 @@ func (c *Controller) refreshOutput(rt *app.DesktopRuntime, sup *supervise.Superv
 	agent := &c.state.Agents[idx]
 	agent.Output = out
 	agent.Revision++
-	shown := *agent
-	if supervised, known := sup.Agent(agent.SessionID); known {
+	snap := c.snapshotLocked(sup, idx)
+	c.mu.Unlock()
+
+	c.broadcast(eventSnapshot, snap)
+	c.correctSnapshot(sup, idx, snap)
+}
+
+// maxSnapshotCorrections bounds how many times one refresh follows its
+// snapshot with a newer one while the agent's supervision state keeps
+// changing under it; each of those changes is shown by the core itself.
+const maxSnapshotCorrections = 4
+
+// snapshotLocked is the snapshot of the agent at index idx: its output and
+// revision, with the supervision state its run's core holds now. The caller
+// holds c.mu.
+func (c *Controller) snapshotLocked(sup *supervise.Supervisor, idx int) SnapshotEvent {
+	shown := c.state.Agents[idx]
+	if supervised, known := sup.Agent(shown.SessionID); known {
 		shown = withSupervision(shown, supervised)
 	}
-	snap := SnapshotEvent{
+	return SnapshotEvent{
 		RunID:       c.runID,
 		SessionID:   shown.SessionID,
 		Revision:    shown.Revision,
@@ -602,11 +629,41 @@ func (c *Controller) refreshOutput(rt *app.DesktopRuntime, sup *supervise.Superv
 		Running:     shown.Running,
 		Attached:    shown.Attached,
 		InputFrozen: shown.InputFrozen,
-		ExitCode:    shown.ExitCode,
+		ExitCode:    cloneExitCode(shown.ExitCode),
 	}
-	c.mu.Unlock()
+}
 
-	c.broadcast(eventSnapshot, snap)
+// correctSnapshot follows a broadcast snapshot with a newer one for as long as
+// the agent's supervision state, read again, differs from what the last one
+// said (refreshOutput). It stops once they agree, when the run changed, or
+// after maxSnapshotCorrections.
+func (c *Controller) correctSnapshot(sup *supervise.Supervisor, idx int, sent SnapshotEvent) {
+	for attempt := 0; attempt < maxSnapshotCorrections; attempt++ {
+		c.mu.Lock()
+		if c.sup != sup || idx >= len(c.state.Agents) || c.state.Agents[idx].SessionID != sent.SessionID {
+			c.mu.Unlock()
+			return
+		}
+		now := c.snapshotLocked(sup, idx)
+		if sameSupervision(now, sent) {
+			c.mu.Unlock()
+			return
+		}
+		c.state.Agents[idx].Revision++
+		now.Revision = c.state.Agents[idx].Revision
+		c.mu.Unlock()
+		c.broadcast(eventSnapshot, now)
+		sent = now
+	}
+}
+
+// sameSupervision reports whether two snapshots say the same of the agent's
+// supervision state.
+func sameSupervision(left, right SnapshotEvent) bool {
+	sameExit := (left.ExitCode == nil) == (right.ExitCode == nil) &&
+		(left.ExitCode == nil || *left.ExitCode == *right.ExitCode)
+	return left.Status == right.Status && left.Running == right.Running &&
+		left.Attached == right.Attached && left.InputFrozen == right.InputFrozen && sameExit
 }
 
 // supervisor returns the run's supervision core and its run ID, or nil between
@@ -896,21 +953,37 @@ func (c *Controller) SetInteractiveSession(runID, sessionID string, active bool,
 
 	// The status is the core's: the gateway's own copy of it is never updated,
 	// and a prompt the hand just turned into an ask leaves the agent waiting.
-	status := agent.Status
+	// It is read before it is broadcast, outside the core's ordered flush, and
+	// so is read again once it is out: a status the core showed meanwhile is
+	// shown again after it, as refreshOutput's snapshots are.
 	sup, currentRun := c.supervisor()
-	if sup != nil {
-		if supervised, known := sup.Agent(sessionID); known {
-			status = supervised.Status
+	shown := c.coreStatus(sup, sessionID, agent.Status)
+	for attempt := 0; ; attempt++ {
+		c.broadcast(eventStatus, StatusEvent{
+			RunID:     currentRun,
+			Scope:     "session",
+			SessionID: agent.SessionID,
+			Status:    shown,
+		})
+		now := c.coreStatus(sup, sessionID, shown)
+		if now == shown || attempt == maxSnapshotCorrections {
+			break
 		}
+		shown = now
 	}
-	c.broadcast(eventStatus, StatusEvent{
-		RunID:     currentRun,
-		Scope:     "session",
-		SessionID: agent.SessionID,
-		Status:    status,
-	})
 
 	return nil
+}
+
+// coreStatus is the session's status as the run's core holds it, or fallback
+// between runs.
+func (c *Controller) coreStatus(sup *supervise.Supervisor, sessionID, fallback string) string {
+	if sup != nil {
+		if supervised, known := sup.Agent(sessionID); known {
+			return supervised.Status
+		}
+	}
+	return fallback
 }
 
 // ResizeSession applies a terminal geometry change requested by the connection
