@@ -1075,6 +1075,14 @@ func TestADenyTheCoreHoldsBackOffersOnlyDeny(t *testing.T) {
 			if !reflect.DeepEqual(shown.Decisions, []string{"deny"}) {
 				t.Fatalf("the prompt offers %v, want deny alone", shown.Decisions)
 			}
+			if test.reason == supervise.ReasonOperatorAttached {
+				// The hand's entry is journaled on a goroutine of its own:
+				// the refusals below are counted once it is.
+				waitFor(t, 2*time.Second, "the hand's evaluation entry", func() bool {
+					evaluated := engine.auditFor(audit.KindPolicyEvaluated, "deny-2")
+					return len(evaluated) > 0 && evaluated[len(evaluated)-1].Reason == supervise.ReasonOperatorAttached
+				})
+			}
 			journaled := len(engine.auditSnapshot())
 			if err := sup.SubmitAutomaticDecision(testRunID, "agent-a", "deny-2", "allow", alice); !errors.Is(err, supervise.ErrUnsupportedDecision) {
 				t.Fatalf("allowing what the policy denies = %v, want ErrUnsupportedDecision", err)
