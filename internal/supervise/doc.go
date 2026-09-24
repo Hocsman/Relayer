@@ -31,6 +31,8 @@
 //     is journaled fallback_unsupported, the prompt goes back to the operator
 //     pending, no longer automatic and without that answer among those it
 //     offers, the caller gets ErrUnsupportedDecision, and nothing is frozen.
+//   - A notice's Details is the prompt's display-safe summary, the one its
+//     View shows, never the adapter's own: a notification leaves the machine.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

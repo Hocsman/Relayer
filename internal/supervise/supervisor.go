@@ -118,9 +118,9 @@ type Notice struct {
 	SessionID string
 	EventID   string
 	Reason    string
-	// Details is the adapter's own summary of the prompt, as the desktop has
-	// always passed it to its notifier. It has not been through
-	// safeEventSummary.
+	// Details is the prompt's display-safe summary, the one its View shows:
+	// bounded, redacted, and a fixed text for a prompt whose text must not be
+	// shown. A front end may send it anywhere a View may go.
 	Details string
 }
 

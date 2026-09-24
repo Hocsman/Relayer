@@ -142,6 +142,10 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 		evaluation.Reason == policy.ReasonExfiltration ||
 		evaluation.Reason == policy.ReasonGuardrailBlocked
 
+	// A notice's details are the summary the prompt is shown with, never the
+	// adapter's own: a notification leaves the machine, and a webhook posts
+	// it as it is. The raw summary went out even for a prompt that asked for
+	// a password.
 	if isGuardrail {
 		s.sink.Notify(Notice{
 			AgentName: agentName,
@@ -150,11 +154,13 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 			EventID:   event.ID,
 			Kind:      NoticeGuardrailBlocked,
 			Severity:  SeverityCritical,
-			Details:   event.Summary,
+			Details:   view.Summary,
 		})
 	} else if !evaluation.Automatic {
 		reason := "confirmation required"
-		if requiresSecretHandling(event) || evaluation.Reason == "sensitive" {
+		// The policy's reason for a sensitive prompt is ReasonSensitive; this
+		// compared it with "sensitive", which it never is.
+		if requiresSecretHandling(event) || evaluation.Reason == policy.ReasonSensitive {
 			reason = "sensitive input required"
 		}
 		s.sink.Notify(Notice{
@@ -164,7 +170,7 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 			EventID:   event.ID,
 			Kind:      NoticePendingDecision,
 			Severity:  SeverityWarning,
-			Details:   event.Summary,
+			Details:   view.Summary,
 		})
 	}
 	s.scheduleAutomatic(event.SessionID)

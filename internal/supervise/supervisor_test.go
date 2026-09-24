@@ -17,8 +17,10 @@ import (
 
 // These tests pin the supervision core as it was moved out of the desktop,
 // through its exported API only: the one a second front end will use. Where
-// they pin a behaviour already known to be wrong, a comment beginning with
-// DEFECT names the fix that must flip them.
+// they pinned a behaviour already known to be wrong, a comment beginning with
+// DEFECT named the fix that had to flip them; each such test was flipped by
+// its fix, and its comment now says what it used to do. A new pin of a known
+// defect is marked the same way.
 
 // A front end's event loop feeds Handle from the run's session stream. The
 // sink sees each event's emissions in the order the desktop always made them,
@@ -989,13 +991,22 @@ func TestANewProcessIsReportedBeforeTheAgentIsShownRunning(t *testing.T) {
 }
 
 // The notices a front end turns into notifications. A guardrail notice is sent
-// even when the policy decides alone; a pending one only when a human must.
+// whenever a guardrail decided, automatically or not, and a pending one only
+// when a human must decide. A notice's details are the prompt's display-safe
+// summary, the one the prompt itself is shown with: a notification leaves
+// the machine (a webhook posts it as it is), so it carries nothing the
+// journal would not. The adapter's raw summary used to go out, even for a
+// prompt that asked for a password.
 func TestNoticesFollowTheDesktopsRules(t *testing.T) {
 	const secret = "otp-493827-super-secret"
+	guardrail := func(reason string, automatic bool) policy.Evaluation {
+		return policy.Evaluation{Action: policy.ActionDeny, ProposedAction: policy.ActionDeny, Reason: reason, Automatic: automatic}
+	}
 	for _, test := range []struct {
 		name       string
 		evaluation policy.Evaluation
 		sensitive  bool
+		summary    string
 		want       supervise.Notice
 	}{
 		{
@@ -1003,6 +1014,7 @@ func TestNoticesFollowTheDesktopsRules(t *testing.T) {
 			evaluation: policy.Evaluation{Action: policy.ActionAsk, ProposedAction: policy.ActionAsk, Reason: policy.ReasonRule},
 			want: supervise.Notice{
 				Kind: supervise.NoticePendingDecision, Severity: supervise.SeverityWarning, Reason: "confirmation required",
+				Details: "Password: [REDACTED]",
 			},
 		},
 		{
@@ -1011,14 +1023,59 @@ func TestNoticesFollowTheDesktopsRules(t *testing.T) {
 			sensitive:  true,
 			want: supervise.Notice{
 				Kind: supervise.NoticePendingDecision, Severity: supervise.SeverityWarning, Reason: "sensitive input required",
+				Details: "Sensitive input required",
+			},
+		},
+		{
+			// The policy's own reason for a sensitive prompt is sensitive_event;
+			// the notice compared it with "sensitive", which it never is.
+			name:       "sensitive input by the policy's reason alone",
+			evaluation: policy.Evaluation{Action: policy.ActionAsk, ProposedAction: policy.ActionAsk, Reason: policy.ReasonSensitive},
+			want: supervise.Notice{
+				Kind: supervise.NoticePendingDecision, Severity: supervise.SeverityWarning, Reason: "sensitive input required",
+				Details: "Password: [REDACTED]",
+			},
+		},
+		{
+			name:       "a summary on several lines",
+			evaluation: policy.Evaluation{Action: policy.ActionAsk, ProposedAction: policy.ActionAsk, Reason: policy.ReasonRule},
+			summary:    "Overwrite\r\nconfig.yaml?\t" + strings.Repeat("x", 200),
+			want: supervise.Notice{
+				Kind: supervise.NoticePendingDecision, Severity: supervise.SeverityWarning, Reason: "confirmation required",
+				Details: "Overwrite config.yaml? " + strings.Repeat("x", 96) + "…",
 			},
 		},
 		{
 			name:       "guardrail on an automatic decision",
-			evaluation: policy.Evaluation{Action: policy.ActionDeny, ProposedAction: policy.ActionDeny, Reason: policy.ReasonDestructive, Automatic: true},
+			evaluation: guardrail(policy.ReasonDestructive, true),
 			want: supervise.Notice{
 				Kind: supervise.NoticeGuardrailBlocked, Severity: supervise.SeverityCritical,
-				Reason: "security guardrail blocked (destructive_command_blocked)",
+				Reason: "security guardrail blocked (destructive_command_blocked)", Details: "Password: [REDACTED]",
+			},
+		},
+		{
+			name:       "guardrail on a prompt a human decides",
+			evaluation: guardrail(policy.ReasonDestructive, false),
+			want: supervise.Notice{
+				Kind: supervise.NoticeGuardrailBlocked, Severity: supervise.SeverityCritical,
+				Reason: "security guardrail blocked (destructive_command_blocked)", Details: "Password: [REDACTED]",
+			},
+		},
+		{
+			name:       "exfiltration guardrail",
+			evaluation: guardrail(policy.ReasonExfiltration, true),
+			want: supervise.Notice{
+				Kind: supervise.NoticeGuardrailBlocked, Severity: supervise.SeverityCritical,
+				Reason: "security guardrail blocked (exfiltration_attempt_blocked)", Details: "Password: [REDACTED]",
+			},
+		},
+		{
+			name:       "guardrail pattern",
+			evaluation: guardrail(policy.ReasonGuardrailBlocked, true),
+			sensitive:  true,
+			want: supervise.Notice{
+				Kind: supervise.NoticeGuardrailBlocked, Severity: supervise.SeverityCritical,
+				Reason: "security guardrail blocked (guardrail_pattern_blocked)", Details: "Sensitive input required",
 			},
 		},
 	} {
@@ -1028,25 +1085,34 @@ func TestNoticesFollowTheDesktopsRules(t *testing.T) {
 			sup, sink := newCoreForTest(t, engine, "agent-a")
 			prompt := promptEvent("agent-a", "prompt-1")
 			prompt.Summary = "Password: " + secret
+			if test.summary != "" {
+				prompt.Summary = test.summary
+			}
 			prompt.Sensitive = test.sensitive
 			sup.Handle(session.AdapterEvent{Event: prompt})
 
 			var notices []supervise.Notice
+			shownSummary := ""
 			for _, call := range sink.snapshot() {
-				if call.kind == "notify" {
+				switch call.kind {
+				case "notify":
 					notices = append(notices, call.notice)
+				case "prompt":
+					shownSummary = call.view.Summary
 				}
 			}
 			want := test.want
 			want.AgentName = "agent-a"
 			want.SessionID = "agent-a"
 			want.EventID = "prompt-1"
-			// DEFECT (v0.8.8 fix "safe notification summary"): Details is the
-			// adapter's raw summary, even for a sensitive prompt. The fix sends
-			// the display-safe summary and flips this expectation.
-			want.Details = prompt.Summary
 			if len(notices) != 1 || !reflect.DeepEqual(notices[0], want) {
 				t.Fatalf("notices = %#v, want %#v", notices, want)
+			}
+			if notices[0].Details != shownSummary {
+				t.Fatalf("notice details %q, want the summary the prompt is shown with, %q", notices[0].Details, shownSummary)
+			}
+			if strings.Contains(sinkText(sink.snapshot()), secret) {
+				t.Fatal("the prompt's secret reached the sink")
 			}
 		})
 	}

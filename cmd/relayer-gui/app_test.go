@@ -1755,6 +1755,44 @@ func TestNotificationDispatchedOnPendingHumanDecision(t *testing.T) {
 	}
 }
 
+// TestANotificationCarriesThePromptsSafeSummary: the desktop's notifier posts
+// a notification's details to every webhook as they are. They are the summary
+// the prompt is shown with in the window, never the adapter's own, which went
+// out as it was even for a prompt that asked for a password.
+func TestANotificationCarriesThePromptsSafeSummary(t *testing.T) {
+	const secret = "otp-493827-super-secret"
+	for _, test := range []struct {
+		name        string
+		sensitive   bool
+		wantDetails string
+	}{
+		{name: "an ordinary prompt", wantDetails: "Password: [REDACTED]"},
+		{name: "a sensitive prompt", sensitive: true, wantDetails: "Sensitive input required"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newFakeDesktopEngine("agent-a")
+			engine.evaluation = policy.Evaluation{Action: policy.ActionAsk, ProposedAction: policy.ActionAsk, Reason: policy.ReasonRule}
+			app := newBridgeForTest(engine)
+			notifier := &fakeAppNotifier{}
+			app.notifier = notifier
+			prompt := bridgeEvent("agent-a", "prompt-secret")
+			prompt.Summary = "Password: " + secret
+			prompt.Sensitive = test.sensitive
+
+			app.handleAdapterEvent(prompt)
+
+			notifs := notifier.snapshot()
+			if len(notifs) != 1 || notifs[0].Details != test.wantDetails {
+				t.Fatalf("notifications = %#v, want one with details %q", notifs, test.wantDetails)
+			}
+			state, err := app.GetState()
+			if err != nil || len(state.PendingEvents) != 1 || state.PendingEvents[0].Summary != notifs[0].Details {
+				t.Fatalf("pending = %#v (%v), want the prompt shown with the notification's details", state.PendingEvents, err)
+			}
+		})
+	}
+}
+
 func TestNotificationDispatchedOnGuardrailViolation(t *testing.T) {
 	engine := newFakeDesktopEngine("agent-a")
 	engine.evaluation = policy.Evaluation{
