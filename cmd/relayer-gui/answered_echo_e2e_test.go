@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -210,9 +211,13 @@ func desktopAnswersOnce(t *testing.T, after string) {
 	// The last screen read is kept: the agent exits shortly after its report,
 	// and what a finished session still returns is not this test's subject.
 	screen := ""
+	switched := false
 	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); {
 		if output, err := run.engine.Output(agentID); err == nil && output != "" {
 			screen = output
+		}
+		if raw, err := run.engine.AnsiOutput(agentID); err == nil && strings.Contains(raw, "\x1b[?1049h") {
+			switched = true
 		}
 		if strings.Contains(screen, askOnceDone) || strings.Contains(screen, askOnceNoAnswer) {
 			break
@@ -225,6 +230,14 @@ func desktopAnswersOnce(t *testing.T, after string) {
 	}
 	emittedMu.Unlock()
 
+	// The ConPTY of Windows Server 2022, and presumably of Windows 10, does not
+	// pass the program's switch to the alternate screen on: it paints the
+	// program over the primary screen and paints that back when the program
+	// exits, which Relayer cannot tell from the agent asking its question
+	// again. docs/adapters.md lists it among the cases still asked twice.
+	if after == askOnceFullScreen && runtime.GOOS == "windows" && !switched {
+		t.Skip("this ConPTY paints a full-screen program over the primary screen instead of switching screens (a known gap, see docs/adapters.md)")
+	}
 	answers := strings.Count(screen, askOnceAnswer)
 	extras := strings.Count(screen, askOnceExtra)
 	if !strings.Contains(screen, askOnceDone) || answers != 1 || extras != 0 {

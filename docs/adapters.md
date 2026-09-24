@@ -277,6 +277,15 @@ reported a row of the agent's screen parked, an answer given there was kept for
 the rest of the program, and the same dialog asked again on that row was put to
 nobody.
 
+All of this needs the switch to the alternate screen to reach Relayer. The
+ConPTY of Windows 11 passes it on; that of Windows Server 2022, and presumably
+of Windows 10, does not: it paints the program over the primary screen and
+paints the primary screen back when the program exits. The answered question's
+row then shows the program's text, the memory lets it go, and the repaint draws
+the question again: it is asked a second time, and under an automatic policy a
+second answer is typed into the agent, as before this release. Nothing in the
+bytes tells that repaint from the agent asking the question again.
+
 On the rendered screen the row also decides what an entry SUPPRESSES: the
 answered question is the one on its own row.
 
