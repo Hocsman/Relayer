@@ -22,14 +22,28 @@ import (
 // the one action that ends the agent, and with it the write. The session
 // stays the keystrokes' until they return: a Start or a Restart is refused
 // meanwhile, since their bytes could reach the replacement.
+//
+// A Stop is taken once the journal has failed, too: nothing more is written to
+// an agent then, and stopping one is how an operator acts on that. The
+// journal's gate, closed by the failure as by a drain, refused it with
+// ErrRuntimeStopped, and only stopping the whole run was left. It is counted
+// so that a drain still waits for it.
 func (s *Supervisor) StopSession(runID, sessionID string) error {
 	if err := s.activeRun(runID); err != nil {
 		return err
 	}
-	if !s.beginDelivery() {
-		return ErrRuntimeStopped
+	if s.beginDelivery() {
+		defer s.endDelivery()
+	} else {
+		s.mu.Lock()
+		if s.shuttingDown || !s.auditFailed {
+			s.mu.Unlock()
+			return ErrRuntimeStopped
+		}
+		s.eventWG.Add(1)
+		s.mu.Unlock()
+		defer s.eventWG.Done()
 	}
-	defer s.endDelivery()
 	sessionKey := strings.ToLower(strings.TrimSpace(sessionID))
 	s.mu.Lock()
 	if s.shuttingDown {

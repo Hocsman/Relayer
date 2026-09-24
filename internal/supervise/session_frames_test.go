@@ -63,3 +63,36 @@ func TestAFailedOperationIsShownUnderTheAgentsOwnID(t *testing.T) {
 		})
 	}
 }
+
+// One agent can still be stopped once the journal has failed: nothing more is
+// written to any agent then, and stopping one is how an operator acts on it.
+// The journal's failure closed the gate a Stop went through, and the Stop was
+// refused as if the run were stopping, with a message that said so; only
+// stopping the whole run was left. A drain still waits for the Stop.
+func TestAnAgentCanBeStoppedOnceTheJournalHasFailed(t *testing.T) {
+	engine := newFakeEngine()
+	sup, _ := newCoreForTest(t, engine, "agent-a", "agent-b")
+	engine.set(func(f *fakeEngine) { f.auditFailAt = f.auditCalls + 1 })
+	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
+	if !sup.State().AuditFailed {
+		t.Fatal("the journal's failure did not freeze the run")
+	}
+
+	if err := sup.StopSession(testRunID, "agent-b"); err != nil {
+		t.Fatalf("a stop once the journal has failed = %v", err)
+	}
+	if stops, _, _ := engine.lifecycleCalls(); stops != 1 {
+		t.Fatalf("%d stops reached the runtime, want the one asked for", stops)
+	}
+	if agent := agentOf(t, sup, "agent-b"); agent.Running {
+		t.Fatalf("the stopped agent is shown %#v", agent)
+	}
+	// Nothing else is taken: an answer and a start are still refused.
+	if err := sup.StartSession(testRunID, "agent-b"); !errors.Is(err, supervise.ErrRuntimeStopped) && !errors.Is(err, supervise.ErrAuditUnavailable) {
+		t.Fatalf("a start once the journal has failed = %v", err)
+	}
+	sup.BeginDrain()
+	if err := sup.StopSession(testRunID, "agent-a"); !errors.Is(err, supervise.ErrRuntimeStopped) {
+		t.Fatalf("a stop during the drain = %v, want ErrRuntimeStopped", err)
+	}
+}
