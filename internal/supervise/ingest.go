@@ -51,9 +51,11 @@ func (s *Supervisor) handleAdapterEventWithdrawn(event adapters.Event) {
 	}
 	delete(s.pending, key)
 	sessionKey := strings.ToLower(event.SessionID)
-	if inflightKey, busy := s.inFlight[sessionKey]; busy && inflightKey == key {
-		delete(s.inFlight, sessionKey)
-	}
+	// The prompt goes, but a write of its answer may still be in progress:
+	// the session's claim stays with that write, which releases it when it
+	// returns (finishDecision) and then considers the next automatic prompt.
+	// Released here, the claim let the next answer be written into the same
+	// terminal while the first still was.
 	s.markResolvedLocked(key)
 
 	hasOtherPending := false

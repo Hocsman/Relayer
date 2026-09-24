@@ -5,7 +5,6 @@ import (
 	"errors"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -433,55 +432,99 @@ func TestAStaleFailedExitIsJournaledAsFinished(t *testing.T) {
 	}
 }
 
-// DEFECT (v0.8.8 fix "withdrawal keeps the in-flight claim"): withdrawing
-// the prompt whose answer is being written releases the session's claim, so
-// the next automatic prompt is delivered while the first write is still in
-// progress. The fix keeps the claim until the first delivery returns, and
-// flips this test to "no second write starts before the first returns".
-func TestWithdrawingTheDeliveringPromptLetsTheNextOneOverlapIt(t *testing.T) {
-	engine := newFakeEngine()
-	engine.evaluation = automaticAllow()
-	started := make(chan struct{}, 2)
-	release := make(chan struct{})
-	engine.applyStarted = started
-	engine.applyRelease = release
-	sup, _ := newCoreForTest(t, engine, "agent-a")
-	var releaseOnce sync.Once
-	releaseAll := func() { releaseOnce.Do(func() { close(release) }) }
-	t.Cleanup(releaseAll)
+// Withdrawing the prompt whose answer is being written does not free its
+// session. The agent took the question back, so the prompt is shown answered
+// and leaves the pending list at once, and the withdrawal is journaled as any
+// other; but the write to the terminal is still in progress, so the session's
+// claim is kept until it returns, and only then is the next automatic prompt
+// considered. The withdrawal used to release the claim with the prompt, and
+// the next answer was written into the same terminal while the first still
+// was, whoever had given the first.
+func TestWithdrawingTheDeliveringPromptKeepsTheSessionUntilItsWriteReturns(t *testing.T) {
+	for _, human := range []bool{false, true} {
+		name := "an automatic answer"
+		if human {
+			name = "a human answer"
+		}
+		t.Run(name, func(t *testing.T) {
+			engine := newFakeEngine()
+			engine.evaluationByID["prompt-2"] = automaticAllow()
+			if !human {
+				engine.evaluationByID["prompt-1"] = automaticAllow()
+			}
+			applyStarted := make(chan struct{}, 2)
+			release := make(chan struct{})
+			engine.applyStarted = applyStarted
+			engine.applyRelease = release
+			sup, sink := newCoreForTest(t, engine, "agent-a")
+			releaseWrites := releaser(t, release)
 
-	first := promptEvent("agent-a", "prompt-1")
-	second := promptEvent("agent-a", "prompt-2")
-	second.Sequence = 2
-	sup.Handle(session.AdapterEvent{Event: first})
-	select {
-	case <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("the first automatic answer was never written")
-	}
-	sup.Handle(session.AdapterEvent{Event: second})
-	select {
-	case <-started:
-		t.Fatal("the second answer started while the first held the session")
-	case <-time.After(50 * time.Millisecond):
-	}
+			first := promptEvent("agent-a", "prompt-1")
+			sup.Handle(session.AdapterEvent{Event: first})
+			answered := make(chan error, 1)
+			if human {
+				go func() { answered <- sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y") }()
+			}
+			select {
+			case <-applyStarted:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the first answer was never written")
+			}
+			second := promptEvent("agent-a", "prompt-2")
+			second.Sequence = 2
+			sup.Handle(session.AdapterEvent{Event: second})
+			sink.reset()
 
-	sup.Handle(session.AdapterEventWithdrawn{Event: first})
-	overlapped := false
-	select {
-	case <-started:
-		overlapped = true
-	case <-time.After(2 * time.Second):
-	}
-	releaseAll()
-	if !overlapped {
-		t.Fatal("the second answer waited for the first: the defect is fixed, flip this test")
-	}
-	waitFor(t, 2*time.Second, "both deliveries to be journaled", func() bool {
-		return len(engine.auditFor(audit.KindDelivery, "prompt-1")) == 1 && len(engine.auditFor(audit.KindDelivery, "prompt-2")) == 1
-	})
-	if calls := engine.applySnapshot(); len(calls) != 2 {
-		t.Fatalf("deliveries = %#v, want two", calls)
+			sup.Handle(session.AdapterEventWithdrawn{Event: first})
+
+			if ids := pendingIDs(sup); len(ids) != 1 || ids[0] != "prompt-2" {
+				t.Fatalf("pending after the withdrawal = %v, want only the next prompt", ids)
+			}
+			shown := false
+			for _, call := range sink.snapshot() {
+				shown = shown || (call.kind == "prompt" && call.view.ID == "prompt-1" && call.view.DeliveryStatus == "delivered")
+			}
+			if !shown {
+				t.Fatalf("the withdrawn prompt was not shown answered: %v", trace(sink.snapshot()))
+			}
+			if withdrawn := engine.auditFor(audit.KindEventWithdrawn, "prompt-1"); len(withdrawn) != 1 {
+				t.Fatalf("withdrawal entries = %#v, want one", withdrawn)
+			}
+			select {
+			case <-applyStarted:
+				t.Fatal("the next answer was written while the withdrawn prompt's still was")
+			case <-time.After(100 * time.Millisecond):
+			}
+			err := returnsBeforeReaching(t, applyStarted, "a human answer was written while the withdrawn prompt's still was", func() error {
+				return sup.SubmitDecision(testRunID, "agent-a", "prompt-2", "y")
+			})
+			if !errors.Is(err, supervise.ErrDecisionInFlight) {
+				t.Fatalf("a human answer while the withdrawn prompt's is written = %v, want ErrDecisionInFlight", err)
+			}
+
+			releaseWrites()
+			if human {
+				if err := <-answered; err != nil {
+					t.Fatalf("the withdrawn prompt's human answer = %v", err)
+				}
+			}
+			waitFor(t, 2*time.Second, "the next prompt to be answered once the session is free", func() bool {
+				return len(engine.auditFor(audit.KindDelivery, "prompt-2")) == 1 && len(pendingIDs(sup)) == 0
+			})
+			operations := engine.operationSnapshot()
+			if returned, applied := indexOf(operations, "apply:return:prompt-1"), indexOf(operations, "apply:start:prompt-2"); returned < 0 || applied < returned {
+				t.Fatalf("operations = %v, want the next answer written after the withdrawn prompt's returned", operations)
+			}
+			if deliveries := engine.auditFor(audit.KindDelivery, "prompt-1"); len(deliveries) != 1 || deliveries[0].Outcome != audit.OutcomeApplied {
+				t.Fatalf("the withdrawn prompt's delivery entries = %#v, want one applied", deliveries)
+			}
+			if calls := engine.applySnapshot(); len(calls) != 2 {
+				t.Fatalf("deliveries = %#v, want two", calls)
+			}
+			if agent := agentOf(t, sup, "agent-a"); agent.Status != "running" || agent.InputFrozen {
+				t.Fatalf("agent once both answers are written = %#v", agent)
+			}
+		})
 	}
 }
 

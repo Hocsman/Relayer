@@ -82,21 +82,25 @@ func eventBefore(left, right adapters.Event) bool {
 	return left.ID < right.ID
 }
 
-func (s *Supervisor) finishDecision(key eventKey, advance bool) {
+// finishDecision releases the session's claim once a decision's write has
+// returned, and only then considers the session's next automatic prompt. It
+// always does: whether one may go is scheduleAutomatic's to decide, from the
+// drain, the journal, the freezes, the session's other claims and the prompt
+// itself. Deciding here instead, from how the write ended, missed the one
+// case where nothing else asks: a prompt withdrawn while its answer was
+// written leaves its claim to this write, and the scheduling its withdrawal
+// asked for found the session still claimed.
+func (s *Supervisor) finishDecision(key eventKey) {
 	s.mu.Lock()
 	if current, exists := s.inFlight[key.sessionID]; exists && current == key {
 		delete(s.inFlight, key.sessionID)
 	}
-	shuttingDown := s.shuttingDown
 	s.mu.Unlock()
-	if advance && !shuttingDown && s.isActiveRun() {
-		s.scheduleAutomatic(key.sessionID)
-	}
+	s.scheduleAutomatic(key.sessionID)
 }
 
 func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluation policy.Evaluation) {
-	advance := false
-	defer func() { s.finishDecision(key, advance) }()
+	defer s.finishDecision(key)
 	decision, supported := adapterDecisionForPolicy(evaluation.Action)
 	if !supported {
 		s.fallbackToAsk(key, "fallback_unsupported")
@@ -132,7 +136,6 @@ func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluati
 		}
 		if s.pendingExists(key) {
 			s.resolveEvent(key)
-			advance = true
 		}
 		return
 	}
@@ -152,7 +155,6 @@ func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluati
 		if s.pendingExists(key) {
 			s.resolveEvent(key)
 			s.reconcilePending(event.SessionID)
-			advance = true
 		}
 		return
 	}
@@ -362,8 +364,7 @@ func (s *Supervisor) applyHumanDecision(
 	view := item.view
 	s.mu.Unlock()
 	s.sink.Prompt(view)
-	advance := false
-	defer func() { s.finishDecision(key, advance) }()
+	defer s.finishDecision(key)
 
 	backend := s.backendFor(sessionID)
 	if !s.recordAudit(decisionAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman)) {
@@ -379,7 +380,6 @@ func (s *Supervisor) applyHumanDecision(
 			}
 			s.resolveEvent(key)
 			s.reconcilePending(sessionID)
-			advance = true
 			return ErrDecisionStale
 		}
 		if !s.recordAudit(deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackDeliveryUncertain, "delivery_uncertain")) {
@@ -392,6 +392,5 @@ func (s *Supervisor) applyHumanDecision(
 		return ErrAuditUnavailable
 	}
 	s.resolveEvent(key)
-	advance = true
 	return nil
 }

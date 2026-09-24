@@ -9,8 +9,15 @@
 //
 // The desktop kept this state machine in its Wails bridge, and the gateway a
 // second, diverging copy of it. The code here is the desktop's, moved without
-// a change in behaviour, so the desktop's tests pin it before either front end
-// is changed to rely on it.
+// a change in behaviour, so the desktop's tests pinned it before either front
+// end was changed to rely on it. The rules it has kept since differ from the
+// desktop's of v0.8.7 in these ways:
+//
+//   - A session takes one write at a time, and the claim a decision takes on
+//     it is released only when that decision's write returns, even when the
+//     agent withdraws the prompt meanwhile: the prompt is shown answered at
+//     once, and the next automatic prompt is considered once the write is
+//     over.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces
