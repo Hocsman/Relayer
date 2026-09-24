@@ -4,6 +4,27 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+Patch release that stops Relayer answering one prompt twice. Once an answer was delivered, the answered question stayed painted on the rendered screen, which every Windows session and every agent that repaints uses, and the next write raised it again as a new prompt with a new ID. Under an automatic policy the desktop typed a second answer into the agent; a human was shown a card for a question already answered, and while it was pending the agent's next real question stayed hidden. Adapters now remember an answered question on its row, across a clear, a full-screen program and a resize. The desktop's supervision now runs on a shared core, which the web gateway adopts in v0.8.9. The gaps that remain are listed below.
+
+### Security
+
+- **The desktop answered one prompt twice under an automatic policy**: after the answer, the question's row still showed the question, with the answer echoed after it. Aider, Goose and Open Interpreter kept no memory of an answered question at all, and the generic and Claude adapters compared the whole line, which the echo changes, so the next write raised the same question again. With `default_action: allow`, an Aider prompt received two `y`: `TestTheDesktopAnswersAnAutomaticQuestionOnce` drives the real desktop runtime and fails against v0.8.7 on Windows and on Linux. Codex was not affected. For a human the repeat was a card for a question already answered, and Aider's detector, which waits while a prompt is pending, hid the agent's next real question behind it.
+  - An answered question is now remembered on its row: a line on that row that still begins with the question is that question with its echo. The same words on another row are a new question, and are asked; the generic and Claude adapters used to swallow them while the answered row still showed the question.
+  - The same second answer came from a full-screen program run after the answer (an editor, a pager): the memory was dropped while the program had the alternate screen, and the question still painted underneath was asked again when it exited. It came from a terminal that lost height, where the screen kept its top rows instead of the cursor's, and from a window resized while such a program was open. It came from an answer given on the program's own screen in the same words, which took over the primary screen's memory. Each is covered by a test that fails against v0.8.7.
+
+### Fixed
+
+- **Aider, Goose and Open Interpreter ask again an identical question after a clear**: once the echo was remembered, a question drawn above the answered row after `clear`, a command that clears the screen or Ctrl+L was taken for the answered one moved, and the agent waited for an answer nobody was asked for. These adapters remember an answered question on its own row only.
+- **A tmux resync no longer discards a pending question** it took for the answered one (TUI).
+- **The TUI keeps the cursor's row in view when the terminal loses height**, as xterm and conhost do; it used to drop that row and every row below it.
+- **Still asked twice on some Windows versions**: the full-screen program fix needs the switch to the alternate screen to reach Relayer. The ConPTY of Windows 11 passes it on; that of Windows Server 2022, and presumably of Windows 10, paints the program over the screen and paints the screen back when it exits, and the answered question is then asked again, as in v0.8.7. Under an automatic policy that is still a second answer typed into the agent there. The tests for it are skipped on such a ConPTY, with the reason.
+- What remains, described in `docs/adapters.md`: an answer an agent rejects and asks again on the same row, with the rejected input still showing, is taken for the echo and not asked; the generic and Claude adapters still lose an identical question drawn above a blank answered row after a clear; the tmux snapshot compares whole lines; and a question moved off its row, or whose line changes after it was detected, is asked again.
+
+### Changed
+
+- The desktop's supervision state machine moved to a new package, `internal/supervise`, with no change of behaviour: the desktop's tests pin it, and new tests drive the core through a fake engine. A mutation run that broke its invariants one by one found 47 of 101 that no test caught; with the tests this release adds, 3 remain, each equivalent to a guard that stays in place.
+- **Known gap**: the web gateway (`relayer serve`) does not deliver automatic policy decisions, so every prompt waits for an operator, and its journal has no detection, evaluation, withdrawal or process exit entries. v0.8.9 moves it onto the shared core.
+
 ## [0.8.7] - 2026-09-23
 
 Patch release that fixes the cause of the ghost prompts v0.8.6 worked around. A prompt's occurrence ID did not tell two processes of an agent apart, so an answer given to a prompt before a restart could be delivered to a different question after it, whenever a short pattern gave both the same signature. Every occurrence ID now carries a token of its own process, a decision on a previous process's prompt is refused, and the front ends no longer need to forget answered prompts at each start. `relayer_events_pending` and the decision-duration histogram now measure what their documentation says. The gaps that remain are listed below.
