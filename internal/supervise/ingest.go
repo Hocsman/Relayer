@@ -361,8 +361,18 @@ func (s *Supervisor) handleProcessExit(event adapters.Event, backend string) {
 	}
 	s.emitLocked(func(sink Sink) { sink.Refresh(event.SessionID) })
 	s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: event.SessionID, Status: status, ClearedBefore: clearedAll()})
+	s.reportEndedLocked(event.SessionID)
 	s.mu.Unlock()
 	s.flush()
+}
+
+// reportEndedLocked queues the report that the session's current process
+// ended, as emitLocked does. The web gateway announces the process's finished
+// recording on it; it did so only when Relayer lost a tmux session, never when
+// a process exited, so a recording's replay was offered only once a client
+// reloaded its list.
+func (s *Supervisor) reportEndedLocked(sessionID string) {
+	s.emitLocked(func(sink Sink) { sink.Lifecycle(sessionID, PhaseEnded) })
 }
 
 func (s *Supervisor) markSessionError(sessionID, reason string) {
@@ -395,6 +405,7 @@ func (s *Supervisor) markLegacyExit(sessionID string) {
 	s.clearSessionPendingLocked(sessionID)
 	s.rebuildPendingLocked()
 	s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: sessionID, Status: "failed", ClearedBefore: clearedAll()})
+	s.reportEndedLocked(sessionID)
 	s.mu.Unlock()
 	s.flush()
 }

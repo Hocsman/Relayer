@@ -79,6 +79,14 @@ type Phase string
 // output on it never shows the new process with its predecessor's output.
 const PhaseStarted Phase = "started"
 
+// PhaseEnded: the session's current process ended, on its own or stopped, or
+// Relayer lost the terminal it ran in (a legacy exit). What the front end kept
+// of that process, such as its recording, is complete. It is reported after
+// the core shows the agent exited. The exit of a process a replacement
+// already superseded reports nothing: the session's process is the
+// replacement, whose recording goes on.
+const PhaseEnded Phase = "ended"
+
 // Status is a session-scoped status, or the audit-scoped one that reports a
 // journal failure. It has the fields and the JSON of the desktop's StatusEvent.
 type Status struct {

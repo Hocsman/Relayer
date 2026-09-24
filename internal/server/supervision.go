@@ -80,21 +80,30 @@ func (s *gatewaySink) Refresh(sessionID string) {
 	s.c.refreshOutput(s.rt, sup, sessionID)
 }
 
-// Lifecycle follows a new process: its predecessor's output does not carry
-// over. The revision stays monotonic, so the next snapshot is accepted by the
-// interface's revision guard.
+// Lifecycle follows the session's process. A new process's predecessor's
+// output does not carry over; the revision stays monotonic, so the next
+// snapshot is accepted by the interface's revision guard. A process that
+// ended has a finished recording, which every client is told about, so the
+// recordings panel can offer its replay without polling the store. The
+// gateway announced it only when Relayer lost a tmux session, never when a
+// process exited on its own or was stopped.
 func (s *gatewaySink) Lifecycle(sessionID string, phase supervise.Phase) {
-	if phase != supervise.PhaseStarted {
-		return
-	}
-	s.c.mu.Lock()
-	defer s.c.mu.Unlock()
-	if s.sup == nil || s.c.sup != s.sup {
-		return
-	}
-	if index, found := s.c.agentIndex[strings.ToLower(sessionID)]; found && index < len(s.c.state.Agents) {
-		s.c.state.Agents[index].Output = ""
-		s.c.state.Agents[index].Revision++
+	switch phase {
+	case supervise.PhaseStarted:
+		s.c.mu.Lock()
+		defer s.c.mu.Unlock()
+		if s.sup == nil || s.c.sup != s.sup {
+			return
+		}
+		if index, found := s.c.agentIndex[strings.ToLower(sessionID)]; found && index < len(s.c.state.Agents) {
+			s.c.state.Agents[index].Output = ""
+			s.c.state.Agents[index].Revision++
+		}
+	case supervise.PhaseEnded:
+		if _, current := s.current(); !current {
+			return
+		}
+		s.c.announceFinishedRecording(sessionID)
 	}
 }
 

@@ -78,7 +78,7 @@ func TestHandleTakesTheSessionStreamFromAChannel(t *testing.T) {
 		"prompt:delivered", "status:running", "refresh",
 		"refresh", "prompt:pending", "notify:pending_decision",
 		"status:failed", "error:backend_stream_failed",
-		"status:failed",
+		"status:failed", "lifecycle:ended",
 	}
 	if got := trace(sink.snapshot()); !reflect.DeepEqual(got, wantTrace) {
 		t.Fatalf("sink = %v, want %v", got, wantTrace)
@@ -434,7 +434,7 @@ func TestALegacyExitClearsPromptsWithoutJournaling(t *testing.T) {
 		t.Fatalf("a legacy exit wrote %d journal entries, want none", after-before)
 	}
 	calls := sink.snapshot()
-	if got := trace(calls); !reflect.DeepEqual(got, []string{"status:failed"}) {
+	if got := trace(calls); !reflect.DeepEqual(got, []string{"status:failed", "lifecycle:ended"}) {
 		t.Fatalf("sink = %v", got)
 	}
 	cleared, err := time.Parse(time.RFC3339Nano, calls[0].status.ClearedBefore)
@@ -521,7 +521,7 @@ func TestAProcessExitJournalsItsDetectionAndTheSessionsEnd(t *testing.T) {
 				t.Fatalf("pending after the exit = %v", ids)
 			}
 			calls := sink.snapshot()
-			if got := trace(calls); !reflect.DeepEqual(got, []string{"refresh", "status:" + test.wantStatus}) {
+			if got := trace(calls); !reflect.DeepEqual(got, []string{"refresh", "status:" + test.wantStatus, "lifecycle:ended"}) {
 				t.Fatalf("sink = %v", got)
 			}
 			if calls[1].status.ClearedBefore == "" {
@@ -1748,7 +1748,7 @@ func TestANewProcessIsReportedBeforeTheAgentIsShownRunning(t *testing.T) {
 				// No automatic decision runs here, so the last call is the one
 				// that ran this probe.
 				calls := sink.snapshot()
-				if calls[len(calls)-1].kind == "lifecycle" {
+				if last := calls[len(calls)-1]; last.kind == "lifecycle" && last.phase == supervise.PhaseStarted {
 					agent, _ := sup.Agent("agent-a")
 					atReport = append(atReport, agent)
 				}

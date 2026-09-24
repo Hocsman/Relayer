@@ -155,6 +155,12 @@
 //     as the assignment it is, and bounded. The web gateway shows it to every
 //     client, viewers included, and showed the arguments as the agent printed
 //     them. It is not part of a view's JSON, which stays the desktop's.
+//   - A front end is told when a session's current process ended, after the
+//     core shows the agent exited (Sink.Lifecycle, PhaseEnded): on its own,
+//     stopped, or with the tmux session Relayer lost. The web gateway
+//     announces the process's finished recording on it, which it did only
+//     for a lost tmux session. The exit of a process a replacement already
+//     superseded reports nothing.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

@@ -333,17 +333,14 @@ func (c *Controller) eventLoop(ctx context.Context, rt *app.DesktopRuntime, sup 
 // the gateway, which reads it again at once; everything else is the core's:
 // a prompt, its withdrawal, a process exit, a lost tmux session and a backend
 // stream error. The core journals each, takes the policy's decision, shows the
-// prompt display-safe and notifies by its rules, through the gateway's sink.
+// prompt display-safe and notifies by its rules, through the gateway's sink,
+// which also announces the finished recording of a process that ended.
 func (c *Controller) handleEvent(rt *app.DesktopRuntime, sup *supervise.Supervisor, rawEvent session.Event) {
-	switch ev := rawEvent.(type) {
-	case session.OutputAvailable:
-		c.refreshOutput(rt, sup, ev.SessionID)
-	case session.Exited:
-		sup.Handle(ev)
-		c.announceFinishedRecording(ev.SessionID)
-	default:
-		sup.Handle(rawEvent)
+	if output, isOutput := rawEvent.(session.OutputAvailable); isOutput {
+		c.refreshOutput(rt, sup, output.SessionID)
+		return
 	}
+	sup.Handle(rawEvent)
 }
 
 // refreshOutput reads a session's bounded output again and shows it to every
@@ -678,19 +675,24 @@ func (c *Controller) roleFor(connID string) string {
 // to the session, drops the previous process's prompts when a start begins,
 // freezes a session whose stop failed, and reports a failure by a fixed
 // message rather than the backend's own text.
+//
+// Each acts only on the run the caller names. The gateway ignored the run, so
+// a tab left open on a run a profile save had replaced, or a request naming
+// none, stopped, started or restarted the agent of the same name in the new
+// run, which the operator had never seen.
 func (c *Controller) StopSession(runID, sessionID string) error {
-	sup, currentRun := c.supervisor()
-	return sup.StopSession(currentRun, sessionID)
+	sup, _ := c.supervisor()
+	return sup.StopSession(runID, sessionID)
 }
 
 func (c *Controller) StartSession(runID, sessionID string) error {
-	sup, currentRun := c.supervisor()
-	return sup.StartSession(currentRun, sessionID)
+	sup, _ := c.supervisor()
+	return sup.StartSession(runID, sessionID)
 }
 
 func (c *Controller) RestartSession(runID, sessionID string) error {
-	sup, currentRun := c.supervisor()
-	return sup.RestartSession(currentRun, sessionID)
+	sup, _ := c.supervisor()
+	return sup.RestartSession(runID, sessionID)
 }
 
 // StopRun stops the run the caller names, and only that one. It stopped
