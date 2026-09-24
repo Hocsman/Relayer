@@ -284,6 +284,87 @@ func TestAnUncertainHumanDeliveryFreezesTheSession(t *testing.T) {
 	}
 }
 
+// An uncertain write freezes its session even when the agent withdrew the
+// prompt while its answer was being written, which is when an echo is most
+// likely read as a new question. The freeze is there to stop a second answer
+// after a write that may have reached the agent in part, and the prompt it
+// answered has nothing to do with that: the session is frozen, the failure is
+// shown, and a person answering gets ErrDeliveryUncertain as the message they
+// are shown says. The freeze used to be set on the prompt's way to
+// "uncertain", which a withdrawn prompt no longer takes: the session stayed
+// writable, the next prompt's automatic answer was written after the
+// uncertain one, and a person was told the session was frozen when it was
+// not.
+func TestAnUncertainWriteFreezesTheSessionEvenWhenItsPromptWasWithdrawn(t *testing.T) {
+	for _, human := range []bool{false, true} {
+		name := "an automatic answer"
+		if human {
+			name = "a human answer"
+		}
+		t.Run(name, func(t *testing.T) {
+			engine := newFakeEngine()
+			engine.evaluationByID["prompt-2"] = automaticAllow()
+			if !human {
+				engine.evaluationByID["prompt-1"] = automaticAllow()
+			}
+			engine.applyErrs = []error{errors.New("write timed out")}
+			applyStarted, releaseWrites := holdTheFirstWrite(t, engine)
+			sup, sink := newCoreForTest(t, engine, "agent-a")
+
+			first := promptEvent("agent-a", "prompt-1")
+			sup.Handle(session.AdapterEvent{Event: first})
+			answered := make(chan error, 1)
+			if human {
+				go func() { answered <- sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y", desktop) }()
+			}
+			awaitWrite(t, applyStarted, "the first answer")
+			sup.Handle(session.AdapterEventWithdrawn{Event: first})
+			second := promptEvent("agent-a", "prompt-2")
+			second.Sequence = 2
+			sup.Handle(session.AdapterEvent{Event: second})
+			sink.reset()
+
+			releaseWrites()
+			if human {
+				if err := <-answered; !errors.Is(err, supervise.ErrDeliveryUncertain) {
+					t.Fatalf("the uncertain human answer = %v, want ErrDeliveryUncertain", err)
+				}
+			}
+			waitFor(t, 2*time.Second, "the uncertainty to be shown", func() bool {
+				for _, call := range sink.snapshot() {
+					if call.kind == "error" && call.failure.Code == "delivery_uncertain" && call.failure.SessionID == "agent-a" {
+						return true
+					}
+				}
+				return false
+			})
+			deliveries := engine.auditFor(audit.KindDelivery, "prompt-1")
+			if len(deliveries) != 1 || deliveries[0].Outcome != audit.OutcomeFallbackDeliveryUncertain {
+				t.Fatalf("the withdrawn prompt's delivery entries = %#v, want one uncertain", deliveries)
+			}
+			if agent := agentOf(t, sup, "agent-a"); !agent.InputFrozen {
+				t.Fatalf("an uncertain write left the session writable: %#v", agent)
+			}
+			time.Sleep(50 * time.Millisecond)
+			if calls := engine.applySnapshot(); len(calls) != 1 {
+				t.Fatalf("the session took %d writes, want the uncertain one alone", len(calls))
+			}
+			if decisions := engine.auditFor(audit.KindDecision, "prompt-2"); len(decisions) != 0 {
+				t.Fatalf("the next prompt was decided after an uncertain write: %#v", decisions)
+			}
+			if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-2", "y", desktop); !errors.Is(err, supervise.ErrDeliveryUncertain) {
+				t.Fatalf("a human answer after the uncertain write = %v, want ErrDeliveryUncertain", err)
+			}
+			if err := sup.SubmitLine(testRunID, "agent-a", "hello", desktop); !errors.Is(err, supervise.ErrDeliveryUncertain) {
+				t.Fatalf("a line after the uncertain write = %v, want ErrDeliveryUncertain", err)
+			}
+			if calls := engine.applySnapshot(); len(calls) != 1 {
+				t.Fatalf("the session took %d writes, want the uncertain one alone", len(calls))
+			}
+		})
+	}
+}
+
 // A backend stream error on a live session journals backend_error and marks
 // the agent failed. It is not an exit: the process may still run, so the
 // agent stays running and its prompts stay answerable.

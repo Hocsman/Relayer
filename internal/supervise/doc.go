@@ -101,6 +101,10 @@
 //     takes, the desktop's Admit renamed. RecordAudit journals a front end's
 //     own entry, such as the gateway's attach_started, through the core's
 //     fail-closed path: an entry the journal refuses freezes the run.
+//   - A write whose outcome is uncertain freezes its session whatever became
+//     of the prompt it answered: a prompt the agent withdrew while its answer
+//     was being written left the session writable, and the next answer
+//     followed the uncertain one.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

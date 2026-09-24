@@ -181,9 +181,7 @@ func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluati
 	if !s.recordAudit(deliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeFallbackDeliveryUncertain, "delivery_uncertain")) {
 		return
 	}
-	if s.pendingExists(key) {
-		s.freezeSession(key, "delivery_uncertain")
-	}
+	s.freezeSession(key, "delivery_uncertain")
 }
 
 // fallbackToAsk hands a prompt to the operator: pending again, and no longer
@@ -279,9 +277,32 @@ func (s *Supervisor) markDelivery(key eventKey, status, reason string) {
 	s.flush()
 }
 
+// freezeSession freezes the session after a write whose outcome is unknown:
+// part of the answer may have reached the agent, and nothing more is written
+// to it until a new process replaces it. The session is frozen, and the
+// failure shown, whatever became of the prompt the write answered; the prompt
+// is shown uncertain only while it is still there. The freeze used to be set
+// on the prompt's way to "uncertain", and a prompt the agent withdrew while
+// its answer was being written, the moment an echo is most likely read as a
+// new question, left the session writable: the next prompt's automatic answer
+// followed the uncertain one, and a person was told the session was frozen
+// when it was not.
 func (s *Supervisor) freezeSession(key eventKey, reason string) {
-	s.markDelivery(key, "uncertain", reason)
-	s.emitSafeError("delivery_uncertain", "Delivery is indeterminate. The session is frozen to prevent a second answer.", key.sessionID)
+	s.mu.Lock()
+	s.frozen[key.sessionID] = true
+	if index, found := s.agentIndex[key.sessionID]; found {
+		s.agents[index].InputFrozen = true
+	}
+	if item, exists := s.pending[key]; exists {
+		item.view.DeliveryStatus = "uncertain"
+		item.view.Evaluation.Reason = reason
+		s.pending[key] = item
+		s.rebuildPendingLocked()
+		s.showPromptLocked(item.view)
+	}
+	s.emitSafeErrorLocked("delivery_uncertain", "Delivery is indeterminate. The session is frozen to prevent a second answer.", key.sessionID)
+	s.mu.Unlock()
+	s.flush()
 }
 
 func (s *Supervisor) resolveEvent(key eventKey) {
