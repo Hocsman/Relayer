@@ -222,3 +222,26 @@ func TestAWebTerminalIsAttachedOnlyForTheRunItNames(t *testing.T) {
 		t.Fatalf("after the release the hand is %+v, want the terminal free", hand)
 	}
 }
+
+// Detaching from a terminal this connection does not hold changes nothing and
+// journals nothing: the bundled interface detaches as it closes the terminal
+// view, whether or not it had taken the terminal. The gateway journaled an
+// attach_finished for every such call, an end of an attach that never began.
+func TestAWebDetachFromATerminalNobodyHeldJournalsNothing(t *testing.T) {
+	g := startWebRun(t, webRun{
+		agents: []webAgent{{id: "web-listen", mode: webAgentListen, adapter: "generic"}},
+	})
+	alice := dialSharedGateway(t, g.serve(), "opAlice")
+	g.awaitScreen("web-listen", "agent ready", 30*time.Second)
+	runID := g.runID()
+
+	alice.mustCall("setInteractiveSession", map[string]any{"runID": runID, "sessionID": "web-listen", "active": false}, nil)
+	if entries := entriesOf(g.sessionJournal("web-listen"), audit.KindAttachFinished); len(entries) != 0 {
+		t.Fatalf("a detach from a terminal nobody held was journaled: %s", journalTrace(entries))
+	}
+	alice.mustCall("setInteractiveSession", map[string]any{"runID": runID, "sessionID": "web-listen", "active": true}, nil)
+	alice.mustCall("setInteractiveSession", map[string]any{"runID": runID, "sessionID": "web-listen", "active": false}, nil)
+	if entries := entriesOf(g.sessionJournal("web-listen"), audit.KindAttachFinished); len(entries) != 1 {
+		t.Fatalf("attach_finished entries = %s, want the one detach from a terminal held", journalTrace(entries))
+	}
+}

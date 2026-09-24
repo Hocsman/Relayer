@@ -945,10 +945,15 @@ func (c *Controller) SetInteractiveSession(runID, sessionID string, active bool,
 		if err != nil {
 			return err
 		}
-		c.mu.RLock()
-		sup := c.sup
-		c.mu.RUnlock()
-		_ = sup.RecordAudit(attachEntry(change, false))
+		// Only a terminal this connection held is let go: detaching from one
+		// nobody held changes nothing, and journaled attach_finished for an
+		// attach that never was.
+		if change.known() && change.before.held() {
+			c.mu.RLock()
+			sup := c.sup
+			c.mu.RUnlock()
+			_ = sup.RecordAudit(attachEntry(change, false))
+		}
 	}
 
 	// The status is the core's: the gateway's own copy of it is never updated,
