@@ -119,7 +119,9 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 		s.addFrozenEvent(event, policy.Evaluation{Action: policy.ActionAsk, ProposedAction: policy.ActionAsk, Reason: policy.ReasonNoEngine})
 		return
 	}
-	evaluation := s.engine.Evaluate(event)
+	// A repeat of a prompt just answered is asked, never answered, and is
+	// journaled as asked: the guard applies before the evaluation entry.
+	evaluation := s.guardRepeat(key, event, s.engine.Evaluate(event))
 	if !s.recordAudit(policyAuditEntry(event, backend, evaluation)) {
 		s.addFrozenEvent(event, evaluation)
 		return

@@ -133,7 +133,25 @@ type Options struct {
 	Agents []AgentSpec
 	// Sink receives what the core shows; nil discards it.
 	Sink Sink
+	// RepeatWindow is how long after an answer is written a prompt of the
+	// same session with the same Signature is taken for its repeat, which
+	// the policy never answers. Zero or less means DefaultRepeatWindow: the
+	// guard cannot be turned off.
+	RepeatWindow time.Duration
+	// Now is the clock that times RepeatWindow; nil means time.Now.
+	Now func() time.Time
 }
+
+// DefaultRepeatWindow is the RepeatWindow of a run whose options set none.
+const DefaultRepeatWindow = 2 * time.Second
+
+// ReasonRepeatAfterDelivery is the reason of a prompt the policy would have
+// answered automatically but that repeats a prompt of its session whose answer
+// is being written, or was written less than RepeatWindow ago: it is asked,
+// never answered. An adapter that reads an answered question again, from its
+// echo or a repaint, raises such a repeat under a new ID, and answering it
+// types a second answer into an agent that already consumed the first.
+const ReasonRepeatAfterDelivery = "repeat_after_delivery"
 
 // State is one consistent reading of what the core holds for a run.
 type State struct {
@@ -145,6 +163,15 @@ type State struct {
 type eventKey struct {
 	sessionID string
 	eventID   string
+}
+
+// writeClaim is a session's claim by the decision whose answer is being
+// written: the prompt it answers, and that prompt's Signature. Both stay with
+// the claim until the write returns, even when the agent withdraws the prompt
+// meanwhile, which is when its echo is most likely read as a repeat.
+type writeClaim struct {
+	key       eventKey
+	signature string
 }
 
 // pendingEvent is a prompt the run waits on. evaluation is the policy's, as
@@ -162,20 +189,26 @@ type pendingEvent struct {
 // that stops is drained and dropped with its supervisor; the next run gets a
 // new one, so nothing of a run's prompts, answers or freezes outlives it.
 type Supervisor struct {
-	ctx    context.Context
-	runID  string
-	engine Engine
-	sink   Sink
+	ctx          context.Context
+	runID        string
+	engine       Engine
+	sink         Sink
+	now          func() time.Time
+	repeatWindow time.Duration
 
-	mu               sync.RWMutex
-	agents           []Agent
-	agentIndex       map[string]int
-	pendingViews     []View
-	pending          map[eventKey]pendingEvent
-	ingesting        map[eventKey]struct{}
-	resolved         map[eventKey]struct{}
-	resolvedOrder    []eventKey
-	inFlight         map[string]eventKey
+	mu            sync.RWMutex
+	agents        []Agent
+	agentIndex    map[string]int
+	pendingViews  []View
+	pending       map[eventKey]pendingEvent
+	ingesting     map[eventKey]struct{}
+	resolved      map[eventKey]struct{}
+	resolvedOrder []eventKey
+	inFlight      map[string]writeClaim
+	// answered is, per session, when an answer to a prompt of each Signature
+	// was last written, for as long as a prompt with that Signature would be
+	// taken for its repeat.
+	answered         map[string]map[string]time.Time
 	lineInFlight     map[string]bool
 	stoppingSessions map[string]bool
 	// startingSessions marks a Start or Restart in progress. The agent is not
@@ -210,6 +243,14 @@ func New(ctx context.Context, engine Engine, options Options) (*Supervisor, erro
 	if sink == nil {
 		sink = discardSink{}
 	}
+	now := options.Now
+	if now == nil {
+		now = time.Now
+	}
+	repeatWindow := options.RepeatWindow
+	if repeatWindow <= 0 {
+		repeatWindow = DefaultRepeatWindow
+	}
 	agents := make([]Agent, 0, len(options.Agents))
 	index := make(map[string]int, len(options.Agents))
 	for _, spec := range options.Agents {
@@ -221,13 +262,16 @@ func New(ctx context.Context, engine Engine, options Options) (*Supervisor, erro
 		runID:             options.RunID,
 		engine:            engine,
 		sink:              sink,
+		now:               now,
+		repeatWindow:      repeatWindow,
 		agents:            agents,
 		agentIndex:        index,
 		pendingViews:      []View{},
 		pending:           make(map[eventKey]pendingEvent),
 		ingesting:         make(map[eventKey]struct{}),
 		resolved:          make(map[eventKey]struct{}),
-		inFlight:          make(map[string]eventKey),
+		inFlight:          make(map[string]writeClaim),
+		answered:          make(map[string]map[string]time.Time),
 		lineInFlight:      make(map[string]bool),
 		stoppingSessions:  make(map[string]bool),
 		startingSessions:  make(map[string]bool),

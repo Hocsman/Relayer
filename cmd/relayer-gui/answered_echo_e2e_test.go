@@ -15,6 +15,7 @@ import (
 
 	appcore "github.com/Hocsman/Relayer/internal/app"
 	"github.com/Hocsman/Relayer/internal/audit"
+	"github.com/Hocsman/Relayer/internal/supervise"
 )
 
 const (
@@ -244,19 +245,36 @@ func desktopAnswersOnce(t *testing.T, after string) {
 		t.Fatalf("the agent received %d answer(s) and %d extra one(s), want exactly one answer; screen:\n%s",
 			answers, extras, screen)
 	}
-	if applied := appliedDeliveries(t, auditPath); applied != 1 {
+	entries := journalEntries(t, auditPath)
+	applied := 0
+	for _, entry := range entries {
+		if entry.Kind == audit.KindDelivery && entry.Outcome == audit.OutcomeApplied {
+			applied++
+		}
+	}
+	if applied != 1 {
 		t.Fatalf("the journal records %d applied deliveries, want 1", applied)
+	}
+	// The core never answers a repeat of a question it just answered, and
+	// journals the one it declines with repeat_after_delivery. That guard is
+	// a backstop: the adapter must not raise the repeat in the first place,
+	// and a single answer reached through the guard would hide an adapter
+	// that does.
+	for _, entry := range entries {
+		if entry.Reason == supervise.ReasonRepeatAfterDelivery {
+			t.Fatalf("the core declined a repeat of the answered question, so the adapter raised one: %#v", entry)
+		}
 	}
 }
 
-// appliedDeliveries counts the deliveries the journal records as applied.
-func appliedDeliveries(t *testing.T, path string) int {
+// journalEntries reads every entry of the journal at path.
+func journalEntries(t *testing.T, path string) []audit.Entry {
 	t.Helper()
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	applied := 0
+	var entries []audit.Entry
 	for _, line := range strings.Split(string(raw), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
@@ -265,9 +283,7 @@ func appliedDeliveries(t *testing.T, path string) int {
 		if json.Unmarshal([]byte(line), &entry) != nil {
 			continue
 		}
-		if entry.Kind == audit.KindDelivery && entry.Outcome == audit.OutcomeApplied {
-			applied++
-		}
+		entries = append(entries, entry)
 	}
-	return applied
+	return entries
 }

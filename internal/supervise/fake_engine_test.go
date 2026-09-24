@@ -459,6 +459,13 @@ const testRunID = "run-test"
 // drained when the test ends, and a drain that does not finish fails it.
 func newCoreForTest(t *testing.T, engine *fakeEngine, sessionIDs ...string) (*supervise.Supervisor, *recordingSink) {
 	t.Helper()
+	return newCoreWithOptions(t, engine, supervise.Options{}, sessionIDs...)
+}
+
+// newCoreWithOptions is newCoreForTest with the options the test sets; the
+// run's ID, agents and sink are the test's as they are there.
+func newCoreWithOptions(t *testing.T, engine *fakeEngine, options supervise.Options, sessionIDs ...string) (*supervise.Supervisor, *recordingSink) {
+	t.Helper()
 	agents := make([]supervise.AgentSpec, 0, len(sessionIDs))
 	for _, sessionID := range sessionIDs {
 		agents = append(agents, supervise.AgentSpec{
@@ -471,7 +478,10 @@ func newCoreForTest(t *testing.T, engine *fakeEngine, sessionIDs ...string) (*su
 	}
 	sink := &recordingSink{}
 	ctx, cancel := context.WithCancel(context.Background())
-	sup, err := supervise.New(ctx, engine, supervise.Options{RunID: testRunID, Agents: agents, Sink: sink})
+	options.RunID = testRunID
+	options.Agents = agents
+	options.Sink = sink
+	sup, err := supervise.New(ctx, engine, options)
 	if err != nil {
 		cancel()
 		t.Fatalf("New: %v", err)
@@ -493,6 +503,28 @@ func newCoreForTest(t *testing.T, engine *fakeEngine, sessionIDs ...string) (*su
 		}
 	})
 	return sup, sink
+}
+
+// testClock is a core's clock that moves only when the test moves it.
+type testClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func newTestClock() *testClock {
+	return &testClock{now: time.Date(2026, time.August, 27, 10, 0, 0, 0, time.UTC)}
+}
+
+func (c *testClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *testClock) advance(by time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(by)
 }
 
 // promptEvent is the desktop tests' bridgeEvent: one confirmation prompt.

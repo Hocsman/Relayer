@@ -168,6 +168,28 @@ func TestSanitizeEntryKeepsTheProcessExitReasons(t *testing.T) {
 	}
 }
 
+// The supervision core journals a repeat of an answered prompt, which it asks
+// instead of answering, as a policy evaluation with the reason
+// repeat_after_delivery. The desktop's end-to-end echo test proves the
+// adapters raise no such repeat by finding no entry with that reason, which
+// holds only if the sanitizer journals it as it is.
+func TestSanitizeEntryKeepsTheRepeatReason(t *testing.T) {
+	for _, mode := range []Mode{ModeMetadata, ModeDetailed} {
+		entry := SanitizeEntry(Entry{
+			Kind:       KindPolicyEvaluated,
+			SessionID:  "agent-a",
+			EventID:    "evt-2",
+			DecisionBy: DecisionByPolicy,
+			Decision:   DecisionAsk,
+			Outcome:    OutcomeAsk,
+			Reason:     "repeat_after_delivery",
+		}, mode)
+		if entry.Reason != "repeat_after_delivery" || entry.Outcome != OutcomeAsk {
+			t.Fatalf("%s: sanitized policy_evaluated = reason %q, outcome %q", mode, entry.Reason, entry.Outcome)
+		}
+	}
+}
+
 func TestSafeCodeBoundsReasonCodes(t *testing.T) {
 	for _, code := range []string{
 		"recording_started", "recording_completed", "recording_truncated",

@@ -1,0 +1,276 @@
+package supervise_test
+
+import (
+	"reflect"
+	"testing"
+	"time"
+
+	"github.com/Hocsman/Relayer/internal/adapters"
+	"github.com/Hocsman/Relayer/internal/audit"
+	"github.com/Hocsman/Relayer/internal/policy"
+	"github.com/Hocsman/Relayer/internal/session"
+	"github.com/Hocsman/Relayer/internal/supervise"
+)
+
+// These tests pin the guard that keeps the policy from answering a repeat: a
+// prompt it would answer automatically, but whose Signature is that of a prompt
+// of its session whose answer is being written, or was written less than
+// RepeatWindow ago. An adapter that reads an answered question again, from the
+// answer's echo or a repaint, raises such a repeat under a new ID; answered, it
+// types a second answer into an agent that consumed the first, and whatever the
+// agent asks next receives an answer nobody gave. The adapters are where that
+// is fixed; the guard is the backstop. The core's clock is the test's.
+
+// repeatOf is a new prompt of the same session asking what prompt asked: a new
+// ID, the same Signature.
+func repeatOf(prompt adapters.Event, eventID string) adapters.Event {
+	repeat := prompt
+	repeat.ID = eventID
+	repeat.Sequence = prompt.Sequence + 1
+	return repeat
+}
+
+// waitForTheSessionToBeFree waits until the claim an automatic answer holds
+// on the session is released, a moment after its delivery was journaled: a
+// line is refused until then, and sent once it is. A repeat detected before
+// then is one whose answer is still being written.
+func waitForTheSessionToBeFree(t *testing.T, sup *supervise.Supervisor, sessionID string) {
+	t.Helper()
+	waitFor(t, 2*time.Second, "the session to be free", func() bool {
+		return sup.SubmitLine(testRunID, sessionID, "next") == nil
+	})
+}
+
+// assertAskedAsARepeat checks that the policy's automatic answer to the prompt
+// was turned into a question for the operator, journaled and shown with the
+// reason repeat_after_delivery, the policy's proposal and rule kept.
+// evaluations is how many policy_evaluated entries the prompt has, the last
+// of which says so.
+func assertAskedAsARepeat(t *testing.T, engine *fakeEngine, sup *supervise.Supervisor, eventID string, evaluations int) {
+	t.Helper()
+	evaluated := engine.auditFor(audit.KindPolicyEvaluated, eventID)
+	if len(evaluated) != evaluations {
+		t.Fatalf("policy_evaluated entries of %s = %#v, want %d", eventID, evaluated, evaluations)
+	}
+	last := evaluated[len(evaluated)-1]
+	wantMetadata := map[string]string{
+		"automatic": "false", "effective_action": "ask", "mode": "enforce", "proposed_action": string(policy.ActionAllow),
+	}
+	if last.DecisionBy != audit.DecisionByPolicy || last.Decision != audit.DecisionAsk || last.Outcome != audit.OutcomeAsk ||
+		last.Reason != supervise.ReasonRepeatAfterDelivery || last.Rule != "allow-safe" || !reflect.DeepEqual(last.Metadata, wantMetadata) {
+		t.Fatalf("policy_evaluated entry of the repeat = %#v", last)
+	}
+	if decisions := engine.auditFor(audit.KindDecision, eventID); len(decisions) != 0 {
+		t.Fatalf("the repeat was decided: %#v", decisions)
+	}
+	var shown *supervise.View
+	for _, view := range sup.State().Pending {
+		if view.ID == eventID {
+			shown = &view
+		}
+	}
+	if shown == nil || shown.DeliveryStatus != "pending" || shown.Evaluation.Action != string(policy.ActionAsk) ||
+		shown.Evaluation.ProposedAction != string(policy.ActionAllow) || shown.Evaluation.Automatic ||
+		shown.Evaluation.Reason != supervise.ReasonRepeatAfterDelivery {
+		t.Fatalf("the repeat is shown as %#v, want pending on the operator", shown)
+	}
+}
+
+// A prompt that asks again what a prompt of its session asked, less than
+// RepeatWindow after that prompt's answer was written, is not answered by the
+// policy, whoever gave the first answer: it goes to the operator, who is
+// notified. Once the window is over, for another question, or for questions
+// the adapter gave no Signature, the policy answers as it always did. The
+// window is two seconds unless the run's options set another.
+func TestAPromptRepeatingAnAnswerIsAskedNotAnswered(t *testing.T) {
+	answerByThePolicy := func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine, prompt adapters.Event) {
+		t.Helper()
+		engine.set(func(f *fakeEngine) { f.evaluationByID[prompt.ID] = automaticAllow() })
+		sup.Handle(session.AdapterEvent{Event: prompt})
+		waitFor(t, 2*time.Second, "the policy's answer", func() bool {
+			return len(engine.auditFor(audit.KindDelivery, prompt.ID)) == 1
+		})
+		waitForTheSessionToBeFree(t, sup, prompt.SessionID)
+	}
+	answerByTyping := func(t *testing.T, sup *supervise.Supervisor, _ *fakeEngine, prompt adapters.Event) {
+		t.Helper()
+		sup.Handle(session.AdapterEvent{Event: prompt})
+		if err := sup.SubmitDecision(testRunID, prompt.SessionID, prompt.ID, "y"); err != nil {
+			t.Fatalf("SubmitDecision: %v", err)
+		}
+	}
+	answerByChoosing := func(t *testing.T, sup *supervise.Supervisor, _ *fakeEngine, prompt adapters.Event) {
+		t.Helper()
+		sup.Handle(session.AdapterEvent{Event: prompt})
+		if err := sup.SubmitAutomaticDecision(testRunID, prompt.SessionID, prompt.ID, string(adapters.DecisionAllow)); err != nil {
+			t.Fatalf("SubmitAutomaticDecision: %v", err)
+		}
+	}
+	for _, test := range []struct {
+		name   string
+		window time.Duration
+		answer func(*testing.T, *supervise.Supervisor, *fakeEngine, adapters.Event)
+		// after is how long after the first answer the repeat is detected.
+		after time.Duration
+		// signature, when set, is the repeat's own Signature; "none" leaves
+		// both prompts without one.
+		signature  string
+		wantAsking bool
+	}{
+		{name: "the policy's answer, asked again just inside the window", answer: answerByThePolicy, after: 1999 * time.Millisecond, wantAsking: true},
+		{name: "the policy's answer, asked again once the window is over", answer: answerByThePolicy, after: 2 * time.Second},
+		{name: "a typed answer, asked again just inside the window", answer: answerByTyping, after: 1999 * time.Millisecond, wantAsking: true},
+		{name: "a chosen answer, asked again just inside the window", answer: answerByChoosing, after: 1999 * time.Millisecond, wantAsking: true},
+		{name: "a typed answer, asked again once the window is over", answer: answerByTyping, after: 2 * time.Second},
+		{name: "another question just after the answer", answer: answerByThePolicy, signature: "signature-another-question"},
+		{name: "questions without a signature", answer: answerByThePolicy, signature: "none"},
+		{name: "a longer window the run chose", window: 5 * time.Second, answer: answerByTyping, after: 4999 * time.Millisecond, wantAsking: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newFakeEngine()
+			engine.supportedDecisions = []adapters.Decision{adapters.DecisionAllow, adapters.DecisionDeny}
+			engine.evaluationByID["repeat-2"] = automaticAllow()
+			clock := newTestClock()
+			sup, sink := newCoreWithOptions(t, engine, supervise.Options{RepeatWindow: test.window, Now: clock.Now}, "agent-a")
+			first := promptEvent("agent-a", "first-1")
+			repeat := repeatOf(first, "repeat-2")
+			switch test.signature {
+			case "":
+			case "none":
+				first.Signature, repeat.Signature = "", ""
+			default:
+				repeat.Signature = test.signature
+			}
+
+			test.answer(t, sup, engine, first)
+			clock.advance(test.after)
+			sink.reset()
+			sup.Handle(session.AdapterEvent{Event: repeat})
+
+			if !test.wantAsking {
+				waitFor(t, 2*time.Second, "the policy's answer to the second prompt", func() bool {
+					return len(engine.auditFor(audit.KindDelivery, "repeat-2")) == 1
+				})
+				if evaluated := engine.auditFor(audit.KindPolicyEvaluated, "repeat-2"); len(evaluated) != 1 || evaluated[0].Metadata["automatic"] != "true" {
+					t.Fatalf("policy_evaluated entries of the second prompt = %#v, want it automatic", evaluated)
+				}
+				return
+			}
+			assertAskedAsARepeat(t, engine, sup, "repeat-2", 1)
+			notified := false
+			for _, call := range sink.snapshot() {
+				notified = notified || (call.kind == "notify" && call.notice.Kind == supervise.NoticePendingDecision && call.notice.EventID == "repeat-2")
+			}
+			if !notified {
+				t.Fatalf("the operator was not told of the repeat: %v", trace(sink.snapshot()))
+			}
+			sup.BeginDrain()
+			sup.Wait()
+			for _, call := range engine.applySnapshot() {
+				if call.event.ID == "repeat-2" {
+					t.Fatalf("the repeat was answered: %#v", call)
+				}
+			}
+		})
+	}
+}
+
+// A prompt that asks again what a prompt of its session asked, while that
+// prompt's answer is still being written, is not answered by the policy
+// either, whoever writes the answer, and even when the agent withdrew the
+// prompt being answered: that is how an echo reads, the question repainted
+// with the answer after it while the write returns. Waiting behind the write,
+// the repeat used to be answered once it had returned.
+func TestAPromptRepeatingOneBeingAnsweredIsAskedNotAnswered(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		human    bool
+		withdraw bool
+	}{
+		{name: "while the policy's answer is written"},
+		{name: "while a human's answer is written", human: true},
+		{name: "withdrawn while its answer is written", withdraw: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newFakeEngine()
+			applyStarted := make(chan struct{}, 4)
+			release := make(chan struct{})
+			engine.applyStarted = applyStarted
+			engine.applyRelease = release
+			if !test.human {
+				engine.evaluationByID["first-1"] = automaticAllow()
+			}
+			engine.evaluationByID["repeat-2"] = automaticAllow()
+			sup, _ := newCoreWithOptions(t, engine, supervise.Options{Now: newTestClock().Now}, "agent-a")
+			releaseWrites := releaser(t, release)
+			first := promptEvent("agent-a", "first-1")
+			repeat := repeatOf(first, "repeat-2")
+
+			sup.Handle(session.AdapterEvent{Event: first})
+			answered := make(chan error, 1)
+			if test.human {
+				go func() { answered <- sup.SubmitDecision(testRunID, "agent-a", "first-1", "y") }()
+			}
+			select {
+			case <-applyStarted:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the first answer never reached the runtime")
+			}
+			if test.withdraw {
+				sup.Handle(session.AdapterEventWithdrawn{Event: first})
+			}
+			sup.Handle(session.AdapterEvent{Event: repeat})
+			assertAskedAsARepeat(t, engine, sup, "repeat-2", 1)
+
+			releaseWrites()
+			if test.human {
+				if err := <-answered; err != nil {
+					t.Fatalf("SubmitDecision: %v", err)
+				}
+			}
+			waitFor(t, 2*time.Second, "the first answer's delivery", func() bool {
+				return len(engine.auditFor(audit.KindDelivery, "first-1")) == 1
+			})
+			sup.BeginDrain()
+			sup.Wait()
+			if calls := engine.applySnapshot(); len(calls) != 1 || calls[0].event.ID != "first-1" {
+				t.Fatalf("deliveries = %#v, want the first answer alone", calls)
+			}
+			assertAskedAsARepeat(t, engine, sup, "repeat-2", 1)
+		})
+	}
+}
+
+// A repeat queued behind the prompt it repeats was not one when it was
+// detected: nothing had been answered yet. The guard is checked again just
+// before the policy's decision, with the policy's own evaluation, and the
+// repeat then goes to the operator with a second evaluation entry.
+func TestARepeatQueuedBehindThePromptItRepeatsIsCheckedAgainBeforeItsAnswer(t *testing.T) {
+	engine := newFakeEngine()
+	engine.evaluation = automaticAllow()
+	sup, _ := newCoreWithOptions(t, engine, supervise.Options{Now: newTestClock().Now}, "agent-a")
+	letTheLineGo := holdWithALine(t, engine, sup, "agent-a")
+	first := promptEvent("agent-a", "first-1")
+	repeat := repeatOf(first, "repeat-2")
+	sup.Handle(session.AdapterEvent{Event: first})
+	sup.Handle(session.AdapterEvent{Event: repeat})
+	if evaluated := engine.auditFor(audit.KindPolicyEvaluated, "repeat-2"); len(evaluated) != 1 || evaluated[0].Metadata["automatic"] != "true" {
+		t.Fatalf("the repeat at detection = %#v, want it automatic: nothing was answered yet", evaluated)
+	}
+
+	letTheLineGo()
+	waitFor(t, 2*time.Second, "the repeat to go to the operator", func() bool {
+		for _, view := range sup.State().Pending {
+			if view.ID == "repeat-2" && !view.Evaluation.Automatic {
+				return true
+			}
+		}
+		return false
+	})
+	sup.BeginDrain()
+	sup.Wait()
+	if calls := engine.applySnapshot(); len(calls) != 1 || calls[0].event.ID != "first-1" {
+		t.Fatalf("deliveries = %#v, want the first answer alone", calls)
+	}
+	assertAskedAsARepeat(t, engine, sup, "repeat-2", 2)
+}

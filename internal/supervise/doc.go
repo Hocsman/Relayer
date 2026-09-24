@@ -41,6 +41,16 @@
 //     one that reached a limit while it waited behind other answers, goes to
 //     the operator, and a second policy_evaluated entry, ask, gives the new
 //     reason.
+//   - The policy never answers a repeat. A prompt it would answer
+//     automatically whose Signature is that of a prompt of its session whose
+//     answer, the policy's or a human's, is being written or was written less
+//     than Options.RepeatWindow ago (DefaultRepeatWindow, two seconds, unless
+//     set) is asked instead: journaled and shown with the reason
+//     repeat_after_delivery, the policy's proposal kept, and notified. The
+//     guard applies before the prompt's evaluation is journaled and again
+//     just before the policy's decision. It is a backstop for an adapter that
+//     reads an answered question again under a new ID; the cost is that a
+//     genuine question asked twice within the window goes to the operator.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

@@ -35,7 +35,7 @@ func (s *Supervisor) scheduleAutomatic(sessionID string) {
 	}
 	item.view.DeliveryStatus = "delivering"
 	s.pending[key] = item
-	s.inFlight[sessionKey] = key
+	s.inFlight[sessionKey] = writeClaim{key: key, signature: item.event.Signature}
 	s.rebuildPendingLocked()
 	view := item.view
 	event := item.event.Clone()
@@ -84,7 +84,7 @@ func eventBefore(left, right adapters.Event) bool {
 // asked for found the session still claimed.
 func (s *Supervisor) finishDecision(key eventKey) {
 	s.mu.Lock()
-	if current, exists := s.inFlight[key.sessionID]; exists && current == key {
+	if current, exists := s.inFlight[key.sessionID]; exists && current.key == key {
 		delete(s.inFlight, key.sessionID)
 	}
 	s.mu.Unlock()
@@ -108,8 +108,10 @@ func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluati
 	// answers, or would now answer another way, is the operator's, and a
 	// second evaluation entry says why. Otherwise the decision is journaled
 	// under the evaluation the prompt was detected with, which the policy has
-	// just confirmed: its rule is the one the first entry named.
-	current := s.engine.Evaluate(event)
+	// just confirmed: its rule is the one the first entry named. The repeat
+	// guard is checked again with it: an answer written since the prompt was
+	// detected may be the one it repeats.
+	current := s.guardRepeat(key, event, s.engine.Evaluate(event))
 	if !current.Automatic || current.Action != evaluation.Action {
 		if !s.recordAudit(policyAuditEntry(event, backend, askEvaluation(current, current.Reason))) {
 			s.markDelivery(key, "failed", "audit_unavailable")
@@ -142,6 +144,7 @@ func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluati
 	err := s.engine.ApplyDecision(ctx, event.SessionID, event, decision, "")
 	cancel()
 	if err == nil {
+		s.recordAnswered(key.sessionID, event.Signature)
 		if !s.recordAudit(deliveryAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy, audit.OutcomeApplied, "delivery_applied")) {
 			return
 		}
@@ -403,7 +406,7 @@ func (s *Supervisor) applyHumanDecision(
 		s.mu.Unlock()
 		return ErrDecisionInFlight
 	}
-	s.inFlight[key.sessionID] = key
+	s.inFlight[key.sessionID] = writeClaim{key: key, signature: item.event.Signature}
 	item.view.DeliveryStatus = "delivering"
 	s.pending[key] = item
 	s.rebuildPendingLocked()
@@ -446,6 +449,7 @@ func (s *Supervisor) applyHumanDecision(
 		s.freezeSession(key, "delivery_uncertain")
 		return ErrDeliveryUncertain
 	}
+	s.recordAnswered(key.sessionID, item.event.Signature)
 	if !s.recordAudit(deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeApplied, "delivery_applied")) {
 		return ErrAuditUnavailable
 	}
