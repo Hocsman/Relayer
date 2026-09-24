@@ -132,8 +132,8 @@ func (s *Supervisor) StartSession(runID, sessionID string) error {
 		if index, found := s.agentIndex[sessionKey]; found {
 			s.agents[index].Status = "failed"
 		}
-		s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: sessionID, Status: "failed"})
-		s.emitSafeErrorLocked("start_failed", "session could not be started", sessionID)
+		s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: s.displaySessionIDLocked(sessionKey), Status: "failed"})
+		s.emitSafeErrorLocked("start_failed", "session could not be started", sessionKey)
 		s.mu.Unlock()
 		s.flush()
 		return errors.New("session could not be started")
@@ -200,7 +200,7 @@ func (s *Supervisor) RestartSession(runID, sessionID string) error {
 		if index, found := s.agentIndex[sessionKey]; found {
 			s.agents[index].Status = "failed"
 		}
-		s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: sessionID, Status: "failed"})
+		s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: s.displaySessionIDLocked(sessionKey), Status: "failed"})
 		s.mu.Unlock()
 		s.flush()
 		s.freezeLineSession(sessionKey)

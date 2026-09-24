@@ -636,16 +636,33 @@ func (s *Supervisor) emitSafeError(code, message, sessionID string) {
 	s.flush()
 }
 
-// emitSafeErrorLocked queues a failure to show, as emitLocked does.
+// emitSafeErrorLocked queues a failure to show, as emitLocked does, under the
+// session's own ID (displaySessionIDLocked).
 func (s *Supervisor) emitSafeErrorLocked(code, message, sessionID string) {
 	failure := SafeError{
 		RunID:     s.runID,
 		Code:      code,
 		Message:   message,
-		SessionID: sessionID,
+		SessionID: s.displaySessionIDLocked(sessionID),
 		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	s.emitLocked(func(sink Sink) { sink.Error(failure) })
+}
+
+// displaySessionIDLocked is the session's own ID, as its agent was configured
+// and as every other frame about it names it, for a session a caller may have
+// spelt otherwise: the core finds a session whatever its case, and a front end
+// matches frames to agents by the exact ID. A failed Start, Restart or Stop,
+// and a refused line, went out under the caller's spelling while "starting"
+// and "stopping" went out under the agent's own, and a client that asked for
+// the start as "AGENT-A" showed the agent starting for good, its Start hidden.
+// Anything else, an empty ID or a session the run does not have, is shown as
+// given.
+func (s *Supervisor) displaySessionIDLocked(sessionID string) string {
+	if index, found := s.agentIndex[strings.ToLower(strings.TrimSpace(sessionID))]; found {
+		return s.agents[index].SessionID
+	}
+	return sessionID
 }
 
 func makeEventKey(sessionID, eventID string) eventKey {
