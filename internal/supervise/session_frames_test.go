@@ -96,3 +96,29 @@ func TestAnAgentCanBeStoppedOnceTheJournalHasFailed(t *testing.T) {
 		t.Fatalf("a stop during the drain = %v, want ErrRuntimeStopped", err)
 	}
 }
+
+// A journal that fails shows every prompt still pending failed, with the
+// reason, as well as the run's status: a client then offers no answer to any
+// of them. The prompts were marked failed only in the state, and every client
+// went on offering answers the core refused one by one.
+func TestAFailedJournalShowsEveryPendingPromptFailed(t *testing.T) {
+	engine := newFakeEngine()
+	sup, sink := newCoreForTest(t, engine, "agent-a", "agent-b")
+	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
+	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-b", "prompt-2")})
+	sink.reset()
+	engine.set(func(f *fakeEngine) { f.auditFailAt = f.auditCalls + 1 })
+	third := promptEvent("agent-a", "prompt-3")
+	third.Sequence = 3
+	sup.Handle(session.AdapterEvent{Event: third})
+
+	failed := map[string]bool{}
+	for _, call := range sink.snapshot() {
+		if call.kind == "prompt" && call.view.DeliveryStatus == "failed" && call.view.Evaluation.Reason == "audit_unavailable" {
+			failed[call.view.ID] = true
+		}
+	}
+	if !failed["prompt-1"] || !failed["prompt-2"] {
+		t.Fatalf("the journal's failure showed %v, want every pending prompt failed", trace(sink.snapshot()))
+	}
+}

@@ -460,7 +460,10 @@ func (s *Supervisor) recordAudit(entry audit.Entry) bool {
 }
 
 // freezeAudit freezes the run once the journal refused an entry: nothing more
-// is sent, every running session is frozen and every prompt shown failed.
+// is sent, every running session is frozen and every prompt shown failed. Each
+// prompt is shown again, failed: marked so only in the state, it was shown
+// pending and answerable by every client until one read the state again, and
+// each answer was then refused.
 // What it shows is shown before it returns or, offCaller, on a goroutine of
 // its own, counted under the core's lock so that a drain waits for it: a
 // front end journals its own entries under a lock its sink may take
@@ -492,6 +495,9 @@ func (s *Supervisor) freezeAudit(offCaller bool) {
 		s.pending[key] = item
 	}
 	s.rebuildPendingLocked()
+	for _, view := range s.pendingViews {
+		s.showPromptLocked(view)
+	}
 	s.showStatusLocked(Status{RunID: s.runID, Scope: "audit", Status: "failed"})
 	s.emitSafeErrorLocked("audit_unavailable", "The local audit journal is unavailable. No further decision will be sent.", "")
 	if offCaller {
