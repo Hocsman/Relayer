@@ -96,6 +96,9 @@ describe("decisionFailure", () => {
     ["this connection does not hold the session's terminal", "decision_not_holder"],
     ["answer cannot be encoded for this request", "decision_unsupported"],
     ["an empty answer is not a decision", "decision_empty"],
+    ["a typed answer must be one line of text, with no control characters and no more than 4096 bytes", "decision_invalid"],
+    ["the policy denies this request: only its deny is accepted", "decision_deny_only"],
+    ["keys were typed at this request's terminal while it was shown: answer it at the terminal", "decision_typed_at_terminal"],
   ])("recognises the core's refusal %s", (text, code) => {
     expect(decisionFailure(new Error(text)).code).toBe(code);
   });
@@ -111,6 +114,16 @@ describe("decisionFailure", () => {
 });
 
 describe("answerLocked", () => {
+  // Keys were typed at the prompt's terminal while it was shown, and may have
+  // answered it: the server takes no answer to it from any screen, and it is
+  // answered at the terminal.
+  it("locks a prompt typed into at its terminal", () => {
+    const typedOver = event("pending", false);
+    typedOver.evaluation.reason = "typed_at_terminal";
+    expect(answerLocked(typedOver)).toBe(true);
+    expect(awaitsPerson(typedOver)).toBe(true);
+  });
+
   it("leaves a pending prompt a person must answer open", () => {
     expect(answerLocked(event("pending", false))).toBe(false);
   });

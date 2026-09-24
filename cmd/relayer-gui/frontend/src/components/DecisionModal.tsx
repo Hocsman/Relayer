@@ -3,7 +3,7 @@ import { ToolCallBadge } from "./ToolCallBadge";
 import { useDialogKeyboard } from "../hooks/useDialogKeyboard";
 import { reasonText } from "../lib/reason";
 import { promptContextLines, safeEventSummary } from "../lib/safety";
-import { answerLocked, deliveryRequiresResync, policyDecisionInProgress } from "../lib/delivery";
+import { answerLocked, deliveryRequiresResync, policyDecisionInProgress, typedAtTerminal } from "../lib/delivery";
 import type { AgentState, SemanticDecision, SupervisionEvent } from "../types/relayer";
 
 interface DecisionModalProps {
@@ -227,6 +227,12 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
         {!indeterminateDelivery && !policyDeciding && event.deliveryStatus === "delivering" && (
           <p className="delivery-progress" role="status">
             An answer to this prompt is being delivered. Nothing more can be sent until it is confirmed.
+          </p>
+        )}
+
+        {!indeterminateDelivery && typedAtTerminal(event) && (
+          <p className="delivery-progress" role="status">
+            Keys were typed at this terminal while the prompt was shown, and may have answered it. Answer it at the terminal: nothing can be sent from here.
           </p>
         )}
 

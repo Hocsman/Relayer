@@ -83,6 +83,18 @@ const decisionRefusals: Array<[RegExp, DecisionFailure]> = [
     code: "decision_empty",
     message: "An empty answer is not a decision. Nothing was sent.",
   }],
+  [/must be one line of text/i, {
+    code: "decision_invalid",
+    message: "A typed answer must be one line of text, with no control characters and at most 4096 bytes. Nothing was sent.",
+  }],
+  [/only its deny is accepted/i, {
+    code: "decision_deny_only",
+    message: "The policy denies this prompt: only Deny is accepted. Nothing was sent.",
+  }],
+  [/typed at this request's terminal/i, {
+    code: "decision_typed_at_terminal",
+    message: "Keys were typed at this prompt's terminal while it was shown, and may have answered it. Answer it at the terminal. Nothing was sent.",
+  }],
 ];
 
 // decisionFailure turns a failed answer into the message the operator reads.
@@ -107,10 +119,23 @@ export function decisionFailure(error: unknown): DecisionFailure {
 // another tab, or the policy. A second answer sent meanwhile is refused by the
 // server with an in-flight error at best, and at worst is typed into whatever
 // the agent prints once the first answer lands.
+//
+// A prompt typed into at its terminal is locked too: keys were typed there
+// while it was shown and may have answered it, so the server takes no answer
+// to it from any screen, and an answer sent anyway would reach whatever the
+// agent asks next. It is answered at the terminal, and still waits for a
+// person there.
 export function answerLocked(event: SupervisionEvent): boolean {
   return (
     event.deliveryStatus === "delivering" ||
     policyDecisionInProgress(event) ||
-    deliveryRequiresResync(event)
+    deliveryRequiresResync(event) ||
+    typedAtTerminal(event)
   );
+}
+
+// typedAtTerminal reports a prompt the server made its terminal's: keys were
+// typed there while it was shown.
+export function typedAtTerminal(event: SupervisionEvent): boolean {
+  return event.evaluation.reason === "typed_at_terminal";
 }

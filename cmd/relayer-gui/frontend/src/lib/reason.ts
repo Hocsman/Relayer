@@ -11,6 +11,7 @@ const reasonWords: Record<string, string> = {
   rate_limit_exceeded: "Automatic answer rate limit reached · a person decides",
   repeat_after_delivery: "Same question again right after an answer · a person decides",
   operator_attached: "An operator holds the terminal · a person decides",
+  typed_at_terminal: "Keys were typed at the terminal while it was shown · answer it there",
   fallback_unsupported: "The adapter cannot encode the policy's answer · a person decides",
   fallback_stale: "The prompt changed before the answer arrived",
   audit_unavailable: "Audit journal unavailable · nothing more is sent",

@@ -189,6 +189,19 @@ describe("DecisionModal while an answer is on its way", () => {
     expect(controls(markup)).toEqual({ decisions: 2, input: true, submit: true });
   });
 
+  // Keys were typed at the prompt's terminal while it was shown and may have
+  // answered it: the server takes no answer to it from here, and the modal
+  // says to answer it at the terminal instead of offering what it would refuse.
+  it("disables every answer on a prompt typed into at its terminal, and says where to answer it", () => {
+    const markup = render(event({
+      decisions: [],
+      evaluation: { ...automatic, action: "ask", automatic: false, reason: "typed_at_terminal" },
+    }));
+    expect(controls(markup).input).toBe(true);
+    expect(controls(markup).submit).toBe(true);
+    expect(markup).toContain("Answer it at the terminal");
+  });
+
   it("asks a person again once the policy hands the prompt back", () => {
     const markup = render(event({
       decisions: ["allow", "deny"],

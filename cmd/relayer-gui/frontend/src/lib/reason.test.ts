@@ -14,6 +14,7 @@ describe("reasonText", () => {
     ["audit_unavailable", "Audit journal unavailable"],
     ["sensitive_event", "Confidential prompt"],
     ["dry_run", "Dry run"],
+    ["typed_at_terminal", "Keys were typed at the terminal"],
   ])("says in words why %s", (code, words) => {
     expect(reasonText(code)).toContain(words);
   });
