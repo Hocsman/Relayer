@@ -568,3 +568,65 @@ func TestAPromptIsPendingUntilItIsDecided(t *testing.T) {
 		t.Fatalf("events_pending after a sensitive prompt's process ended = %d, want 0", pending)
 	}
 }
+
+// TestEachSessionIsCountedActiveOnce: an operator Stop journals the session's
+// end, session_finished with the reason operator_stop, and the exit of the
+// process it stopped is journaled session_finished too, as the exit it is.
+// Both decremented relayer_sessions_active, which then read one short while
+// other agents ran, and zero with one of two still running. The same befell
+// a Restart whose old process's exit arrived between the stop and the start,
+// and a run that ended after a process had exited, whose supervision_finished
+// ended the session a second time. A session is now counted active once,
+// from its start to its first end, however many entries say it started or
+// ended.
+func TestEachSessionIsCountedActiveOnce(t *testing.T) {
+	reg := NewRegistry()
+	observe := func(session string, kind audit.Kind, reason string) {
+		reg.Observe(audit.Entry{
+			RunID: "run-1", SessionID: session, AgentID: session, Backend: "pty",
+			Kind: kind, Reason: reason, Timestamp: time.Now().UTC(),
+		})
+	}
+	active := func() float64 {
+		t.Helper()
+		samples := reg.Snapshot().SessionsActive
+		if len(samples) != 1 {
+			t.Fatalf("sessions_active = %#v, want one pty series", samples)
+		}
+		return samples[0].Value
+	}
+	observe("stopped", audit.KindSessionStarted, "")
+	observe("restarted", audit.KindSessionStarted, "")
+	observe("running", audit.KindSessionStarted, "")
+
+	observe("stopped", audit.KindSessionFinished, "operator_stop")
+	observe("stopped", audit.KindSessionFinished, "process_exit")
+	if got := active(); got != 2 {
+		t.Fatalf("sessions_active after a stop and its process's exit = %v, want the two others", got)
+	}
+
+	observe("restarted", audit.KindSessionFinished, "operator_restart")
+	observe("restarted", audit.KindSessionFinished, "process_exit")
+	observe("restarted", audit.KindSessionStarted, "operator_restart")
+	if got := active(); got != 2 {
+		t.Fatalf("sessions_active after a restart whose old exit came between = %v, want 2", got)
+	}
+
+	observe("stopped", audit.KindSessionStarted, "operator_start")
+	observe("stopped", audit.KindSessionStarted, "operator_start")
+	if got := active(); got != 3 {
+		t.Fatalf("sessions_active after a start journaled twice = %v, want 3", got)
+	}
+
+	observe("running", audit.KindSessionFinished, "process_exit")
+	observe("running", audit.KindSupervisionFinished, "supervision_ended")
+	if got := active(); got != 2 {
+		t.Fatalf("sessions_active after an exit and the end of its supervision = %v, want 2", got)
+	}
+
+	// The same session ID in another run is another session.
+	reg.Observe(audit.Entry{RunID: "run-2", SessionID: "stopped", Backend: "pty", Kind: audit.KindSessionStarted})
+	if got := active(); got != 3 {
+		t.Fatalf("sessions_active with a second run's session = %v, want 3", got)
+	}
+}

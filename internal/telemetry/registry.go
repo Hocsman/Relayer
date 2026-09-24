@@ -46,8 +46,15 @@ type Snapshot struct {
 
 // Registry aggregates and tracks metrics from audit events in a thread-safe manner.
 type Registry struct {
-	mu                   sync.RWMutex
-	sessionsActive       map[string]int64
+	mu             sync.RWMutex
+	sessionsActive map[string]int64
+	// activeSessions is, per run and session, the backend under which a
+	// session is counted in sessionsActive. A session is counted once from
+	// its start to its first end, however many entries say it started or
+	// ended: an operator Stop journals the session's end, and the exit of the
+	// process it stopped is journaled as an end too; both decremented the
+	// gauge, which then read one short while other agents ran.
+	activeSessions       map[runSession]string
 	sessionsTotal        map[string]int64
 	eventsDetectedTotal  map[string]int64
 	eventsWithdrawnTotal map[string]int64
@@ -72,6 +79,7 @@ type histogramSeries struct {
 func NewRegistry() *Registry {
 	return &Registry{
 		sessionsActive:       make(map[string]int64),
+		activeSessions:       make(map[runSession]string),
 		sessionsTotal:        make(map[string]int64),
 		eventsDetectedTotal:  make(map[string]int64),
 		eventsWithdrawnTotal: make(map[string]int64),
@@ -110,7 +118,7 @@ func (r *Registry) Observe(entry audit.Entry) {
 	switch entry.Kind {
 	case audit.KindSessionStarted:
 		r.dropSessionPending(entry.RunID, entry.SessionID)
-		r.sessionsActive[backend]++
+		r.countSessionActive(entry.RunID, entry.SessionID, backend)
 		key := fmt.Sprintf("adapter=%s,agent_id=%s,backend=%s", adapter, agentID, backend)
 		r.sessionsTotal[key]++
 
@@ -123,9 +131,7 @@ func (r *Registry) Observe(entry audit.Entry) {
 			return
 		}
 		r.dropSessionPending(entry.RunID, entry.SessionID)
-		if r.sessionsActive[backend] > 0 {
-			r.sessionsActive[backend]--
-		}
+		r.uncountSessionActive(entry.RunID, entry.SessionID)
 
 	case audit.KindEventDetected:
 		sensitiveStr := "false"
@@ -307,6 +313,39 @@ func (r *Registry) Snapshot() Snapshot {
 	}
 
 	return snap
+}
+
+// runSession names one session of one run.
+type runSession struct {
+	runID, sessionID string
+}
+
+// countSessionActive counts a session that started as active under backend,
+// once: a session already counted, whose end was not journaled before it
+// started again, is counted under its new backend alone. Its caller holds the
+// registry's lock.
+func (r *Registry) countSessionActive(runID, sessionID, backend string) {
+	key := runSession{runID: runID, sessionID: sessionID}
+	if counted, found := r.activeSessions[key]; found && r.sessionsActive[counted] > 0 {
+		r.sessionsActive[counted]--
+	}
+	r.activeSessions[key] = backend
+	r.sessionsActive[backend]++
+}
+
+// uncountSessionActive stops counting a session that ended, if it was counted:
+// its first end ends it, and those journaled after it end nothing. Its caller
+// holds the registry's lock.
+func (r *Registry) uncountSessionActive(runID, sessionID string) {
+	key := runSession{runID: runID, sessionID: sessionID}
+	counted, found := r.activeSessions[key]
+	if !found {
+		return
+	}
+	delete(r.activeSessions, key)
+	if r.sessionsActive[counted] > 0 {
+		r.sessionsActive[counted]--
+	}
 }
 
 // dropSessionPending forgets the prompts of a session whose process ended or
