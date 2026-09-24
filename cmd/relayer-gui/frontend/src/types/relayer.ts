@@ -613,11 +613,14 @@ export interface RelayerBridge {
   // operator and no notion of a roster, so these are absent there by design.
   listPresence?(sessionID: string): Promise<PresenceView>;
   observeSession?(sessionID: string, observing: boolean): Promise<PresenceView>;
-  requestControl?(sessionID: string): Promise<HandView>;
-  grantControl?(sessionID: string, toConnID: string): Promise<HandView>;
-  declineControl?(sessionID: string, toConnID: string): Promise<HandView>;
-  releaseControl?(sessionID: string): Promise<HandView>;
-  forceTakeControl?(sessionID: string): Promise<HandView>;
+  // Each names the run the page shows: the gateway refuses asking for,
+  // handing over and seizing a terminal for any other run, so a tab left on a
+  // run that a restart replaced cannot take the new run's terminal.
+  requestControl?(runID: string, sessionID: string): Promise<HandView>;
+  grantControl?(runID: string, sessionID: string, toConnID: string): Promise<HandView>;
+  declineControl?(runID: string, sessionID: string, toConnID: string): Promise<HandView>;
+  releaseControl?(runID: string, sessionID: string): Promise<HandView>;
+  forceTakeControl?(runID: string, sessionID: string): Promise<HandView>;
   // Session recording and replay. Optional throughout: the desktop bridge has
   // no recording store, so a build without one simply has no panel content.
   listRecordings?(filter?: RecordingFilterInput): Promise<RecordingView[]>;

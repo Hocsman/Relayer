@@ -908,19 +908,19 @@ export function createDemoBridge(): RelayerBridge {
       emit("relayer:presence", view);
       return view;
     },
-    async requestControl(sessionID: string) {
+    async requestControl(_runID: string, sessionID: string) {
       return emitDemoHand(sessionID, "held");
     },
-    async grantControl(sessionID: string) {
+    async grantControl(_runID: string, sessionID: string) {
       return emitDemoHand(sessionID, "held");
     },
-    async declineControl(sessionID: string) {
+    async declineControl(_runID: string, sessionID: string) {
       return emitDemoHand(sessionID, "held");
     },
-    async releaseControl(sessionID: string) {
+    async releaseControl(_runID: string, sessionID: string) {
       return emitDemoHand(sessionID, "free");
     },
-    async forceTakeControl(sessionID: string) {
+    async forceTakeControl(_runID: string, sessionID: string) {
       return emitDemoHand(sessionID, "held");
     },
     async listRecordings(filter?: RecordingFilterInput) {

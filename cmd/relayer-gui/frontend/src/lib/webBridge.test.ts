@@ -264,6 +264,31 @@ describe("webBridge", () => {
     }
   });
 
+  // Asking for a terminal, handing it over and seizing it name the run the
+  // page shows: the gateway refuses them for another run, so a tab left on a
+  // run that a restart replaced cannot take the new run's terminal. Declining
+  // and letting go send it as well.
+  it("names the run in every terminal control request", async () => {
+    const bridge = createWebBridge({ token: "tok" });
+    const ws = MockWebSocket.instances[0];
+    await new Promise((r) => setTimeout(r, 10));
+
+    void bridge.requestControl!("run-a", "agent-1");
+    void bridge.grantControl!("run-a", "agent-1", "conn-2");
+    void bridge.declineControl!("run-a", "agent-1", "conn-2");
+    void bridge.releaseControl!("run-a", "agent-1");
+    void bridge.forceTakeControl!("run-a", "agent-1");
+
+    const sent = ws.sentMessages.map((message) => JSON.parse(message));
+    expect(sent.map((request) => [request.method, request.params])).toEqual([
+      ["requestControl", { runID: "run-a", sessionID: "agent-1" }],
+      ["grantControl", { runID: "run-a", sessionID: "agent-1", toConnID: "conn-2" }],
+      ["declineControl", { runID: "run-a", sessionID: "agent-1", toConnID: "conn-2" }],
+      ["releaseControl", { runID: "run-a", sessionID: "agent-1" }],
+      ["forceTakeControl", { runID: "run-a", sessionID: "agent-1" }],
+    ]);
+  });
+
   it("queues requests before connection opens and flushes on open", async () => {
     const bridge = createWebBridge({ token: "tok" });
     const ws = MockWebSocket.instances[0];

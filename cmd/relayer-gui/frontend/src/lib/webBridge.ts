@@ -270,16 +270,16 @@ export function createWebBridge(options: WebBridgeOptions = {}): RelayerBridge {
       callRpc<PresenceView>("listPresence", { sessionID }),
     observeSession: (sessionID, observing) =>
       callRpc<PresenceView>("observeSession", { sessionID, observing }),
-    requestControl: (sessionID) =>
-      callRpc<HandView>("requestControl", { sessionID }),
-    grantControl: (sessionID, toConnID) =>
-      callRpc<HandView>("grantControl", { sessionID, toConnID }),
-    declineControl: (sessionID, toConnID) =>
-      callRpc<HandView>("declineControl", { sessionID, toConnID }),
-    releaseControl: (sessionID) =>
-      callRpc<HandView>("releaseControl", { sessionID }),
-    forceTakeControl: (sessionID) =>
-      callRpc<HandView>("forceTakeControl", { sessionID }),
+    requestControl: (runID, sessionID) =>
+      callRpc<HandView>("requestControl", { runID, sessionID }),
+    grantControl: (runID, sessionID, toConnID) =>
+      callRpc<HandView>("grantControl", { runID, sessionID, toConnID }),
+    declineControl: (runID, sessionID, toConnID) =>
+      callRpc<HandView>("declineControl", { runID, sessionID, toConnID }),
+    releaseControl: (runID, sessionID) =>
+      callRpc<HandView>("releaseControl", { runID, sessionID }),
+    forceTakeControl: (runID, sessionID) =>
+      callRpc<HandView>("forceTakeControl", { runID, sessionID }),
 
     listRecordings: (filter) =>
       callRpc<RecordingView[]>("listRecordings", filter ?? {}),

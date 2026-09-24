@@ -346,7 +346,7 @@ export function useRelayer(bridge: RelayerBridge) {
         sessionID,
         "control_request_failed",
         "The request for the terminal could not be sent.",
-        bridge.requestControl && (() => bridge.requestControl!(sessionID)),
+        bridge.requestControl && (() => bridge.requestControl!(runID, sessionID)),
       ),
     [bridge, controlVerb],
   );
@@ -358,7 +358,7 @@ export function useRelayer(bridge: RelayerBridge) {
         sessionID,
         "control_grant_failed",
         "The terminal could not be handed over.",
-        bridge.grantControl && (() => bridge.grantControl!(sessionID, toConnID)),
+        bridge.grantControl && (() => bridge.grantControl!(runID, sessionID, toConnID)),
       ),
     [bridge, controlVerb],
   );
@@ -370,7 +370,7 @@ export function useRelayer(bridge: RelayerBridge) {
         sessionID,
         "control_decline_failed",
         "The request could not be declined.",
-        bridge.declineControl && (() => bridge.declineControl!(sessionID, toConnID)),
+        bridge.declineControl && (() => bridge.declineControl!(runID, sessionID, toConnID)),
       ),
     [bridge, controlVerb],
   );
@@ -382,7 +382,7 @@ export function useRelayer(bridge: RelayerBridge) {
         sessionID,
         "control_release_failed",
         "The terminal could not be released.",
-        bridge.releaseControl && (() => bridge.releaseControl!(sessionID)),
+        bridge.releaseControl && (() => bridge.releaseControl!(runID, sessionID)),
       ),
     [bridge, controlVerb],
   );
