@@ -382,6 +382,8 @@ func TestAFrontEndsEntryIsJournaledThroughTheCore(t *testing.T) {
 	if state := sup.State(); !state.AuditFailed || !state.Agents[0].InputFrozen {
 		t.Fatalf("the run after the journal refused the entry = %#v", state)
 	}
+	// Shown on another goroutine (TestAFrontEndsEntryShowsNothingOnItsCaller).
+	waitFor(t, 2*time.Second, "the journal's failure to be shown", func() bool { return len(sink.snapshot()) >= 2 })
 	if got := trace(sink.snapshot()); len(got) != 2 || got[0] != "status:failed" || got[1] != "error:audit_unavailable" {
 		t.Fatalf("the journal's failure was shown as %v", got)
 	}
@@ -400,5 +402,116 @@ func TestAFrontEndsEntryIsJournaledThroughTheCore(t *testing.T) {
 	var none *supervise.Supervisor
 	if err := none.RecordAudit(attach); !errors.Is(err, supervise.ErrRuntimeStopped) {
 		t.Fatalf("an entry with no run = %v, want ErrRuntimeStopped", err)
+	}
+}
+
+// A front end journals its own entries under a lock of its own, the one it
+// takes the hand under, which its sink may take too: RecordAudit never calls
+// the sink on its caller's goroutine. The journal's failure used to be shown
+// by the caller, before RecordAudit returned, and a gateway that journaled
+// attach_started under its hub lock deadlocked the first time the journal
+// refused an entry, never while it worked. The failure is shown on another
+// goroutine, once the caller let go of its lock, and a drain waits for it.
+func TestAFrontEndsEntryShowsNothingOnItsCaller(t *testing.T) {
+	for _, failing := range []bool{false, true} {
+		name := "a journal that works"
+		if failing {
+			name = "a journal that refuses the entry"
+		}
+		t.Run(name, func(t *testing.T) {
+			engine := newFakeEngine()
+			if failing {
+				engine.auditFailAt = 1
+			}
+			sup, sink := newCoreForTest(t, engine, "agent-a")
+			var host sync.Mutex
+			sink.mu.Lock()
+			sink.gate = func(sinkCall) {
+				host.Lock()
+				//lint:ignore SA2001 the sink takes the host's lock, as a front end's does
+				host.Unlock()
+			}
+			sink.mu.Unlock()
+			attach := audit.Entry{
+				Kind: audit.KindAttachStarted, SessionID: "agent-a", AgentID: "agent-a",
+				DecisionBy: audit.DecisionByHuman, Operator: "alice", Outcome: audit.OutcomeApplied, Reason: "attach_started",
+			}
+			returned := make(chan error, 1)
+			go func() {
+				host.Lock()
+				defer host.Unlock()
+				err := sup.RecordAudit(attach)
+				if err == nil {
+					sup.SetHolder("agent-a", "conn-1")
+				}
+				returned <- err
+			}()
+			select {
+			case err := <-returned:
+				if failing != errors.Is(err, supervise.ErrAuditUnavailable) || (!failing && err != nil) {
+					t.Fatalf("RecordAudit = %v", err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("RecordAudit called the sink on its caller while the caller held the lock the sink takes")
+			}
+			if !failing {
+				return
+			}
+			waitFor(t, 2*time.Second, "the journal's failure to be shown", func() bool {
+				return len(sink.snapshot()) == 2
+			})
+			if got := trace(sink.snapshot()); got[0] != "status:failed" || got[1] != "error:audit_unavailable" {
+				t.Fatalf("the journal's failure was shown as %v", got)
+			}
+		})
+	}
+}
+
+// A front end journals through the core only what the core does not write
+// itself: who took or let go of a terminal, how its control changed hands,
+// and the lifecycle of a recording. Any other kind is refused
+// (ErrUnsupportedEntry) before anything else, with nothing journaled and
+// nothing frozen: a decision entry written by a front end reset the policy's
+// count of consecutive automatic decisions, and a detection or a delivery
+// would read as the core's own.
+func TestOnlyAFrontEndsOwnEntriesAreJournaledThroughTheCore(t *testing.T) {
+	accepted := []audit.Kind{
+		audit.KindAttachStarted, audit.KindAttachFinished,
+		audit.KindControlRequested, audit.KindControlGranted, audit.KindControlDeclined,
+		audit.KindControlReleased, audit.KindControlForced,
+		audit.KindRecordingStarted, audit.KindRecordingFinished, audit.KindRecordingExported, audit.KindRecordingDeleted,
+	}
+	refused := []audit.Kind{
+		audit.KindRunStarted, audit.KindRunFinished, audit.KindSessionStarted, audit.KindSupervisionFinished,
+		audit.KindSessionFinished, audit.KindEventDetected, audit.KindEventWithdrawn, audit.KindPolicyEvaluated,
+		audit.KindDecision, audit.KindDelivery, audit.KindOperatorInput, audit.KindBackendError,
+		audit.KindSessionCleanup, audit.Kind(""), audit.Kind("attach"),
+	}
+	engine := newFakeEngine()
+	sup, sink := newCoreForTest(t, engine, "agent-a")
+	for _, kind := range refused {
+		entry := audit.Entry{Kind: kind, SessionID: "agent-a", AgentID: "agent-a", DecisionBy: audit.DecisionByHuman, Outcome: audit.OutcomeApplied}
+		if err := sup.RecordAudit(entry); !errors.Is(err, supervise.ErrUnsupportedEntry) {
+			t.Fatalf("a front end's %q entry = %v, want ErrUnsupportedEntry", kind, err)
+		}
+		var none *supervise.Supervisor
+		if err := none.RecordAudit(entry); !errors.Is(err, supervise.ErrUnsupportedEntry) {
+			t.Fatalf("a front end's %q entry with no run = %v, want ErrUnsupportedEntry", kind, err)
+		}
+	}
+	if entries := engine.auditSnapshot(); len(entries) != 0 {
+		t.Fatalf("refused entries were journaled: %#v", entries)
+	}
+	if state := sup.State(); state.AuditFailed || state.Agents[0].InputFrozen || len(sink.snapshot()) != 0 {
+		t.Fatalf("refused entries changed the run: %#v, %v", state, trace(sink.snapshot()))
+	}
+	for _, kind := range accepted {
+		entry := audit.Entry{Kind: kind, SessionID: "agent-a", AgentID: "agent-a", DecisionBy: audit.DecisionByHuman, Outcome: audit.OutcomeApplied}
+		if err := sup.RecordAudit(entry); err != nil {
+			t.Fatalf("a front end's %q entry = %v", kind, err)
+		}
+	}
+	if entries := engine.auditSnapshot(); len(entries) != len(accepted) {
+		t.Fatalf("journaled %d of the front end's %d entries", len(entries), len(accepted))
 	}
 }

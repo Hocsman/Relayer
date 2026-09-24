@@ -140,17 +140,50 @@ func (s *Supervisor) finishRaw(sessionKey string) {
 // A front end that must not act unless its record is journaled, such as
 // handing over a terminal, acts only once RecordAudit returned nil.
 //
-// Freezing the run shows the journal's failure: like any operation that
-// changes the core, RecordAudit may call the sink before it returns.
+// Only a front end's own kinds are taken: who took or let go of a terminal
+// (attach_started, attach_finished), how its control changed hands (the
+// control_ kinds) and the lifecycle of a recording (the recording_ kinds).
+// Any other is refused with ErrUnsupportedEntry before anything else, with
+// nothing journaled: the core's own entries say what the core did, and a
+// decision entry a front end wrote reset the policy's count of consecutive
+// automatic decisions.
+//
+// RecordAudit never calls the sink on its caller's goroutine: the journal's
+// failure is shown on another, which a drain waits for. A front end may call
+// it under a lock of its own, one its sink takes included, and take the hand
+// under the same lock once the entry is journaled. Shown on the caller, the
+// failure deadlocked such a front end the first time the journal refused an
+// entry, and never while it worked.
 func (s *Supervisor) RecordAudit(entry audit.Entry) error {
+	if !frontEndEntry(entry.Kind) {
+		return ErrUnsupportedEntry
+	}
 	if s == nil {
 		return ErrRuntimeStopped
 	}
 	s.mu.RLock()
 	failed := s.auditFailed
 	s.mu.RUnlock()
-	if failed || !s.recordAudit(entry) {
+	if failed {
+		return ErrAuditUnavailable
+	}
+	if err := s.engine.RecordAudit(entry); err != nil {
+		s.freezeAudit(true)
 		return ErrAuditUnavailable
 	}
 	return nil
+}
+
+// frontEndEntry reports whether a front end may journal an entry of kind
+// through the core (RecordAudit).
+func frontEndEntry(kind audit.Kind) bool {
+	switch kind {
+	case audit.KindAttachStarted, audit.KindAttachFinished,
+		audit.KindControlRequested, audit.KindControlGranted, audit.KindControlDeclined,
+		audit.KindControlReleased, audit.KindControlForced,
+		audit.KindRecordingStarted, audit.KindRecordingFinished,
+		audit.KindRecordingExported, audit.KindRecordingDeleted:
+		return true
+	}
+	return false
 }

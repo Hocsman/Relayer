@@ -46,8 +46,8 @@ type Engine interface {
 // operation that changes it, and should not block: the goroutine calling it
 // may be delivering a decision, and the other goroutines that show something
 // wait for it. A front end may hold a lock of its own while it reads the core
-// or calls SetHolder, AdmitRun, Admit, the release Admit returns or
-// BeginDrain, none of which calls the sink on the caller's goroutine. It must
+// or calls SetHolder, AdmitRun, Admit, the release Admit returns, RecordAudit
+// or BeginDrain, none of which calls the sink on the caller's goroutine. It must
 // not hold a lock its sink takes while it calls an operation that changes the
 // core, which may show what another goroutine queued, nor while it calls
 // Wait, which waits for goroutines that show things.
@@ -418,13 +418,19 @@ func (s *Supervisor) activeRun(expectedRunID string) error {
 
 func (s *Supervisor) recordAudit(entry audit.Entry) bool {
 	if err := s.engine.RecordAudit(entry); err != nil {
-		s.freezeAudit()
+		s.freezeAudit(false)
 		return false
 	}
 	return true
 }
 
-func (s *Supervisor) freezeAudit() {
+// freezeAudit freezes the run once the journal refused an entry: nothing more
+// is sent, every running session is frozen and every prompt shown failed.
+// What it shows is shown before it returns or, offCaller, on a goroutine of
+// its own, counted under the core's lock so that a drain waits for it: a
+// front end journals its own entries under a lock its sink may take
+// (RecordAudit). During a drain nothing is frozen, as it never was.
+func (s *Supervisor) freezeAudit(offCaller bool) {
 	if !s.isActiveRun() {
 		return
 	}
@@ -453,6 +459,19 @@ func (s *Supervisor) freezeAudit() {
 	s.rebuildPendingLocked()
 	s.showStatusLocked(Status{RunID: s.runID, Scope: "audit", Status: "failed"})
 	s.emitSafeErrorLocked("audit_unavailable", "The local audit journal is unavailable. No further decision will be sent.", "")
+	if offCaller {
+		// A drain that began since the run was found active leaves the calls
+		// queued: a goroutine started now could outlive Wait.
+		if !s.shuttingDown {
+			s.eventWG.Add(1)
+			go func() {
+				defer s.eventWG.Done()
+				s.flush()
+			}()
+		}
+		s.mu.Unlock()
+		return
+	}
 	s.mu.Unlock()
 	s.flush()
 }

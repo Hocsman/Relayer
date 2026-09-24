@@ -33,3 +33,9 @@ var ErrReadOnlyActor = errors.New("permission denied: this role is read-only")
 // ErrNotHolder refuses a raw write to a session's terminal from a connection
 // that does not hold its hand, including any connection while nobody does.
 var ErrNotHolder = errors.New("this connection does not hold the session's terminal")
+
+// ErrUnsupportedEntry refuses an entry a front end asked the core to journal
+// (RecordAudit) whose kind is not one a front end writes: only who took or
+// let go of a terminal, how its control changed hands, and the lifecycle of a
+// recording. Every other kind is the core's own, or the runtime's.
+var ErrUnsupportedEntry = errors.New("this entry is not one a front end journals through the core")
