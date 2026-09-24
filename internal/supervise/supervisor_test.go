@@ -999,6 +999,96 @@ func TestADenyTheCoreHoldsBackOffersOnlyDeny(t *testing.T) {
 	}
 }
 
+// A prompt the policy was to answer, handed back to the operator after it was
+// detected, is notified like any prompt that waits on a person: the policy's
+// last check found a limit reached, a repeat, or another answer, or the
+// adapter could not encode the policy's answer. Such a prompt waited in
+// silence, shown on a screen nobody may be watching, and a limit exists to
+// bring a person in; the agent stalled. The one exception is the hand, whose
+// holder is at the terminal (TestTheHandTakenBeforeThePolicysLastCheckStopsItsAnswer),
+// and a person's own answer handed back is not notified either
+// (TestAHumanAnswerTheAdapterCannotEncodeGoesBackToTheOperator): they are
+// there.
+func TestAPromptHandedBackAfterItsDetectionIsNotified(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		reason string
+		// handBack raises automatic-2 of agent-a, which the policy would
+		// answer, and has it handed back to the operator.
+		handBack func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine)
+	}{
+		{name: "the policy's limit at its last check", reason: policy.ReasonConsecutiveLimit,
+			handBack: func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine) {
+				engine.set(func(f *fakeEngine) { f.maxConsecutiveAuto = 1 })
+				letTheLineGo := holdWithALine(t, engine, sup, "agent-a")
+				sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "automatic-1")})
+				second := promptEvent("agent-a", "automatic-2")
+				second.Sequence = 2
+				sup.Handle(session.AdapterEvent{Event: second})
+				letTheLineGo()
+			}},
+		{name: "a repeat at its last check", reason: supervise.ReasonRepeatAfterDelivery,
+			handBack: func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine) {
+				letTheLineGo := holdWithALine(t, engine, sup, "agent-a")
+				first := promptEvent("agent-a", "automatic-1")
+				sup.Handle(session.AdapterEvent{Event: first})
+				sup.Handle(session.AdapterEvent{Event: repeatOf(first, "automatic-2")})
+				letTheLineGo()
+			}},
+		{name: "an answer the adapter could not encode", reason: "fallback_unsupported",
+			handBack: func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine) {
+				engine.set(func(f *fakeEngine) { f.applyErrs = []error{adapters.ErrDecisionUnsupported} })
+				sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "automatic-2")})
+			}},
+		{name: "an action no adapter encodes", reason: "fallback_unsupported",
+			handBack: func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine) {
+				engine.set(func(f *fakeEngine) {
+					f.evaluationByID["automatic-2"] = policy.Evaluation{
+						Action: policy.ActionAsk, ProposedAction: policy.ActionAsk, RuleName: "odd", Reason: policy.ReasonRule, Automatic: true,
+					}
+				})
+				sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "automatic-2")})
+			}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newFakeEngine()
+			engine.evaluation = automaticAllow()
+			sup, sink := newCoreWithOptions(t, engine, supervise.Options{Now: newTestClock().Now}, "agent-a")
+			test.handBack(t, sup, engine)
+			waitFor(t, 2*time.Second, "the prompt to go back to the operator", func() bool {
+				shown := viewOf(sup, "automatic-2")
+				return shown != nil && !shown.Evaluation.Automatic && shown.DeliveryStatus == "pending"
+			})
+			sup.BeginDrain()
+			sup.Wait()
+
+			if shown := viewOf(sup, "automatic-2"); shown.Evaluation.Reason != test.reason {
+				t.Fatalf("the prompt went back for %q, want %q", shown.Evaluation.Reason, test.reason)
+			}
+			var notices []supervise.Notice
+			shownPending := -1
+			for index, call := range sink.snapshot() {
+				if call.kind == "prompt" && call.view.ID == "automatic-2" && call.view.DeliveryStatus == "pending" && !call.view.Evaluation.Automatic {
+					shownPending = index
+				}
+				if call.kind == "notify" && call.notice.EventID == "automatic-2" {
+					if shownPending < 0 {
+						t.Fatalf("the notice came before the prompt was shown the operator's: %v", trace(sink.snapshot()))
+					}
+					notices = append(notices, call.notice)
+				}
+			}
+			want := supervise.Notice{
+				Kind: supervise.NoticePendingDecision, Severity: supervise.SeverityWarning, AgentName: "agent-a",
+				SessionID: "agent-a", EventID: "automatic-2", Reason: "confirmation required", Details: "Overwrite file?",
+			}
+			if len(notices) != 1 || notices[0] != want {
+				t.Fatalf("notices = %#v, want one that the prompt waits on a person", notices)
+			}
+		})
+	}
+}
+
 // A human answer the adapter cannot encode goes back to the operator. The
 // runtime encodes an answer before it writes a byte of it (the router's
 // ApplyDecision), so the delivery is not uncertain: it is journaled

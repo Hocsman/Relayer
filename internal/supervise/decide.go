@@ -101,7 +101,7 @@ func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluati
 	defer s.finishDecision(key)
 	decision, supported := adapterDecisionForPolicy(evaluation.Action)
 	if !supported {
-		s.fallbackToAsk(key, "fallback_unsupported", "")
+		s.handBack(key, nil, "fallback_unsupported")
 		return
 	}
 	backend := s.backendFor(event.SessionID)
@@ -127,7 +127,7 @@ func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluati
 			s.markDelivery(key, "failed", "audit_unavailable")
 			return
 		}
-		s.askOperator(key, &current, current.Reason, "")
+		s.handBack(key, &current, current.Reason)
 		return
 	}
 	auditDecision := auditDecisionForPolicy(evaluation.Action)
@@ -168,7 +168,7 @@ func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluati
 			return
 		}
 		if s.pendingExists(key) {
-			s.fallbackToAsk(key, "fallback_unsupported", "")
+			s.handBack(key, nil, "fallback_unsupported")
 		}
 		return
 	}
@@ -188,14 +188,26 @@ func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluati
 	s.freezeSession(key, "delivery_uncertain")
 }
 
-// fallbackToAsk hands a prompt to the operator: pending again, and no longer
-// the policy's to answer. refused, when not empty, is an answer the adapter
-// could not encode for it, which the prompt no longer offers. A prompt the
-// operator tried to answer stays theirs even when the policy would have
-// answered it: were it automatic again, the policy could send the very answer
-// the operator had just tried to refuse.
+// fallbackToAsk hands a prompt a person tried to answer back to the operator:
+// pending again, and no longer the policy's to answer. refused is the answer
+// the adapter could not encode for it, which the prompt no longer offers. A
+// prompt the operator tried to answer stays theirs even when the policy would
+// have answered it: were it automatic again, the policy could send the very
+// answer the operator had just tried to refuse. Nobody is notified: the
+// person who answered is there.
 func (s *Supervisor) fallbackToAsk(key eventKey, reason string, refused adapters.Decision) {
-	s.askOperator(key, nil, reason, refused)
+	s.askOperator(key, nil, reason, refused, false)
+}
+
+// handBack hands a prompt the policy was to answer to the operator, after it
+// was detected, for reason: the policy's last check found a limit reached, a
+// repeat, the hand, or another answer (current is then its evaluation), or no
+// adapter could encode its answer. The operator is notified as for any prompt
+// that waits on a person, unless the hand asked it, whose holder is at the
+// terminal. Such a prompt used to wait in silence, and a limit, which exists
+// to bring a person in, stalled the agent instead.
+func (s *Supervisor) handBack(key eventKey, current *policy.Evaluation, reason string) {
+	s.askOperator(key, current, reason, "", reason != ReasonOperatorAttached)
 }
 
 // askEvaluation is an evaluation made the operator's: nothing is answered
@@ -236,10 +248,13 @@ func onlyDeny(offered []string) []string {
 	return kept
 }
 
-// askOperator is fallbackToAsk with, when current is not nil, the policy's
-// evaluation of the prompt now in place of the one it was detected with: the
-// prompt then shows the proposal and the rule the policy has now.
-func (s *Supervisor) askOperator(key eventKey, current *policy.Evaluation, reason string, refused adapters.Decision) {
+// askOperator makes a prompt the operator's, for reason. current, when not
+// nil, is the policy's evaluation of the prompt now, in place of the one it
+// was detected with: the prompt then shows the proposal and the rule the
+// policy has now. refused, when not empty, is taken off the answers it
+// offers, and notify queues the notice that it waits on a person after the
+// prompt is shown so.
+func (s *Supervisor) askOperator(key eventKey, current *policy.Evaluation, reason string, refused adapters.Decision, notify bool) {
 	s.mu.Lock()
 	item, exists := s.pending[key]
 	if !exists {
@@ -269,6 +284,10 @@ func (s *Supervisor) askOperator(key eventKey, current *policy.Evaluation, reaso
 	s.pending[key] = item
 	s.rebuildPendingLocked()
 	s.showPromptLocked(item.view)
+	if notify {
+		notice := s.pendingNoticeLocked(item.event, item.evaluation, item.view)
+		s.emitLocked(func(sink Sink) { sink.Notify(notice) })
+	}
 	s.mu.Unlock()
 	s.flush()
 }

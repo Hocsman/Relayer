@@ -129,6 +129,13 @@
 //     or an answer the adapter could not encode, offers deny alone: offered
 //     every answer, it let any operator allow what a deny rule refuses. A
 //     typed answer is still sent as typed.
+//   - A prompt the policy was to answer, handed back to the operator after it
+//     was detected, is notified like any prompt that waits on a person: a
+//     limit, a repeat or another answer found at the policy's last check, or
+//     an answer no adapter could encode. It waited in silence, and a limit,
+//     which exists to bring a person in, stalled the agent. A prompt the hand
+//     asks is not notified, since its holder is at the terminal, nor is a
+//     person's own answer handed back to them.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

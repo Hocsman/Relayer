@@ -167,10 +167,6 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 	s.setAgentWaitingLocked(event.SessionID)
 	s.rebuildPendingLocked()
 	s.showPromptLocked(view)
-	agentName := event.AgentID
-	if index, found := s.agentIndex[strings.ToLower(event.SessionID)]; found {
-		agentName = s.agents[index].Name
-	}
 
 	// A notice's details are the summary the prompt is shown with, never the
 	// adapter's own: a notification leaves the machine, and a webhook posts
@@ -179,7 +175,7 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 	var notice *Notice
 	if isGuardrail {
 		notice = &Notice{
-			AgentName: agentName,
+			AgentName: s.agentNameLocked(event),
 			SessionID: event.SessionID,
 			Reason:    "security guardrail blocked (" + evaluation.Reason + ")",
 			EventID:   event.ID,
@@ -188,21 +184,8 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 			Details:   view.Summary,
 		}
 	} else if !evaluation.Automatic {
-		reason := "confirmation required"
-		// The policy's reason for a sensitive prompt is ReasonSensitive; this
-		// compared it with "sensitive", which it never is.
-		if requiresSecretHandling(event) || evaluation.Reason == policy.ReasonSensitive {
-			reason = "sensitive input required"
-		}
-		notice = &Notice{
-			AgentName: agentName,
-			SessionID: event.SessionID,
-			Reason:    reason,
-			EventID:   event.ID,
-			Kind:      NoticePendingDecision,
-			Severity:  SeverityWarning,
-			Details:   view.Summary,
-		}
+		pending := s.pendingNoticeLocked(event, evaluation, view)
+		notice = &pending
 	}
 	if notice != nil {
 		shown := *notice
@@ -214,6 +197,34 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 	}
 	s.flush()
 	s.scheduleAutomatic(event.SessionID)
+}
+
+// pendingNoticeLocked is the notice that a prompt, shown as view, waits on a
+// person. Its details are the summary the prompt is shown with.
+func (s *Supervisor) pendingNoticeLocked(event adapters.Event, evaluation policy.Evaluation, view View) Notice {
+	reason := "confirmation required"
+	// The policy's reason for a sensitive prompt is ReasonSensitive; this
+	// compared it with "sensitive", which it never is.
+	if requiresSecretHandling(event) || evaluation.Reason == policy.ReasonSensitive {
+		reason = "sensitive input required"
+	}
+	return Notice{
+		AgentName: s.agentNameLocked(event),
+		SessionID: event.SessionID,
+		Reason:    reason,
+		EventID:   event.ID,
+		Kind:      NoticePendingDecision,
+		Severity:  SeverityWarning,
+		Details:   view.Summary,
+	}
+}
+
+// agentNameLocked is the name of the agent that raised event.
+func (s *Supervisor) agentNameLocked(event adapters.Event) string {
+	if index, found := s.agentIndex[strings.ToLower(event.SessionID)]; found {
+		return s.agents[index].Name
+	}
+	return event.AgentID
 }
 
 func (s *Supervisor) sessionRunning(sessionID string) bool {
