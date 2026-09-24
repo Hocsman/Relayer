@@ -156,5 +156,13 @@ operator token. A viewer receives only each agent's executable name, and no host
 path: not the configuration's, the audit journal's, the recordings' or an
 agent's working directory, and not in an error message either.
 
+A viewer does receive every agent's terminal, as it is: the output snapshots
+carry the screen verbatim, to viewers as to operators. What an agent prints —
+a token it echoes, a file it displays, a secret in a command it runs — reaches
+every viewer. Only the prompt cards are redacted: a prompt's summary, its
+tool-call badge and every notification carry bounded, redacted text, and a
+prompt whose text must not be shown carries none. A viewer token is therefore
+a token to read the terminals, and should be given only to people who may.
+
 The full trust boundary is described in
 [security-model.md](security-model.md#web-gateway-and-remote-operators).

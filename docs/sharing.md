@@ -17,7 +17,25 @@ particular terminal right now*.
 
 A viewer can never hold the hand. An operator who does not hold it can still
 arbitrate prompts, stop and restart agents, and change settings — the hand
-governs raw terminal input and geometry, not supervision.
+governs raw terminal input and geometry, not supervision. Two rules bound what
+an answer given this way can carry:
+
+- A typed answer is one line of text, as a line is: no control character — no
+  carriage return, line feed or escape — and at most 4096 bytes. The adapter
+  adds its own terminator. A typed answer that was a stream of keystrokes
+  would be raw input that needs no hand.
+- A prompt the policy denies, that goes to a person all the same (because the
+  terminal is held, a limit was reached, or it repeats an answer just
+  written), takes the adapter's Deny alone: neither Allow nor a typed answer,
+  whose bytes only the adapter understands.
+
+A prompt that was shown while its terminal's holder typed into it is the
+terminal's: the keystrokes may have answered it, and the core cannot tell. It
+offers no answer, anybody's answer to it is refused, the policy's included,
+and it stays shown, reason `typed_at_terminal`, until the agent takes it back
+or its process ends. Its holder answers it by typing, as they may have
+already. An answer given to it from a card used to be typed into whatever the
+agent asked next.
 
 A terminal nobody holds takes no keystrokes, from anybody: an operator takes
 the terminal first, which the bundled interface does when you open the
@@ -32,6 +50,14 @@ written, and an answer or a line is refused, or for the policy's, delayed,
 while they are. They are refused once the audit journal has failed, on a
 session frozen after a write whose outcome is unknown, on a session that is
 stopped, stopping or starting, and while the run is stopping.
+
+An agent that reads nothing lets its terminal's input buffer fill, and a
+keystroke write then waits for room. On Linux it gives up after five seconds,
+having written part of what was typed or none of it, and a Stop or the run's
+end cuts it short. A Stop of the agent is taken while keystrokes are being
+written: it writes nothing, and it is what ends such an agent. A Start or a
+Restart waits for the keystrokes to return, since they could otherwise reach
+the replacement.
 
 ## Taking, requesting, and releasing
 
@@ -51,11 +77,21 @@ stopped, stopping or starting, and while the run is stopping.
 A hand belongs to a run's terminal. Stopping the run, or restarting it with
 "Save and restart", lets go of every terminal once the run has drained, and
 the new run's terminals are free: whoever wants one takes it again, which is
-journaled. No terminal is taken while a run is stopping, and taking one names
-the run it is for: a tab still showing a run that has been replaced cannot
-attach to the new run's terminal. Before v0.8.9 the new run inherited the
-previous run's hands, the attach ignored the run it named, and a connection
-could type into a process it had never attached to.
+journaled. No terminal is taken while a run is stopping, and taking, asking
+for, handing over or seizing one names the run it is for: a tab still showing
+a run that has been replaced cannot attach to, ask for or be handed the new
+run's terminal. Releasing a terminal and declining a request need no run.
+Before v0.8.9 the new run inherited the previous run's hands, the control
+verbs ignored the run, and a connection could type into a process it had never
+attached to, or take a terminal it never knew it held.
+
+A terminal that changes hands is journaled before the new holder can type:
+`attach_started` before an attach, and `control_requested` (a free terminal
+taken by asking), `control_granted` or `control_forced` before the hand moves.
+The attach is refused when its record cannot be written. The control records
+are best effort — the hand moves all the same, so every client agrees on who
+holds the terminal — but a record the journal refuses freezes the run first,
+and no keystroke is admitted after it.
 
 Taking a terminal someone else holds is **refused, not queued and not stolen**.
 An operator typing into an agent can be interrupted mid-command by a takeover,
