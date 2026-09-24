@@ -480,86 +480,48 @@ func (c *Controller) RunPreflight(ctx context.Context) (PreflightReport, error) 
 	return projectPreflightReport(report), nil
 }
 
-func (c *Controller) SubmitDecision(runID, sessionID, eventID, value string) error {
-	return c.SubmitDecisionWithOperator(runID, sessionID, eventID, value, "operator")
-}
-
-// SubmitDecisionWithOperator answers a prompt through the run's supervision
-// core, which journals the decision before it writes it, keeps the prompt
-// pending until the write has an outcome, writes one answer at a time to a
-// session, and freezes the session when a write's outcome is unknown.
+// SubmitDecision sends a person's typed answer to a prompt through the run's
+// supervision core, which journals the decision before it writes it, keeps the
+// prompt pending until the write has an outcome, writes one answer at a time
+// to a session, and freezes the session when a write's outcome is unknown.
 //
-// The gateway deleted the prompt before the answer was written, so a failed
-// write lost it on every screen, journaled the answer after the fact with the
-// journal's errors ignored, and wrote two answers to one terminal at once.
-func (c *Controller) SubmitDecisionWithOperator(runID, sessionID, eventID, value, operator string) error {
-	sup, currentRun := c.supervisor()
-	if strings.TrimSpace(runID) == "" {
-		runID = currentRun
-	}
-	if strings.TrimSpace(operator) == "" {
-		operator = "operator"
-	}
-	actor := supervise.Actor{Identity: operator, Role: supervise.RoleOperator}
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "allow", "yes", "y":
-		return sup.SubmitAutomaticDecision(runID, sessionID, eventID, string(adapters.DecisionAllow), actor)
-	case "deny", "no", "n":
-		return sup.SubmitAutomaticDecision(runID, sessionID, eventID, string(adapters.DecisionDeny), actor)
-	}
-	return sup.SubmitDecision(runID, sessionID, eventID, strings.TrimRight(value, "\r\n"), actor)
+// The text is always sent as typed and journaled as asked: only the adapter
+// knows what the bytes mean. The gateway read "y", "yes" and "allow" as the
+// adapter's allow and "n", "no" and "deny" as its deny, so typing "y" into a
+// Generic prompt, whose adapter encodes no allow, was refused, and any other
+// text was journaled as a human allowing something. An empty answer is
+// refused before anything is claimed or journaled, and so is a run the caller
+// does not name: the gateway took an empty run ID for the current run, so a
+// tab left open on a run that had since been replaced could answer the new
+// one. actor is who typed it, from which connection; the core refuses one
+// whose role may only watch, as the gateway's list of the calls a viewer may
+// make already does.
+func (c *Controller) SubmitDecision(runID, sessionID, eventID, value string, actor supervise.Actor) error {
+	sup, _ := c.supervisor()
+	return sup.SubmitDecision(runID, sessionID, eventID, value, actor)
 }
 
-func (c *Controller) SubmitAutomaticDecision(runID, sessionID, eventID, decision string) error {
-	return c.SubmitDecision(runID, sessionID, eventID, decision)
+// SubmitAutomaticDecision sends a chosen answer, allow or deny, which the
+// adapter encodes itself. It is taken only when the prompt offers it. The
+// gateway sent whatever the caller named as typed text, so an answer that was
+// no choice at all reached the agent through the call meant for buttons.
+func (c *Controller) SubmitAutomaticDecision(runID, sessionID, eventID, decision string, actor supervise.Actor) error {
+	sup, _ := c.supervisor()
+	return sup.SubmitAutomaticDecision(runID, sessionID, eventID, decision, actor)
 }
 
-func (c *Controller) SubmitLine(runID, sessionID, line string) error {
-	return c.SubmitLineWithOperator(runID, sessionID, line, "operator")
-}
-
-func (c *Controller) SubmitLineWithOperator(runID, sessionID, line, operator string) error {
-	c.mu.RLock()
-	rt := c.runtime
-	idx, hasAgent := c.agentIndex[strings.ToLower(sessionID)]
-	var agent AgentState
-	if hasAgent && idx < len(c.state.Agents) {
-		agent = c.state.Agents[idx]
-	}
-	c.mu.RUnlock()
-
-	if rt == nil {
-		return errors.New("supervisor runtime not ready")
-	}
-
-	if strings.TrimSpace(operator) == "" {
-		operator = "operator"
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	err := rt.SendLine(ctx, sessionID, line)
-	outcome := audit.OutcomeApplied
-	reason := "operator_input_applied"
-	if err != nil {
-		outcome = audit.OutcomeFailed
-		reason = "operator_input_invalid"
-	}
-
-	_ = rt.RecordAudit(audit.Entry{
-		Kind:       audit.KindOperatorInput,
-		SessionID:  strings.TrimSpace(sessionID),
-		AgentID:    strings.TrimSpace(agent.AgentID),
-		Backend:    strings.ToLower(strings.TrimSpace(agent.Backend)),
-		Adapter:    strings.ToLower(strings.TrimSpace(agent.Adapter)),
-		DecisionBy: audit.DecisionByHuman,
-		Operator:   operator,
-		Outcome:    outcome,
-		Reason:     reason,
-	})
-
-	return err
+// SubmitLine sends one ordinary line to a detached, running session through
+// the core. The core journals the line before it writes it and fails closed,
+// takes the session's one write slot, refuses the line while a prompt waits
+// on the operator, while anybody holds the terminal or while the session is
+// frozen, and freezes the session when the write's outcome is unknown. The
+// gateway wrote the line beside whatever else was being written, with no
+// check at all, journaled it afterwards with the journal's errors ignored, and
+// ignored the run the caller named. The line's entries name the actor's
+// identity, which is all their closed shape holds.
+func (c *Controller) SubmitLine(runID, sessionID, line string, actor supervise.Actor) error {
+	sup, _ := c.supervisor()
+	return sup.SubmitLine(runID, sessionID, line, actor)
 }
 
 // SendTerminalInput delivers raw terminal input bytes directly to the session backend.
@@ -731,10 +693,16 @@ func (c *Controller) RestartSession(runID, sessionID string) error {
 	return sup.RestartSession(currentRun, sessionID)
 }
 
+// StopRun stops the run the caller names, and only that one. It stopped
+// whatever run was current, whatever the caller named, so a tab left open on a
+// replaced run, or a request naming none, stopped every agent of the new one.
 func (c *Controller) StopRun(runID string) (AppState, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if strings.TrimSpace(runID) == "" || runID != c.runID {
+		return AppState{}, supervise.ErrRunStale
+	}
 	c.beginDrainLocked()
 	if c.cancel != nil {
 		c.cancel()

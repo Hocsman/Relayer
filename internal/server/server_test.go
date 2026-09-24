@@ -15,8 +15,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/session"
+	"github.com/Hocsman/Relayer/internal/supervise"
 	"github.com/Hocsman/Relayer/internal/tmuxbackend"
 	"github.com/gorilla/websocket"
 )
@@ -982,25 +984,35 @@ func TestRBACOperatorAuditAttribution(t *testing.T) {
 	}()
 
 	state := ctrl.GetState()
-	if len(state.Agents) > 0 {
-		agent := state.Agents[0]
-		_ = ctrl.SubmitLineWithOperator(state.RunID, agent.SessionID, "echo hello", "alice")
+	if len(state.Agents) == 0 {
+		t.Fatal("the default configuration started no agent")
+	}
+	agent := state.Agents[0]
+	// The line must be sent, not merely attempted: the test ignored the result,
+	// and the gateway journaled every attempt, so a line that failed was still
+	// counted as attributed.
+	alice := supervise.Actor{Identity: "alice", Role: string(RoleOperator), ConnID: "conn-alice"}
+	if err := ctrl.SubmitLine(state.RunID, agent.SessionID, "echo hello", alice); err != nil {
+		t.Fatalf("SubmitLine: %v", err)
 	}
 
-	entries, err := ctrl.GetAuditEntries(AuditFilterInput{Limit: 10})
+	entries, err := ctrl.GetAuditEntries(AuditFilterInput{Limit: 50})
 	if err != nil {
 		t.Fatalf("GetAuditEntries: %v", err)
 	}
 
-	foundAlice := false
+	// The line is journaled before it is written and once it was, both times
+	// under the operator who sent it.
+	var started, applied bool
 	for _, e := range entries {
-		if e.Operator == "alice" {
-			foundAlice = true
-			break
+		if e.Kind != string(audit.KindOperatorInput) || e.Operator != "alice" {
+			continue
 		}
+		started = started || e.Outcome == string(audit.OutcomeInFlight)
+		applied = applied || e.Outcome == string(audit.OutcomeApplied)
 	}
-	if !foundAlice {
-		t.Error("Did not find audit entry attributed to operator 'alice'")
+	if !started || !applied {
+		t.Errorf("the line's entries attributed to alice: started %v, applied %v; want both", started, applied)
 	}
 }
 

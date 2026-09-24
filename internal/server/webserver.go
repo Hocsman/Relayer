@@ -24,6 +24,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/Hocsman/Relayer/internal/session"
+	"github.com/Hocsman/Relayer/internal/supervise"
 )
 
 // UserRole defines the privilege level of an authenticated client.
@@ -125,6 +126,17 @@ func newConnectionID() string {
 		return ""
 	}
 	return hex.EncodeToString(raw)
+}
+
+// actor is who this connection is, as the supervision core names who made a
+// decision or sent a line: the signed-in identity, the role its token gives
+// it, and the connection. The journal keeps them on the person's decision and
+// delivery entries; the connection is what ties an answer to the attach and
+// control records around it, since one identity may be signed in from several
+// tabs. The role was always written "operator", whoever answered, and the
+// connection not at all.
+func (c *clientConnection) actor() supervise.Actor {
+	return supervise.Actor{Identity: c.identity, Role: string(c.role), ConnID: c.connID}
 }
 
 // notifyHandOnce sends one hand correction per session to a client whose
@@ -687,7 +699,7 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
-		return nil, gh.ctrl.SubmitDecisionWithOperator(p.RunID, p.SessionID, p.EventID, p.Value, client.identity)
+		return nil, gh.ctrl.SubmitDecision(p.RunID, p.SessionID, p.EventID, p.Value, client.actor())
 
 	case "submitAutomaticDecision":
 		var p struct {
@@ -699,7 +711,7 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
-		return nil, gh.ctrl.SubmitDecisionWithOperator(p.RunID, p.SessionID, p.EventID, p.Decision, client.identity)
+		return nil, gh.ctrl.SubmitAutomaticDecision(p.RunID, p.SessionID, p.EventID, p.Decision, client.actor())
 
 	case "submitLine":
 		var p struct {
@@ -710,7 +722,7 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
-		return nil, gh.ctrl.SubmitLineWithOperator(p.RunID, p.SessionID, p.Line, client.identity)
+		return nil, gh.ctrl.SubmitLine(p.RunID, p.SessionID, p.Line, client.actor())
 
 	case "sendTerminalInput":
 		var p struct {

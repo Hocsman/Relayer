@@ -208,7 +208,7 @@ func TestTheWebGatewayKeepsAPromptOfferedUntilItsAnswerIsWritten(t *testing.T) {
 		agents: []webAgent{{id: "web-generic", mode: webAgentGeneric, adapter: "generic"}},
 	})
 	prompt := g.awaitPending("web-generic", 30*time.Second)
-	if err := g.ctrl.SubmitAutomaticDecision(prompt.RunID, prompt.SessionID, prompt.ID, "allow"); err == nil {
+	if err := g.ctrl.SubmitAutomaticDecision(prompt.RunID, prompt.SessionID, prompt.ID, "allow", webOperator); err == nil {
 		t.Fatal("an allow the Generic adapter cannot encode was accepted")
 	}
 	prompts := g.pending("web-generic")
@@ -220,7 +220,7 @@ func TestTheWebGatewayKeepsAPromptOfferedUntilItsAnswerIsWritten(t *testing.T) {
 	}
 	g.assertNoAnswerFor("web-generic", 500*time.Millisecond)
 
-	if err := g.ctrl.SubmitDecision(prompt.RunID, prompt.SessionID, prompt.ID, "yes please"); err != nil {
+	if err := g.ctrl.SubmitDecision(prompt.RunID, prompt.SessionID, prompt.ID, "yes please", webOperator); err != nil {
 		t.Fatalf("the typed answer was refused: %v", err)
 	}
 	screen := g.awaitReport("web-generic", 20*time.Second)
@@ -420,7 +420,7 @@ func TestTheWebGatewayNotifiesOnlyWhatWaitsOnAPerson(t *testing.T) {
 	if notice.Body != asked.Summary {
 		t.Fatalf("notification body = %q, want the summary the prompt is shown with, %q", notice.Body, asked.Summary)
 	}
-	if err := g.ctrl.SubmitAutomaticDecision(asked.RunID, asked.SessionID, asked.ID, "deny"); err != nil {
+	if err := g.ctrl.SubmitAutomaticDecision(asked.RunID, asked.SessionID, asked.ID, "deny", webOperator); err != nil {
 		t.Fatalf("the operator's deny was refused: %v", err)
 	}
 	g.awaitReport("web-ask", 20*time.Second)
@@ -463,7 +463,7 @@ func TestTakingAWebTerminalKeepsThePolicyFromAnsweringIt(t *testing.T) {
 	if !evaluated {
 		t.Fatalf("the journal does not say why the prompt was asked:\n%s", journalTrace(g.sessionJournal("web-held")))
 	}
-	if err := g.ctrl.SubmitAutomaticDecision(prompt.RunID, prompt.SessionID, prompt.ID, "allow"); err != nil {
+	if err := g.ctrl.SubmitAutomaticDecision(prompt.RunID, prompt.SessionID, prompt.ID, "allow", webOperator); err != nil {
 		t.Fatalf("the operator's allow was refused: %v", err)
 	}
 	screen := g.awaitReport("web-held", 20*time.Second)
@@ -485,7 +485,7 @@ func TestAWebJournalThatFailsStopsEveryAnswer(t *testing.T) {
 	prompt := g.awaitPending("web-generic", 30*time.Second)
 	fault.set(func(f *faultEngine) { f.auditFails = true })
 
-	err := g.ctrl.SubmitDecision(prompt.RunID, prompt.SessionID, prompt.ID, "nope")
+	err := g.ctrl.SubmitDecision(prompt.RunID, prompt.SessionID, prompt.ID, "nope", webOperator)
 	if !errors.Is(err, supervise.ErrAuditUnavailable) {
 		t.Fatalf("an answer with a failing journal returned %v, want the journal's refusal", err)
 	}
@@ -508,7 +508,7 @@ func TestAWebJournalThatFailsStopsEveryAnswer(t *testing.T) {
 	if !told {
 		t.Fatal("no client was told the journal failed")
 	}
-	if err := g.ctrl.SubmitDecision(prompt.RunID, prompt.SessionID, prompt.ID, "nope"); err == nil {
+	if err := g.ctrl.SubmitDecision(prompt.RunID, prompt.SessionID, prompt.ID, "nope", webOperator); err == nil {
 		t.Fatal("a second answer went through a failed journal")
 	}
 }
@@ -526,7 +526,7 @@ func TestAnUncertainWebWriteFreezesTheSession(t *testing.T) {
 	prompt := g.awaitPending("web-generic", 30*time.Second)
 	fault.set(func(f *faultEngine) { f.applyErr = errors.New("the terminal did not take the write in time") })
 
-	err := g.ctrl.SubmitDecision(prompt.RunID, prompt.SessionID, prompt.ID, "nope")
+	err := g.ctrl.SubmitDecision(prompt.RunID, prompt.SessionID, prompt.ID, "nope", webOperator)
 	if !errors.Is(err, supervise.ErrDeliveryUncertain) {
 		t.Fatalf("an uncertain write returned %v, want ErrDeliveryUncertain", err)
 	}
@@ -547,7 +547,7 @@ func TestAnUncertainWebWriteFreezesTheSession(t *testing.T) {
 		t.Fatal("no client was told the delivery is indeterminate")
 	}
 	fault.set(func(f *faultEngine) { f.applyErr = nil })
-	if err := g.ctrl.SubmitDecision(prompt.RunID, prompt.SessionID, prompt.ID, "again"); !errors.Is(err, supervise.ErrDeliveryUncertain) {
+	if err := g.ctrl.SubmitDecision(prompt.RunID, prompt.SessionID, prompt.ID, "again", webOperator); !errors.Is(err, supervise.ErrDeliveryUncertain) {
 		t.Fatalf("a second answer to a frozen session returned %v, want ErrDeliveryUncertain", err)
 	}
 	g.assertNoAnswerFor("web-generic", 500*time.Millisecond)
@@ -567,7 +567,7 @@ func TestTheWebGatewayWritesOneAnswerAtATimeToASession(t *testing.T) {
 	fault.set(func(f *faultEngine) { f.holdApply = release })
 	firstDone := make(chan error, 1)
 	go func() {
-		firstDone <- g.ctrl.SubmitDecision(first.RunID, first.SessionID, first.ID, "first answer")
+		firstDone <- g.ctrl.SubmitDecision(first.RunID, first.SessionID, first.ID, "first answer", webOperator)
 	}()
 	select {
 	case <-fault.applyStarted:
@@ -581,7 +581,7 @@ func TestTheWebGatewayWritesOneAnswerAtATimeToASession(t *testing.T) {
 	if !promptOffered(g.ctrl, second.ID) {
 		t.Fatal("the second question was not taken in")
 	}
-	err := g.ctrl.SubmitDecision(first.RunID, "web-generic", second.ID, "second answer")
+	err := g.ctrl.SubmitDecision(first.RunID, "web-generic", second.ID, "second answer", webOperator)
 	if !errors.Is(err, supervise.ErrDecisionInFlight) {
 		t.Fatalf("an answer while another is written returned %v, want ErrDecisionInFlight", err)
 	}

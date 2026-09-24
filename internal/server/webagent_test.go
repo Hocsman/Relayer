@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
@@ -243,14 +244,17 @@ type webAgent struct {
 
 // webRun configures one gateway run of helper agents. policy is the default
 // action, ask when empty; rules is a YAML list of policy rules, indented as
-// the policies block's items. The audit journal is on, in metadata mode, in the
-// test's directory.
+// the policies block's items. The audit journal is on, in the mode auditMode
+// names, in the test's directory.
 type webRun struct {
 	policy        string
 	rules         string
 	notifications bool
-	recording     bool
-	agents        []webAgent
+	// auditMode is the journal's mode, metadata when empty: detailed keeps
+	// the role and connection of whoever answered.
+	auditMode string
+	recording bool
+	agents    []webAgent
 	// engineWrap is the Controller's seam, set before the run starts.
 	engineWrap func(supervise.Engine) supervise.Engine
 }
@@ -311,7 +315,11 @@ func startWebRun(t *testing.T, run webRun) *webGateway {
 	} else {
 		b.WriteString("  rules:\n" + run.rules)
 	}
-	b.WriteString("audit:\n  enabled: true\n  mode: metadata\n  path: " + webYAMLQuote(auditPath) + "\n  max_file_size_mb: 10\n  max_files: 5\n")
+	auditMode := run.auditMode
+	if auditMode == "" {
+		auditMode = "metadata"
+	}
+	b.WriteString("audit:\n  enabled: true\n  mode: " + auditMode + "\n  path: " + webYAMLQuote(auditPath) + "\n  max_file_size_mb: 10\n  max_files: 5\n")
 	if run.recording {
 		b.WriteString("recording:\n  enabled: true\n  path: " + webYAMLQuote(recordingDir) + "\n")
 	}
@@ -591,4 +599,27 @@ func stateText(t *testing.T, state AppState) string {
 		t.Fatalf("marshal the state: %v", err)
 	}
 	return string(encoded)
+}
+
+// webOperator is the operator the tests answer as, from one connection.
+var webOperator = supervise.Actor{Identity: "alice", Role: supervise.RoleOperator, ConnID: "conn-alice"}
+
+// serve puts the gateway's websocket in front of the run, as Serve does, with
+// two operators, alice and carol, and a viewer, dave, each by their token,
+// and returns its address. A test that goes through it goes through what a
+// browser does: the RPC dispatch, the viewer's list of calls and the actor
+// each connection answers as.
+func (g *webGateway) serve() string {
+	g.t.Helper()
+	handler := newGatewayHandler(g.ctrl, map[string]AuthIdentity{
+		"opAlice":  {Identity: "alice", Role: RoleOperator},
+		"opCarol":  {Identity: "carol", Role: RoleOperator},
+		"viewDave": {Identity: "dave", Role: RoleViewer},
+	}, false, 0, "", io.Discard)
+	server := httptest.NewServer(handler)
+	g.t.Cleanup(func() {
+		handler.closeClients()
+		server.Close()
+	})
+	return server.URL
 }
