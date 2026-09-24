@@ -37,6 +37,10 @@ func (s *Supervisor) handleAdapterEventWithdrawn(event adapters.Event) {
 	}
 
 	backend := s.backendFor(event.SessionID)
+	s.mu.RLock()
+	owed := s.heldEntries[key.sessionID]
+	s.mu.RUnlock()
+	awaitHeldEntries(owed)
 	_ = s.recordAudit(eventWithdrawnEntry(event, backend, "agent_withdrew_occurrence"))
 
 	s.mu.Lock()
@@ -122,6 +126,9 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 	// A repeat of a prompt just answered is asked, never answered, and is
 	// journaled as asked: the guard applies before the evaluation entry.
 	evaluation := s.guardRepeat(key, event, s.engine.Evaluate(event))
+	// So is a prompt raised while somebody holds the terminal, who may answer
+	// it by typing.
+	evaluation = s.guardHeld(key.sessionID, evaluation)
 	if !s.recordAudit(policyAuditEntry(event, backend, evaluation)) {
 		s.addFrozenEvent(event, evaluation)
 		return
@@ -132,7 +139,18 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 		evaluation.Reason == policy.ReasonExfiltration ||
 		evaluation.Reason == policy.ReasonGuardrailBlocked
 	s.mu.Lock()
-	s.pending[key] = pendingEvent{event: event.Clone(), view: view, evaluation: evaluation}
+	// The hand may have been taken since the evaluation was journaled, while
+	// the prompt was not yet among those SetHolder turns into asks: it is
+	// asked now, and a second entry says why.
+	var previous, done chan struct{}
+	heldSince := evaluation.Automatic && s.holders[key.sessionID] != ""
+	if heldSince {
+		evaluation = askEvaluation(evaluation, ReasonOperatorAttached)
+		view.Evaluation = evaluationView(evaluation)
+		previous, done = s.oweHeldEntriesLocked(key.sessionID)
+	}
+	item := pendingEvent{event: event.Clone(), view: view, evaluation: evaluation}
+	s.pending[key] = item
 	s.setAgentWaitingLocked(event.SessionID)
 	s.rebuildPendingLocked()
 	s.showPromptLocked(view)
@@ -178,6 +196,9 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 		s.emitLocked(func(sink Sink) { sink.Notify(shown) })
 	}
 	s.mu.Unlock()
+	if heldSince {
+		s.journalHeldEntries(key.sessionID, []pendingEvent{item}, previous, done)
+	}
 	s.flush()
 	s.scheduleAutomatic(event.SessionID)
 }
@@ -258,7 +279,6 @@ func (s *Supervisor) handleProcessExit(event adapters.Event, backend string) {
 	if found {
 		agent := &s.agents[index]
 		agent.Running = false
-		agent.Attached = false
 		agent.Status = "exited"
 		if event.Metadata["failed"] == "true" {
 			agent.Status = "failed"

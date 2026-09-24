@@ -34,6 +34,7 @@ func TestSafeReason(t *testing.T) {
 		"consecutive_auto_limit",
 		"rate_limit_exceeded",
 		"repeat_after_delivery",
+		"operator_attached",
 	}
 
 	for _, reason := range allowedReasons {

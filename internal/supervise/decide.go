@@ -424,11 +424,15 @@ func (s *Supervisor) applyHumanDecision(
 	s.pending[key] = item
 	s.rebuildPendingLocked()
 	s.showPromptLocked(item.view)
+	owed := s.heldEntries[key.sessionID]
 	s.mu.Unlock()
 	s.flush()
 	defer s.finishDecision(key)
 
 	backend := s.backendFor(sessionID)
+	// The prompt may be one the hand just turned into an ask: the journal
+	// says so before it says who answered it.
+	awaitHeldEntries(owed)
 	if !s.recordAudit(attributed(decisionAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman), actor)) {
 		return ErrAuditUnavailable
 	}

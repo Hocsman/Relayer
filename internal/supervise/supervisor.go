@@ -46,10 +46,11 @@ type Engine interface {
 // operation that changes it, and should not block: the goroutine calling it
 // may be delivering a decision, and the other goroutines that show something
 // wait for it. A front end may hold a lock of its own while it reads the core
-// or calls SetAttached, Admit or BeginDrain, none of which shows anything. It
-// must not hold a lock its sink takes while it calls an operation that changes
-// the core, which may show what another goroutine queued, nor while it calls
-// Wait, which waits for goroutines that show things.
+// or calls SetHolder, Admit or BeginDrain, none of which calls the sink on the
+// caller's goroutine. It must not hold a lock its sink takes while it calls an
+// operation that changes the core, which may show what another goroutine
+// queued, nor while it calls Wait, which waits for goroutines that show
+// things.
 type Sink interface {
 	// Prompt shows a prompt, or a change of its delivery state.
 	Prompt(View)
@@ -227,8 +228,13 @@ type Supervisor struct {
 	// dropped as the prompt of a stopped agent.
 	startingSessions map[string]bool
 	frozen           map[string]bool
-	auditFailed      bool
-	shuttingDown     bool
+	// holders is, per session, the connection that holds its terminal.
+	holders map[string]string
+	// heldEntries is, per session, closed once the evaluation entries of the
+	// prompts the hand last turned into asks are journaled.
+	heldEntries  map[string]chan struct{}
+	auditFailed  bool
+	shuttingDown bool
 	// outbox holds the sink calls not yet made, in the order of the state
 	// changes they report: each is queued under mu, with its change.
 	outbox []func(Sink)
@@ -293,6 +299,8 @@ func New(ctx context.Context, engine Engine, options Options) (*Supervisor, erro
 		stoppingSessions:  make(map[string]bool),
 		startingSessions:  make(map[string]bool),
 		frozen:            make(map[string]bool),
+		holders:           make(map[string]string),
+		heldEntries:       make(map[string]chan struct{}),
 		deliveryAvailable: true,
 	}, nil
 }
@@ -344,18 +352,6 @@ func (s *Supervisor) Draining() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.shuttingDown
-}
-
-// SetAttached records whether an operator holds the session's terminal. Free
-// text is refused while it is held, where it would interleave with the
-// operator's keystrokes. It emits nothing and may be called under a front
-// end's own lock.
-func (s *Supervisor) SetAttached(sessionID string, attached bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if index, found := s.agentIndex[strings.ToLower(strings.TrimSpace(sessionID))]; found {
-		s.agents[index].Attached = attached
-	}
 }
 
 // Admit admits one backend write the core does not make itself, such as a

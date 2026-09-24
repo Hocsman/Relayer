@@ -805,7 +805,7 @@ func TestSubmitLineFailsClosedForExitAttachShutdownAndAudit(t *testing.T) {
 	t.Run("attached", func(t *testing.T) {
 		engine := newFakeDesktopEngine("agent-a")
 		application := newBridgeForTest(engine)
-		activeRunForTest(application).sup.SetAttached("agent-a", true)
+		activeRunForTest(application).sup.SetHolder("agent-a", "conn-test")
 		if err := application.SubmitLine(activeRunIDForTest(application), "agent-a", "hello"); !errors.Is(err, errLineUnavailable) {
 			t.Fatalf("SubmitLine error = %v", err)
 		}

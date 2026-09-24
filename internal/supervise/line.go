@@ -166,7 +166,6 @@ func (s *Supervisor) markLineSessionUnavailable(sessionKey, status string) {
 	if index, found := s.agentIndex[sessionKey]; found {
 		agent := &s.agents[index]
 		agent.Running = false
-		agent.Attached = false
 		agent.Status = status
 		displaySessionID = agent.SessionID
 	}

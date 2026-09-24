@@ -72,6 +72,22 @@
 //     ask, an empty one is refused before any claim or entry, and a chosen one
 //     is only allow or deny, and only one the adapter offers, or it is refused
 //     with nothing changed.
+//   - The core knows who holds a session's terminal, the hand (SetHolder), and
+//     the policy answers nothing on a session somebody holds. The holder types
+//     into the agent directly, and raw keystrokes never resolve the runtime's
+//     pending prompt: an automatic answer to a prompt the holder answered by
+//     hand would be a second answer. Taking the hand turns every prompt of the
+//     session the policy would answer, and whose answer is not already being
+//     written, into an ask for the reason operator_attached, journaled as a
+//     second policy_evaluated entry; a prompt raised while the hand is held is
+//     asked before its evaluation is journaled. Releasing the hand never
+//     makes a prompt automatic again. A line is refused while anybody holds
+//     the hand; a person's decision is not, since the hand governs the
+//     terminal and not supervision. The hand changes only when the front end
+//     says so, never with the process, and SetHolder never waits on the
+//     journal nor calls the sink on its caller's goroutine, so a front end
+//     may call it under a lock of its own. It replaces SetAttached, which
+//     only recorded that somebody held the terminal.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

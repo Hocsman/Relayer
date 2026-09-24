@@ -250,7 +250,6 @@ func (s *Supervisor) completeAgentStart(sessionKey string, startedAt time.Time) 
 	if index, found := s.agentIndex[sessionKey]; found {
 		agent := &s.agents[index]
 		agent.Running = true
-		agent.Attached = false
 		agent.Status = status
 		agent.ExitCode = nil
 		agent.InputFrozen = false
