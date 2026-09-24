@@ -237,6 +237,30 @@ the scrollback, as xterm and conhost do. The screen kept the top rows instead,
 which dropped the row the agent had just asked on, and ConPTY's repaint after
 the resize drew the answered question on a row the memory did not know.
 
+An entry kept for the primary screen answers for nothing on the program's
+screen, which is not where it was answered: the identical question asked there
+is asked. Taking part, an answered row that was blank when the program started
+let the generic adapter take that question for the answered one moved, and an
+entry with no row matched it anywhere, since without a row the line alone
+decides; after a full reset, which leaves the screen on the program's grid for
+good, that lasted for the rest of the session. An entry with no row remembered
+while the program has the grid is not kept for the primary screen: its question
+is on the program's grid, raised from a tmux snapshot of it and answered before
+any write could find its row, and it goes on comparing its line there.
+
+While the program runs, only its screen follows the terminal. The primary one
+is resized once, to the size then in force, when the program exits, which is
+what ConPTY does: it leaves the primary buffer alone while the alternate one is
+shown, so a window dragged smaller and back while an editor was open gives the
+primary screen back exactly as it was. Resized at every step of the drag, it
+came back higher than ConPTY drew it, and the answered question was asked
+again. It also minted its new rows from the counter it was parked with, which
+the program's screen had been using since: a pane that more than doubled its
+height under a full-screen agent — four agents to one in the desktop grid —
+reported a row of the agent's screen parked, an answer given there was kept for
+the rest of the program, and the same dialog asked again on that row was put to
+nobody.
+
 On the rendered screen the row also decides what an entry SUPPRESSES: the
 answered question is the one on its own row.
 
@@ -298,6 +322,17 @@ What is left, knowingly:
   erases the second, the first is the last line again, and it is asked again.
 - On the tmux resync, the answered question with its echo after it is another
   line, and is asked again.
+- A full-screen agent whose answered dialog is still painted near the top of
+  its screen, with its cursor in an input box at the bottom, asks it again once
+  it repaints for a terminal that lost height. The rows above the cursor go
+  first, the dialog's with them, and the alternate screen has no history to
+  keep them in. Keeping the top rows, as the screen did before, lost a dialog
+  drawn near the bottom instead, beside the cursor.
+- An entry with no row adopts the only row showing its question the first time
+  it is looked for: at the agent's first repaint, or when a full-screen program
+  that was running exits. If that same write also clears the screen and draws
+  the identical question on another row, the new question is taken for the
+  answered one and is not asked.
 
 A match is not always one line. The vendor rules are regexes that run across a
 whole prompt block, so the row check joins as many logical lines as the match
@@ -357,7 +392,9 @@ Resizing cannot be aligned with a byte offset in the stream, so the grid does
 not reflow: it keeps what fits and waits for the agent to repaint. What fits is
 what a terminal keeps: the cursor's row stays in view, the rows below it go
 first, and the rows above it go into the scrollback when that is not enough.
-Until the repaint, a wrapped line is wrapped at the old width.
+Until the repaint, a wrapped line is wrapped at the old width. The primary
+screen parked under a full-screen program is resized once, when the program
+exits, to the size then in force.
 
 Withdrawal is narrow on purpose, and everything it cannot prove keeps the
 occurrence pending, which is the behaviour that existed before it. An agent that

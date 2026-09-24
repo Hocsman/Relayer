@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -159,6 +160,234 @@ func TestAQuestionAnsweredBeforeTheFirstRepaintIsFoundByItsLine(t *testing.T) {
 				// The first write a byte stream cannot express.
 				agentWrites("\x1b[K", 1),
 				agentWrites(escapeOnlyWrite, 1),
+			})
+			if pending := processor.Pending(); pending != nil {
+				t.Fatalf("the session is blocked on an answered question: %q", pending.Match)
+			}
+		})
+	}
+}
+
+// A window resized while a full-screen program runs after the answer. ConPTY
+// leaves the primary buffer alone while the alternate one is shown, resizes it
+// once when the program exits, and repaints it. The screen resized the parked
+// primary screen at every step instead: a shrink pushed its top rows into the
+// history and the grow that followed did not pull them back, so ConPTY drew the
+// answered question on a row the memory did not know, and it was asked again.
+// Under an automatic policy that is a second answer typed into the agent.
+//
+// The bytes are ConPTY's, captured on Windows 11 with the question on the last
+// row of a 120x30 terminal. A shrink or a grow alone did not ask again before,
+// and is pinned alongside.
+func TestAWindowResizedWhileAProgramRunsAfterTheAnswerDoesNotAskItAgain(t *testing.T) {
+	editor := func(report string, height int) string {
+		return conptyRepaint(report, height, []string{"editor contents", "~", "~"}, "\x1b[3;2H")
+	}
+	for _, question := range []struct {
+		adapter string
+		prompt  string
+		answer  string
+	}{
+		{adapter: AiderID, prompt: aiderApplyPrompt, answer: "y"},
+		{adapter: GenericID, prompt: overwritePrompt, answer: "nope"},
+	} {
+		// The primary screen as ConPTY repaints it when the program exits: the
+		// output from line first on, then the question with its echo.
+		primary := func(first int) []string {
+			rows := strings.Split(strings.TrimSuffix(outputLines("agent output line %d", first, 44), "\r\n"), "\r\n")
+			return append(rows, question.prompt+question.answer)
+		}
+		for _, resize := range []struct {
+			name    string
+			heights []int
+			repaint string
+		}{
+			{name: "shrink then grow back", heights: []int{20, 30}, repaint: conptyRepaint("", 30, primary(17), "")},
+			{name: "a window dragged smaller and back", heights: []int{28, 25, 22, 26, 30}, repaint: conptyRepaint("", 30, primary(17), "")},
+			{name: "shrink, then grow past the old height", heights: []int{20, 40}, repaint: conptyRepaint("", 40, primary(17), "\x1b[30;1H")},
+			{name: "shrink only", heights: []int{20}, repaint: conptyRepaint("", 20, primary(27), "")},
+			{name: "grow only", heights: []int{40}, repaint: conptyRepaint("", 40, primary(17), "\x1b[30;1H")},
+		} {
+			t.Run(question.adapter+"/"+resize.name, func(t *testing.T) {
+				steps := []sessionStep{
+					agentWrites(outputLines("agent output line %d", 0, 44), 0),
+					agentWrites(question.prompt, 1),
+					operatorAnswers(1),
+					// The question is on the last row, so the echo's line feed
+					// scrolls it one row up.
+					agentWrites(question.answer+"\r", 1),
+					agentWrites("\n", 1),
+					agentWrites("\x1b[?1049h\x1b[2J", 1),
+					agentWrites(editor("", 30), 1),
+				}
+				height := 30
+				for _, next := range resize.heights {
+					// ConPTY reports the new size before a repaint that shrinks.
+					report := ""
+					if next < height {
+						report = fmt.Sprintf("\x1b[8;%d;120t", next)
+					}
+					height = next
+					steps = append(steps, terminalResizedTo(120, next, 1), agentWrites(editor(report, next), 1))
+				}
+				steps = append(steps,
+					agentWrites("\x1b[?1049l", 1),
+					agentWrites(resize.repaint, 1),
+					agentWrites(escapeOnlyWrite, 1),
+				)
+				if pending := playSession(t, question.adapter, true, steps).Pending(); pending != nil {
+					t.Fatalf("the session is blocked on an answered question: %q", pending.Match)
+				}
+			})
+		}
+	}
+}
+
+// A pane that more than doubles its height while a full-screen agent has it:
+// four agents to one in the desktop grid, a small pane maximised. The parked
+// primary screen was resized with it, and gave its new rows names the agent's
+// screen had already given out, so a row of the agent's screen was reported
+// parked. An answer given on such a row was kept for the rest of the program:
+// the same dialog asked again on that row later was never offered, and the
+// agent waited on a question nobody was shown. On Codex, which compares the
+// line alone, the same command asked anywhere was not offered either.
+func TestAPaneThatGrowsUnderAFullScreenAgentStillAsksTheSameDialogAgain(t *testing.T) {
+	const dialog = "Permission required: run npm test? [y/n] "
+	for _, adapterID := range []string{GenericID, ClaudeID} {
+		for _, onConPTY := range []bool{false, true} {
+			for _, row := range []int{14, 20, 27} {
+				t.Run(fmt.Sprintf("%s/conpty=%t/the dialog on row %d", adapterID, onConPTY, row), func(t *testing.T) {
+					processor := playSession(t, adapterID, onConPTY, []sessionStep{
+						// Four agents share the window.
+						terminalResizedTo(120, 12, 0),
+						agentWrites("$ agent\r\n", 0),
+						agentWrites("\x1b[?1049h\x1b[H\x1b[2JAgent header\x1b[12;1H> ", 0),
+						// The other three are closed, and this pane takes the
+						// window.
+						terminalResizedTo(120, 40, 0),
+						agentWrites("\x1b[H\x1b[2JAgent header\x1b[40;1H> ", 0),
+						agentWrites(fmt.Sprintf("\x1b[%d;1H%s", row, dialog), 1),
+						operatorAnswers(1),
+						agentWrites(fmt.Sprintf("\x1b[%d;1H\x1b[2Kran npm test: ok\x1b[40;3H", row), 1),
+						agentWrites(fmt.Sprintf("\x1b[%d;1H\x1b[2K%s", row, dialog), 2),
+					})
+					if processor.Pending() == nil {
+						t.Fatal("the dialog asked again is not pending")
+					}
+				})
+			}
+		}
+	}
+	t.Run("codex/the same command asked again lower down", func(t *testing.T) {
+		processor := playSession(t, CodexID, false, []sessionStep{
+			terminalResizedTo(120, 12, 0),
+			agentWrites("$ codex\r\n", 0),
+			agentWrites("\x1b[?1049h\x1b[H\x1b[2JCodex header", 0),
+			terminalResizedTo(120, 30, 0),
+			agentWrites("\x1b[13;1H"+codexCommandPrompt, 1),
+			operatorAnswers(1),
+			// The dialog goes, and its rows show the command's output.
+			agentWrites("\x1b[13;1H\x1b[2Kran ls\x1b[14;1H\x1b[2Kfile1\x1b[15;1H\x1b[2Kfile2\x1b[16;1H\x1b[2Kfile3\x1b[17;1H\x1b[2K> ", 1),
+			agentWrites(escapeOnlyWrite, 1),
+			agentWrites("\x1b[H\x1b[2JCodex header\x1b[4;1Hran ls\r\nfile1\r\n\x1b[8;1H"+codexCommandPrompt, 2),
+		})
+		if processor.Pending() == nil {
+			t.Fatal("the command asked again is not pending")
+		}
+	})
+}
+
+// What was answered on the primary screen is kept while a full-screen program
+// has the alternate one, so that the question still painted underneath is not
+// asked again when the program exits. Kept, it went on answering for questions
+// on the program's screen, which is not where it was answered, and each of
+// these was put to nobody:
+//
+//   - an answered row that was blank when the program started kept its blank
+//     flag, and the generic adapter took the identical question on the
+//     program's screen for the answered one moved off its blank row;
+//   - an answer with no row, given before the agent first repainted, matched
+//     the identical line anywhere on the program's screen, since without a row
+//     the line alone decides;
+//   - and after a full reset, which a program can send instead of leaving the
+//     alternate screen, that went on for the rest of the session.
+func TestAQuestionOnAProgramsScreenIsAskedWhateverWasAnsweredUnderneath(t *testing.T) {
+	for _, adapterID := range []string{GenericID, ClaudeID} {
+		t.Run(adapterID+"/the answered row was blank when the program started", func(t *testing.T) {
+			processor := playSession(t, adapterID, true, []sessionStep{
+				agentWrites(overwritePrompt, 1),
+				operatorAnswers(1),
+				agentWrites("yes\r\n", 1),
+				// The agent tidies the answered question away.
+				agentWrites("\x1b[1A\x1b[2K", 1),
+				agentWrites("\x1b[?1049h\x1b[H\x1b[2Jfull-screen tool\r\n", 1),
+				agentWrites("\x1b[5;1H"+overwritePrompt, 2),
+			})
+			if processor.Pending() == nil {
+				t.Fatal("the question on the program's screen is not pending")
+			}
+		})
+	}
+	for _, question := range []struct {
+		adapter string
+		prompt  string
+	}{
+		{adapter: GenericID, prompt: overwritePrompt},
+		{adapter: AiderID, prompt: aiderApplyPrompt},
+	} {
+		t.Run(question.adapter+"/answered before the agent ever repainted", func(t *testing.T) {
+			processor := playSession(t, question.adapter, false, []sessionStep{
+				agentWrites("agent ready\r\n", 0),
+				agentWrites(question.prompt, 1),
+				operatorAnswers(1),
+				agentWrites("y\r\n", 1),
+				agentWrites("\x1b[?1049h\x1b[H\x1b[2Jfull-screen tool\r\n", 1),
+				agentWrites("\x1b[5;1H"+question.prompt, 2),
+			})
+			if processor.Pending() == nil {
+				t.Fatal("the question on the program's screen is not pending")
+			}
+		})
+		t.Run(question.adapter+"/the program ended with a full reset", func(t *testing.T) {
+			processor := playSession(t, question.adapter, false, []sessionStep{
+				agentWrites("agent ready\r\n", 0),
+				agentWrites(question.prompt, 1),
+				operatorAnswers(1),
+				agentWrites("y\r\n", 1),
+				agentWrites("\x1b[?1049h\x1b[H\x1b[2Jfull-screen tool", 1),
+				agentWrites("\x1bc", 1),
+				agentWrites("agent output\r\n"+question.prompt, 2),
+			})
+			if processor.Pending() == nil {
+				t.Fatal("the question after the reset is not pending")
+			}
+		})
+	}
+}
+
+// An answer with no row is kept for the primary screen only when it was there
+// before the program took the grid. One given while the program has it is about
+// a question on the program's own grid: raised from a tmux snapshot of the pane,
+// and answered before any write could find its row. Treated as the primary
+// screen's, it answered for nothing on the program's grid, and the next write,
+// which still showed the question just answered, asked it again.
+func TestAQuestionFromASnapshotOfAProgramsScreenIsNotAskedAgainOnceAnswered(t *testing.T) {
+	for _, question := range []struct {
+		adapter string
+		prompt  string
+	}{
+		{adapter: GenericID, prompt: overwritePrompt},
+		{adapter: AiderID, prompt: aiderApplyPrompt},
+	} {
+		t.Run(question.adapter, func(t *testing.T) {
+			processor := playSession(t, question.adapter, false, []sessionStep{
+				agentWrites("\x1b[?1049h\x1b[H\x1b[2Jfull-screen agent\r\n", 0),
+				// An operator attached to the pane saw the question and
+				// detached; the backend resyncs from a snapshot.
+				tmuxResyncsWith("full-screen agent\n"+strings.TrimSpace(question.prompt)+"\n", 0),
+				operatorAnswers(0),
+				agentWrites("\x1b[2;1H"+question.prompt, 0),
+				agentWrites(escapeOnlyWrite, 0),
 			})
 			if pending := processor.Pending(); pending != nil {
 				t.Fatalf("the session is blocked on an answered question: %q", pending.Match)

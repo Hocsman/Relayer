@@ -108,12 +108,27 @@ type DetectionState struct {
 // rowBlank records that the row was blank at the last write: a frame caught
 // between its erase and its repaint. The Processor sets it, because only the
 // screen knows; see answeredAt for the one thing it changes.
+//
+// parked records that the entry is kept for the primary screen while a
+// full-screen program has the alternate one: its row is parked with that
+// screen, or it has no row, was there before the program took the grid, and is
+// looked for once that screen is back. The Processor sets it on every write,
+// because only the screen knows. Such an entry suppresses nothing: the question
+// it remembers is not on the grid being read, and what is on it, the program's
+// screen, is not where it was answered. Taking part, it did three things. An answered row that was blank when the
+// program started kept its blank flag, and the generic adapter's blank-row
+// exception took the identical question on the program's screen for the
+// answered one moved; an entry with no row matched the identical line anywhere
+// on the program's screen, since without a row the line alone decides; and
+// after a full reset, which leaves the screen on the alternate grid for good,
+// that lasted until the end of the session. Each was a question put to nobody.
 type answeredQuestion struct {
 	signature string
 	match     string
 	line      string
 	anchor    screen.RowID
 	rowBlank  bool
+	parked    bool
 }
 
 // maxAnsweredMemory bounds the set. A screen cannot show an unbounded number of
@@ -151,8 +166,10 @@ func (s *DetectionState) rememberAnswered(signature, match string, anchor screen
 			// watching a line the operator has finished with.
 			if anchor != 0 {
 				s.answered[index].anchor = anchor
-				// The occurrence was just seen on that row, so it is not blank.
+				// The occurrence was just seen on that row, so it is not blank,
+				// and it is on the grid being read, so it is not parked.
 				s.answered[index].rowBlank = false
+				s.answered[index].parked = false
 			}
 			if line != "" {
 				s.answered[index].line = line
@@ -186,6 +203,9 @@ func (s *DetectionState) rememberAnswered(signature, match string, anchor screen
 // snapshot, whose text maps onto no grid, and the Codex adapter, whose footer
 // must end the line, so that nothing typed after the question can still match.
 // Detection on the rendered screen asks answeredAt, which knows the row.
+//
+// An entry kept for the parked primary screen takes no part, see parked: the
+// line is being read on the program's screen, or on a snapshot of it.
 func (s *DetectionState) answersTheSameQuestion(line string) bool {
 	if s == nil {
 		return false
@@ -195,6 +215,9 @@ func (s *DetectionState) answersTheSameQuestion(line string) bool {
 		return false
 	}
 	for _, entry := range s.answered {
+		if entry.parked {
+			continue
+		}
 		if entry.line != "" && strings.TrimSpace(entry.line) == asked {
 			return true
 		}
@@ -288,6 +311,11 @@ func (s *DetectionState) answeredOnItsRow(line string, anchor screen.RowID) bool
 // answeredOnTheScreen is the body of answeredAt and answeredOnItsRow.
 // overABlankRow says whether a blank answered row lets the same line on another
 // row stand for the answered question.
+//
+// An entry kept for the parked primary screen is not looked at, see parked. Its
+// row is on no grid a candidate can come from, so the first rule cannot apply,
+// and the second would compare a question on the program's screen with one on
+// the screen underneath it.
 func (s *DetectionState) answeredOnTheScreen(line string, anchor screen.RowID, overABlankRow bool) bool {
 	if s == nil {
 		return false
@@ -298,7 +326,7 @@ func (s *DetectionState) answeredOnTheScreen(line string, anchor screen.RowID, o
 	}
 	for _, entry := range s.answered {
 		answered := strings.TrimSpace(entry.line)
-		if answered == "" {
+		if answered == "" || entry.parked {
 			continue
 		}
 		if anchor != 0 && entry.anchor == anchor {

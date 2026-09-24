@@ -284,6 +284,27 @@ func (s *Screen) resizeTo(width, height int, keep bool) {
 // render — which is what a terminal interface does — would report the whole
 // screen as new work on every write, and the actionable region would never
 // narrow.
+//
+// While a full-screen program has the alternate screen, only that screen is
+// resized. The parked primary one is resized once, to the size then in force,
+// when the program exits; see switchScreen. That is what ConPTY does, and ConPTY
+// renders every Windows session: it leaves the primary buffer alone while the
+// alternate one is shown, so a window dragged smaller and back while an editor
+// was open gives the primary screen back exactly as it was, and ConPTY repaints
+// it that way. Following every step of the drag shifted the parked rows up on
+// the shrink, pushed the top ones into the history, and did not pull them back
+// on the grow: the answered question came back on a row the memory did not
+// know, and was asked again. On Unix Relayer is the terminal, and giving the
+// primary screen back as it was left is as good an answer as any.
+//
+// It also keeps row identities unique. The parked screen mints its new rows from
+// the counter it was parked with, which the alternate screen has been using
+// since. A pane that more than doubled its height while a full-screen agent had
+// it — four agents to one in the desktop grid, a small pane maximised — gave a
+// row of the program's grid and a parked row one name. RowParked then answered
+// yes for a live row, and an answer given there was kept for the rest of the
+// program: the same dialog asked again later on that row was never offered, and
+// the agent waited on a question nobody was shown.
 func (s *Screen) Resize(width, height int) {
 	if width <= 0 {
 		width = defaultWidth
@@ -293,9 +314,6 @@ func (s *Screen) Resize(width, height int) {
 	}
 	if clamp(width, MinWidth, MaxWidth) == s.width && clamp(height, MinHeight, MaxHeight) == s.height {
 		return
-	}
-	if s.alternate != nil {
-		s.alternate.resizeTo(width, height, true)
 	}
 	s.resizeTo(width, height, true)
 }

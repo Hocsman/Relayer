@@ -144,12 +144,10 @@ func (s *Screen) switchScreen(toAlternate bool) {
 	// The whole grid leaves the view in either direction.
 	s.evicted++
 	if toAlternate {
-		// nextRowID travels into the saved screen and back out again. Resize
-		// resizes the ALTERNATE screen too, and resizeTo mints identities from
-		// whatever counter that struct holds: leaving it at zero there would
-		// hand the saved primary rows names that are already in use on the live
-		// grid, and a memory anchored on one of them would follow the wrong
-		// line home.
+		// The parked screen mints nothing while it is parked: Resize leaves it
+		// alone until the program exits. Its counter is carried anyway, so that
+		// it is a whole screen, and it is brought up to the live one before the
+		// resize on the way back.
 		saved := &Screen{width: s.width, height: s.height, rows: s.rows,
 			scrollback: s.scrollback, cursor: s.cursor, saved: s.saved,
 			scrollTop: s.scrollTop, scrollBottom: s.scrollBottom, autowrap: s.autowrap,
@@ -166,9 +164,17 @@ func (s *Screen) switchScreen(toAlternate bool) {
 	}
 	restored := s.alternate
 	s.alternate = nil
-	if restored.nextRowID > s.nextRowID {
-		s.nextRowID = restored.nextRowID
+	// The primary screen missed every resize while the program ran, and takes
+	// the size in force now, in one step, as ConPTY resizes its primary buffer
+	// when the program exits; see Resize. It mints the rows it adds from the live
+	// counter, which is the one the alternate screen has been using: minted from
+	// the counter it was parked with, they would carry names the program's grid
+	// has already given out.
+	restored.nextRowID = max(restored.nextRowID, s.nextRowID)
+	if restored.width != s.width || restored.height != s.height {
+		restored.resizeTo(s.width, s.height, true)
 	}
+	s.nextRowID = restored.nextRowID
 	s.rows = restored.rows
 	s.scrollback = restored.scrollback
 	s.cursor = restored.cursor

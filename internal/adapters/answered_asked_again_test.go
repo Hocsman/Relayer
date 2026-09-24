@@ -12,13 +12,16 @@ import (
 // the agent waiting for an answer that no card is offering.
 
 // sessionStep is one thing that happens to a session: the agent writes, the
-// operator answers the question that is pending, or the terminal changes size.
-// raised is how many occurrences the session must have raised once it is done.
+// operator answers the question that is pending, the terminal changes size, or
+// the tmux backend resyncs from a snapshot of the pane. raised is how many
+// occurrences the session must have raised once it is done; a resync raises
+// none of its own, since the backend publishes what it returns.
 type sessionStep struct {
-	write   string
-	answers bool
-	resize  [2]int
-	raised  int
+	write    string
+	answers  bool
+	resize   [2]int
+	snapshot string
+	raised   int
 }
 
 func agentWrites(text string, raised int) sessionStep {
@@ -33,12 +36,18 @@ func terminalResizedTo(columns, rows, raised int) sessionStep {
 	return sessionStep{resize: [2]int{columns, rows}, raised: raised}
 }
 
+func tmuxResyncsWith(snapshot string, raised int) sessionStep {
+	return sessionStep{snapshot: snapshot, raised: raised}
+}
+
 func (step sessionStep) String() string {
 	switch {
 	case step.answers:
 		return "the operator answers"
 	case step.resize != [2]int{}:
 		return fmt.Sprintf("the terminal is resized to %dx%d", step.resize[0], step.resize[1])
+	case step.snapshot != "":
+		return fmt.Sprintf("the tmux backend resyncs with %q", step.snapshot)
 	default:
 		return fmt.Sprintf("the agent writes %q", step.write)
 	}
@@ -80,6 +89,10 @@ func playSession(t *testing.T, adapterID string, onConPTY bool, steps []sessionS
 			}
 		case step.resize != [2]int{}:
 			processor.Resize(step.resize[0], step.resize[1])
+		case step.snapshot != "":
+			if _, _, err := processor.ReconcileSnapshot([]byte(step.snapshot)); err != nil {
+				t.Fatal(err)
+			}
 		default:
 			if err := processor.Consume([]byte(step.write)); err != nil {
 				t.Fatal(err)

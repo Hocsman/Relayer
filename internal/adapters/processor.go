@@ -80,6 +80,13 @@ type Processor struct {
 	// probe has no business carrying what the real screen showed.
 	pendingAnchor screenAnchor
 
+	// alternateShown is whether a full-screen program had the alternate screen
+	// when the last write was read. It tells the answered memory an entry with
+	// no row that was there before the program took the grid, and belongs to the
+	// primary screen underneath, from one remembered while the program had it,
+	// whose question was on the program's grid. See Consume.
+	alternateShown bool
+
 	mu                         sync.Mutex
 	semanticHooks              sync.WaitGroup
 	ansiCarry                  string
@@ -214,6 +221,10 @@ func (p *Processor) Consume(chunk []byte) error {
 			onGrid = true
 			live := make([]answeredQuestion, 0, len(p.state.answered))
 			for _, entry := range p.state.pendingAnswers() {
+				// Parked or not is decided again on every write, below: the
+				// program exits, and the entry answers for its row again.
+				wasParked := entry.parked
+				entry.parked = false
 				if entry.anchor != 0 {
 					// The match, or the line it was asked on. A vendor match is
 					// the label of a kind of prompt — "Apply changes?" for
@@ -247,6 +258,10 @@ func (p *Processor) Consume(chunk []byte) error {
 						// second answer into the agent. The row has not stopped
 						// carrying the question; it is out of view. Nothing
 						// about it changes while parked, rowBlank included.
+						//
+						// Kept, it answers for nothing on the program's screen:
+						// see answeredQuestion.parked.
+						entry.parked = true
 						live = append(live, entry)
 						continue
 					}
@@ -277,7 +292,21 @@ func (p *Processor) Consume(chunk []byte) error {
 					// unchanged; looked for on the alternate grid it is found
 					// nowhere, the entry went, and the question still painted
 					// underneath was asked again the moment the program exited.
-					// It is looked for once the primary screen is back.
+					// It is looked for once the primary screen is back, and
+					// until then it answers for nothing on the program's
+					// screen, see answeredQuestion.parked: with no row, the
+					// line alone would decide, and the identical question
+					// anywhere on the program's grid would be put to nobody.
+					//
+					// That is an entry that was there before the program
+					// took the grid. One remembered while the program had it
+					// is about a question on the program's own grid: raised
+					// from a tmux snapshot of it, and answered before any
+					// write could find its row. Parked, it answered for
+					// nothing there, and the next write, which still showed
+					// the question it had just answered, asked it again.
+					// It goes on comparing its line, as it always did.
+					entry.parked = wasParked || !p.alternateShown
 					live = append(live, entry)
 					continue
 				}
@@ -302,6 +331,7 @@ func (p *Processor) Consume(chunk []byte) error {
 				}
 			}
 			p.state.keepAnswered(live)
+			p.alternateShown = p.screen.OnAlternate()
 			p.refreshPendingAnchor()
 			p.state.UseRenderedScreen(rendered, burst, fenceParity(rendered), anchors)
 			withdrawn = p.reconcilePendingWithScreen()

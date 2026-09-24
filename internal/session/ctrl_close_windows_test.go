@@ -29,6 +29,10 @@ func TestMain(m *testing.M) {
 		runCtrlCloseHelper(marker)
 		return
 	}
+	if kind := os.Getenv(answeredThenProgramHelperEnv); kind != "" {
+		runAnsweredThenProgramHelper(kind)
+		return
+	}
 	if os.Getenv(detachHelperEnv) != "" {
 		fmt.Println("READY")
 		_, _, _ = windows.NewLazySystemDLL("kernel32.dll").NewProc("FreeConsole").Call()
