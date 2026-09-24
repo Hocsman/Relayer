@@ -584,6 +584,19 @@ func (c *Controller) SendTerminalInput(runID, sessionID string, data []byte, ope
 //
 // Taking a hand another operator holds is refused rather than silently stolen;
 // the caller is expected to request control instead.
+//
+// Keystrokes are never journaled, so the attach record is what says who was at
+// the terminal, and it is journaled first: through the run's supervision core,
+// under the same lock the hand is taken under, before any client can see the
+// terminal held or its holder type into it. A record the journal refuses
+// leaves the terminal as it was and fails the call, and freezes the run as
+// the core's own entries do; once the journal has failed, no terminal is
+// taken this way. The gateway took the hand first and wrote the record
+// afterwards, dropping its error, so keystrokes could reach the agent before
+// any record of the attach existed, or with none at all. Releasing is
+// journaled after the hand is let go, best effort, as the control records are
+// (recordControlAudit): a release that could not be journaled must still
+// release, and the core freezes the run all the same.
 func (c *Controller) SetInteractiveSession(runID, sessionID string, active bool, operator, connID string) error {
 	c.mu.RLock()
 	rt := c.runtime
@@ -601,46 +614,58 @@ func (c *Controller) SetInteractiveSession(runID, sessionID string, active bool,
 		return errUnknownSession
 	}
 
-	// The unjournaled forms: this verb writes its own attach record below, and
-	// one action must not appear in the journal twice.
-	var err error
-	if active {
-		_, err = c.TakeControl(sessionID, connID, operator)
-	} else {
-		_, _, err = c.releaseHand(sessionID, connID)
-	}
-	if err != nil {
-		return err
-	}
-
 	if strings.TrimSpace(operator) == "" {
 		operator = "operator"
 	}
-
-	kind := audit.KindAttachStarted
-	outcome := "attached"
-	if !active {
-		kind = audit.KindAttachFinished
-		outcome = "detached"
+	attachEntry := func(change handTransition, active bool) audit.Entry {
+		kind, outcome := audit.KindAttachStarted, "attached"
+		if !active {
+			kind, outcome = audit.KindAttachFinished, "detached"
+		}
+		role := change.actor.role
+		if role == "" {
+			role = string(RoleOperator)
+		}
+		return audit.Entry{
+			Kind:       kind,
+			SessionID:  change.agent.SessionID,
+			AgentID:    strings.TrimSpace(change.agent.AgentID),
+			Backend:    strings.ToLower(strings.TrimSpace(change.agent.Backend)),
+			Adapter:    strings.ToLower(strings.TrimSpace(change.agent.Adapter)),
+			DecisionBy: audit.DecisionByHuman,
+			Operator:   operator,
+			Outcome:    audit.OutcomeApplied,
+			Reason:     "operator_interactive_" + outcome,
+			Metadata: map[string]string{
+				"operator": operator,
+				"role":     role,
+				"conn_id":  change.actor.connID,
+				"active":   strconv.FormatBool(active),
+			},
+		}
 	}
 
-	_ = rt.RecordAudit(audit.Entry{
-		Kind:       kind,
-		SessionID:  strings.TrimSpace(sessionID),
-		AgentID:    strings.TrimSpace(agent.AgentID),
-		Backend:    strings.ToLower(strings.TrimSpace(agent.Backend)),
-		Adapter:    strings.ToLower(strings.TrimSpace(agent.Adapter)),
-		DecisionBy: audit.DecisionByHuman,
-		Operator:   operator,
-		Outcome:    audit.OutcomeApplied,
-		Reason:     "operator_interactive_" + outcome,
-		Metadata: map[string]string{
-			"operator": operator,
-			"role":     c.roleFor(connID),
-			"conn_id":  strings.TrimSpace(connID),
-			"active":   strconv.FormatBool(active),
-		},
-	})
+	// The unjournaled forms of the hand's verbs: this verb writes its own
+	// attach record, and one action must not appear in the journal twice.
+	if active {
+		_, _, err := c.mutateHandRecorded(sessionID, connID, takeHand, func(change handTransition) error {
+			// Under c.mu, which the core's RecordAudit allows: it never shows
+			// anything on its caller's goroutine.
+			return c.sup.RecordAudit(attachEntry(change, true))
+		})
+		if err != nil {
+			return err
+		}
+	} else {
+		_, change, err := c.releaseHand(sessionID, connID)
+		if err != nil {
+			return err
+		}
+		c.mu.RLock()
+		sup := c.sup
+		c.mu.RUnlock()
+		_ = sup.RecordAudit(attachEntry(change, false))
+	}
 
 	// The status is the core's: the gateway's own copy of it is never updated,
 	// and a prompt the hand just turned into an ask leaves the agent waiting.
@@ -681,19 +706,6 @@ func (c *Controller) ResizeSession(runID, sessionID string, columns, rows int, c
 	defer cancel()
 
 	return rt.Resize(ctx, sessionID, terminal.Size{Columns: columns, Rows: rows})
-}
-
-// roleFor reports the role recorded for a connection, defaulting to operator
-// for callers the registrar never saw (the desktop bridge has no connections).
-func (c *Controller) roleFor(connID string) string {
-	c.mu.RLock()
-	entry, found := c.presence[strings.TrimSpace(connID)]
-	c.mu.RUnlock()
-
-	if !found || entry.role == "" {
-		return string(RoleOperator)
-	}
-	return entry.role
 }
 
 // StopSession, StartSession and RestartSession go through the run's

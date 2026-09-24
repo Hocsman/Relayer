@@ -108,8 +108,11 @@ Interactive attach over the web has the same property as native tmux attach:
 input goes directly to the pseudo-terminal and does not pass through the
 adapter, policy, manual-delivery, or audit decision path. Attach and detach are
 recorded with the acting operator, and the keystrokes themselves deliberately
-are not. Interactive attach is operator-only and should be treated as
-equivalent to sitting at the agent's terminal.
+are not. The attach is journaled before the terminal is handed over, and
+refused when it cannot be; only the connection holding the terminal may type
+into it, and never while an answer or a line is being written to it. Interactive
+attach is operator-only and should be treated as equivalent to sitting at the
+agent's terminal.
 
 ### tmux server
 

@@ -268,24 +268,30 @@ func (c *Controller) ListPresence(sessionID string) (PresenceView, error) {
 // TakeControl acquires a free hand. It deliberately refuses to steal a held
 // one: the caller is told to request control instead.
 //
-// It journals nothing itself: its only caller is the attach verb, which
-// records attach_started, so one action never produces two records.
+// It journals nothing itself. No client reaches it: a client takes a terminal
+// through the attach verb, SetInteractiveSession, which takes the hand the
+// same way once attach_started is journaled, so one action never produces two
+// records and no terminal is held that the journal does not say was taken.
 func (c *Controller) TakeControl(sessionID, connID, operator string) (HandView, error) {
-	view, _, err := c.mutateHand(sessionID, connID, func(hand handState, entry presenceEntry, now time.Time) (handState, error) {
-		if entry.role == string(RoleViewer) {
-			return hand, ErrViewerRole
-		}
-		if hand.held() && hand.holderConnID != connID {
-			return hand, ErrHandHeld
-		}
-		hand.holderConnID = entry.connID
-		hand.holderIdentity = entry.identity
-		if hand.since.IsZero() {
-			hand.since = now
-		}
-		return hand, nil
-	})
+	view, _, err := c.mutateHand(sessionID, connID, takeHand)
 	return view, err
+}
+
+// takeHand gives a free hand, or one the connection already holds, to the
+// connection; a viewer and a hand somebody else holds are refused.
+func takeHand(hand handState, entry presenceEntry, now time.Time) (handState, error) {
+	if entry.role == string(RoleViewer) {
+		return hand, ErrViewerRole
+	}
+	if hand.held() && hand.holderConnID != entry.connID {
+		return hand, ErrHandHeld
+	}
+	hand.holderConnID = entry.connID
+	hand.holderIdentity = entry.identity
+	if hand.since.IsZero() {
+		hand.since = now
+	}
+	return hand, nil
 }
 
 // ReleaseControl frees a hand held by this connection and journals it as
@@ -554,6 +560,19 @@ func (c *Controller) mutateHand(
 	sessionID, connID string,
 	apply func(handState, presenceEntry, time.Time) (handState, error),
 ) (HandView, handTransition, error) {
+	return c.mutateHandRecorded(sessionID, connID, apply, nil)
+}
+
+// mutateHandRecorded is mutateHand with a record journaled before the hand
+// changes, under the same lock acquisition: when record returns an error, the
+// transition is dropped and the error returned, and nothing changed. record,
+// when not nil, is called under c.mu, and so may call only what is safe under
+// it, such as the supervision core's RecordAudit.
+func (c *Controller) mutateHandRecorded(
+	sessionID, connID string,
+	apply func(handState, presenceEntry, time.Time) (handState, error),
+	record func(handTransition) error,
+) (HandView, handTransition, error) {
 	key := sessionKey(sessionID)
 	if key == "" {
 		return HandView{}, handTransition{}, errors.New("session id is empty")
@@ -592,6 +611,14 @@ func (c *Controller) mutateHand(
 		return view, change, err
 	}
 	change.after = next
+	if record != nil {
+		if err := record(change); err != nil {
+			change.after = change.before
+			view := c.handViewLocked(key)
+			c.mu.Unlock()
+			return view, change, err
+		}
+	}
 
 	if c.hands == nil {
 		c.hands = make(map[string]handState)
@@ -625,18 +652,25 @@ type controlRecord struct {
 }
 
 // recordControlAudit journals a transition after the lock is released and the
-// snapshots are out: an audit write is synchronous file I/O, and nothing that
-// holds c.mu may wait on a disk.
+// snapshots are out: an audit write is synchronous file I/O, and a hand-over
+// need not hold c.mu while it waits on a disk.
 //
-// A write failure is not reported to the operator, matching the attach and
-// recording records. The hand has already moved by then, and refusing the
-// answer would leave the interface disagreeing with the server about who
-// holds the terminal.
+// The record is best effort: a write failure is not reported to the operator.
+// The hand has already moved by then, and refusing the answer would leave the
+// interface disagreeing with the server about who holds the terminal. It goes
+// through the run's supervision core all the same, the way the core's own
+// entries go: an entry the journal refuses freezes the run, so no keystroke,
+// answer or line follows a hand-over nothing records. The gateway wrote it
+// straight to the runtime and dropped the error, and the core, never told its
+// journal had failed, went on admitting the new holder's keystrokes. Only the
+// attach record is written before the hand moves, and refuses the hand when
+// it cannot be (SetInteractiveSession): it is the verb a holder takes a
+// terminal by.
 func (c *Controller) recordControlAudit(change handTransition, rec controlRecord) {
 	c.mu.RLock()
-	rt := c.runtime
+	sup := c.sup
 	c.mu.RUnlock()
-	if rt == nil {
+	if sup == nil {
 		return
 	}
 
@@ -662,7 +696,7 @@ func (c *Controller) recordControlAudit(change handTransition, rec controlRecord
 		metadata["target_conn_id"] = rec.targetConnID
 	}
 
-	_ = rt.RecordAudit(audit.Entry{
+	_ = sup.RecordAudit(audit.Entry{
 		Kind:       rec.kind,
 		SessionID:  change.agent.SessionID,
 		AgentID:    change.agent.AgentID,

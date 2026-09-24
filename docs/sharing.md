@@ -147,6 +147,20 @@ Keystrokes themselves are never journaled. The audit model has no field for
 terminal input, and sharing does not add one. To record what happened inside a
 session, see [session recording](recording.md).
 
+What the journal does say is who held each terminal, and it says so first.
+`attach_started` is written before the terminal is handed over, under the
+same lock: until it is on disk no client sees the terminal held and nobody can
+type into it. If it cannot be written, the terminal stays as it was and the
+attach fails; once the journal has failed, no terminal is attached. The
+control records and `attach_finished` are best effort: the hand has moved by
+the time they are written, and refusing the action then would leave the
+interface disagreeing with the gateway about who holds the terminal. Every one
+of them still goes through the supervision core, so a record the journal
+refuses freezes the run, as a refused decision entry does: no keystroke,
+answer or line follows it. Before v0.8.9 the gateway handed the terminal over
+first and wrote the record afterwards, and ignored a failed write, so a holder
+could type with no record of holding the terminal.
+
 ## What sharing is not
 
 - It is **not an access control boundary**. Anyone holding an operator token can
