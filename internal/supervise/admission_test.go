@@ -93,6 +93,15 @@ func TestRawInputIsRefusedWhenTheSessionCannotTakeAWrite(t *testing.T) {
 				sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
 				return func() {}
 			}},
+		// The drain comes first, as it does in the order Admit documents:
+		// refused as a journal failure, the drain read as one.
+		{name: "the run drains after the journal failed", want: supervise.ErrRuntimeStopped,
+			set: func(_ *testing.T, sup *supervise.Supervisor, engine *fakeEngine) func() {
+				engine.set(func(f *fakeEngine) { f.auditFailAt = f.auditCalls + 1 })
+				sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
+				sup.BeginDrain()
+				return func() {}
+			}},
 		{name: "the session is frozen", want: supervise.ErrDeliveryUncertain,
 			set: func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine) func() {
 				engine.set(func(f *fakeEngine) { f.applyErr = errors.New("write failed half way") })

@@ -48,8 +48,11 @@ func (s *Supervisor) Admit(sessionID, connID string) (release func(), err error)
 	sessionKey := strings.ToLower(strings.TrimSpace(sessionID))
 	connID = strings.TrimSpace(connID)
 	if !s.beginDelivery() {
+		// The gate is closed by a drain and by a failed journal alike: the
+		// drain is named first, in the order above, as rawRefusalLocked
+		// names it once the gate is passed.
 		s.mu.RLock()
-		failed := s.auditFailed
+		failed := s.auditFailed && !s.shuttingDown
 		s.mu.RUnlock()
 		if failed {
 			return nil, ErrAuditUnavailable

@@ -150,7 +150,9 @@ type Options struct {
 	// the policy never answers. Zero or less means DefaultRepeatWindow: the
 	// guard cannot be turned off.
 	RepeatWindow time.Duration
-	// Now is the clock that times RepeatWindow; nil means time.Now.
+	// Now is the clock that times RepeatWindow; nil means time.Now. The core
+	// calls it from several goroutines at once, outside its own lock: it must
+	// be safe for concurrent use.
 	Now func() time.Time
 }
 
