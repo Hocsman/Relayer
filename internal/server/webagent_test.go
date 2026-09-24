@@ -272,6 +272,9 @@ type webGateway struct {
 	ctrl         *Controller
 	auditPath    string
 	recordingDir string
+	// cancelStart cancels the context the run was started with, as a signal
+	// to Serve does.
+	cancelStart context.CancelFunc
 
 	mu     sync.Mutex
 	frames []webFrame
@@ -374,6 +377,7 @@ func startWebRun(t *testing.T, run webRun) *webGateway {
 		gateway.mu.Unlock()
 	})
 	ctx, cancel := context.WithCancel(context.Background())
+	gateway.cancelStart = cancel
 	if err := ctrl.Start(ctx); err != nil {
 		cancel()
 		t.Fatalf("Start: %v", err)

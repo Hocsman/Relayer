@@ -165,6 +165,14 @@ func NewController(configPath string, diagnostics io.Writer) (*Controller, error
 }
 
 // Start boots the supervisor runtime and begins event processing.
+//
+// The run's context keeps ctx's values but not its cancellation: a run ends
+// by StopRun, "Save and restart" or Close, which drain it in order, and never
+// because the caller's context ended. Serve passes the context its signals
+// cancel, and an interrupt cancelled the run before Close drained it: an
+// answer being written was cut off and recorded as uncertain, and the exits of
+// the agents Close then stopped were never journaled. A run started by "Save
+// and restart" already had a context of its own.
 func (c *Controller) Start(ctx context.Context) error {
 	c.lifecycleMu.Lock()
 	defer c.lifecycleMu.Unlock()
@@ -175,7 +183,7 @@ func (c *Controller) Start(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	return c.startLocked(ctx, runID)
+	return c.startLocked(context.WithoutCancel(ctx), runID)
 }
 
 // newRunID draws the ID of a run about to start.

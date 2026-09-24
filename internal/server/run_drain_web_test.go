@@ -361,3 +361,31 @@ func TestEndingAWebRunIsBoundedWhenAWriteNeverReturns(t *testing.T) {
 		t.Fatalf("a run started or stopped beside the one that did not end cleanly: %v", err)
 	}
 }
+
+// A run ends by StopRun, "Save and restart" or Close, which drain it in
+// order, never because the context it was started with ended: Serve starts
+// the first run with the context its signals cancel, and an interrupt
+// cancelled the run before Close could drain it. An answer being written was
+// cut off and recorded as uncertain, and the exits of the agents Close then
+// stopped were never journaled. Once that context ends, the run still takes
+// an answer, writes it and journals it.
+func TestAWebRunOutlivesTheContextItWasStartedWith(t *testing.T) {
+	g := startWebRun(t, webRun{
+		agents: []webAgent{{id: "web-generic", mode: webAgentGeneric, adapter: "generic"}},
+	})
+	prompt := g.awaitPending("web-generic", 30*time.Second)
+	g.cancelStart()
+	time.Sleep(200 * time.Millisecond)
+
+	if err := g.ctrl.SubmitDecision(prompt.RunID, prompt.SessionID, prompt.ID, "after-the-signal", webOperator); err != nil {
+		t.Fatalf("an answer once the start context ended: %v", err)
+	}
+	screen := g.awaitReport("web-generic", 20*time.Second)
+	if first, count, _ := answers(screen); count != 1 || !strings.HasPrefix(first, `"after-the-signal`) {
+		t.Fatalf("the agent received %s (%d answers), want the answer once; screen:\n%s", first, count, screen)
+	}
+	deliveries := entriesOf(g.sessionJournal("web-generic"), audit.KindDelivery)
+	if len(deliveries) != 1 || deliveries[0].Outcome != audit.OutcomeApplied {
+		t.Fatalf("delivery entries = %s, want the answer applied", journalTrace(deliveries))
+	}
+}
