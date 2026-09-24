@@ -516,7 +516,7 @@ func (a *App) ResizeSession(runID, sessionID string, columns, rows int) error {
 	if err != nil {
 		return err
 	}
-	release, admitted := run.sup.Admit()
+	release, admitted := run.sup.AdmitRun()
 	if !admitted {
 		return errRuntimeStopped
 	}

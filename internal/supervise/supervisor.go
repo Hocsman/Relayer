@@ -46,11 +46,11 @@ type Engine interface {
 // operation that changes it, and should not block: the goroutine calling it
 // may be delivering a decision, and the other goroutines that show something
 // wait for it. A front end may hold a lock of its own while it reads the core
-// or calls SetHolder, Admit or BeginDrain, none of which calls the sink on the
-// caller's goroutine. It must not hold a lock its sink takes while it calls an
-// operation that changes the core, which may show what another goroutine
-// queued, nor while it calls Wait, which waits for goroutines that show
-// things.
+// or calls SetHolder, AdmitRun, Admit, the release Admit returns or
+// BeginDrain, none of which calls the sink on the caller's goroutine. It must
+// not hold a lock its sink takes while it calls an operation that changes the
+// core, which may show what another goroutine queued, nor while it calls
+// Wait, which waits for goroutines that show things.
 type Sink interface {
 	// Prompt shows a prompt, or a change of its delivery state.
 	Prompt(View)
@@ -232,7 +232,10 @@ type Supervisor struct {
 	holders map[string]string
 	// heldEntries is, per session, closed once the evaluation entries of the
 	// prompts the hand last turned into asks are journaled.
-	heldEntries  map[string]chan struct{}
+	heldEntries map[string]chan struct{}
+	// rawInFlight marks a session whose holder's keystrokes are admitted
+	// (Admit): the session's one write slot is theirs until released.
+	rawInFlight  map[string]bool
 	auditFailed  bool
 	shuttingDown bool
 	// outbox holds the sink calls not yet made, in the order of the state
@@ -301,6 +304,7 @@ func New(ctx context.Context, engine Engine, options Options) (*Supervisor, erro
 		frozen:            make(map[string]bool),
 		holders:           make(map[string]string),
 		heldEntries:       make(map[string]chan struct{}),
+		rawInFlight:       make(map[string]bool),
 		deliveryAvailable: true,
 	}, nil
 }
@@ -352,18 +356,6 @@ func (s *Supervisor) Draining() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.shuttingDown
-}
-
-// Admit admits one backend write the core does not make itself, such as a
-// terminal resize, through the gate a drain closes and then waits on: no
-// write of a run is still in progress when its runtime closes. It admits
-// nothing once the run drains or its journal has failed. release must be
-// called once, when the write has returned.
-func (s *Supervisor) Admit() (release func(), admitted bool) {
-	if !s.beginDelivery() {
-		return nil, false
-	}
-	return s.endDelivery, true
 }
 
 // BeginDrain stops the run taking anything in: no write is admitted, no

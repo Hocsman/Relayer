@@ -73,6 +73,12 @@ func (s *Supervisor) SubmitLine(runID, sessionID, line string, actor Actor) erro
 		s.mu.Unlock()
 		return ErrLineInFlight
 	}
+	if s.rawInFlight[sessionKey] {
+		// The hand was released while its holder's keystrokes were still
+		// being written.
+		s.mu.Unlock()
+		return ErrDecisionInFlight
+	}
 	s.lineInFlight[sessionKey] = true
 	s.mu.Unlock()
 	defer s.finishLine(sessionKey)

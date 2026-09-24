@@ -29,3 +29,7 @@ var (
 // role may only watch. It is checked before anything else, so the request
 // changes nothing and journals nothing, whatever else is wrong with it.
 var ErrReadOnlyActor = errors.New("permission denied: this role is read-only")
+
+// ErrNotHolder refuses a raw write to a session's terminal from a connection
+// that does not hold its hand, including any connection while nobody does.
+var ErrNotHolder = errors.New("this connection does not hold the session's terminal")

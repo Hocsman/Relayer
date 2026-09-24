@@ -28,6 +28,12 @@ func (s *Supervisor) scheduleAutomatic(sessionID string) {
 		s.mu.Unlock()
 		return
 	}
+	if s.rawInFlight[sessionKey] {
+		// The holder's keystrokes are being written, and the session takes
+		// one write at a time: their release considers the prompt again.
+		s.mu.Unlock()
+		return
+	}
 	key, item, found := s.firstPendingForSessionLocked(sessionKey)
 	if !found || !item.evaluation.Automatic || item.view.DeliveryStatus != "pending" {
 		s.mu.Unlock()
@@ -416,6 +422,10 @@ func (s *Supervisor) applyHumanDecision(
 		return ErrDeliveryUncertain
 	}
 	if _, busy := s.inFlight[key.sessionID]; busy || s.lineInFlight[key.sessionID] || item.view.DeliveryStatus != "pending" {
+		s.mu.Unlock()
+		return ErrDecisionInFlight
+	}
+	if s.rawInFlight[key.sessionID] {
 		s.mu.Unlock()
 		return ErrDecisionInFlight
 	}

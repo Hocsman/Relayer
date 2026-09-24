@@ -1561,7 +1561,7 @@ func TestNewRefusesAnIncompleteRun(t *testing.T) {
 // A drain admits nothing more and waits for what it admitted.
 func TestADrainWaitsForAdmittedWritesAndAdmitsNoMore(t *testing.T) {
 	sup, _ := newCoreForTest(t, newFakeEngine(), "agent-a")
-	release, admitted := sup.Admit()
+	release, admitted := sup.AdmitRun()
 	if !admitted {
 		t.Fatal("a live run refused a write")
 	}
@@ -1569,7 +1569,7 @@ func TestADrainWaitsForAdmittedWritesAndAdmitsNoMore(t *testing.T) {
 	if !sup.Draining() {
 		t.Fatal("the run does not report draining")
 	}
-	if _, admitted := sup.Admit(); admitted {
+	if _, admitted := sup.AdmitRun(); admitted {
 		t.Fatal("a draining run admitted a write")
 	}
 	if err := sup.SubmitLine(testRunID, "agent-a", "hello", desktop); !errors.Is(err, supervise.ErrRuntimeStopped) {

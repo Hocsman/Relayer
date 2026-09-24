@@ -88,6 +88,19 @@
 //     journal nor calls the sink on its caller's goroutine, so a front end
 //     may call it under a lock of its own. It replaces SetAttached, which
 //     only recorded that somebody held the terminal.
+//   - A session takes one write at a time, raw keystrokes included. Admit
+//     admits the keystrokes a terminal's holder types, which reach the agent
+//     without the policy and are never journaled, only from the connection
+//     that holds the hand (ErrNotHolder otherwise, and from everybody while
+//     nobody does), never during a drain, after the journal failed, on a
+//     frozen session or a process stopped, stopping or starting, and never
+//     while a decision, a line or other keystrokes are being written
+//     (ErrDecisionInFlight). While they are admitted, a person's answer and a
+//     line on the session are refused, and the policy's answer waits for
+//     their release. AdmitRun is the run-wide admission a terminal resize
+//     takes, the desktop's Admit renamed. RecordAudit journals a front end's
+//     own entry, such as the gateway's attach_started, through the core's
+//     fail-closed path: an entry the journal refuses freezes the run.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

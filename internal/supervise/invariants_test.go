@@ -1018,7 +1018,7 @@ func TestAFailedJournalAdmitsNoOtherWrite(t *testing.T) {
 		t.Fatal("the journal did not fail")
 	}
 
-	if release, admitted := sup.Admit(); admitted {
+	if release, admitted := sup.AdmitRun(); admitted {
 		release()
 		t.Fatal("a write was admitted after the journal failed")
 	}
