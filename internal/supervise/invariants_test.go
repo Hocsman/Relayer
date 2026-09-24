@@ -88,6 +88,33 @@ func TestAnAutomaticPromptWaitsForAnEarlierHumanOneAndGoesOnceItIsAnswered(t *te
 	}
 }
 
+// An automatic prompt queued behind a human one goes when the agent withdraws
+// the human one, with nothing else asking for it: no write was in progress,
+// so no write's end will ask; the withdrawal must. Its asking used to be
+// tested only where the withdrawn prompt's answer was being written, and
+// there the write's end now asks instead, once it has released the session.
+func TestAnAutomaticPromptGoesOnceTheHumanOneBeforeItIsWithdrawn(t *testing.T) {
+	engine := newFakeEngine()
+	engine.evaluationByID["automatic-2"] = automaticAllow()
+	sup, _ := newCoreForTest(t, engine, "agent-a")
+	human := promptEvent("agent-a", "human-1")
+	automatic := promptEvent("agent-a", "automatic-2")
+	automatic.Sequence = 2
+	sup.Handle(session.AdapterEvent{Event: human})
+	sup.Handle(session.AdapterEvent{Event: automatic})
+	if calls := engine.applySnapshot(); len(calls) != 0 {
+		t.Fatalf("deliveries before the withdrawal = %#v, want none", calls)
+	}
+
+	sup.Handle(session.AdapterEventWithdrawn{Event: human})
+	waitFor(t, 2*time.Second, "the queued automatic answer", func() bool {
+		return len(engine.auditFor(audit.KindDelivery, "automatic-2")) == 1
+	})
+	if calls := engine.applySnapshot(); len(calls) != 1 || calls[0].event.ID != "automatic-2" {
+		t.Fatalf("deliveries = %#v, want the automatic answer alone", calls)
+	}
+}
+
 // Automatic prompts queued behind a human one go in the agent's order, not in
 // the order the adapter reported them.
 func TestQueuedAutomaticPromptsAreAnsweredInTheAgentsOrder(t *testing.T) {

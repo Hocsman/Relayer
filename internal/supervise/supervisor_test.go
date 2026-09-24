@@ -237,6 +237,53 @@ func TestAnUncertainAutomaticDeliveryFreezesTheSession(t *testing.T) {
 	}
 }
 
+// A human answer whose write fails for any reason but an answer the adapter
+// cannot encode, or a prompt the agent no longer shows, may have reached the
+// agent in part, as an automatic one may: the session is frozen, the caller
+// is told the delivery is uncertain and the failure is shown by a fixed
+// message. This was pinned only through the answer the adapter cannot
+// encode, which the human path wrongly treated the same way; it no longer
+// does (TestAHumanAnswerTheAdapterCannotEncodeGoesBackToTheOperator).
+func TestAnUncertainHumanDeliveryFreezesTheSession(t *testing.T) {
+	const detail = "write /dev/pts/3: secret-transport-detail"
+	engine := newFakeEngine()
+	engine.applyErr = errors.New(detail)
+	sup, sink := newCoreForTest(t, engine, "agent-a")
+	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
+	sink.reset()
+
+	if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y"); !errors.Is(err, supervise.ErrDeliveryUncertain) {
+		t.Fatalf("SubmitDecision = %v, want ErrDeliveryUncertain", err)
+	}
+	deliveries := engine.auditFor(audit.KindDelivery, "prompt-1")
+	if len(deliveries) != 1 || deliveries[0].Outcome != audit.OutcomeFallbackDeliveryUncertain ||
+		deliveries[0].Reason != "delivery_uncertain" || deliveries[0].DecisionBy != audit.DecisionByHuman {
+		t.Fatalf("delivery entries = %#v", deliveries)
+	}
+	state := sup.State()
+	if len(state.Pending) != 1 || state.Pending[0].DeliveryStatus != "uncertain" || state.Pending[0].Evaluation.Reason != "delivery_uncertain" {
+		t.Fatalf("prompt after an uncertain delivery = %#v", state.Pending)
+	}
+	if agent := agentOf(t, sup, "agent-a"); !agent.InputFrozen {
+		t.Fatalf("an uncertain delivery left the session writable: %#v", agent)
+	}
+	if got := trace(sink.snapshot()); !reflect.DeepEqual(got, []string{"prompt:delivering", "prompt:uncertain", "error:delivery_uncertain"}) {
+		t.Fatalf("sink = %v", got)
+	}
+	if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "n"); !errors.Is(err, supervise.ErrDeliveryUncertain) {
+		t.Fatalf("a second answer after the uncertainty = %v, want ErrDeliveryUncertain", err)
+	}
+	if err := sup.SubmitLine(testRunID, "agent-a", "hello"); !errors.Is(err, supervise.ErrDeliveryUncertain) {
+		t.Fatalf("a line after the uncertainty = %v, want ErrDeliveryUncertain", err)
+	}
+	if calls := engine.applySnapshot(); len(calls) != 1 {
+		t.Fatalf("a frozen session received %d deliveries, want the one attempt", len(calls))
+	}
+	if strings.Contains(sinkText(sink.snapshot()), "secret-transport-detail") {
+		t.Fatal("the transport error reached the sink")
+	}
+}
+
 // A backend stream error on a live session journals backend_error and marks
 // the agent failed. It is not an exit: the process may still run, so the
 // agent stays running and its prompts stay answerable.
@@ -791,7 +838,7 @@ func TestAHumanAnswerTheAdapterCannotEncodeGoesBackToTheOperator(t *testing.T) {
 		engine.evaluationByID["automatic-2"] = automaticAllow()
 		engine.supportedDecisions = []adapters.Decision{adapters.DecisionAllow, adapters.DecisionDeny}
 		engine.applyErrs = []error{adapters.ErrDecisionUnsupported}
-		sup, _ := newCoreForTest(t, engine, "agent-a")
+		sup, sink := newCoreForTest(t, engine, "agent-a")
 		sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "human-1")})
 		automatic := promptEvent("agent-a", "automatic-2")
 		automatic.Sequence = 2
@@ -800,6 +847,13 @@ func TestAHumanAnswerTheAdapterCannotEncodeGoesBackToTheOperator(t *testing.T) {
 		if err := sup.SubmitAutomaticDecision(testRunID, "agent-a", "automatic-2", "deny"); !errors.Is(err, supervise.ErrUnsupportedDecision) {
 			t.Fatalf("the operator's refused answer = %v, want ErrUnsupportedDecision", err)
 		}
+		for _, view := range sup.State().Pending {
+			if view.ID == "automatic-2" && (view.Evaluation.Automatic || view.Evaluation.Action != string(policy.ActionAsk) ||
+				view.Evaluation.ProposedAction != string(policy.ActionAllow)) {
+				t.Fatalf("the refused prompt = %#v, want it shown as the operator's, with the policy's proposal kept", view)
+			}
+		}
+		sink.reset()
 		if err := sup.SubmitDecision(testRunID, "agent-a", "human-1", "y"); err != nil {
 			t.Fatalf("the earlier prompt's answer = %v", err)
 		}
@@ -810,6 +864,37 @@ func TestAHumanAnswerTheAdapterCannotEncodeGoesBackToTheOperator(t *testing.T) {
 		}
 		if ids := pendingIDs(sup); len(ids) != 1 || ids[0] != "automatic-2" {
 			t.Fatalf("pending = %v, want the refused prompt still with the operator", ids)
+		}
+		for _, call := range sink.snapshot() {
+			if call.kind == "prompt" && call.view.ID == "automatic-2" {
+				t.Fatalf("the refused prompt was taken up again once the session was free: %v", trace(sink.snapshot()))
+			}
+		}
+	})
+
+	// The refused answer's delivery entry is journaled like any other: when
+	// the journal fails on it, the run stops sending, as it does everywhere.
+	t.Run("the journal fails on the refused answer", func(t *testing.T) {
+		engine := newFakeEngine()
+		engine.applyErrs = []error{adapters.ErrDecisionUnsupported}
+		sup, _ := newCoreForTest(t, engine, "agent-a")
+		sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
+		// The decision entry, then the delivery entry, which fails.
+		engine.set(func(f *fakeEngine) { f.auditFailAt = f.auditCalls + 2 })
+
+		if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y"); !errors.Is(err, supervise.ErrAuditUnavailable) {
+			t.Fatalf("a refused answer the journal could not record = %v, want ErrAuditUnavailable", err)
+		}
+		state := sup.State()
+		if !state.AuditFailed || len(state.Pending) != 1 || state.Pending[0].DeliveryStatus != "failed" ||
+			state.Pending[0].Evaluation.Reason != "audit_unavailable" {
+			t.Fatalf("state = %#v, want the journal failed and the prompt with it", state)
+		}
+		if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "n"); err == nil {
+			t.Fatal("an answer was taken after the journal failed")
+		}
+		if calls := engine.applySnapshot(); len(calls) != 1 {
+			t.Fatalf("deliveries = %#v, want the one refused attempt", calls)
 		}
 	})
 }
