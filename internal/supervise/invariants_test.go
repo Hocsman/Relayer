@@ -2,6 +2,7 @@ package supervise_test
 
 import (
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -314,6 +315,89 @@ func TestAWithdrawnPromptIsNotTakenInAgain(t *testing.T) {
 	}
 	if detected := engine.auditFor(audit.KindEventDetected, "prompt-1"); len(detected) != 1 {
 		t.Fatalf("the withdrawn prompt was journaled again: %#v", detected)
+	}
+}
+
+// A withdrawal that arrives while its prompt is still being taken in, by the
+// event loop or by a reconciliation on another goroutine, is not lost: the
+// prompt is not left pending, and its withdrawal is journaled after the
+// entries that took it in. The withdrawal found nothing pending and did
+// nothing, and the prompt then waited on the operator for a question the
+// agent no longer asked, holding up every automatic answer behind it until
+// somebody clicked it, which failed as stale.
+func TestAWithdrawalWhileItsPromptIsTakenInIsNotLost(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		blocked audit.Kind
+	}{
+		{name: "while its detection is journaled", blocked: audit.KindEventDetected},
+		{name: "while its evaluation is journaled", blocked: audit.KindPolicyEvaluated},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newFakeEngine()
+			engine.evaluationByID["automatic-2"] = automaticAllow()
+			journalStarted := make(chan struct{}, 1)
+			journalRelease := make(chan struct{})
+			releaseJournal := releaser(t, journalRelease)
+			engine.auditBlockKind = test.blocked
+			engine.auditBlockEventID = "prompt-1"
+			engine.auditStarted = journalStarted
+			engine.auditRelease = journalRelease
+			sup, sink := newCoreForTest(t, engine, "agent-a")
+			prompt := promptEvent("agent-a", "prompt-1")
+
+			handled := make(chan struct{})
+			go func() {
+				sup.Handle(session.AdapterEvent{Event: prompt})
+				close(handled)
+			}()
+			select {
+			case <-journalStarted:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the prompt's entry was never journaled")
+			}
+			sup.Handle(session.AdapterEventWithdrawn{Event: prompt})
+			releaseJournal()
+			select {
+			case <-handled:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the prompt was never taken in")
+			}
+
+			if ids := pendingIDs(sup); len(ids) != 0 {
+				t.Fatalf("pending = %v, want the withdrawn prompt gone", ids)
+			}
+			for _, call := range sink.snapshot() {
+				if call.kind == "prompt" || call.kind == "notify" {
+					t.Fatalf("a prompt withdrawn before it was taken in was shown: %v", trace(sink.snapshot()))
+				}
+			}
+			var journal []string
+			for _, entry := range engine.auditSnapshot() {
+				if entry.EventID == "prompt-1" {
+					journal = append(journal, string(entry.Kind))
+				}
+			}
+			want := []string{string(audit.KindEventDetected), string(audit.KindPolicyEvaluated), string(audit.KindEventWithdrawn)}
+			if !reflect.DeepEqual(journal, want) {
+				t.Fatalf("the prompt's journal = %v, want %v", journal, want)
+			}
+			if agent := agentOf(t, sup, "agent-a"); agent.Status != "running" {
+				t.Fatalf("the agent after the withdrawal = %#v, want it running", agent)
+			}
+
+			// A late copy is refused, and the next prompt is answered as usual.
+			sup.Handle(session.AdapterEvent{Event: prompt})
+			if ids := pendingIDs(sup); len(ids) != 0 {
+				t.Fatalf("pending after a late copy = %v", ids)
+			}
+			next := promptEvent("agent-a", "automatic-2")
+			next.Sequence = 2
+			sup.Handle(session.AdapterEvent{Event: next})
+			waitFor(t, 2*time.Second, "the next prompt's automatic answer", func() bool {
+				return len(engine.auditFor(audit.KindDelivery, "automatic-2")) == 1
+			})
+		})
 	}
 }
 

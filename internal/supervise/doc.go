@@ -140,6 +140,11 @@
 //     which exists to bring a person in, stalled the agent. A prompt the hand
 //     asks is not notified, since its holder is at the terminal, nor is a
 //     person's own answer handed back to them.
+//   - A withdrawal that arrives while its prompt is still being taken in, by
+//     the event loop or a reconciliation, leaves a tombstone: the prompt is
+//     set aside instead of pending, and its withdrawal journaled after the
+//     entries that took it in. It was lost, and the prompt waited on the
+//     operator for a question the agent no longer asked.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

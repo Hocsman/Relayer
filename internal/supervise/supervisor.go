@@ -190,10 +190,12 @@ type writeClaim struct {
 // set aside. hand is the session's hand generation when it was reserved: a
 // hand taken since, even one released again, may have typed its answer.
 // signature is the prompt's, which keystrokes written meanwhile count as
-// answered (finishRaw).
+// answered (finishRaw). withdrawn is the tombstone its withdrawal leaves
+// when it arrives before the prompt is pending.
 type ingestion struct {
 	hand      uint64
 	signature string
+	withdrawn bool
 }
 
 // pendingEvent is a prompt the run waits on. evaluation is the policy's, as

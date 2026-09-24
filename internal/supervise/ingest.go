@@ -37,9 +37,24 @@ func (s *Supervisor) handleAdapterEventWithdrawn(event adapters.Event) {
 	}
 
 	backend := s.backendFor(event.SessionID)
-	s.mu.RLock()
+	s.mu.Lock()
+	if taking, ingesting := s.ingesting[key]; ingesting {
+		if _, pending := s.pending[key]; !pending {
+			// The prompt is still being taken in, by the event loop or by a
+			// reconciliation on another goroutine: nothing is pending to
+			// withdraw yet. The withdrawal is left for that goroutine, which
+			// sets the prompt aside instead of making it pending and journals
+			// the withdrawal after the entries that took it in. Found nothing
+			// and done nothing, it left the prompt pending, waiting on the
+			// operator for a question the agent no longer asked.
+			taking.withdrawn = true
+			s.ingesting[key] = taking
+			s.mu.Unlock()
+			return
+		}
+	}
 	owed := s.heldEntries[key.sessionID]
-	s.mu.RUnlock()
+	s.mu.Unlock()
 	awaitHeldEntries(owed)
 	_ = s.recordAudit(eventWithdrawnEntry(event, backend, "agent_withdrew_occurrence"))
 
@@ -145,6 +160,16 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 		evaluation.Reason == policy.ReasonExfiltration ||
 		evaluation.Reason == policy.ReasonGuardrailBlocked
 	s.mu.Lock()
+	if s.ingesting[key].withdrawn {
+		// The agent withdrew the prompt while it was being taken in: it is
+		// set aside, remembered so that a late copy is refused, and its
+		// withdrawal journaled after the entries that took it in. It was
+		// never shown, and nothing waits on it.
+		s.markResolvedLocked(key)
+		s.mu.Unlock()
+		_ = s.recordAudit(eventWithdrawnEntry(event, backend, "agent_withdrew_occurrence"))
+		return
+	}
 	// The hand may have been taken since the evaluation was journaled, while
 	// the prompt was not yet among those SetHolder turns into asks: it is
 	// asked now, and a second entry says why. So it is when the hand was
