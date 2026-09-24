@@ -44,9 +44,9 @@ func (s *Supervisor) StopSession(runID, sessionID string) error {
 	}
 	s.stoppingSessions[sessionKey] = true
 	s.agents[index].Status = "stopping"
-	displaySessionID := s.agents[index].SessionID
+	s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: s.agents[index].SessionID, Status: "stopping"})
 	s.mu.Unlock()
-	s.sink.Status(Status{RunID: s.runID, Scope: "session", SessionID: displaySessionID, Status: "stopping"})
+	s.flush()
 	ctx, cancel := context.WithTimeout(s.ctx, session.StopBudget+2*time.Second)
 	err := s.engine.StopAgent(ctx, sessionID)
 	cancel()
@@ -103,9 +103,9 @@ func (s *Supervisor) StartSession(runID, sessionID string) error {
 	s.startingSessions[sessionKey] = true
 	s.agents[index].Status = "starting"
 	s.dropSessionPendingLocked(sessionKey)
-	displaySessionID := s.agents[index].SessionID
+	s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: s.agents[index].SessionID, Status: "starting", ClearedBefore: clearedAll()})
 	s.mu.Unlock()
-	s.sink.Status(Status{RunID: s.runID, Scope: "session", SessionID: displaySessionID, Status: "starting", ClearedBefore: clearedAll()})
+	s.flush()
 	startedAt := time.Now().UTC()
 	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 	err := s.engine.StartAgent(ctx, sessionID)
@@ -117,9 +117,10 @@ func (s *Supervisor) StartSession(runID, sessionID string) error {
 		if index, found := s.agentIndex[sessionKey]; found {
 			s.agents[index].Status = "failed"
 		}
+		s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: sessionID, Status: "failed"})
+		s.emitSafeErrorLocked("start_failed", "session could not be started", sessionID)
 		s.mu.Unlock()
-		s.sink.Status(Status{RunID: s.runID, Scope: "session", SessionID: sessionID, Status: "failed"})
-		s.emitSafeError("start_failed", "session could not be started", sessionID)
+		s.flush()
 		return errors.New("session could not be started")
 	}
 	s.completeAgentStart(sessionKey, startedAt)
@@ -168,9 +169,9 @@ func (s *Supervisor) RestartSession(runID, sessionID string) error {
 	s.startingSessions[sessionKey] = true
 	s.agents[index].Status = "stopping"
 	s.dropSessionPendingLocked(sessionKey)
-	displaySessionID := s.agents[index].SessionID
+	s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: s.agents[index].SessionID, Status: "stopping", ClearedBefore: clearedAll()})
 	s.mu.Unlock()
-	s.sink.Status(Status{RunID: s.runID, Scope: "session", SessionID: displaySessionID, Status: "stopping", ClearedBefore: clearedAll()})
+	s.flush()
 	startedAt := time.Now().UTC()
 	ctx, cancel := context.WithTimeout(s.ctx, session.StopBudget+8*time.Second)
 	err := s.engine.RestartAgent(ctx, sessionID)
@@ -182,8 +183,9 @@ func (s *Supervisor) RestartSession(runID, sessionID string) error {
 		if index, found := s.agentIndex[sessionKey]; found {
 			s.agents[index].Status = "failed"
 		}
+		s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: sessionID, Status: "failed"})
 		s.mu.Unlock()
-		s.sink.Status(Status{RunID: s.runID, Scope: "session", SessionID: sessionID, Status: "failed"})
+		s.flush()
 		s.freezeLineSession(sessionKey)
 		s.emitSafeError("restart_failed", "session could not be restarted cleanly", sessionID)
 		return errors.New("session could not be restarted cleanly")
@@ -209,16 +211,17 @@ func (s *Supervisor) completeAgentStart(sessionKey string, startedAt time.Time) 
 	// new process running with its predecessor's output. In this order a reader
 	// between them sees the agent still starting, or stopping for a Restart,
 	// with no output yet, which is true. A session's identity never changes
-	// after New, so reading it first is safe.
-	s.mu.RLock()
+	// after New, so reading it first is safe. The report is made, not only
+	// queued, before the agent is marked running: flush returns once every
+	// call queued before it was made.
+	s.mu.Lock()
 	displaySessionID := ""
 	if index, found := s.agentIndex[sessionKey]; found {
 		displaySessionID = s.agents[index].SessionID
+		s.emitLocked(func(sink Sink) { sink.Lifecycle(displaySessionID, PhaseStarted) })
 	}
-	s.mu.RUnlock()
-	if displaySessionID != "" {
-		s.sink.Lifecycle(displaySessionID, PhaseStarted)
-	}
+	s.mu.Unlock()
+	s.flush()
 	s.mu.Lock()
 	delete(s.stoppingSessions, sessionKey)
 	delete(s.startingSessions, sessionKey)
@@ -252,12 +255,15 @@ func (s *Supervisor) completeAgentStart(sessionKey string, startedAt time.Time) 
 		agent.ExitCode = nil
 		agent.InputFrozen = false
 	}
+	if displaySessionID != "" {
+		s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: displaySessionID, Status: status, ClearedBefore: bound.Format(time.RFC3339Nano)})
+		s.emitLocked(func(sink Sink) { sink.Refresh(displaySessionID) })
+	}
 	s.mu.Unlock()
+	s.flush()
 	if displaySessionID == "" {
 		return
 	}
-	s.sink.Status(Status{RunID: s.runID, Scope: "session", SessionID: displaySessionID, Status: status, ClearedBefore: bound.Format(time.RFC3339Nano)})
-	s.sink.Refresh(displaySessionID)
 	// A prompt the replacement raised while it was starting waited: no
 	// automatic decision is taken while a session is changing.
 	s.scheduleAutomatic(displaySessionID)

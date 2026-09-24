@@ -33,12 +33,23 @@ type Engine interface {
 	RecordAudit(audit.Entry) error
 }
 
-// Sink receives what the core has to show. The core calls it on the goroutine
-// that changed the state, at the points and in the order the desktop always
-// emitted, and never while it holds its own lock. A front end may therefore
-// hold a lock of its own while it calls the core, but a sink must not call an
-// operation that changes the core, and should not block: the goroutine calling
-// it may be delivering a decision.
+// Sink receives what the core has to show, in the order of the state changes
+// it reports: what one change shows is queued with the change, under the
+// core's lock, and the queue is shown in order by one goroutine at a time,
+// never while the core's lock is held. The sink is therefore never called by
+// two goroutines at once, and a prompt is never shown delivering after it was
+// shown delivered. A call is made on the goroutine that queued it, or on
+// another that was showing the queue meanwhile; either way, an operation's
+// calls are made before it returns, as the desktop always made them.
+//
+// A sink may read the core (State, Agent, Draining), but must not call an
+// operation that changes it, and should not block: the goroutine calling it
+// may be delivering a decision, and the other goroutines that show something
+// wait for it. A front end may hold a lock of its own while it reads the core
+// or calls SetAttached, Admit or BeginDrain, none of which shows anything. It
+// must not hold a lock its sink takes while it calls an operation that changes
+// the core, which may show what another goroutine queued, nor while it calls
+// Wait, which waits for goroutines that show things.
 type Sink interface {
 	// Prompt shows a prompt, or a change of its delivery state.
 	Prompt(View)
@@ -218,6 +229,12 @@ type Supervisor struct {
 	frozen           map[string]bool
 	auditFailed      bool
 	shuttingDown     bool
+	// outbox holds the sink calls not yet made, in the order of the state
+	// changes they report: each is queued under mu, with its change.
+	outbox []func(Sink)
+
+	// flushMu is held by the one goroutine that makes the outbox's calls.
+	flushMu sync.Mutex
 
 	deliveryMu        sync.Mutex
 	deliveryAvailable bool
@@ -431,9 +448,60 @@ func (s *Supervisor) freezeAudit() {
 		s.pending[key] = item
 	}
 	s.rebuildPendingLocked()
+	s.showStatusLocked(Status{RunID: s.runID, Scope: "audit", Status: "failed"})
+	s.emitSafeErrorLocked("audit_unavailable", "The local audit journal is unavailable. No further decision will be sent.", "")
 	s.mu.Unlock()
-	s.sink.Status(Status{RunID: s.runID, Scope: "audit", Status: "failed"})
-	s.emitSafeError("audit_unavailable", "The local audit journal is unavailable. No further decision will be sent.", "")
+	s.flush()
+}
+
+// emitLocked queues a sink call behind every call queued before it. The
+// caller holds mu, queues the call with the state change it reports, and
+// flushes once it has released mu.
+func (s *Supervisor) emitLocked(call func(Sink)) {
+	s.outbox = append(s.outbox, call)
+}
+
+// showPromptLocked queues a prompt's view, as emitLocked does.
+func (s *Supervisor) showPromptLocked(view View) {
+	s.emitLocked(func(sink Sink) { sink.Prompt(view) })
+}
+
+// showStatusLocked queues a status, as emitLocked does.
+func (s *Supervisor) showStatusLocked(status Status) {
+	s.emitLocked(func(sink Sink) { sink.Status(status) })
+}
+
+// emit queues a sink call and makes it, with every call queued before it.
+func (s *Supervisor) emit(call func(Sink)) {
+	s.mu.Lock()
+	s.emitLocked(call)
+	s.mu.Unlock()
+	s.flush()
+}
+
+// flush makes the queued sink calls in order, outside mu. One goroutine
+// flushes at a time and the others wait for it: when flush returns, every
+// call queued before it was called has been made, by this goroutine or by the
+// one it waited for. Each goroutine made its own calls once it had released
+// mu, and two that changed the state one after the other reached the sink in
+// either order: a withdrawal's delivered came before the delivering of the
+// answer it overtook, and an exit's status before the running one of the
+// delivery it ended.
+func (s *Supervisor) flush() {
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+	for {
+		s.mu.Lock()
+		calls := s.outbox
+		s.outbox = nil
+		s.mu.Unlock()
+		if len(calls) == 0 {
+			return
+		}
+		for _, call := range calls {
+			call(s.sink)
+		}
+	}
 }
 
 func (s *Supervisor) beginDelivery() bool {
@@ -520,13 +588,22 @@ func (s *Supervisor) rebuildPendingLocked() {
 }
 
 func (s *Supervisor) emitSafeError(code, message, sessionID string) {
-	s.sink.Error(SafeError{
+	s.mu.Lock()
+	s.emitSafeErrorLocked(code, message, sessionID)
+	s.mu.Unlock()
+	s.flush()
+}
+
+// emitSafeErrorLocked queues a failure to show, as emitLocked does.
+func (s *Supervisor) emitSafeErrorLocked(code, message, sessionID string) {
+	failure := SafeError{
 		RunID:     s.runID,
 		Code:      code,
 		Message:   message,
 		SessionID: sessionID,
 		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
-	})
+	}
+	s.emitLocked(func(sink Sink) { sink.Error(failure) })
 }
 
 func makeEventKey(sessionID, eventID string) eventKey {

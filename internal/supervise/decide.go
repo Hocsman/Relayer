@@ -37,12 +37,12 @@ func (s *Supervisor) scheduleAutomatic(sessionID string) {
 	s.pending[key] = item
 	s.inFlight[sessionKey] = writeClaim{key: key, signature: item.event.Signature}
 	s.rebuildPendingLocked()
-	view := item.view
+	s.showPromptLocked(item.view)
 	event := item.event.Clone()
 	evaluation := item.evaluation
 	s.eventWG.Add(1)
 	s.mu.Unlock()
-	s.sink.Prompt(view)
+	s.flush()
 	go func() {
 		defer s.eventWG.Done()
 		s.applyAutomatic(key, event, evaluation)
@@ -228,9 +228,9 @@ func (s *Supervisor) askOperator(key eventKey, current *policy.Evaluation, reaso
 	}
 	s.pending[key] = item
 	s.rebuildPendingLocked()
-	view := item.view
+	s.showPromptLocked(item.view)
 	s.mu.Unlock()
-	s.sink.Prompt(view)
+	s.flush()
 }
 
 func (s *Supervisor) addFrozenEvent(event adapters.Event, evaluation policy.Evaluation) {
@@ -246,8 +246,9 @@ func (s *Supervisor) addFrozenEvent(event adapters.Event, evaluation policy.Eval
 	}
 	s.setAgentWaitingLocked(event.SessionID)
 	s.rebuildPendingLocked()
+	s.showPromptLocked(view)
 	s.mu.Unlock()
-	s.sink.Prompt(view)
+	s.flush()
 }
 
 func (s *Supervisor) markDelivery(key eventKey, status, reason string) {
@@ -267,9 +268,9 @@ func (s *Supervisor) markDelivery(key eventKey, status, reason string) {
 		}
 	}
 	s.rebuildPendingLocked()
-	view := item.view
+	s.showPromptLocked(item.view)
 	s.mu.Unlock()
-	s.sink.Prompt(view)
+	s.flush()
 }
 
 func (s *Supervisor) freezeSession(key eventKey, reason string) {
@@ -292,12 +293,11 @@ func (s *Supervisor) resolveEvent(key eventKey) {
 		}
 		s.rebuildPendingLocked()
 		item.view.DeliveryStatus = "delivered"
+		s.showPromptLocked(item.view)
+		s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: key.sessionID, Status: status})
 	}
 	s.mu.Unlock()
-	if exists {
-		s.sink.Prompt(item.view)
-		s.sink.Status(Status{RunID: s.runID, Scope: "session", SessionID: key.sessionID, Status: status})
-	}
+	s.flush()
 }
 
 func (s *Supervisor) hasPendingForSessionLocked(sessionKey string) bool {
@@ -410,9 +410,9 @@ func (s *Supervisor) applyHumanDecision(
 	item.view.DeliveryStatus = "delivering"
 	s.pending[key] = item
 	s.rebuildPendingLocked()
-	view := item.view
+	s.showPromptLocked(item.view)
 	s.mu.Unlock()
-	s.sink.Prompt(view)
+	s.flush()
 	defer s.finishDecision(key)
 
 	backend := s.backendFor(sessionID)

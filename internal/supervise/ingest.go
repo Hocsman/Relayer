@@ -73,13 +73,13 @@ func (s *Supervisor) handleAdapterEventWithdrawn(event adapters.Event) {
 		currentStatus = s.agents[index].Status
 	}
 	s.rebuildPendingLocked()
-	s.mu.Unlock()
-
 	view := pending.view
 	view.DeliveryStatus = "delivered"
-	s.sink.Prompt(view)
-	s.sink.Status(Status{RunID: s.runID, Scope: "session", SessionID: event.SessionID, Status: currentStatus})
-	s.sink.Refresh(event.SessionID)
+	s.showPromptLocked(view)
+	s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: event.SessionID, Status: currentStatus})
+	s.emitLocked(func(sink Sink) { sink.Refresh(event.SessionID) })
+	s.mu.Unlock()
+	s.flush()
 	s.scheduleAutomatic(event.SessionID)
 }
 
@@ -114,7 +114,7 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 	// OutputAvailable is intentionally coalescable. Refreshing here guarantees
 	// that an essential semantic event still brings the latest bounded tail to
 	// the WebView even when its preceding output invalidation was dropped.
-	s.sink.Refresh(event.SessionID)
+	s.emit(func(sink Sink) { sink.Refresh(event.SessionID) })
 	if !s.recordAudit(eventDetectedEntry(event, backend)) {
 		s.addFrozenEvent(event, policy.Evaluation{Action: policy.ActionAsk, ProposedAction: policy.ActionAsk, Reason: policy.ReasonNoEngine})
 		return
@@ -128,28 +128,26 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 	}
 
 	view := supervisionView(s.runID, event, evaluation, "pending", s.engine.SupportedDecisions(event))
+	isGuardrail := evaluation.Reason == policy.ReasonDestructive ||
+		evaluation.Reason == policy.ReasonExfiltration ||
+		evaluation.Reason == policy.ReasonGuardrailBlocked
 	s.mu.Lock()
 	s.pending[key] = pendingEvent{event: event.Clone(), view: view, evaluation: evaluation}
 	s.setAgentWaitingLocked(event.SessionID)
 	s.rebuildPendingLocked()
-	s.mu.Unlock()
-	s.sink.Prompt(view)
+	s.showPromptLocked(view)
 	agentName := event.AgentID
-	s.mu.RLock()
 	if index, found := s.agentIndex[strings.ToLower(event.SessionID)]; found {
 		agentName = s.agents[index].Name
 	}
-	s.mu.RUnlock()
-	isGuardrail := evaluation.Reason == policy.ReasonDestructive ||
-		evaluation.Reason == policy.ReasonExfiltration ||
-		evaluation.Reason == policy.ReasonGuardrailBlocked
 
 	// A notice's details are the summary the prompt is shown with, never the
 	// adapter's own: a notification leaves the machine, and a webhook posts
 	// it as it is. The raw summary went out even for a prompt that asked for
 	// a password.
+	var notice *Notice
 	if isGuardrail {
-		s.sink.Notify(Notice{
+		notice = &Notice{
 			AgentName: agentName,
 			SessionID: event.SessionID,
 			Reason:    "security guardrail blocked (" + evaluation.Reason + ")",
@@ -157,7 +155,7 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 			Kind:      NoticeGuardrailBlocked,
 			Severity:  SeverityCritical,
 			Details:   view.Summary,
-		})
+		}
 	} else if !evaluation.Automatic {
 		reason := "confirmation required"
 		// The policy's reason for a sensitive prompt is ReasonSensitive; this
@@ -165,7 +163,7 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 		if requiresSecretHandling(event) || evaluation.Reason == policy.ReasonSensitive {
 			reason = "sensitive input required"
 		}
-		s.sink.Notify(Notice{
+		notice = &Notice{
 			AgentName: agentName,
 			SessionID: event.SessionID,
 			Reason:    reason,
@@ -173,8 +171,14 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 			Kind:      NoticePendingDecision,
 			Severity:  SeverityWarning,
 			Details:   view.Summary,
-		})
+		}
 	}
+	if notice != nil {
+		shown := *notice
+		s.emitLocked(func(sink Sink) { sink.Notify(shown) })
+	}
+	s.mu.Unlock()
+	s.flush()
 	s.scheduleAutomatic(event.SessionID)
 }
 
@@ -271,9 +275,10 @@ func (s *Supervisor) handleProcessExit(event adapters.Event, backend string) {
 	if found {
 		status = s.agents[index].Status
 	}
+	s.emitLocked(func(sink Sink) { sink.Refresh(event.SessionID) })
+	s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: event.SessionID, Status: status, ClearedBefore: clearedAll()})
 	s.mu.Unlock()
-	s.sink.Refresh(event.SessionID)
-	s.sink.Status(Status{RunID: s.runID, Scope: "session", SessionID: event.SessionID, Status: status, ClearedBefore: clearedAll()})
+	s.flush()
 }
 
 func (s *Supervisor) markSessionError(sessionID, reason string) {
@@ -291,9 +296,10 @@ func (s *Supervisor) markSessionError(sessionID, reason string) {
 	if index, found := s.agentIndex[strings.ToLower(sessionID)]; found {
 		s.agents[index].Status = "failed"
 	}
+	s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: sessionID, Status: "failed"})
+	s.emitSafeErrorLocked("backend_stream_failed", "The backend stream failed.", sessionID)
 	s.mu.Unlock()
-	s.sink.Status(Status{RunID: s.runID, Scope: "session", SessionID: sessionID, Status: "failed"})
-	s.emitSafeError("backend_stream_failed", "The backend stream failed.", sessionID)
+	s.flush()
 }
 
 func (s *Supervisor) markLegacyExit(sessionID string) {
@@ -304,6 +310,7 @@ func (s *Supervisor) markLegacyExit(sessionID string) {
 	}
 	s.clearSessionPendingLocked(sessionID)
 	s.rebuildPendingLocked()
+	s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: sessionID, Status: "failed", ClearedBefore: clearedAll()})
 	s.mu.Unlock()
-	s.sink.Status(Status{RunID: s.runID, Scope: "session", SessionID: sessionID, Status: "failed", ClearedBefore: clearedAll()})
+	s.flush()
 }

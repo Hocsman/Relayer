@@ -51,6 +51,14 @@
 //     just before the policy's decision. It is a backstop for an adapter that
 //     reads an answered question again under a new ID; the cost is that a
 //     genuine question asked twice within the window goes to the operator.
+//   - What the core shows reaches the sink in the order of the state changes
+//     it reports, one call at a time. Each change queues what it shows under
+//     the core's lock, and the queue is shown in order, outside that lock, by
+//     one goroutine at a time, before the operation that queued it returns.
+//     Each goroutine used to show its own change once it had released the
+//     lock, and two goroutines reached the sink in either order: a prompt
+//     could be shown delivering after it was shown delivered, and an agent
+//     running after it was shown exited.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

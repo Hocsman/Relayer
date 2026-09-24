@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -376,14 +377,31 @@ type sinkCall struct {
 }
 
 // recordingSink records every call in order. probe, when set, runs inside
-// each call, as a front end's sink would when it reads the core.
+// each call once it is recorded, as a front end's sink would when it reads the
+// core. gate, when set, runs inside each call before it is recorded, as a front
+// end that takes a moment to show what it was given.
 type recordingSink struct {
 	mu    sync.Mutex
 	calls []sinkCall
 	probe func()
+	gate  func(sinkCall)
+	// inside counts the calls in progress; overlapped is set when a call
+	// began while another was in progress.
+	inside     atomic.Int32
+	overlapped atomic.Bool
 }
 
 func (s *recordingSink) record(call sinkCall) {
+	if s.inside.Add(1) > 1 {
+		s.overlapped.Store(true)
+	}
+	defer s.inside.Add(-1)
+	s.mu.Lock()
+	gate := s.gate
+	s.mu.Unlock()
+	if gate != nil {
+		gate(call)
+	}
 	s.mu.Lock()
 	s.calls = append(s.calls, call)
 	probe := s.probe

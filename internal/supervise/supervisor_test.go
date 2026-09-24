@@ -1380,8 +1380,10 @@ func TestNoticesFollowTheDesktopsRules(t *testing.T) {
 }
 
 // The sink is called without the core's lock held, so a front end's sink may
-// read the core — State, Agent, Draining — from inside any callback. A call
-// made under the lock would deadlock here and fail on the watchdog.
+// read the core — State, Agent, Draining — from inside any callback. What the
+// core shows is queued under its lock and shown after it is released: a call
+// made under the lock, or a queue shown while holding it, would deadlock here
+// and fail on the watchdog.
 func TestTheSinkIsNeverCalledUnderTheCoreLock(t *testing.T) {
 	engine := newFakeEngine()
 	engine.evaluationByID["auto-1"] = automaticAllow()

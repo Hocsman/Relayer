@@ -150,8 +150,9 @@ func (s *Supervisor) freezeLineSession(sessionKey string) {
 		s.agents[index].InputFrozen = true
 		displaySessionID = s.agents[index].SessionID
 	}
+	s.emitSafeErrorLocked("delivery_uncertain", "Delivery is indeterminate. The session is frozen to prevent another send.", displaySessionID)
 	s.mu.Unlock()
-	s.emitSafeError("delivery_uncertain", "Delivery is indeterminate. The session is frozen to prevent another send.", displaySessionID)
+	s.flush()
 }
 
 func (s *Supervisor) markLineSessionUnavailable(sessionKey, status string) {
@@ -164,6 +165,7 @@ func (s *Supervisor) markLineSessionUnavailable(sessionKey, status string) {
 		agent.Status = status
 		displaySessionID = agent.SessionID
 	}
+	s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: displaySessionID, Status: status})
 	s.mu.Unlock()
-	s.sink.Status(Status{RunID: s.runID, Scope: "session", SessionID: displaySessionID, Status: status})
+	s.flush()
 }
