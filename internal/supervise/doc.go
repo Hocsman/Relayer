@@ -26,6 +26,11 @@
 //     with its real outcome, failed when it failed, and the reason
 //     process_exit_stale (audit.ReasonProcessExitStale), which the telemetry
 //     does not read as the end of the running session.
+//   - A human answer the adapter cannot encode never reached the agent, since
+//     the runtime encodes an answer before it writes any of it. Its delivery
+//     is journaled fallback_unsupported, the prompt goes back to the operator
+//     pending, no longer automatic and without that answer among those it
+//     offers, the caller gets ErrUnsupportedDecision, and nothing is frozen.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

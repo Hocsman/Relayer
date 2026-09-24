@@ -704,38 +704,112 @@ func TestAPromptRaisedWhileTheAgentStopsLeavesItShownStopping(t *testing.T) {
 	}
 }
 
-// DEFECT (v0.8.8 fix "human-path ErrDecisionUnsupported falls back to ask
-// without freezing"): an answer the adapter cannot encode is refused before
-// any byte is written, yet the human path treats it as an uncertain delivery
-// and freezes the session; the automatic path falls back to ask
-// (TestAnUnsupportedAutomaticDecisionFallsBackToAsk). The fix flips this test.
-func TestAHumanAnswerTheAdapterCannotEncodeFreezesTheSession(t *testing.T) {
-	engine := newFakeEngine()
-	engine.applyErr = adapters.ErrDecisionUnsupported
-	sup, sink := newCoreForTest(t, engine, "agent-a")
-	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
+// A human answer the adapter cannot encode goes back to the operator. The
+// runtime encodes an answer before it writes a byte of it (the router's
+// ApplyDecision), so the delivery is not uncertain: it is journaled
+// fallback_unsupported, the prompt is pending again without the answer it
+// could not take, the caller is told ErrUnsupportedDecision, and nothing is
+// frozen, so the operator can answer otherwise. The human path used to treat
+// it as an uncertain delivery and freeze the session, where the automatic
+// path (TestAnUnsupportedAutomaticDecisionFallsBackToAsk) fell back to ask.
+func TestAHumanAnswerTheAdapterCannotEncodeGoesBackToTheOperator(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		answer        func(*supervise.Supervisor) error
+		wantDecision  audit.Decision
+		wantDecisions []string
+	}{
+		{
+			name: "a typed answer",
+			answer: func(sup *supervise.Supervisor) error {
+				return sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y")
+			},
+			wantDecision:  audit.DecisionAsk,
+			wantDecisions: []string{"allow", "deny"},
+		},
+		{
+			name: "a button",
+			answer: func(sup *supervise.Supervisor) error {
+				return sup.SubmitAutomaticDecision(testRunID, "agent-a", "prompt-1", "deny")
+			},
+			wantDecision:  audit.DecisionDeny,
+			wantDecisions: []string{"allow"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newFakeEngine()
+			engine.supportedDecisions = []adapters.Decision{adapters.DecisionAllow, adapters.DecisionDeny}
+			engine.applyErrs = []error{adapters.ErrDecisionUnsupported}
+			sup, sink := newCoreForTest(t, engine, "agent-a")
+			sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
+			sink.reset()
 
-	err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y")
-	if !errors.Is(err, supervise.ErrDeliveryUncertain) {
-		t.Fatalf("SubmitDecision = %v: the defect is fixed, flip this test", err)
+			if err := test.answer(sup); !errors.Is(err, supervise.ErrUnsupportedDecision) {
+				t.Fatalf("an answer the adapter cannot encode = %v, want ErrUnsupportedDecision", err)
+			}
+			decisions := engine.auditFor(audit.KindDecision, "prompt-1")
+			if len(decisions) != 1 || decisions[0].DecisionBy != audit.DecisionByHuman || decisions[0].Decision != test.wantDecision {
+				t.Fatalf("decision entries = %#v", decisions)
+			}
+			deliveries := engine.auditFor(audit.KindDelivery, "prompt-1")
+			if len(deliveries) != 1 || deliveries[0].Outcome != audit.OutcomeFallbackUnsupported || deliveries[0].Reason != "fallback_unsupported" ||
+				deliveries[0].DecisionBy != audit.DecisionByHuman || deliveries[0].Decision != test.wantDecision {
+				t.Fatalf("delivery entries = %#v, want one fallback_unsupported", deliveries)
+			}
+			if agent := agentOf(t, sup, "agent-a"); agent.InputFrozen || agent.Status != "waiting" {
+				t.Fatalf("agent = %#v, want it waiting on the prompt and not frozen", agent)
+			}
+			state := sup.State()
+			if len(state.Pending) != 1 {
+				t.Fatalf("pending = %#v, want the prompt back", state.Pending)
+			}
+			view := state.Pending[0]
+			if view.DeliveryStatus != "pending" || !reflect.DeepEqual(view.Decisions, test.wantDecisions) ||
+				view.Evaluation.Automatic || view.Evaluation.Action != string(policy.ActionAsk) || view.Evaluation.Reason != "fallback_unsupported" {
+				t.Fatalf("prompt after the refused answer = %#v, want it pending without the refused answer", view)
+			}
+			if got := trace(sink.snapshot()); !reflect.DeepEqual(got, []string{"prompt:delivering", "prompt:pending"}) {
+				t.Fatalf("sink = %v, want the prompt shown delivering then pending again", got)
+			}
+
+			if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "n"); err != nil {
+				t.Fatalf("another answer after the refused one = %v", err)
+			}
+			if ids := pendingIDs(sup); len(ids) != 0 {
+				t.Fatalf("pending after the second answer = %v", ids)
+			}
+		})
 	}
-	deliveries := engine.auditFor(audit.KindDelivery, "prompt-1")
-	if len(deliveries) != 1 || deliveries[0].Outcome != audit.OutcomeFallbackDeliveryUncertain || deliveries[0].Reason != "delivery_uncertain" {
-		t.Fatalf("delivery entries = %#v", deliveries)
-	}
-	if agent := agentOf(t, sup, "agent-a"); !agent.InputFrozen {
-		t.Fatalf("agent = %#v, want the session frozen", agent)
-	}
-	if state := sup.State(); len(state.Pending) != 1 || state.Pending[0].DeliveryStatus != "uncertain" {
-		t.Fatalf("prompt = %#v", state.Pending)
-	}
-	found := false
-	for _, call := range sink.snapshot() {
-		found = found || (call.kind == "error" && call.failure.Code == "delivery_uncertain")
-	}
-	if !found {
-		t.Fatal("the freeze was not reported")
-	}
+
+	// An automatic prompt the operator answered is theirs from then on: the
+	// policy does not answer it once the operator's answer is refused. The
+	// prompt waits behind an earlier one only a human answers.
+	t.Run("an automatic prompt a human answered", func(t *testing.T) {
+		engine := newFakeEngine()
+		engine.evaluationByID["automatic-2"] = automaticAllow()
+		engine.supportedDecisions = []adapters.Decision{adapters.DecisionAllow, adapters.DecisionDeny}
+		engine.applyErrs = []error{adapters.ErrDecisionUnsupported}
+		sup, _ := newCoreForTest(t, engine, "agent-a")
+		sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "human-1")})
+		automatic := promptEvent("agent-a", "automatic-2")
+		automatic.Sequence = 2
+		sup.Handle(session.AdapterEvent{Event: automatic})
+
+		if err := sup.SubmitAutomaticDecision(testRunID, "agent-a", "automatic-2", "deny"); !errors.Is(err, supervise.ErrUnsupportedDecision) {
+			t.Fatalf("the operator's refused answer = %v, want ErrUnsupportedDecision", err)
+		}
+		if err := sup.SubmitDecision(testRunID, "agent-a", "human-1", "y"); err != nil {
+			t.Fatalf("the earlier prompt's answer = %v", err)
+		}
+		sup.BeginDrain()
+		sup.Wait()
+		if calls := engine.applySnapshot(); len(calls) != 2 {
+			t.Fatalf("deliveries = %#v, want only the two human answers", calls)
+		}
+		if ids := pendingIDs(sup); len(ids) != 1 || ids[0] != "automatic-2" {
+			t.Fatalf("pending = %v, want the refused prompt still with the operator", ids)
+		}
+	})
 }
 
 // The desktop's TestUnsupportedAutomaticDecisionFallsBackToAsk, through the

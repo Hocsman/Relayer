@@ -103,7 +103,7 @@ func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluati
 	defer s.finishDecision(key)
 	decision, supported := adapterDecisionForPolicy(evaluation.Action)
 	if !supported {
-		s.fallbackToAsk(key, "fallback_unsupported")
+		s.fallbackToAsk(key, "fallback_unsupported", "")
 		return
 	}
 	backend := s.backendFor(event.SessionID)
@@ -144,7 +144,7 @@ func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluati
 			return
 		}
 		if s.pendingExists(key) {
-			s.fallbackToAsk(key, "fallback_unsupported")
+			s.fallbackToAsk(key, "fallback_unsupported", "")
 		}
 		return
 	}
@@ -166,7 +166,13 @@ func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluati
 	}
 }
 
-func (s *Supervisor) fallbackToAsk(key eventKey, reason string) {
+// fallbackToAsk hands a prompt to the operator: pending again, and no longer
+// the policy's to answer. refused, when not empty, is an answer the adapter
+// could not encode for it, which the prompt no longer offers. A prompt the
+// operator tried to answer stays theirs even when the policy would have
+// answered it: were it automatic again, the policy could send the very answer
+// the operator had just tried to refuse.
+func (s *Supervisor) fallbackToAsk(key eventKey, reason string, refused adapters.Decision) {
 	s.mu.Lock()
 	item, exists := s.pending[key]
 	if !exists {
@@ -177,6 +183,16 @@ func (s *Supervisor) fallbackToAsk(key eventKey, reason string) {
 	item.view.Evaluation.Action = "ask"
 	item.view.Evaluation.Automatic = false
 	item.view.Evaluation.Reason = reason
+	if refused != "" {
+		// A new slice: the views already shown share the old one.
+		offered := make([]string, 0, len(item.view.Decisions))
+		for _, decision := range item.view.Decisions {
+			if decision != string(refused) {
+				offered = append(offered, decision)
+			}
+		}
+		item.view.Decisions = offered
+	}
 	s.pending[key] = item
 	s.rebuildPendingLocked()
 	view := item.view
@@ -374,6 +390,18 @@ func (s *Supervisor) applyHumanDecision(
 	err := s.engine.ApplyDecision(ctx, sessionID, item.event, decision, manualInput)
 	cancel()
 	if err != nil {
+		if errors.Is(err, adapters.ErrDecisionUnsupported) {
+			// The adapter has no bytes for this answer. The runtime encodes an
+			// answer before it writes any of it, so nothing reached the agent:
+			// the delivery is not uncertain and freezing the session, as an
+			// uncertain one does, left a prompt nobody could answer any more.
+			// It goes back to the operator without the answer it cannot take.
+			if !s.recordAudit(deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackUnsupported, "fallback_unsupported")) {
+				return ErrAuditUnavailable
+			}
+			s.fallbackToAsk(key, "fallback_unsupported", decision)
+			return ErrUnsupportedDecision
+		}
 		if errors.Is(err, adapters.ErrEventMismatch) {
 			if !s.recordAudit(deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackStale, "fallback_stale")) {
 				return ErrAuditUnavailable
