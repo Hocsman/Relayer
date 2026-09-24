@@ -220,12 +220,15 @@ type Supervisor struct {
 	now          func() time.Time
 	repeatWindow time.Duration
 
-	mu            sync.RWMutex
-	agents        []Agent
-	agentIndex    map[string]int
-	pendingViews  []View
-	pending       map[eventKey]pendingEvent
-	ingesting     map[eventKey]ingestion
+	mu           sync.RWMutex
+	agents       []Agent
+	agentIndex   map[string]int
+	pendingViews []View
+	pending      map[eventKey]pendingEvent
+	ingesting    map[eventKey]ingestion
+	// withdrawing marks a pending prompt whose withdrawal is being journaled:
+	// it is nobody's to act on any more (handleAdapterEventWithdrawn).
+	withdrawing   map[eventKey]struct{}
 	resolved      map[eventKey]struct{}
 	resolvedOrder []eventKey
 	inFlight      map[string]writeClaim
@@ -311,6 +314,7 @@ func New(ctx context.Context, engine Engine, options Options) (*Supervisor, erro
 		pendingViews:      []View{},
 		pending:           make(map[eventKey]pendingEvent),
 		ingesting:         make(map[eventKey]ingestion),
+		withdrawing:       make(map[eventKey]struct{}),
 		resolved:          make(map[eventKey]struct{}),
 		inFlight:          make(map[string]writeClaim),
 		answered:          make(map[string]map[string]time.Time),

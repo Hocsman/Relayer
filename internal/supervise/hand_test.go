@@ -384,6 +384,83 @@ func TestAHandTakenAndReleasedWhileAPromptIsTakenInLeavesItAsked(t *testing.T) {
 	}
 }
 
+// A withdrawal marks its prompt as going before it journals it, and the prompt
+// is nobody's to act on from then on: taking the hand leaves it alone, a
+// person's answer to it is refused as stale, and the policy does not claim it.
+// The withdrawal read the hand's debt, journaled, and only then removed the
+// prompt, and a hand taken meanwhile asked it and journaled why after the
+// journal said it was gone; a person's answer or the policy's could be
+// journaled, and written, after it too.
+func TestAPromptBeingWithdrawnIsNobodysToActOn(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		// automatic makes prompt-1 one the policy would answer, which then
+		// waits behind a line being written.
+		automatic bool
+		// act runs while the withdrawal of prompt-1 is journaled.
+		act func(t *testing.T, sup *supervise.Supervisor, letTheLineGo func())
+	}{
+		{name: "the hand taken", automatic: true, act: func(t *testing.T, sup *supervise.Supervisor, _ func()) {
+			sup.SetHolder("agent-a", "conn-1")
+		}},
+		{name: "a person's answer", act: func(t *testing.T, sup *supervise.Supervisor, _ func()) {
+			if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y", alice); !errors.Is(err, supervise.ErrDecisionStale) {
+				t.Errorf("an answer to a prompt being withdrawn = %v, want ErrDecisionStale", err)
+			}
+		}},
+		{name: "the policy's answer", automatic: true, act: func(t *testing.T, sup *supervise.Supervisor, letTheLineGo func()) {
+			// The line's end considers the session's first automatic prompt.
+			letTheLineGo()
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newFakeEngine()
+			letTheLineGo := func() {}
+			if test.automatic {
+				engine.evaluationByID["prompt-1"] = automaticAllow()
+			}
+			sup, _ := newCoreForTest(t, engine, "agent-a")
+			if test.automatic {
+				var lineOnce sync.Once
+				letTheLine := holdWithALine(t, engine, sup, "agent-a")
+				letTheLineGo = func() { lineOnce.Do(letTheLine) }
+			}
+			prompt := promptEvent("agent-a", "prompt-1")
+			sup.Handle(session.AdapterEvent{Event: prompt})
+			var once sync.Once
+			engine.set(func(f *fakeEngine) {
+				f.beforeAudit = func(entry audit.Entry) {
+					if entry.Kind == audit.KindEventWithdrawn && entry.EventID == "prompt-1" {
+						once.Do(func() { test.act(t, sup, letTheLineGo) })
+					}
+				}
+			})
+
+			sup.Handle(session.AdapterEventWithdrawn{Event: prompt})
+			letTheLineGo()
+			sup.BeginDrain()
+			sup.Wait()
+
+			var journal []string
+			for _, entry := range engine.auditSnapshot() {
+				if entry.EventID == "prompt-1" {
+					journal = append(journal, string(entry.Kind))
+				}
+			}
+			want := []string{string(audit.KindEventDetected), string(audit.KindPolicyEvaluated), string(audit.KindEventWithdrawn)}
+			if !reflect.DeepEqual(journal, want) {
+				t.Fatalf("the prompt's journal = %v, want %v", journal, want)
+			}
+			if calls := engine.applySnapshot(); len(calls) != 0 {
+				t.Fatalf("a prompt being withdrawn was answered: %#v", calls)
+			}
+			if ids := pendingIDs(sup); len(ids) != 0 {
+				t.Fatalf("pending = %v", ids)
+			}
+		})
+	}
+}
+
 // The hand may also be taken after the policy's answer to a prompt claimed the
 // session and before the policy's last check, the one it makes just before
 // its decision is journaled. SetHolder leaves a prompt whose answer is being

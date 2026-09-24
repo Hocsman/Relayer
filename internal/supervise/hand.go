@@ -80,6 +80,11 @@ func (s *Supervisor) SetHolder(sessionID, connID string) {
 		if key.sessionID != sessionKey || !item.evaluation.Automatic || item.view.DeliveryStatus != "pending" {
 			continue
 		}
+		if _, going := s.withdrawing[key]; going {
+			// Its withdrawal is being journaled: asked now, its entry would
+			// follow the one saying it was gone.
+			continue
+		}
 		if policyDenies(item.evaluation) {
 			// What the policy denies, the operator may only deny.
 			item.view.Decisions = onlyDeny(item.view.Decisions)

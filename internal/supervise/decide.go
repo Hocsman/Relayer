@@ -39,6 +39,12 @@ func (s *Supervisor) scheduleAutomatic(sessionID string) {
 		s.mu.Unlock()
 		return
 	}
+	if _, going := s.withdrawing[key]; going {
+		// The agent took the question back; its withdrawal considers the
+		// session's next prompt once it is gone.
+		s.mu.Unlock()
+		return
+	}
 	item.view.DeliveryStatus = "delivering"
 	s.pending[key] = item
 	s.inFlight[sessionKey] = writeClaim{key: key, signature: item.event.Signature}
@@ -497,6 +503,10 @@ func (s *Supervisor) applyHumanDecision(
 	frozen := s.frozen[key.sessionID] || s.auditFailed
 	shuttingDown := s.shuttingDown
 	if !exists {
+		s.mu.Unlock()
+		return ErrDecisionStale
+	}
+	if _, going := s.withdrawing[key]; going {
 		s.mu.Unlock()
 		return ErrDecisionStale
 	}

@@ -144,7 +144,11 @@
 //     the event loop or a reconciliation, leaves a tombstone: the prompt is
 //     set aside instead of pending, and its withdrawal journaled after the
 //     entries that took it in. It was lost, and the prompt waited on the
-//     operator for a question the agent no longer asked.
+//     operator for a question the agent no longer asked. A pending prompt is
+//     marked as going before its withdrawal is journaled, and nobody acts on
+//     it from then on: the hand leaves it alone, a person's answer is refused
+//     as stale (ErrDecisionStale), and the policy does not claim it, so that
+//     nothing about it is journaled after the entry that says it is gone.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

@@ -53,12 +53,23 @@ func (s *Supervisor) handleAdapterEventWithdrawn(event adapters.Event) {
 			return
 		}
 	}
+	// A pending prompt is marked as going before its withdrawal is journaled,
+	// under the lock where the hand's debt is read: from then on it is
+	// nobody's to act on. Taking the hand leaves it alone, a person's answer
+	// to it is refused as stale, and the policy does not claim it. The hand
+	// taken while the withdrawal was journaled used to ask it and journal why
+	// after the journal said it was gone, and a person's answer or the
+	// policy's could be journaled, and written, after it too.
+	if _, pending := s.pending[key]; pending {
+		s.withdrawing[key] = struct{}{}
+	}
 	owed := s.heldEntries[key.sessionID]
 	s.mu.Unlock()
 	awaitHeldEntries(owed)
 	_ = s.recordAudit(eventWithdrawnEntry(event, backend, "agent_withdrew_occurrence"))
 
 	s.mu.Lock()
+	delete(s.withdrawing, key)
 	if _, duplicate := s.resolved[key]; duplicate {
 		s.mu.Unlock()
 		return

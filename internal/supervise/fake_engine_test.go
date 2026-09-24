@@ -70,6 +70,10 @@ type fakeEngine struct {
 	auditBlockEventID string
 	auditStarted      chan struct{}
 	auditRelease      <-chan struct{}
+	// beforeAudit, when set, runs on each entry before it is journaled,
+	// outside the fixture's lock, as another goroutine acting at that moment
+	// would.
+	beforeAudit func(audit.Entry)
 
 	stopErr           error
 	stopCalls         []string
@@ -288,7 +292,11 @@ func (f *fakeEngine) RecordAudit(entry audit.Entry) error {
 		(f.auditBlockEventID == "" || entry.EventID == f.auditBlockEventID)
 	started := f.auditStarted
 	release := f.auditRelease
+	hook := f.beforeAudit
 	f.mu.Unlock()
+	if hook != nil {
+		hook(entry)
+	}
 	if block {
 		if started != nil {
 			started <- struct{}{}
