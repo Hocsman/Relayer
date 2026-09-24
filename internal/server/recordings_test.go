@@ -13,6 +13,7 @@ import (
 
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/record"
+	"github.com/Hocsman/Relayer/internal/session"
 )
 
 // startRecordingController boots a supervisor whose configuration enables
@@ -415,8 +416,11 @@ func TestRecordingLifecycleIsJournaled(t *testing.T) {
 	}
 
 	// Closing the run finalizes every transcript before the journal closes,
-	// so each closing is on disk once Close returns.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// so each closing is on disk once Close returns. The run ends as the
+	// desktop's does, the agents asked to stop before anything is cancelled,
+	// and on Windows an agent the console close does not end has five seconds
+	// before it is killed: a stop's worst case, session.StopBudget.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), session.StopBudget+5*time.Second)
 	defer cancel()
 	if err := ctrl.Close(shutdownCtx); err != nil {
 		t.Fatalf("Close: %v", err)

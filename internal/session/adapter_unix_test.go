@@ -120,10 +120,15 @@ func TestManagerFailedEventDeliveryKeepsPendingOccurrence(t *testing.T) {
 		t.Fatalf("NewManager: %v", err)
 	}
 	t.Cleanup(manager.Close)
+	// The agent outlives its closed terminal: it ignores the hangup and waits.
+	// The master is polled by the runtime, so closing it ends the read loop at
+	// once, and an agent that exited on the hangup had its prompt cleared by
+	// its exit before the test could look: that is the exit's doing, not the
+	// failed delivery's, which is what this test is about.
 	info, err := manager.Start(agent.Spec{
 		ID:    "failed-delivery",
 		Name:  "failed delivery",
-		Shell: `printf 'Overwrite? [Y/n]'; IFS= read -r answer`,
+		Shell: `trap '' HUP; printf 'Overwrite? [Y/n]'; IFS= read -r answer; sleep 30`,
 	}, 80, 24)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
