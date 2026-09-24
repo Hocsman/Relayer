@@ -935,6 +935,170 @@ func TestAnUnsupportedAutomaticDecisionFallsBackToAsk(t *testing.T) {
 	}
 }
 
+// holdWithALine writes a line to the session and holds its write, so that the
+// prompts raised meanwhile queue behind it. The function it returns lets the
+// line go and waits for it.
+func holdWithALine(t *testing.T, engine *fakeEngine, sup *supervise.Supervisor, sessionID string) func() {
+	t.Helper()
+	started := make(chan string, 1)
+	release := make(chan struct{})
+	engine.set(func(f *fakeEngine) {
+		f.lineStarted = started
+		f.lineRelease = release
+	})
+	releaseLine := releaser(t, release)
+	sent := make(chan error, 1)
+	go func() { sent <- sup.SubmitLine(testRunID, sessionID, "hello") }()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the line never reached the runtime")
+	}
+	return func() {
+		t.Helper()
+		releaseLine()
+		select {
+		case err := <-sent:
+			if err != nil {
+				t.Fatalf("SubmitLine: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("the line did not return")
+		}
+	}
+}
+
+// The policy decides a prompt when it is detected, and its answer goes when the
+// session is free, which may be after other automatic answers: a limit on
+// consecutive automatic decisions can be reached in between. The core asks the
+// policy again just before it journals its decision. A prompt that is no
+// longer the policy's to answer, or that the policy would now answer another
+// way, goes to the operator, with a second policy_evaluated entry that says
+// why. Decided at detection alone, two prompts queued on one session were both
+// answered under a limit of one.
+func TestThePolicyIsAskedAgainJustBeforeItsDecision(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		limit int
+		// now, when set, is how the policy evaluates the second prompt once the
+		// first was answered.
+		now          *policy.Evaluation
+		wantReason   string
+		wantRule     string
+		wantProposed policy.Action
+	}{
+		{
+			name:         "the consecutive limit is reached while the prompt waits",
+			limit:        1,
+			wantReason:   policy.ReasonConsecutiveLimit,
+			wantRule:     "allow-safe",
+			wantProposed: policy.ActionAllow,
+		},
+		{
+			name: "the policy now takes another action",
+			now: &policy.Evaluation{
+				Action: policy.ActionDeny, ProposedAction: policy.ActionDeny, RuleName: "deny-now",
+				Reason: policy.ReasonRule, Automatic: true,
+			},
+			wantReason:   policy.ReasonRule,
+			wantRule:     "deny-now",
+			wantProposed: policy.ActionDeny,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newFakeEngine()
+			engine.evaluation = automaticAllow()
+			engine.maxConsecutiveAuto = test.limit
+			sup, _ := newCoreForTest(t, engine, "agent-a")
+			letTheLineGo := holdWithALine(t, engine, sup, "agent-a")
+			second := promptEvent("agent-a", "automatic-2")
+			second.Sequence = 2
+			sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "automatic-1")})
+			sup.Handle(session.AdapterEvent{Event: second})
+			for _, id := range []string{"automatic-1", "automatic-2"} {
+				if evaluated := engine.auditFor(audit.KindPolicyEvaluated, id); len(evaluated) != 1 || evaluated[0].Metadata["automatic"] != "true" {
+					t.Fatalf("%s at detection = %#v, want one automatic evaluation", id, evaluated)
+				}
+			}
+			if test.now != nil {
+				engine.set(func(f *fakeEngine) { f.evaluationByID["automatic-2"] = *test.now })
+			}
+
+			letTheLineGo()
+			waitFor(t, 2*time.Second, "the second prompt to go to the operator", func() bool {
+				pending := sup.State().Pending
+				return len(pending) == 1 && pending[0].ID == "automatic-2" && !pending[0].Evaluation.Automatic
+			})
+			// The counts below are exact only once the automatic decisions have
+			// finished.
+			sup.BeginDrain()
+			sup.Wait()
+
+			if calls := engine.applySnapshot(); len(calls) != 1 || calls[0].event.ID != "automatic-1" {
+				t.Fatalf("deliveries = %#v, want the first prompt's alone", calls)
+			}
+			evaluated := engine.auditFor(audit.KindPolicyEvaluated, "automatic-2")
+			if len(evaluated) != 2 {
+				t.Fatalf("policy_evaluated entries = %#v, want the detection's and the one before the decision", evaluated)
+			}
+			again := evaluated[1]
+			wantMetadata := map[string]string{
+				"automatic": "false", "effective_action": "ask", "mode": "enforce", "proposed_action": string(test.wantProposed),
+			}
+			if again.DecisionBy != audit.DecisionByPolicy || again.Decision != audit.DecisionAsk || again.Outcome != audit.OutcomeAsk ||
+				again.Reason != test.wantReason || again.Rule != test.wantRule || !reflect.DeepEqual(again.Metadata, wantMetadata) {
+				t.Fatalf("second policy_evaluated entry = %#v", again)
+			}
+			if decisions := engine.auditFor(audit.KindDecision, "automatic-2"); len(decisions) != 0 {
+				t.Fatalf("the prompt the policy no longer answers was decided: %#v", decisions)
+			}
+			if deliveries := engine.auditFor(audit.KindDelivery, "automatic-2"); len(deliveries) != 0 {
+				t.Fatalf("the prompt the policy no longer answers was delivered: %#v", deliveries)
+			}
+			view := sup.State().Pending[0]
+			if view.DeliveryStatus != "pending" || view.Evaluation.Action != string(policy.ActionAsk) ||
+				view.Evaluation.ProposedAction != string(test.wantProposed) || view.Evaluation.Reason != test.wantReason ||
+				view.Evaluation.RuleName != test.wantRule || view.Evaluation.Automatic {
+				t.Fatalf("prompt handed to the operator = %#v", view)
+			}
+			if agent := agentOf(t, sup, "agent-a"); agent.Status != "waiting" || agent.InputFrozen {
+				t.Fatalf("agent = %#v, want waiting on the operator", agent)
+			}
+		})
+	}
+}
+
+// An automatic decision is journaled under the rule that made it, named as the
+// policy names it, as its evaluation was. The core decided from an evaluation
+// it rebuilt from the prompt's display form, whose rule name is bounded and
+// redacted, and its decision entries named no rule at all.
+func TestAnAutomaticDecisionIsJournaledUnderItsRule(t *testing.T) {
+	rule := "allow-" + strings.Repeat("r", 80)
+	engine := newFakeEngine()
+	evaluation := automaticAllow()
+	evaluation.RuleName = rule
+	engine.evaluation = evaluation
+	sup, sink := newCoreForTest(t, engine, "agent-a")
+
+	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "automatic-1")})
+	waitFor(t, 2*time.Second, "the delivery", func() bool {
+		return len(engine.auditFor(audit.KindDelivery, "automatic-1")) == 1
+	})
+	sup.BeginDrain()
+	sup.Wait()
+
+	if shown := sink.snapshot()[1].view.Evaluation.RuleName; shown == rule || shown == "" {
+		t.Fatalf("the prompt shows the rule as %q, want it bounded", shown)
+	}
+	if evaluated := engine.auditFor(audit.KindPolicyEvaluated, "automatic-1"); len(evaluated) != 1 || evaluated[0].Rule != rule {
+		t.Fatalf("policy_evaluated entries = %#v, want one under the rule", evaluated)
+	}
+	decisions := engine.auditFor(audit.KindDecision, "automatic-1")
+	if len(decisions) != 1 || decisions[0].Rule != rule || decisions[0].DecisionBy != audit.DecisionByPolicy {
+		t.Fatalf("decision entries = %#v, want one by the policy under its rule", decisions)
+	}
+}
+
 // The desktop's TestProcessExitDuringAutomaticDeliveryStillRecordsTerminalOutcome,
 // through the core: the process exits while the answer is written, and the
 // delivery still gets exactly one terminal journal entry. The desktop decided

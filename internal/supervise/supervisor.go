@@ -147,9 +147,15 @@ type eventKey struct {
 	eventID   string
 }
 
+// pendingEvent is a prompt the run waits on. evaluation is the policy's, as
+// the engine returned it, and what the core decides from: the view shows it
+// bounded and redacted, and an evaluation rebuilt from the view named its rule
+// as the prompt shows it. The two change together when the prompt goes to the
+// operator.
 type pendingEvent struct {
-	event adapters.Event
-	view  View
+	event      adapters.Event
+	view       View
+	evaluation policy.Evaluation
 }
 
 // Supervisor is the supervision state machine of one run generation. A run

@@ -29,7 +29,7 @@ func (s *Supervisor) scheduleAutomatic(sessionID string) {
 		return
 	}
 	key, item, found := s.firstPendingForSessionLocked(sessionKey)
-	if !found || !item.view.Evaluation.Automatic || item.view.DeliveryStatus != "pending" {
+	if !found || !item.evaluation.Automatic || item.view.DeliveryStatus != "pending" {
 		s.mu.Unlock()
 		return
 	}
@@ -39,15 +39,7 @@ func (s *Supervisor) scheduleAutomatic(sessionID string) {
 	s.rebuildPendingLocked()
 	view := item.view
 	event := item.event.Clone()
-	evaluation := policy.Evaluation{
-		Action:         policy.Action(item.view.Evaluation.Action),
-		ProposedAction: policy.Action(item.view.Evaluation.ProposedAction),
-		RuleName:       item.view.Evaluation.RuleName,
-		Reason:         item.view.Evaluation.Reason,
-		EventID:        item.event.ID,
-		Automatic:      item.view.Evaluation.Automatic,
-		DryRun:         item.view.Evaluation.DryRun,
-	}
+	evaluation := item.evaluation
 	s.eventWG.Add(1)
 	s.mu.Unlock()
 	s.sink.Prompt(view)
@@ -107,8 +99,27 @@ func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluati
 		return
 	}
 	backend := s.backendFor(event.SessionID)
+	// The policy decided when the prompt was detected, and the answer goes
+	// only now that the session is free, possibly after other automatic
+	// answers: a limit the policy enforces, such as its consecutive automatic
+	// decisions, may have been reached since. Evaluate has no side effects,
+	// so the policy is asked again just before the decision is journaled, and
+	// the journal's decisions are what its limits count. A prompt it no longer
+	// answers, or would now answer another way, is the operator's, and a
+	// second evaluation entry says why. Otherwise the decision is journaled
+	// under the evaluation the prompt was detected with, which the policy has
+	// just confirmed: its rule is the one the first entry named.
+	current := s.engine.Evaluate(event)
+	if !current.Automatic || current.Action != evaluation.Action {
+		if !s.recordAudit(policyAuditEntry(event, backend, askEvaluation(current, current.Reason))) {
+			s.markDelivery(key, "failed", "audit_unavailable")
+			return
+		}
+		s.askOperator(key, &current, current.Reason, "")
+		return
+	}
 	auditDecision := auditDecisionForPolicy(evaluation.Action)
-	if !s.recordAudit(decisionAuditEntry(event, backend, auditDecision, audit.DecisionByPolicy)) {
+	if !s.recordAudit(policyDecisionAuditEntry(event, backend, evaluation)) {
 		s.markDelivery(key, "failed", "audit_unavailable")
 		return
 	}
@@ -173,16 +184,35 @@ func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluati
 // answered it: were it automatic again, the policy could send the very answer
 // the operator had just tried to refuse.
 func (s *Supervisor) fallbackToAsk(key eventKey, reason string, refused adapters.Decision) {
+	s.askOperator(key, nil, reason, refused)
+}
+
+// askEvaluation is an evaluation made the operator's: nothing is answered
+// automatically, for reason, and the policy's proposal and rule are kept.
+func askEvaluation(evaluation policy.Evaluation, reason string) policy.Evaluation {
+	evaluation.Action = policy.ActionAsk
+	evaluation.Automatic = false
+	evaluation.Reason = reason
+	return evaluation
+}
+
+// askOperator is fallbackToAsk with, when current is not nil, the policy's
+// evaluation of the prompt now in place of the one it was detected with: the
+// prompt then shows the proposal and the rule the policy has now.
+func (s *Supervisor) askOperator(key eventKey, current *policy.Evaluation, reason string, refused adapters.Decision) {
 	s.mu.Lock()
 	item, exists := s.pending[key]
 	if !exists {
 		s.mu.Unlock()
 		return
 	}
+	evaluation := item.evaluation
+	if current != nil {
+		evaluation = *current
+	}
+	item.evaluation = askEvaluation(evaluation, reason)
 	item.view.DeliveryStatus = "pending"
-	item.view.Evaluation.Action = "ask"
-	item.view.Evaluation.Automatic = false
-	item.view.Evaluation.Reason = reason
+	item.view.Evaluation = evaluationView(item.evaluation)
 	if refused != "" {
 		// A new slice: the views already shown share the old one.
 		offered := make([]string, 0, len(item.view.Decisions))
@@ -206,7 +236,7 @@ func (s *Supervisor) addFrozenEvent(event adapters.Event, evaluation policy.Eval
 	// an audit or delivery failure and nothing more may be sent to it.
 	view := supervisionView(s.runID, event, evaluation, "failed", nil)
 	s.mu.Lock()
-	s.pending[key] = pendingEvent{event: event.Clone(), view: view}
+	s.pending[key] = pendingEvent{event: event.Clone(), view: view, evaluation: evaluation}
 	s.frozen[key.sessionID] = true
 	if index, found := s.agentIndex[key.sessionID]; found {
 		s.agents[index].InputFrozen = true

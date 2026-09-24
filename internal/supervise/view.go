@@ -67,25 +67,32 @@ func supervisionView(
 		timestamp = time.Now().UTC()
 	}
 	return View{
-		RunID:     runID,
-		ID:        event.ID,
-		SessionID: event.SessionID,
-		AgentID:   event.AgentID,
-		Adapter:   event.Adapter,
-		Type:      string(event.Type),
-		Summary:   safeEventSummary(event),
-		Sensitive: requiresSecretHandling(event),
-		Risk:      string(event.Risk),
-		Timestamp: timestamp.UTC().Format(eventTimestampLayout),
-		Evaluation: EvaluationView{
-			Action:         string(evaluation.Action),
-			ProposedAction: string(evaluation.ProposedAction),
-			RuleName:       safeRuleName(evaluation.RuleName),
-			Reason:         safeReason(evaluation.Reason),
-			Automatic:      evaluation.Automatic,
-			DryRun:         evaluation.DryRun,
-		},
+		RunID:          runID,
+		ID:             event.ID,
+		SessionID:      event.SessionID,
+		AgentID:        event.AgentID,
+		Adapter:        event.Adapter,
+		Type:           string(event.Type),
+		Summary:        safeEventSummary(event),
+		Sensitive:      requiresSecretHandling(event),
+		Risk:           string(event.Risk),
+		Timestamp:      timestamp.UTC().Format(eventTimestampLayout),
+		Evaluation:     evaluationView(evaluation),
 		DeliveryStatus: delivery,
 		Decisions:      offered,
+	}
+}
+
+// evaluationView is the display form of a policy evaluation: its rule name and
+// reason bounded and redacted. The core decides from the evaluation itself,
+// never from this form.
+func evaluationView(evaluation policy.Evaluation) EvaluationView {
+	return EvaluationView{
+		Action:         string(evaluation.Action),
+		ProposedAction: string(evaluation.ProposedAction),
+		RuleName:       safeRuleName(evaluation.RuleName),
+		Reason:         safeReason(evaluation.Reason),
+		Automatic:      evaluation.Automatic,
+		DryRun:         evaluation.DryRun,
 	}
 }

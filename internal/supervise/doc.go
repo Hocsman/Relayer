@@ -33,6 +33,14 @@
 //     offers, the caller gets ErrUnsupportedDecision, and nothing is frozen.
 //   - A notice's Details is the prompt's display-safe summary, the one its
 //     View shows, never the adapter's own: a notification leaves the machine.
+//   - The core decides from the policy's evaluation as the engine returned it,
+//     never from the bounded and redacted form a View shows, and journals the
+//     policy's decision entries under the rule that made them. It asks the
+//     policy again just before it journals a decision: a prompt the policy no
+//     longer answers automatically, or would now answer another way, such as
+//     one that reached a limit while it waited behind other answers, goes to
+//     the operator, and a second policy_evaluated entry, ask, gives the new
+//     reason.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

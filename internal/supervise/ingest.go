@@ -127,7 +127,7 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 
 	view := supervisionView(s.runID, event, evaluation, "pending", s.engine.SupportedDecisions(event))
 	s.mu.Lock()
-	s.pending[key] = pendingEvent{event: event.Clone(), view: view}
+	s.pending[key] = pendingEvent{event: event.Clone(), view: view, evaluation: evaluation}
 	s.setAgentWaitingLocked(event.SessionID)
 	s.rebuildPendingLocked()
 	s.mu.Unlock()

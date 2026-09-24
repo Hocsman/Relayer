@@ -30,6 +30,13 @@ type fakeEngine struct {
 	// evaluationByID overrides evaluation for one event ID.
 	evaluationByID map[string]policy.Evaluation
 	pending        map[string]*adapters.Event
+	// maxConsecutiveAuto, when positive, is the desktop runtime's
+	// max_consecutive_auto_decisions: once that many decisions by the policy
+	// were journaled on a session with no human one since, Evaluate turns an
+	// automatic evaluation into ask, as policy.Tracker.CheckLimits does. It
+	// counts journaled decision entries, as the runtime's RecordAudit does.
+	maxConsecutiveAuto int
+	consecutiveAuto    map[string]int
 
 	applyCalls []applyCall
 	// applyErrs are returned by the first calls, in order, before applyErr.
@@ -94,8 +101,9 @@ func newFakeEngine() *fakeEngine {
 			ProposedAction: policy.ActionAsk,
 			Reason:         policy.ReasonDefault,
 		},
-		evaluationByID: make(map[string]policy.Evaluation),
-		pending:        make(map[string]*adapters.Event),
+		evaluationByID:  make(map[string]policy.Evaluation),
+		pending:         make(map[string]*adapters.Event),
+		consecutiveAuto: make(map[string]int),
 	}
 }
 
@@ -118,6 +126,12 @@ func (f *fakeEngine) Evaluate(event adapters.Event) policy.Evaluation {
 		evaluation = f.evaluation
 	}
 	evaluation.EventID = event.ID
+	if evaluation.Automatic && f.maxConsecutiveAuto > 0 &&
+		f.consecutiveAuto[strings.ToLower(event.SessionID)] >= f.maxConsecutiveAuto {
+		evaluation.Action = policy.ActionAsk
+		evaluation.Automatic = false
+		evaluation.Reason = policy.ReasonConsecutiveLimit
+	}
 	return evaluation
 }
 
@@ -275,6 +289,14 @@ func (f *fakeEngine) RecordAudit(entry audit.Entry) error {
 	}
 	entry.Metadata = cloneStringMap(entry.Metadata)
 	f.auditEntries = append(f.auditEntries, entry)
+	if entry.Kind == audit.KindDecision {
+		switch entry.DecisionBy {
+		case audit.DecisionByPolicy:
+			f.consecutiveAuto[strings.ToLower(entry.SessionID)]++
+		case audit.DecisionByHuman:
+			f.consecutiveAuto[strings.ToLower(entry.SessionID)] = 0
+		}
+	}
 	return nil
 }
 

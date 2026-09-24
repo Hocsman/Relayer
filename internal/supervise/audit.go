@@ -112,6 +112,15 @@ func decisionAuditEntry(
 	return entry
 }
 
+// policyDecisionAuditEntry journals the policy's decision before it is
+// delivered, under the rule that made it, named as the policy's evaluation
+// entry names it.
+func policyDecisionAuditEntry(event adapters.Event, backend string, evaluation policy.Evaluation) audit.Entry {
+	entry := decisionAuditEntry(event, backend, auditDecisionForPolicy(evaluation.Action), audit.DecisionByPolicy)
+	entry.Rule = evaluation.RuleName
+	return entry
+}
+
 // deliveryAuditEntry journals the terminal outcome of a decision's delivery.
 func deliveryAuditEntry(
 	event adapters.Event,
