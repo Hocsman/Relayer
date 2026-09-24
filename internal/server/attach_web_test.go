@@ -137,11 +137,11 @@ func TestAWebHandOverThatCannotBeJournaledStopsTheKeystrokes(t *testing.T) {
 	g.awaitScreen("web-listen", "agent ready", 30*time.Second)
 	runID := g.runID()
 	alice.mustCall("setInteractiveSession", map[string]any{"runID": runID, "sessionID": "web-listen", "active": true}, nil)
-	carol.mustCall("requestControl", map[string]any{"sessionID": "web-listen"}, nil)
+	carol.mustCall("requestControl", map[string]any{"runID": runID, "sessionID": "web-listen"}, nil)
 
 	fault.set(func(f *faultEngine) { f.auditFails = true })
 	var granted HandView
-	alice.mustCall("grantControl", map[string]any{"sessionID": "web-listen", "toConnID": carol.connID}, &granted)
+	alice.mustCall("grantControl", map[string]any{"runID": runID, "sessionID": "web-listen", "toConnID": carol.connID}, &granted)
 	if granted.HolderConnID != carol.connID {
 		t.Fatalf("the hand = %+v, want it with carol: a hand-over's record is best effort", granted)
 	}

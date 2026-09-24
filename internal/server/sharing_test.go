@@ -219,7 +219,7 @@ func TestSessionSharingHandLifecycle(t *testing.T) {
 
 	// Asking is the supported path, and the holder sees it.
 	var requested HandView
-	carol.mustCall("requestControl", map[string]any{"sessionID": sessionID}, &requested)
+	carol.mustCall("requestControl", controlParams(t, carol, sessionID, nil), &requested)
 	if requested.State != HandRequested || requested.RequesterConnID != carol.connID {
 		t.Fatalf("hand = %+v, want a pending request from carol", requested)
 	}
@@ -229,7 +229,7 @@ func TestSessionSharingHandLifecycle(t *testing.T) {
 
 	var granted HandView
 	alice.mustCall("grantControl",
-		map[string]any{"sessionID": sessionID, "toConnID": carol.connID}, &granted)
+		controlParams(t, alice, sessionID, map[string]any{"toConnID": carol.connID}), &granted)
 	if granted.HolderConnID != carol.connID {
 		t.Fatalf("hand = %+v, want held by carol", granted)
 	}
@@ -296,7 +296,7 @@ func TestSessionSharingDisconnectFreesTheTerminal(t *testing.T) {
 	})
 
 	var taken HandView
-	carol.mustCall("requestControl", map[string]any{"sessionID": sessionID}, &taken)
+	carol.mustCall("requestControl", controlParams(t, carol, sessionID, nil), &taken)
 	if taken.HolderConnID != carol.connID {
 		t.Fatalf("hand = %+v, want carol to have taken the freed terminal", taken)
 	}

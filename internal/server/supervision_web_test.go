@@ -70,6 +70,12 @@ type faultEngine struct {
 	// progress.
 	overlapped bool
 	stopErr    error
+	// holdAuditKind, when set with holdAudit, holds each entry of that kind,
+	// before it is journaled, until holdAudit is closed; auditHeld receives
+	// the kind as each entry waits.
+	holdAuditKind audit.Kind
+	holdAudit     chan struct{}
+	auditHeld     chan audit.Kind
 }
 
 func newFaultEngine() (*faultEngine, func(supervise.Engine) supervise.Engine) {
@@ -83,7 +89,17 @@ func newFaultEngine() (*faultEngine, func(supervise.Engine) supervise.Engine) {
 func (f *faultEngine) RecordAudit(entry audit.Entry) error {
 	f.mu.Lock()
 	fails := f.auditFails
+	hold, held := f.holdAudit, f.auditHeld
+	if entry.Kind != f.holdAuditKind {
+		hold = nil
+	}
 	f.mu.Unlock()
+	if hold != nil {
+		if held != nil {
+			held <- entry.Kind
+		}
+		<-hold
+	}
 	if fails {
 		return errors.New("write audit: the disk is full")
 	}
@@ -459,7 +475,7 @@ func TestTakingAWebTerminalKeepsThePolicyFromAnsweringIt(t *testing.T) {
 		t.Fatalf("the prompt of a held terminal is %+v, want it asked for operator_attached", prompt.Evaluation)
 	}
 	g.assertNoAnswerFor("web-held", time.Second)
-	if _, err := g.ctrl.ReleaseControl("web-held", "conn-alice", "alice"); err != nil {
+	if _, err := g.ctrl.ReleaseControl(g.ctrl.GetState().RunID, "web-held", "conn-alice", "alice"); err != nil {
 		t.Fatalf("ReleaseControl: %v", err)
 	}
 	g.assertNoAnswerFor("web-held", time.Second)

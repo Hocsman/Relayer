@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Hocsman/Relayer/internal/audit"
+	"github.com/Hocsman/Relayer/internal/supervise"
 )
 
 // Presence and the terminal write lock ("the hand") live in the Controller
@@ -296,8 +297,10 @@ func takeHand(hand handState, entry presenceEntry, now time.Time) (handState, er
 
 // ReleaseControl frees a hand held by this connection and journals it as
 // control_released. Releasing a hand nobody holds changes nothing and is not
-// journaled.
-func (c *Controller) ReleaseControl(sessionID, connID, operator string) (HandView, error) {
+// journaled. runID is the run the caller shows, and is not checked: letting
+// go of a terminal is always safe, and a connection holds no terminal of a
+// run it never took one in.
+func (c *Controller) ReleaseControl(runID, sessionID, connID, operator string) (HandView, error) {
 	view, change, err := c.releaseHand(sessionID, connID)
 	if err == nil && change.known() && change.before.held() {
 		c.recordControlAudit(change, controlRecord{
@@ -327,10 +330,40 @@ func (c *Controller) releaseHand(sessionID, connID string) (HandView, handTransi
 // RequestControl asks the current holder to hand over. A second request from
 // the same connection refreshes the deadline rather than erroring, so a UI that
 // retries is not punished, and is not journaled a second time either.
-func (c *Controller) RequestControl(sessionID, connID, operator string) (HandView, error) {
-	view, change, err := c.mutateHand(sessionID, connID, func(hand handState, entry presenceEntry, now time.Time) (handState, error) {
+//
+// A request names the run it is for, and one for another run, or none, is
+// refused (supervise.ErrRunStale), checked under the lock the hand changes
+// under. The verb named no run, and a tab left on a run "Save and restart"
+// had replaced took the new run's free terminal with its "Ask for the
+// terminal" button: the tab dropped the new run's hand frame and never knew
+// it held the terminal, nobody else could take it, and the policy answered
+// nothing on that agent any more, since its terminal was held.
+//
+// A request that takes a free terminal is journaled, best effort, before the
+// hand moves (recordControlAuditLocked): no keystroke is admitted before the
+// record of who took the terminal, and a record the journal refuses freezes
+// the run first, so none is admitted at all.
+func (c *Controller) RequestControl(runID, sessionID, connID, operator string) (HandView, error) {
+	record := func(change handTransition) error {
+		if !change.before.held() && change.after.holderConnID == change.actor.connID {
+			// The hand was free and the request takes it at once. The
+			// record says so rather than posing as a request somebody
+			// could still answer.
+			c.recordControlAuditLocked(change, controlRecord{
+				kind:    audit.KindControlRequested,
+				by:      audit.DecisionByHuman,
+				outcome: audit.OutcomeApplied,
+				reason:  "control_taken_free",
+			})
+		}
+		return nil
+	}
+	view, change, err := c.mutateHandRecorded(sessionID, connID, func(hand handState, entry presenceEntry, now time.Time) (handState, error) {
 		if entry.role == string(RoleViewer) {
 			return hand, ErrViewerRole
+		}
+		if err := c.runNamedLocked(runID); err != nil {
+			return hand, err
 		}
 		if !hand.held() {
 			// Nothing to ask for: the hand is free, so take it directly rather
@@ -350,22 +383,13 @@ func (c *Controller) RequestControl(sessionID, connID, operator string) (HandVie
 		hand.requesterIdentity = entry.identity
 		hand.requestedAt = now
 		return hand, nil
-	})
+	}, record)
 	if err != nil || !change.known() {
 		return view, err
 	}
 
 	actor := change.actor.connID
 	switch {
-	case !change.before.held() && change.after.holderConnID == actor:
-		// The hand was free and the request took it at once. The record says
-		// so rather than posing as a request somebody could still answer.
-		c.recordControlAudit(change, controlRecord{
-			kind:    audit.KindControlRequested,
-			by:      audit.DecisionByHuman,
-			outcome: audit.OutcomeApplied,
-			reason:  "control_taken_free",
-		})
 	case change.before.held() && change.before.requesterConnID != actor && change.after.requesterConnID == actor:
 		c.recordControlAudit(change, controlRecord{
 			kind:           audit.KindControlRequested,
@@ -380,10 +404,26 @@ func (c *Controller) RequestControl(sessionID, connID, operator string) (HandVie
 }
 
 // GrantControl transfers the hand to a pending requester. Only the current
-// holder may grant.
-func (c *Controller) GrantControl(sessionID, connID, operator, toConnID string) (HandView, error) {
+// holder may grant, for the run it names (supervise.ErrRunStale otherwise, as
+// RequestControl). The grant is journaled, best effort, before the hand moves
+// (recordControlAuditLocked).
+func (c *Controller) GrantControl(runID, sessionID, connID, operator, toConnID string) (HandView, error) {
 	toConnID = strings.TrimSpace(toConnID)
-	view, change, err := c.mutateHand(sessionID, connID, func(hand handState, entry presenceEntry, now time.Time) (handState, error) {
+	record := func(change handTransition) error {
+		c.recordControlAuditLocked(change, controlRecord{
+			kind:           audit.KindControlGranted,
+			by:             audit.DecisionByHuman,
+			outcome:        audit.OutcomeApplied,
+			reason:         "control_granted",
+			targetConnID:   change.after.holderConnID,
+			targetIdentity: change.after.holderIdentity,
+		})
+		return nil
+	}
+	view, _, err := c.mutateHandRecorded(sessionID, connID, func(hand handState, entry presenceEntry, now time.Time) (handState, error) {
+		if err := c.runNamedLocked(runID); err != nil {
+			return hand, err
+		}
 		if !hand.held() || hand.holderConnID != entry.connID {
 			return hand, ErrNotHolder
 		}
@@ -408,22 +448,14 @@ func (c *Controller) GrantControl(sessionID, connID, operator, toConnID string) 
 			holderIdentity: target.identity,
 			since:          now,
 		}, nil
-	})
-	if err == nil && change.known() {
-		c.recordControlAudit(change, controlRecord{
-			kind:           audit.KindControlGranted,
-			by:             audit.DecisionByHuman,
-			outcome:        audit.OutcomeApplied,
-			reason:         "control_granted",
-			targetConnID:   change.after.holderConnID,
-			targetIdentity: change.after.holderIdentity,
-		})
-	}
+	}, record)
 	return view, err
 }
 
 // DeclineControl refuses a pending request and leaves the hand where it is.
-func (c *Controller) DeclineControl(sessionID, connID, operator, toConnID string) (HandView, error) {
+// runID is the run the caller shows, and is not checked: declining moves no
+// terminal.
+func (c *Controller) DeclineControl(runID, sessionID, connID, operator, toConnID string) (HandView, error) {
 	toConnID = strings.TrimSpace(toConnID)
 	view, change, err := c.mutateHand(sessionID, connID, func(hand handState, entry presenceEntry, _ time.Time) (handState, error) {
 		if !hand.held() || hand.holderConnID != entry.connID {
@@ -459,11 +491,43 @@ func (c *Controller) DeclineControl(sessionID, connID, operator, toConnID string
 //
 // Every attempt by a known connection is journaled as control_forced, refused
 // ones included: trying to seize a colleague's terminal is the event worth
-// finding later, whether or not the deployment allowed it.
-func (c *Controller) ForceTakeControl(sessionID, connID, operator string) (HandView, error) {
-	view, change, err := c.mutateHand(sessionID, connID, func(hand handState, entry presenceEntry, now time.Time) (handState, error) {
+// finding later, whether or not the deployment allowed it. A seizure names
+// the run it is for (supervise.ErrRunStale otherwise, as RequestControl), and
+// one that takes the terminal is journaled, best effort, before the hand
+// moves (recordControlAuditLocked); a refused one afterwards.
+func (c *Controller) ForceTakeControl(runID, sessionID, connID, operator string) (HandView, error) {
+	forcedRecord := func(change handTransition, err error) controlRecord {
+		forced := controlRecord{
+			kind:    audit.KindControlForced,
+			by:      audit.DecisionByHuman,
+			outcome: audit.OutcomeApplied,
+			reason:  "control_forced",
+		}
+		switch {
+		case errors.Is(err, ErrForceDisabled):
+			forced.outcome, forced.reason = audit.OutcomeFailed, "control_force_disabled"
+		case errors.Is(err, ErrViewerRole):
+			forced.outcome, forced.reason = audit.OutcomeFailed, "control_force_viewer_denied"
+		case err != nil:
+			forced.outcome, forced.reason = audit.OutcomeFailed, "control_force_failed"
+		}
+		// The displaced holder, not the operator's own earlier hold.
+		if change.before.held() && change.before.holderConnID != change.actor.connID {
+			forced.targetConnID = change.before.holderConnID
+			forced.targetIdentity = change.before.holderIdentity
+		}
+		return forced
+	}
+	record := func(change handTransition) error {
+		c.recordControlAuditLocked(change, forcedRecord(change, nil))
+		return nil
+	}
+	view, change, err := c.mutateHandRecorded(sessionID, connID, func(hand handState, entry presenceEntry, now time.Time) (handState, error) {
 		if entry.role == string(RoleViewer) {
 			return hand, ErrViewerRole
+		}
+		if err := c.runNamedLocked(runID); err != nil {
+			return hand, err
 		}
 		if !c.allowForceTakeover {
 			return hand, ErrForceDisabled
@@ -473,32 +537,23 @@ func (c *Controller) ForceTakeControl(sessionID, connID, operator string) (HandV
 			holderIdentity: entry.identity,
 			since:          now,
 		}, nil
-	})
-	if !change.known() {
+	}, record)
+	if !change.known() || err == nil {
 		return view, err
 	}
-
-	forced := controlRecord{
-		kind:    audit.KindControlForced,
-		by:      audit.DecisionByHuman,
-		outcome: audit.OutcomeApplied,
-		reason:  "control_forced",
-	}
-	switch {
-	case errors.Is(err, ErrForceDisabled):
-		forced.outcome, forced.reason = audit.OutcomeFailed, "control_force_disabled"
-	case errors.Is(err, ErrViewerRole):
-		forced.outcome, forced.reason = audit.OutcomeFailed, "control_force_viewer_denied"
-	case err != nil:
-		forced.outcome, forced.reason = audit.OutcomeFailed, "control_force_failed"
-	}
-	// The displaced holder, not the operator's own earlier hold.
-	if change.before.held() && change.before.holderConnID != change.actor.connID {
-		forced.targetConnID = change.before.holderConnID
-		forced.targetIdentity = change.before.holderIdentity
-	}
-	c.recordControlAudit(change, forced)
+	c.recordControlAudit(change, forcedRecord(change, err))
 	return view, err
+}
+
+// runNamedLocked refuses a verb that takes or hands over a terminal for a run
+// that is not the gateway's current one, or for no run at all
+// (supervise.ErrRunStale). The caller holds c.mu, under which the hand
+// changes: a run started meanwhile is seen.
+func (c *Controller) runNamedLocked(runID string) error {
+	if strings.TrimSpace(runID) == "" || runID != c.runID {
+		return supervise.ErrRunStale
+	}
+	return nil
 }
 
 // HoldsHand reports whether a connection may currently resize a session's
@@ -675,7 +730,27 @@ func (c *Controller) recordControlAudit(change handTransition, rec controlRecord
 	if sup == nil {
 		return
 	}
+	_ = sup.RecordAudit(controlEntry(change, rec))
+}
 
+// recordControlAuditLocked journals a transition that moves the hand, best
+// effort, before it moves: the caller holds c.mu, under which the hand is
+// about to change (mutateHandRecorded), and the supervision core's
+// RecordAudit is safe under it. A write failure is not reported to the
+// operator and the hand moves all the same, as recordControlAudit's, but the
+// core has frozen the run by then: no keystroke is admitted before the record
+// of who took the terminal, or at all when it could not be written. Written
+// after the hand moved, the record could follow the new holder's first
+// keystrokes, or never exist while they reached the agent.
+func (c *Controller) recordControlAuditLocked(change handTransition, rec controlRecord) {
+	if c.sup == nil {
+		return
+	}
+	_ = c.sup.RecordAudit(controlEntry(change, rec))
+}
+
+// controlEntry is the journal entry of one hand transition.
+func controlEntry(change handTransition, rec controlRecord) audit.Entry {
 	operator := change.actor.identity
 	if operator == "" {
 		operator = "operator"
@@ -698,7 +773,7 @@ func (c *Controller) recordControlAudit(change handTransition, rec controlRecord
 		metadata["target_conn_id"] = rec.targetConnID
 	}
 
-	_ = sup.RecordAudit(audit.Entry{
+	return audit.Entry{
 		Kind:       rec.kind,
 		SessionID:  change.agent.SessionID,
 		AgentID:    change.agent.AgentID,
@@ -709,7 +784,7 @@ func (c *Controller) recordControlAudit(change handTransition, rec controlRecord
 		Outcome:    rec.outcome,
 		Reason:     rec.reason,
 		Metadata:   metadata,
-	})
+	}
 }
 
 // setAttachedLocked keeps AgentState.Attached meaning "somebody holds this

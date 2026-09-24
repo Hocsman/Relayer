@@ -119,42 +119,42 @@ func TestEveryHandoverIsJournaled(t *testing.T) {
 		}
 	}
 	must("alice attaches", ctrl.SetInteractiveSession(state.RunID, session, true, "alice", "conn-a"))
-	_, err := ctrl.RequestControl(session, "conn-b", "bob")
+	_, err := ctrl.RequestControl(ctrl.GetState().RunID, session, "conn-b", "bob")
 	must("bob asks", err)
-	_, err = ctrl.RequestControl(session, "conn-b", "bob")
+	_, err = ctrl.RequestControl(ctrl.GetState().RunID, session, "conn-b", "bob")
 	must("bob asks again", err)
-	_, err = ctrl.DeclineControl(session, "conn-a", "alice", "conn-b")
+	_, err = ctrl.DeclineControl(ctrl.GetState().RunID, session, "conn-a", "alice", "conn-b")
 	must("alice declines", err)
-	_, err = ctrl.RequestControl(session, "conn-b", "bob")
+	_, err = ctrl.RequestControl(ctrl.GetState().RunID, session, "conn-b", "bob")
 	must("bob asks once more", err)
-	_, err = ctrl.GrantControl(session, "conn-a", "alice", "conn-b")
+	_, err = ctrl.GrantControl(ctrl.GetState().RunID, session, "conn-a", "alice", "conn-b")
 	must("alice grants", err)
-	_, err = ctrl.ReleaseControl(session, "conn-b", "bob")
+	_, err = ctrl.ReleaseControl(ctrl.GetState().RunID, session, "conn-b", "bob")
 	must("bob releases", err)
-	_, err = ctrl.ReleaseControl(session, "conn-b", "bob")
+	_, err = ctrl.ReleaseControl(ctrl.GetState().RunID, session, "conn-b", "bob")
 	must("bob releases a free terminal", err)
-	_, err = ctrl.RequestControl(session, "conn-c", "carol")
+	_, err = ctrl.RequestControl(ctrl.GetState().RunID, session, "conn-c", "carol")
 	must("carol takes the free terminal", err)
 
-	if _, err := ctrl.ForceTakeControl(session, "conn-a", "alice"); !errors.Is(err, ErrForceDisabled) {
+	if _, err := ctrl.ForceTakeControl(ctrl.GetState().RunID, session, "conn-a", "alice"); !errors.Is(err, ErrForceDisabled) {
 		t.Fatalf("force while disabled: %v, want ErrForceDisabled", err)
 	}
 	ctrl.mu.Lock()
 	ctrl.allowForceTakeover = true
 	ctrl.mu.Unlock()
-	_, err = ctrl.ForceTakeControl(session, "conn-a", "alice")
+	_, err = ctrl.ForceTakeControl(ctrl.GetState().RunID, session, "conn-a", "alice")
 	must("alice forces", err)
 
 	// Detaching journals attach_finished and nothing else: one action, one
 	// record.
 	must("alice detaches", ctrl.SetInteractiveSession(state.RunID, session, false, "alice", "conn-a"))
 
-	_, err = ctrl.RequestControl(session, "conn-b", "bob")
+	_, err = ctrl.RequestControl(ctrl.GetState().RunID, session, "conn-b", "bob")
 	must("bob takes the free terminal", err)
 	ctrl.ReleasePresence("conn-b")
 
 	// A session the run never started is refused and names nothing.
-	if _, err := ctrl.RequestControl("no-such-session", "conn-c", "carol"); !errors.Is(err, errUnknownSession) {
+	if _, err := ctrl.RequestControl(ctrl.GetState().RunID, "no-such-session", "conn-c", "carol"); !errors.Is(err, errUnknownSession) {
 		t.Fatalf("request on an unknown session: %v, want errUnknownSession", err)
 	}
 

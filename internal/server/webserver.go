@@ -780,52 +780,57 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 
 	case "requestControl":
 		var p struct {
+			RunID     string `json:"runID"`
 			SessionID string `json:"sessionID"`
 		}
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
 		client.clearHandNotice(p.SessionID)
-		return gh.ctrl.RequestControl(p.SessionID, client.connID, client.identity)
+		return gh.ctrl.RequestControl(p.RunID, p.SessionID, client.connID, client.identity)
 
 	case "grantControl":
 		var p struct {
+			RunID     string `json:"runID"`
 			SessionID string `json:"sessionID"`
 			ToConnID  string `json:"toConnID"`
 		}
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
-		return gh.ctrl.GrantControl(p.SessionID, client.connID, client.identity, p.ToConnID)
+		return gh.ctrl.GrantControl(p.RunID, p.SessionID, client.connID, client.identity, p.ToConnID)
 
 	case "declineControl":
 		var p struct {
+			RunID     string `json:"runID"`
 			SessionID string `json:"sessionID"`
 			ToConnID  string `json:"toConnID"`
 		}
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
-		return gh.ctrl.DeclineControl(p.SessionID, client.connID, client.identity, p.ToConnID)
+		return gh.ctrl.DeclineControl(p.RunID, p.SessionID, client.connID, client.identity, p.ToConnID)
 
 	case "releaseControl":
 		var p struct {
+			RunID     string `json:"runID"`
 			SessionID string `json:"sessionID"`
 		}
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
-		return gh.ctrl.ReleaseControl(p.SessionID, client.connID, client.identity)
+		return gh.ctrl.ReleaseControl(p.RunID, p.SessionID, client.connID, client.identity)
 
 	case "forceTakeControl":
 		var p struct {
+			RunID     string `json:"runID"`
 			SessionID string `json:"sessionID"`
 		}
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
 		client.clearHandNotice(p.SessionID)
-		return gh.ctrl.ForceTakeControl(p.SessionID, client.connID, client.identity)
+		return gh.ctrl.ForceTakeControl(p.RunID, p.SessionID, client.connID, client.identity)
 
 	case "stopSession":
 		var p struct {

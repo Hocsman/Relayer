@@ -134,7 +134,7 @@ func TestHandRequestGrantTransfers(t *testing.T) {
 		t.Fatalf("alice TakeControl: %v", err)
 	}
 
-	requested, err := c.RequestControl("alpha", "conn-b", "bob")
+	requested, err := c.RequestControl(c.GetState().RunID, "alpha", "conn-b", "bob")
 	if err != nil {
 		t.Fatalf("bob RequestControl: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestHandRequestGrantTransfers(t *testing.T) {
 		t.Fatal("a pending request must not transfer the hand on its own")
 	}
 
-	granted, err := c.GrantControl("alpha", "conn-a", "alice", "conn-b")
+	granted, err := c.GrantControl(c.GetState().RunID, "alpha", "conn-a", "alice", "conn-b")
 	if err != nil {
 		t.Fatalf("alice GrantControl: %v", err)
 	}
@@ -171,11 +171,11 @@ func TestHandDeclineKeepsHolder(t *testing.T) {
 	if _, err := c.TakeControl("alpha", "conn-a", "alice"); err != nil {
 		t.Fatalf("alice TakeControl: %v", err)
 	}
-	if _, err := c.RequestControl("alpha", "conn-b", "bob"); err != nil {
+	if _, err := c.RequestControl(c.GetState().RunID, "alpha", "conn-b", "bob"); err != nil {
 		t.Fatalf("bob RequestControl: %v", err)
 	}
 
-	declined, err := c.DeclineControl("alpha", "conn-a", "alice", "conn-b")
+	declined, err := c.DeclineControl(c.GetState().RunID, "alpha", "conn-a", "alice", "conn-b")
 	if err != nil {
 		t.Fatalf("alice DeclineControl: %v", err)
 	}
@@ -196,10 +196,10 @@ func TestHandGrantRequiresHolderAndRequest(t *testing.T) {
 		t.Fatalf("alice TakeControl: %v", err)
 	}
 
-	if _, err := c.GrantControl("alpha", "conn-b", "bob", "conn-b"); !errors.Is(err, ErrNotHolder) {
+	if _, err := c.GrantControl(c.GetState().RunID, "alpha", "conn-b", "bob", "conn-b"); !errors.Is(err, ErrNotHolder) {
 		t.Fatalf("non-holder grant error = %v, want ErrNotHolder", err)
 	}
-	if _, err := c.GrantControl("alpha", "conn-a", "alice", "conn-b"); !errors.Is(err, ErrNoPendingRequest) {
+	if _, err := c.GrantControl(c.GetState().RunID, "alpha", "conn-a", "alice", "conn-b"); !errors.Is(err, ErrNoPendingRequest) {
 		t.Fatalf("grant with no request error = %v, want ErrNoPendingRequest", err)
 	}
 }
@@ -212,7 +212,7 @@ func TestHandGrantToDisconnectedRequesterKeepsHolder(t *testing.T) {
 	if _, err := c.TakeControl("alpha", "conn-a", "alice"); err != nil {
 		t.Fatalf("alice TakeControl: %v", err)
 	}
-	if _, err := c.RequestControl("alpha", "conn-b", "bob"); err != nil {
+	if _, err := c.RequestControl(c.GetState().RunID, "alpha", "conn-b", "bob"); err != nil {
 		t.Fatalf("bob RequestControl: %v", err)
 	}
 
@@ -220,7 +220,7 @@ func TestHandGrantToDisconnectedRequesterKeepsHolder(t *testing.T) {
 	// stay with alice rather than be handed to nobody.
 	c.ReleasePresence("conn-b")
 
-	if _, err := c.GrantControl("alpha", "conn-a", "alice", ""); !errors.Is(err, ErrNoPendingRequest) {
+	if _, err := c.GrantControl(c.GetState().RunID, "alpha", "conn-a", "alice", ""); !errors.Is(err, ErrNoPendingRequest) {
 		t.Fatalf("grant to departed requester error = %v, want ErrNoPendingRequest", err)
 	}
 	if got := c.HandFor("alpha"); got.HolderConnID != "conn-a" {
@@ -236,7 +236,7 @@ func TestHandReleaseAndDisconnectFreeTheTerminal(t *testing.T) {
 	if _, err := c.TakeControl("alpha", "conn-a", "alice"); err != nil {
 		t.Fatalf("alice TakeControl: %v", err)
 	}
-	released, err := c.ReleaseControl("alpha", "conn-a", "alice")
+	released, err := c.ReleaseControl(c.GetState().RunID, "alpha", "conn-a", "alice")
 	if err != nil {
 		t.Fatalf("alice ReleaseControl: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestHandReleaseByNonHolderIsRejected(t *testing.T) {
 	if _, err := c.TakeControl("alpha", "conn-a", "alice"); err != nil {
 		t.Fatalf("alice TakeControl: %v", err)
 	}
-	if _, err := c.ReleaseControl("alpha", "conn-b", "bob"); !errors.Is(err, ErrNotHolder) {
+	if _, err := c.ReleaseControl(c.GetState().RunID, "alpha", "conn-b", "bob"); !errors.Is(err, ErrNotHolder) {
 		t.Fatalf("bob ReleaseControl error = %v, want ErrNotHolder", err)
 	}
 	if !c.HoldsHand("alpha", "conn-a") {
@@ -278,7 +278,7 @@ func TestHandRequestExpires(t *testing.T) {
 	if _, err := c.TakeControl("alpha", "conn-a", "alice"); err != nil {
 		t.Fatalf("alice TakeControl: %v", err)
 	}
-	if _, err := c.RequestControl("alpha", "conn-b", "bob"); err != nil {
+	if _, err := c.RequestControl(c.GetState().RunID, "alpha", "conn-b", "bob"); err != nil {
 		t.Fatalf("bob RequestControl: %v", err)
 	}
 
@@ -299,7 +299,7 @@ func TestHandRequestOnFreeSessionTakesItDirectly(t *testing.T) {
 
 	// Asking nobody for a hand nobody holds would strand the requester, so the
 	// request resolves immediately into a take.
-	view, err := c.RequestControl("alpha", "conn-b", "bob")
+	view, err := c.RequestControl(c.GetState().RunID, "alpha", "conn-b", "bob")
 	if err != nil {
 		t.Fatalf("RequestControl on free session: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestHandForceTakeoverRequiresOptIn(t *testing.T) {
 	if _, err := c.TakeControl("alpha", "conn-a", "alice"); err != nil {
 		t.Fatalf("alice TakeControl: %v", err)
 	}
-	if _, err := c.ForceTakeControl("alpha", "conn-b", "bob"); !errors.Is(err, ErrForceDisabled) {
+	if _, err := c.ForceTakeControl(c.GetState().RunID, "alpha", "conn-b", "bob"); !errors.Is(err, ErrForceDisabled) {
 		t.Fatalf("force takeover error = %v, want ErrForceDisabled", err)
 	}
 	if !c.HoldsHand("alpha", "conn-a") {
@@ -324,7 +324,7 @@ func TestHandForceTakeoverRequiresOptIn(t *testing.T) {
 	}
 
 	c.allowForceTakeover = true
-	forced, err := c.ForceTakeControl("alpha", "conn-b", "bob")
+	forced, err := c.ForceTakeControl(c.GetState().RunID, "alpha", "conn-b", "bob")
 	if err != nil {
 		t.Fatalf("ForceTakeControl with opt-in: %v", err)
 	}
@@ -340,7 +340,7 @@ func TestHandViewerCannotTakeOrRequest(t *testing.T) {
 	if _, err := c.TakeControl("alpha", "conn-v", "watcher"); !errors.Is(err, ErrViewerRole) {
 		t.Fatalf("viewer TakeControl error = %v, want ErrViewerRole", err)
 	}
-	if _, err := c.RequestControl("alpha", "conn-v", "watcher"); !errors.Is(err, ErrViewerRole) {
+	if _, err := c.RequestControl(c.GetState().RunID, "alpha", "conn-v", "watcher"); !errors.Is(err, ErrViewerRole) {
 		t.Fatalf("viewer RequestControl error = %v, want ErrViewerRole", err)
 	}
 
@@ -458,7 +458,7 @@ func TestPresenceAgentStateTracksHolder(t *testing.T) {
 		t.Fatalf("agent = %+v, want attached and attributed to alice", agent)
 	}
 
-	if _, err := c.ReleaseControl("alpha", "conn-a", "alice"); err != nil {
+	if _, err := c.ReleaseControl(c.GetState().RunID, "alpha", "conn-a", "alice"); err != nil {
 		t.Fatalf("ReleaseControl: %v", err)
 	}
 
@@ -488,10 +488,10 @@ func TestHandConcurrentTransitions(t *testing.T) {
 			defer wg.Done()
 			for i := 0; i < 200; i++ {
 				_, _ = c.TakeControl("alpha", connID, connID)
-				_, _ = c.RequestControl("alpha", connID, connID)
+				_, _ = c.RequestControl(c.GetState().RunID, "alpha", connID, connID)
 				_, _ = c.ObserveSession(connID, "alpha", i%2 == 0)
-				_, _ = c.GrantControl("alpha", connID, connID, "")
-				_, _ = c.ReleaseControl("alpha", connID, connID)
+				_, _ = c.GrantControl(c.GetState().RunID, "alpha", connID, connID, "")
+				_, _ = c.ReleaseControl(c.GetState().RunID, "alpha", connID, connID)
 				c.HoldsHand("alpha", connID)
 				c.HandFor("alpha")
 			}
