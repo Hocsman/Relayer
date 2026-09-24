@@ -47,10 +47,10 @@ type Engine interface {
 // may be delivering a decision, and the other goroutines that show something
 // wait for it. A front end may hold a lock of its own while it reads the core
 // or calls SetHolder, AdmitRun, Admit, the release Admit returns, RecordAudit
-// or BeginDrain, none of which calls the sink on the caller's goroutine. It must
-// not hold a lock its sink takes while it calls an operation that changes the
-// core, which may show what another goroutine queued, nor while it calls
-// Wait, which waits for goroutines that show things.
+// or BeginDrain, none of which calls the sink on the caller's goroutine. It
+// must not hold a lock its sink takes while it calls an operation that
+// changes the core, which may show what another goroutine queued, nor while
+// it calls Wait, which waits for goroutines that show things.
 type Sink interface {
 	// Prompt shows a prompt, or a change of its delivery state.
 	Prompt(View)

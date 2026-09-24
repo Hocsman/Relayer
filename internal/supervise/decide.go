@@ -230,10 +230,11 @@ func askEvaluation(evaluation policy.Evaluation, reason string) policy.Evaluatio
 // the operator all the same, for the hand, a repeat, a limit or an answer the
 // adapter could not encode, is offered deny alone (onlyDeny): offered every
 // answer its adapter encodes, it let any operator allow what a deny rule
-// refuses. A dry run denies nothing, and a sensitive prompt is always the
-// operator's, whatever the rule proposes.
+// refuses. The policy asks about a sensitive prompt, and about every prompt of
+// a dry run, whatever its rule proposes: such an evaluation is neither
+// automatic nor held back by a limit, and is not restricted.
 func policyDenies(evaluation policy.Evaluation) bool {
-	if evaluation.ProposedAction != policy.ActionDeny || evaluation.DryRun {
+	if evaluation.ProposedAction != policy.ActionDeny {
 		return false
 	}
 	if evaluation.Automatic {

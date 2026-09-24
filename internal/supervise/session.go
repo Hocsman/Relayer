@@ -14,9 +14,9 @@ import (
 // while anything is being written to the session (ErrLineInFlight for a
 // line, ErrDecisionInFlight for an answer or the holder's keystrokes): the
 // write's outcome would be lost with the process. Keystrokes are refused like
-// an answer rather than cut short, although a Stop takes nothing more to the
-// agent: they are bounded and their write returns at once, and the session's
-// one write slot is simpler to reason about when nothing overtakes it.
+// an answer, although a Stop writes nothing to the agent: their write is
+// bounded and returns at once, and the session's one write slot is simpler to
+// reason about when nothing overtakes it.
 func (s *Supervisor) StopSession(runID, sessionID string) error {
 	if err := s.activeRun(runID); err != nil {
 		return err
