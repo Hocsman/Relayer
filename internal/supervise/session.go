@@ -236,11 +236,19 @@ func (s *Supervisor) completeAgentStart(sessionKey string, startedAt time.Time) 
 	// new process gives every event an ID of its own, so nothing of the
 	// replacement's is mistaken for them, and a late copy of an old one is
 	// still refused.
+	//
+	// The status is derived from what was kept: a prompt the new process
+	// raised while it started waits on the operator, and showing the agent
+	// running hid it.
+	status := "running"
+	if s.hasPendingForSessionLocked(sessionKey) {
+		status = "waiting"
+	}
 	if index, found := s.agentIndex[sessionKey]; found {
 		agent := &s.agents[index]
 		agent.Running = true
 		agent.Attached = false
-		agent.Status = "running"
+		agent.Status = status
 		agent.ExitCode = nil
 		agent.InputFrozen = false
 	}
@@ -248,7 +256,7 @@ func (s *Supervisor) completeAgentStart(sessionKey string, startedAt time.Time) 
 	if displaySessionID == "" {
 		return
 	}
-	s.sink.Status(Status{RunID: s.runID, Scope: "session", SessionID: displaySessionID, Status: "running", ClearedBefore: bound.Format(time.RFC3339Nano)})
+	s.sink.Status(Status{RunID: s.runID, Scope: "session", SessionID: displaySessionID, Status: status, ClearedBefore: bound.Format(time.RFC3339Nano)})
 	s.sink.Refresh(displaySessionID)
 	// A prompt the replacement raised while it was starting waited: no
 	// automatic decision is taken while a session is changing.

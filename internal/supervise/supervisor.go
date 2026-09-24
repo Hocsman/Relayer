@@ -420,8 +420,14 @@ func (s *Supervisor) pendingExists(key eventKey) bool {
 	return exists
 }
 
+// setAgentWaitingLocked shows a running agent waiting on a prompt. An agent
+// that a Stop or a Restart holds stays "stopping": its process is on its way
+// out and no answer reaches it until the operation ends, which then sets the
+// status the agent really has. Shown waiting, and running once the prompt was
+// withdrawn, it read as ready for input in the middle of its Stop.
 func (s *Supervisor) setAgentWaitingLocked(sessionID string) {
-	if index, found := s.agentIndex[strings.ToLower(sessionID)]; found && s.agents[index].Running {
+	sessionKey := strings.ToLower(sessionID)
+	if index, found := s.agentIndex[sessionKey]; found && s.agents[index].Running && !s.stoppingSessions[sessionKey] {
 		s.agents[index].Status = "waiting"
 	}
 }

@@ -18,6 +18,10 @@
 //     agent withdraws the prompt meanwhile: the prompt is shown answered at
 //     once, and the next automatic prompt is considered once the write is
 //     over.
+//   - An agent's status follows its prompts: a Start or a Restart that kept a
+//     prompt the new process raised shows the agent waiting, not running, and
+//     a prompt raised while a Stop or a Restart holds the agent leaves it
+//     stopping.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

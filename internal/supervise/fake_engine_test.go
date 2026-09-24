@@ -65,6 +65,10 @@ type fakeEngine struct {
 	agentStartRelease <-chan struct{}
 	agentRestartErr   error
 	agentRestartCalls []string
+	// agentRestartStarted receives each restarted agent; agentRestartRelease,
+	// when set, holds the restart until it is closed.
+	agentRestartStarted chan string
+	agentRestartRelease <-chan struct{}
 
 	operations []string
 }
@@ -227,9 +231,18 @@ func (f *fakeEngine) StartAgent(_ context.Context, agentID string) error {
 
 func (f *fakeEngine) RestartAgent(_ context.Context, agentID string) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.agentRestartCalls = append(f.agentRestartCalls, agentID)
-	return f.agentRestartErr
+	started := f.agentRestartStarted
+	release := f.agentRestartRelease
+	err := f.agentRestartErr
+	f.mu.Unlock()
+	if started != nil {
+		started <- agentID
+	}
+	if release != nil {
+		<-release
+	}
+	return err
 }
 
 func (f *fakeEngine) MarkProcessExited(string) bool {

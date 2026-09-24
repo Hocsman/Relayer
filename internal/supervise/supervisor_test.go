@@ -528,43 +528,138 @@ func TestWithdrawingTheDeliveringPromptKeepsTheSessionUntilItsWriteReturns(t *te
 	}
 }
 
-// DEFECT (v0.8.8 fix "'waiting' after a start with a kept prompt"): a prompt
-// the new process raised while it started is kept, but the agent is shown
-// running rather than waiting on it. The fix flips the expected status.
-func TestAStartShowsRunningWhileThePromptItRaisedWaits(t *testing.T) {
-	engine := newFakeEngine()
-	startStarted := make(chan string, 1)
-	startRelease := make(chan struct{})
-	engine.agentStartStarted = startStarted
-	engine.agentStartRelease = startRelease
-	sup, _ := newCoreForTest(t, engine, "agent-a")
-	sup.Handle(session.AdapterEvent{Event: exitEvent("agent-a", 0, false)})
+// A prompt the new process raised while it started is kept, and the agent is
+// shown waiting on it once the start completes, in the core's state and in
+// the status the start reports. The start used to show it running whatever
+// it had kept, so the agent read as busy while it waited on the operator.
+func TestAStartShowsTheAgentWaitingOnThePromptItRaised(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		name := "start"
+		if restart {
+			name = "restart"
+		}
+		t.Run(name, func(t *testing.T) {
+			engine := newFakeEngine()
+			reached := make(chan string, 1)
+			release := make(chan struct{})
+			if restart {
+				engine.agentRestartStarted = reached
+				engine.agentRestartRelease = release
+			} else {
+				engine.agentStartStarted = reached
+				engine.agentStartRelease = release
+			}
+			sup, sink := newCoreForTest(t, engine, "agent-a")
+			releaseStart := releaser(t, release)
+			done := make(chan error, 1)
+			if restart {
+				go func() { done <- sup.RestartSession(testRunID, "agent-a") }()
+			} else {
+				sup.Handle(session.AdapterEvent{Event: exitEvent("agent-a", 0, false)})
+				go func() { done <- sup.StartSession(testRunID, "agent-a") }()
+			}
+			select {
+			case <-reached:
+			case <-time.After(2 * time.Second):
+				t.Fatalf("the %s never reached the runtime", name)
+			}
+			prompt := promptEvent("agent-a", "prompt-early")
+			prompt.Timestamp = time.Now().UTC()
+			sup.Handle(session.AdapterEvent{Event: prompt})
+			sink.reset()
+			releaseStart()
+			if err := <-done; err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
 
-	done := make(chan error, 1)
-	go func() { done <- sup.StartSession(testRunID, "agent-a") }()
-	select {
-	case <-startStarted:
-	case <-time.After(2 * time.Second):
-		close(startRelease)
-		t.Fatal("the start never reached the runtime")
+			if ids := pendingIDs(sup); len(ids) != 1 || ids[0] != "prompt-early" {
+				t.Fatalf("pending after the %s = %v, want the prompt raised during it", name, ids)
+			}
+			if agent := agentOf(t, sup, "agent-a"); !agent.Running || agent.Status != "waiting" {
+				t.Fatalf("agent after the %s = %#v, want running and waiting on the kept prompt", name, agent)
+			}
+			var reported []supervise.Status
+			for _, call := range sink.snapshot() {
+				if call.kind == "status" {
+					reported = append(reported, call.status)
+				}
+			}
+			if len(reported) != 1 || reported[0].Status != "waiting" || reported[0].ClearedBefore == "" {
+				t.Fatalf("statuses the %s reported = %#v, want one waiting status that clears the previous process's prompts", name, reported)
+			}
+		})
 	}
-	prompt := promptEvent("agent-a", "prompt-early")
-	prompt.Timestamp = time.Now().UTC()
-	sup.Handle(session.AdapterEvent{Event: prompt})
-	close(startRelease)
-	if err := <-done; err != nil {
-		t.Fatalf("StartSession: %v", err)
-	}
+}
 
-	if ids := pendingIDs(sup); len(ids) != 1 || ids[0] != "prompt-early" {
-		t.Fatalf("pending after the start = %v, want the prompt raised during it", ids)
-	}
-	agent := agentOf(t, sup, "agent-a")
-	if !agent.Running {
-		t.Fatalf("agent after the start = %#v", agent)
-	}
-	if agent.Status != "running" {
-		t.Fatalf("agent status = %q: the defect is fixed, flip this test to waiting", agent.Status)
+// A prompt raised while the agent is stopped, or restarted, leaves it shown
+// stopping: its process is on its way out and the core refuses any answer to
+// it until the operation ends. The prompt used to set the agent waiting over
+// "stopping", and its withdrawal then set it running, so the agent read as
+// ready for input in the middle of its Stop.
+func TestAPromptRaisedWhileTheAgentStopsLeavesItShownStopping(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		hold      func(*fakeEngine, chan string, <-chan struct{})
+		operate   func(*supervise.Supervisor) error
+		wantAfter string
+	}{
+		{
+			name: "stop",
+			hold: func(engine *fakeEngine, reached chan string, release <-chan struct{}) {
+				engine.stopStarted, engine.stopRelease = reached, release
+			},
+			operate:   func(sup *supervise.Supervisor) error { return sup.StopSession(testRunID, "agent-a") },
+			wantAfter: "exited",
+		},
+		{
+			name: "restart",
+			hold: func(engine *fakeEngine, reached chan string, release <-chan struct{}) {
+				engine.agentRestartStarted, engine.agentRestartRelease = reached, release
+			},
+			operate:   func(sup *supervise.Supervisor) error { return sup.RestartSession(testRunID, "agent-a") },
+			wantAfter: "running",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newFakeEngine()
+			reached := make(chan string, 1)
+			release := make(chan struct{})
+			test.hold(engine, reached, release)
+			sup, sink := newCoreForTest(t, engine, "agent-a")
+			releaseOperation := releaser(t, release)
+			done := make(chan error, 1)
+			go func() { done <- test.operate(sup) }()
+			select {
+			case <-reached:
+			case <-time.After(2 * time.Second):
+				t.Fatalf("the %s never reached the runtime", test.name)
+			}
+
+			prompt := promptEvent("agent-a", "prompt-1")
+			prompt.Timestamp = time.Now().UTC()
+			sup.Handle(session.AdapterEvent{Event: prompt})
+			if agent := agentOf(t, sup, "agent-a"); agent.Status != "stopping" {
+				t.Fatalf("agent once a prompt is raised during the %s = %#v, want still stopping", test.name, agent)
+			}
+			sink.reset()
+			sup.Handle(session.AdapterEventWithdrawn{Event: prompt})
+			if agent := agentOf(t, sup, "agent-a"); agent.Status != "stopping" {
+				t.Fatalf("agent once the prompt is withdrawn during the %s = %#v, want still stopping", test.name, agent)
+			}
+			for _, call := range sink.snapshot() {
+				if call.kind == "status" && call.status.Status != "stopping" {
+					t.Fatalf("the withdrawal reported %#v during the %s, want stopping", call.status, test.name)
+				}
+			}
+
+			releaseOperation()
+			if err := <-done; err != nil {
+				t.Fatalf("%s: %v", test.name, err)
+			}
+			if agent := agentOf(t, sup, "agent-a"); agent.Status != test.wantAfter {
+				t.Fatalf("agent after the %s = %#v, want %s", test.name, agent, test.wantAfter)
+			}
+		})
 	}
 }
 
