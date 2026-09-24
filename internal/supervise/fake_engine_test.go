@@ -25,6 +25,9 @@ type fakeEngine struct {
 	// staleExits makes MarkProcessExited report every exit as belonging to a
 	// process a replacement already superseded.
 	staleExits bool
+	// markExited, when set, answers MarkProcessExited in place of staleExits,
+	// as the runtime does from what runs when it is asked.
+	markExited func(agentID string) bool
 
 	supportedDecisions []adapters.Decision
 	evaluation         policy.Evaluation
@@ -290,10 +293,14 @@ func (f *fakeEngine) RestartAgent(_ context.Context, agentID string) error {
 	return err
 }
 
-func (f *fakeEngine) MarkProcessExited(string) bool {
+func (f *fakeEngine) MarkProcessExited(agentID string) bool {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	return !f.staleExits
+	mark, stale := f.markExited, f.staleExits
+	f.mu.Unlock()
+	if mark != nil {
+		return mark(agentID)
+	}
+	return !stale
 }
 
 func (f *fakeEngine) RecordAudit(entry audit.Entry) error {

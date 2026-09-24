@@ -256,7 +256,14 @@ type Supervisor struct {
 	// yet marked running, and a prompt its replacement raised then used to be
 	// dropped as the prompt of a stopped agent.
 	startingSessions map[string]bool
-	frozen           map[string]bool
+	// starts counts, per session, the Starts and Restarts begun: an exit
+	// compares it with the count it started from, and learns that one began
+	// while it was journaled.
+	starts map[string]uint64
+	// parkedExits holds, per session, the process exits that arrived while a
+	// Start or a Restart was in progress, until it ends (takeParkedExits).
+	parkedExits map[string][]adapters.Event
+	frozen      map[string]bool
 	// holders is, per session, the connection that holds its terminal.
 	holders map[string]string
 	// handGenerations counts, per session, the times its hand was taken
@@ -335,6 +342,8 @@ func New(ctx context.Context, engine Engine, options Options) (*Supervisor, erro
 		lineInFlight:      make(map[string]bool),
 		stoppingSessions:  make(map[string]bool),
 		startingSessions:  make(map[string]bool),
+		starts:            make(map[string]uint64),
+		parkedExits:       make(map[string][]adapters.Event),
 		frozen:            make(map[string]bool),
 		holders:           make(map[string]string),
 		handGenerations:   make(map[string]uint64),

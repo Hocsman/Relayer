@@ -116,11 +116,15 @@ func (s *Supervisor) StartSession(runID, sessionID string) error {
 	}
 	s.stoppingSessions[sessionKey] = true
 	s.startingSessions[sessionKey] = true
+	s.starts[sessionKey]++
 	s.agents[index].Status = "starting"
 	s.dropSessionPendingLocked(sessionKey)
 	s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: s.agents[index].SessionID, Status: "starting", ClearedBefore: clearedAll()})
 	s.mu.Unlock()
 	s.flush()
+	// An exit that arrives while the start runs waits for it to end, whatever
+	// its outcome, and is judged then (handleProcessExit).
+	defer s.takeParkedExits(sessionKey)
 	startedAt := time.Now().UTC()
 	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 	err := s.engine.StartAgent(ctx, sessionID)
@@ -184,11 +188,16 @@ func (s *Supervisor) RestartSession(runID, sessionID string) error {
 	}
 	s.stoppingSessions[sessionKey] = true
 	s.startingSessions[sessionKey] = true
+	s.starts[sessionKey]++
 	s.agents[index].Status = "stopping"
 	s.dropSessionPendingLocked(sessionKey)
 	s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: s.agents[index].SessionID, Status: "stopping", ClearedBefore: clearedAll()})
 	s.mu.Unlock()
 	s.flush()
+	// An exit that arrives while the restart runs, its own stop's most of
+	// all, waits for it to end, whatever its outcome, and is judged then
+	// (handleProcessExit).
+	defer s.takeParkedExits(sessionKey)
 	startedAt := time.Now().UTC()
 	ctx, cancel := context.WithTimeout(s.ctx, session.StopBudget+8*time.Second)
 	err := s.engine.RestartAgent(ctx, sessionID)

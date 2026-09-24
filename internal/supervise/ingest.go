@@ -303,9 +303,43 @@ func (s *Supervisor) releaseEventReservation(key eventKey) {
 	s.mu.Unlock()
 }
 
+// handleProcessExit takes in the exit of a session's process: journaled, and
+// shown when it is the current process's.
+//
+// An exit that arrives while a Start or a Restart of its session runs waits
+// for it to end (parked, then takeParkedExits), and is judged only then. The
+// runtime cannot tell, in the middle of a Restart, whether the exit is the
+// stopped process's or its replacement's: between the stop and the start
+// nothing runs, and it called the stopped process's exit current. That exit
+// was journaled, and applied once the Restart had shown the replacement
+// running: the agent was shown failed and not running while its new process
+// ran, a session_finished followed the new process's session_started, every
+// prompt the new process raised was dropped as a stopped agent's, and a Stop
+// and a Start were both refused. Judged once the operation has ended, the
+// stopped process's exit is stale, since its replacement runs, and a
+// replacement that died at once is current, since nothing runs.
+//
+// An exit judged current while no Start or Restart ran is still journaled
+// before it is applied, and one may begin meanwhile. It is then applied only
+// if none began: the session is the operation's, which shows the status its
+// own outcome gives.
 func (s *Supervisor) handleProcessExit(event adapters.Event, backend string) {
-	current := s.engine.MarkProcessExited(event.SessionID)
 	key := makeEventKey(event.SessionID, event.ID)
+	s.mu.Lock()
+	if s.startingSessions[key.sessionID] {
+		for _, parked := range s.parkedExits[key.sessionID] {
+			if parked.ID == event.ID {
+				s.mu.Unlock()
+				return
+			}
+		}
+		s.parkedExits[key.sessionID] = append(s.parkedExits[key.sessionID], event.Clone())
+		s.mu.Unlock()
+		return
+	}
+	starts := s.starts[key.sessionID]
+	s.mu.Unlock()
+	current := s.engine.MarkProcessExited(event.SessionID)
 	finished := eventAuditEntry(audit.KindSessionFinished, event, backend)
 	finished.Outcome = audit.OutcomeFinished
 	if event.Metadata["failed"] == "true" {
@@ -340,6 +374,12 @@ func (s *Supervisor) handleProcessExit(event adapters.Event, backend string) {
 		return
 	}
 	s.markResolvedLocked(key)
+	if s.starts[key.sessionID] != starts {
+		// A Start or a Restart began while the exit was journaled: the
+		// session is the operation's now.
+		s.mu.Unlock()
+		return
+	}
 	index, found := s.agentIndex[strings.ToLower(event.SessionID)]
 	if found {
 		agent := &s.agents[index]
@@ -365,6 +405,25 @@ func (s *Supervisor) handleProcessExit(event adapters.Event, backend string) {
 	s.reportEndedLocked(event.SessionID)
 	s.mu.Unlock()
 	s.flush()
+}
+
+// takeParkedExits judges the exits that arrived while a Start or a Restart of
+// the session ran, once it has ended (handleProcessExit). Each is taken in as
+// the event stream's own exits are, and one taken in meanwhile is not taken
+// twice.
+func (s *Supervisor) takeParkedExits(sessionKey string) {
+	s.mu.Lock()
+	parked := s.parkedExits[sessionKey]
+	delete(s.parkedExits, sessionKey)
+	s.mu.Unlock()
+	for _, event := range parked {
+		key := makeEventKey(event.SessionID, event.ID)
+		if _, reserved := s.reserveEvent(key, event.Signature); !reserved {
+			continue
+		}
+		s.handleProcessExit(event, s.backendFor(event.SessionID))
+		s.releaseEventReservation(key)
+	}
 }
 
 // reportEndedLocked queues the report that the session's current process
