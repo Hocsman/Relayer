@@ -116,8 +116,12 @@ func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluati
 	// under the evaluation the prompt was detected with, which the policy has
 	// just confirmed: its rule is the one the first entry named. The repeat
 	// guard is checked again with it: an answer written since the prompt was
-	// detected may be the one it repeats.
-	current := s.guardRepeat(key, event, s.engine.Evaluate(event))
+	// detected may be the one it repeats. So is the hand: SetHolder leaves a
+	// prompt whose answer claimed the session alone, and the policy used to
+	// journal and write its answer once a hand taken meanwhile held the
+	// terminal. Nothing can be typed while the claim holds the session's
+	// write slot, so who holds the hand now is all there is to check.
+	current := s.guardHeld(key.sessionID, s.guardRepeat(key, event, s.engine.Evaluate(event)))
 	if !current.Automatic || current.Action != evaluation.Action {
 		if !s.recordAudit(policyAuditEntry(event, backend, askEvaluation(current, current.Reason))) {
 			s.markDelivery(key, "failed", "audit_unavailable")

@@ -111,6 +111,11 @@
 //     are still being written; a Stop and a Restart are refused the same way
 //     while keystrokes are. The exit used to release an answer's claim at
 //     once, and the replacement's first answer could be written beside it.
+//   - The policy answers nothing the hand may have touched. A hand taken and
+//     released again while a prompt was being taken in leaves the prompt
+//     asked, as if still held, since its holder may have typed the answer;
+//     and the policy's last check before its decision asks about the hand as
+//     the first did, so no automatic answer starts once SetHolder returned.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

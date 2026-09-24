@@ -38,6 +38,12 @@ type fakeEngine struct {
 	// counts journaled decision entries, as the runtime's RecordAudit does.
 	maxConsecutiveAuto int
 	consecutiveAuto    map[string]int
+	// onEvaluate, when set, runs on each Evaluate outside the fixture's lock,
+	// with how many times that event has been evaluated, this call included:
+	// the first is its detection's, the second the policy's last check before
+	// its decision. It may block, as a slow policy would.
+	onEvaluate  func(event adapters.Event, call int)
+	evaluations map[string]int
 
 	applyCalls []applyCall
 	// applyErrs are returned by the first calls, in order, before applyErr.
@@ -107,6 +113,7 @@ func newFakeEngine() *fakeEngine {
 		evaluationByID:  make(map[string]policy.Evaluation),
 		pending:         make(map[string]*adapters.Event),
 		consecutiveAuto: make(map[string]int),
+		evaluations:     make(map[string]int),
 	}
 }
 
@@ -122,6 +129,13 @@ func automaticAllow() policy.Evaluation {
 }
 
 func (f *fakeEngine) Evaluate(event adapters.Event) policy.Evaluation {
+	f.mu.Lock()
+	f.evaluations[event.ID]++
+	hook, call := f.onEvaluate, f.evaluations[event.ID]
+	f.mu.Unlock()
+	if hook != nil {
+		hook(event, call)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	evaluation, found := f.evaluationByID[event.ID]

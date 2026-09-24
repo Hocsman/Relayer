@@ -96,7 +96,8 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 		s.emitSafeError("invalid_event", "An invalid event was ignored.", event.SessionID)
 		return
 	}
-	if !s.reserveEvent(key) {
+	hand, reserved := s.reserveEvent(key)
+	if !reserved {
 		return
 	}
 	defer s.releaseEventReservation(key)
@@ -127,8 +128,8 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 	// journaled as asked: the guard applies before the evaluation entry.
 	evaluation := s.guardRepeat(key, event, s.engine.Evaluate(event))
 	// So is a prompt raised while somebody holds the terminal, who may answer
-	// it by typing.
-	evaluation = s.guardHeld(key.sessionID, evaluation)
+	// it by typing, or took it since the prompt started being taken in.
+	evaluation = s.guardHeldSince(key.sessionID, hand, evaluation)
 	if !s.recordAudit(policyAuditEntry(event, backend, evaluation)) {
 		s.addFrozenEvent(event, evaluation)
 		return
@@ -141,9 +142,12 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 	s.mu.Lock()
 	// The hand may have been taken since the evaluation was journaled, while
 	// the prompt was not yet among those SetHolder turns into asks: it is
-	// asked now, and a second entry says why.
+	// asked now, and a second entry says why. So it is when the hand was
+	// taken and released again meanwhile: the holder may have typed its
+	// answer, and only who held the hand now was checked, which left it the
+	// policy's.
 	var previous, done chan struct{}
-	heldSince := evaluation.Automatic && s.holders[key.sessionID] != ""
+	heldSince := evaluation.Automatic && s.handTakenSinceLocked(key.sessionID, hand)
 	if heldSince {
 		evaluation = askEvaluation(evaluation, ReasonOperatorAttached)
 		view.Evaluation = evaluationView(evaluation)
@@ -216,20 +220,24 @@ func (s *Supervisor) sessionStarting(sessionKey string) bool {
 	return s.startingSessions[sessionKey]
 }
 
-func (s *Supervisor) reserveEvent(key eventKey) bool {
+// reserveEvent reserves an event for the goroutine taking it in, unless the
+// core knows it already, and returns the session's hand generation at that
+// moment.
+func (s *Supervisor) reserveEvent(key eventKey) (hand uint64, reserved bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.resolved[key]; exists {
-		return false
+		return 0, false
 	}
 	if _, exists := s.pending[key]; exists {
-		return false
+		return 0, false
 	}
 	if _, exists := s.ingesting[key]; exists {
-		return false
+		return 0, false
 	}
-	s.ingesting[key] = struct{}{}
-	return true
+	hand = s.handGenerations[key.sessionID]
+	s.ingesting[key] = ingestion{hand: hand}
+	return hand, true
 }
 
 func (s *Supervisor) releaseEventReservation(key eventKey) {

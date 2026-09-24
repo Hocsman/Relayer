@@ -186,6 +186,13 @@ type writeClaim struct {
 	signature string
 }
 
+// ingestion is a prompt being taken in (reserveEvent), until it is pending or
+// set aside. hand is the session's hand generation when it was reserved: a
+// hand taken since, even one released again, may have typed its answer.
+type ingestion struct {
+	hand uint64
+}
+
 // pendingEvent is a prompt the run waits on. evaluation is the policy's, as
 // the engine returned it, and what the core decides from: the view shows it
 // bounded and redacted, and an evaluation rebuilt from the view named its rule
@@ -213,7 +220,7 @@ type Supervisor struct {
 	agentIndex    map[string]int
 	pendingViews  []View
 	pending       map[eventKey]pendingEvent
-	ingesting     map[eventKey]struct{}
+	ingesting     map[eventKey]ingestion
 	resolved      map[eventKey]struct{}
 	resolvedOrder []eventKey
 	inFlight      map[string]writeClaim
@@ -230,6 +237,10 @@ type Supervisor struct {
 	frozen           map[string]bool
 	// holders is, per session, the connection that holds its terminal.
 	holders map[string]string
+	// handGenerations counts, per session, the times its hand was taken
+	// (SetHolder). A prompt compares it with the count it started from, and
+	// learns that a hand came and went while it was being taken in.
+	handGenerations map[string]uint64
 	// heldEntries is, per session, closed once the evaluation entries of the
 	// prompts the hand last turned into asks are journaled.
 	heldEntries map[string]chan struct{}
@@ -294,7 +305,7 @@ func New(ctx context.Context, engine Engine, options Options) (*Supervisor, erro
 		agentIndex:        index,
 		pendingViews:      []View{},
 		pending:           make(map[eventKey]pendingEvent),
-		ingesting:         make(map[eventKey]struct{}),
+		ingesting:         make(map[eventKey]ingestion),
 		resolved:          make(map[eventKey]struct{}),
 		inFlight:          make(map[string]writeClaim),
 		answered:          make(map[string]map[string]time.Time),
@@ -303,6 +314,7 @@ func New(ctx context.Context, engine Engine, options Options) (*Supervisor, erro
 		startingSessions:  make(map[string]bool),
 		frozen:            make(map[string]bool),
 		holders:           make(map[string]string),
+		handGenerations:   make(map[string]uint64),
 		heldEntries:       make(map[string]chan struct{}),
 		rawInFlight:       make(map[string]bool),
 		deliveryAvailable: true,

@@ -31,6 +31,12 @@ const ReasonOperatorAttached = "operator_attached"
 //     journaled as a second policy_evaluated entry, ask, and shown again;
 //   - a prompt the session raises is asked the same way before its evaluation
 //     is journaled, and is notified like any prompt that waits on a person;
+//   - a prompt that was being taken in when the hand was taken is asked the
+//     same way, even when the hand was released again before the prompt was
+//     pending: its holder may have typed the answer meanwhile;
+//   - a prompt whose answer the policy already claimed is checked for the
+//     hand again just before the policy's decision is journaled, and asked if
+//     somebody holds it then; an answer already journaled goes on;
 //   - a line is refused (ErrLineUnavailable): it would interleave with the
 //     holder's keystrokes;
 //   - a person's decision is still accepted, from anyone who may act: the
@@ -62,6 +68,7 @@ func (s *Supervisor) SetHolder(sessionID, connID string) {
 		return
 	}
 	s.holders[sessionKey] = connID
+	s.handGenerations[sessionKey]++
 	s.agents[index].Attached = true
 	if s.shuttingDown {
 		// A drain answers nothing more, and a goroutine started now could
@@ -109,6 +116,31 @@ func (s *Supervisor) guardHeld(sessionKey string, evaluation policy.Evaluation) 
 		return evaluation
 	}
 	return askEvaluation(evaluation, ReasonOperatorAttached)
+}
+
+// guardHeldSince is guardHeld for a prompt being taken in, which started when
+// the session's hand generation was hand: a hand taken since is taken into
+// account even when it was released again, since its holder may have typed
+// the prompt's answer. Only who held the hand at the end used to count, and a
+// hand taken, typed into and released while the prompt's entries were
+// journaled left the prompt the policy's.
+func (s *Supervisor) guardHeldSince(sessionKey string, hand uint64, evaluation policy.Evaluation) policy.Evaluation {
+	if !evaluation.Automatic {
+		return evaluation
+	}
+	s.mu.RLock()
+	taken := s.handTakenSinceLocked(sessionKey, hand)
+	s.mu.RUnlock()
+	if !taken {
+		return evaluation
+	}
+	return askEvaluation(evaluation, ReasonOperatorAttached)
+}
+
+// handTakenSinceLocked reports whether somebody holds the session's hand, or
+// took it since the session's hand generation was hand.
+func (s *Supervisor) handTakenSinceLocked(sessionKey string, hand uint64) bool {
+	return s.holders[sessionKey] != "" || s.handGenerations[sessionKey] != hand
 }
 
 // oweHeldEntriesLocked records that the evaluation entries of prompts the hand

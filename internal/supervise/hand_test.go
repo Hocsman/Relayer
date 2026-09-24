@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
@@ -318,6 +319,116 @@ func TestAPromptTakenInAsTheHandIsTakenIsAskedAllTheSame(t *testing.T) {
 	assertAskedForTheHand(t, engine, sup, "prompt-1", 2)
 	if calls := engine.applySnapshot(); len(calls) != 0 {
 		t.Fatalf("the prompt was answered while the hand was held: %#v", calls)
+	}
+}
+
+// The hand may be taken, typed into and released again while a prompt is
+// being taken in, before the prompt joins those SetHolder asks: the holder may
+// have answered it by typing, so the prompt is theirs as if the hand were
+// still held. Only who held the hand when the prompt was inserted used to be
+// checked, and a hand already released left the prompt the policy's, which
+// then typed a second answer. Taken while the prompt's detection is
+// journaled, the hand is seen before the evaluation is, whose one entry says
+// operator_attached; taken while the evaluation is journaled, a second entry
+// says so.
+func TestAHandTakenAndReleasedWhileAPromptIsTakenInLeavesItAsked(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		blocked     audit.Kind
+		evaluations int
+	}{
+		{name: "while its detection is journaled", blocked: audit.KindEventDetected, evaluations: 1},
+		{name: "while its evaluation is journaled", blocked: audit.KindPolicyEvaluated, evaluations: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newFakeEngine()
+			engine.evaluationByID["prompt-1"] = automaticAllow()
+			journalStarted := make(chan struct{}, 1)
+			journalRelease := make(chan struct{})
+			releaseJournal := releaser(t, journalRelease)
+			engine.auditBlockKind = test.blocked
+			engine.auditBlockEventID = "prompt-1"
+			engine.auditStarted = journalStarted
+			engine.auditRelease = journalRelease
+			sup, _ := newCoreForTest(t, engine, "agent-a")
+
+			handled := make(chan struct{})
+			go func() {
+				sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
+				close(handled)
+			}()
+			select {
+			case <-journalStarted:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the prompt's entry was never journaled")
+			}
+			sup.SetHolder("agent-a", "conn-1")
+			// The holder types the answer to the question on screen.
+			admitted(t, sup, "agent-a", "conn-1")()
+			sup.SetHolder("agent-a", "")
+			engine.set(func(f *fakeEngine) { f.auditBlockKind = "" })
+			releaseJournal()
+			select {
+			case <-handled:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the prompt was never taken in")
+			}
+			sup.BeginDrain()
+			sup.Wait()
+
+			assertAskedForTheHand(t, engine, sup, "prompt-1", test.evaluations)
+			if calls := engine.applySnapshot(); len(calls) != 0 {
+				t.Fatalf("the policy answered a prompt the holder may have typed into: %#v", calls)
+			}
+		})
+	}
+}
+
+// The hand may also be taken after the policy's answer to a prompt claimed the
+// session and before the policy's last check, the one it makes just before
+// its decision is journaled. SetHolder leaves a prompt whose answer is being
+// written alone, and the policy used to journal its decision and write it
+// once SetHolder had returned, on a terminal somebody held. The last check
+// asks about the hand as the first did: the prompt goes back to the
+// operator, a second entry says why, and nothing is written. Nobody is
+// notified: whoever holds the terminal is at it.
+func TestTheHandTakenBeforeThePolicysLastCheckStopsItsAnswer(t *testing.T) {
+	engine := newFakeEngine()
+	engine.evaluationByID["automatic-1"] = automaticAllow()
+	lastCheck := make(chan struct{}, 1)
+	release := make(chan struct{})
+	releaseCheck := releaser(t, release)
+	engine.onEvaluate = func(event adapters.Event, call int) {
+		if event.ID == "automatic-1" && call == 2 {
+			lastCheck <- struct{}{}
+			<-release
+		}
+	}
+	sup, sink := newCoreForTest(t, engine, "agent-a")
+
+	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "automatic-1")})
+	select {
+	case <-lastCheck:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the policy's last check never ran")
+	}
+	sup.SetHolder("agent-a", "conn-1")
+	releaseCheck()
+	waitFor(t, 2*time.Second, "the prompt to settle", func() bool {
+		shown := viewOf(sup, "automatic-1")
+		return shown == nil || shown.DeliveryStatus == "pending"
+	})
+	sup.BeginDrain()
+	sup.Wait()
+
+	assertAskedForTheHand(t, engine, sup, "automatic-1", 2)
+	if calls := engine.applySnapshot(); len(calls) != 0 {
+		t.Fatalf("the policy answered once the hand was taken: %#v", calls)
+	}
+	for _, call := range sink.snapshot() {
+		if call.kind == "notify" && call.notice.EventID == "automatic-1" {
+			t.Fatalf("the holder was notified of the prompt the hand asked: %#v", call.notice)
+		}
 	}
 }
 
