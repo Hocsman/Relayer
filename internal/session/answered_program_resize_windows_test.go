@@ -220,7 +220,7 @@ func TestAWindowResizedWhileAProgramRunsAfterTheAnswerDoesNotAskItAgainOnConPTY(
 				repaints.waitFor(t, index+2)
 			}
 			// The program quits, and ConPTY gives the primary screen back.
-			if err := manager.SendRaw(info.ID, []byte("q\r")); err != nil {
+			if err := manager.SendRaw(context.Background(), info.ID, []byte("q\r")); err != nil {
 				t.Fatalf("quitting the program: %v", err)
 			}
 			for {

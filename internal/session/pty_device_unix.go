@@ -43,11 +43,14 @@ func (u *unixPTYDevice) Close() error {
 	return u.file.Close()
 }
 
+// SetWriteDeadline bounds the writes to the master, where the runtime polls it
+// (pollableMaster): os.ErrNoDeadline otherwise.
+func (u *unixPTYDevice) SetWriteDeadline(deadline time.Time) error {
+	return u.file.SetWriteDeadline(deadline)
+}
+
 func (u *unixPTYDevice) Resize(columns, rows int) error {
-	return pty.Setsize(u.file, &pty.Winsize{
-		Rows: uint16(clamp(rows, 1, 65535)),
-		Cols: uint16(clamp(columns, 1, 65535)),
-	})
+	return setWindowSize(u.file, columns, rows)
 }
 
 func startPTY(session *processSession, cmd *exec.Cmd, columns, rows int) (ptyDevice, error) {
@@ -58,7 +61,13 @@ func startPTY(session *processSession, cmd *exec.Cmd, columns, rows int) (ptyDev
 	if err != nil {
 		return nil, err
 	}
-	return &unixPTYDevice{file: file}, nil
+	master, err := pollableMaster(file)
+	if err != nil {
+		// The agent runs: its master stays as it was opened, in blocking
+		// mode, rather than lose the agent.
+		return &unixPTYDevice{file: file}, nil
+	}
+	return &unixPTYDevice{file: master}, nil
 }
 
 // waitCommand reaps the leader. os/exec records the state in cmd.ProcessState

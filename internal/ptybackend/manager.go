@@ -113,7 +113,7 @@ func (m *Manager) SendRaw(ctx context.Context, id terminal.SessionID, data []byt
 	if err := m.check(ctx, id); err != nil {
 		return err
 	}
-	if err := m.inner.SendRaw(id, data); err != nil {
+	if err := m.inner.SendRaw(ctx, id, data); err != nil {
 		if errors.Is(err, session.ErrClosed) {
 			err = terminal.ErrClosed
 		}

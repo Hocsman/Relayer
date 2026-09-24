@@ -158,6 +158,48 @@ func (s *processSession) write(input []byte) error {
 	return err
 }
 
+// writeDeadliner is a device whose writes a deadline can end: the Unix
+// master, where the runtime polls it.
+type writeDeadliner interface {
+	SetWriteDeadline(time.Time) error
+}
+
+// writeRaw writes keystrokes as write does, within ctx where the device takes
+// a deadline: a write still blocked when ctx ends returns with
+// os.ErrDeadlineExceeded, having written part of input or none of it. Only
+// keystrokes are written this way. They are never journaled, and part of them
+// is what a person typing into a busy terminal gets anyway; an answer or a
+// line must never be cut short, and is written by write.
+//
+// The deadline is the device's for as long as the write lasts, and the
+// session's other writes, an answer's or a line's, never overlap it: the
+// supervision core admits one write at a time to a session.
+func (s *processSession) writeRaw(ctx context.Context, input []byte) error {
+	s.fileMu.RLock()
+	device := s.device
+	s.fileMu.RUnlock()
+	if device == nil {
+		return ErrClosed
+	}
+	if timed, ok := device.(writeDeadliner); ok && ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if deadline, bounded := ctx.Deadline(); bounded {
+			if timed.SetWriteDeadline(deadline) == nil {
+				defer func() { _ = timed.SetWriteDeadline(time.Time{}) }()
+			}
+		}
+		stop := context.AfterFunc(ctx, func() { _ = timed.SetWriteDeadline(time.Now()) })
+		defer stop()
+	}
+	_, err := device.Write(input)
+	if err == nil && s.recordInput != nil {
+		s.recordInput(time.Now(), append([]byte(nil), input...))
+	}
+	return err
+}
+
 func (s *processSession) resize(columns, rows int) error {
 	columns = clamp(columns, 1, 65535)
 	rows = clamp(rows, 1, 65535)

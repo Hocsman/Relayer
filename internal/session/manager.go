@@ -337,8 +337,10 @@ func (m *Manager) SendInput(sessionID string, value string) error {
 }
 
 // SendRaw writes raw terminal input bytes directly to the session PTY device.
-// Used for interactive terminal streaming (keystrokes, VT escape sequences, Ctrl+C).
-func (m *Manager) SendRaw(sessionID string, data []byte) error {
+// Used for interactive terminal streaming (keystrokes, VT escape sequences,
+// Ctrl+C). The write ends with ctx where the device takes a deadline, the Unix
+// master: an agent that reads nothing blocked it in the kernel for good.
+func (m *Manager) SendRaw(ctx context.Context, sessionID string, data []byte) error {
 	session, err := m.session(sessionID)
 	if err != nil {
 		return err
@@ -346,7 +348,7 @@ func (m *Manager) SendRaw(sessionID string, data []byte) error {
 	if exited, _, _ := session.result(); exited {
 		return ErrClosed
 	}
-	return session.write(data)
+	return session.writeRaw(ctx, data)
 }
 
 // SendLine is the ordinary-input path. Processor.SendLine atomically confirms
