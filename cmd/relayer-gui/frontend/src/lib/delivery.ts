@@ -25,6 +25,18 @@ export function policyDecisionInProgress(event: SupervisionEvent): boolean {
   );
 }
 
+// awaitsPerson reports a prompt that is waiting for a person: to answer it,
+// or to stop or resynchronize its session after a failed delivery. It is what
+// the "pending" counts count and what the decision modal opens for by itself.
+//
+// Left out are the prompts the policy is answering, and any prompt whose
+// answer is being delivered: nobody has anything to do about either until the
+// server says how it ended, and if it ends badly the prompt comes back as
+// uncertain or failed, which counts again.
+export function awaitsPerson(event: SupervisionEvent): boolean {
+  return event.deliveryStatus !== "delivering" && !policyDecisionInProgress(event);
+}
+
 // answerLocked reports whether this screen may send anything to the prompt at
 // all: no semantic answer, no typed answer, and no keyboard shortcut.
 //

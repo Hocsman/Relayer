@@ -1,3 +1,4 @@
+import { awaitsPerson } from "../lib/delivery";
 import type { AppState, UserInfo } from "../types/relayer";
 
 interface TopBarProps {
@@ -24,7 +25,9 @@ const runLabels: Record<AppState["runStatus"], string> = {
 
 export function TopBar({ state, userInfo, onOpenAgents, onOpenPreflight, onOpenAudit, onOpenObservability, onOpenRecordings, onRequestStop }: TopBarProps) {
   const running = state.agents.filter((agent) => agent.running).length;
-  const waiting = state.pendingEvents.length;
+  // Requests waiting for a person, not every pending prompt: the policy's own
+  // answers in progress are listed in the supervisor panel instead.
+  const waiting = state.pendingEvents.filter(awaitsPerson).length;
   const transitioning = ["starting", "restarting", "rollback", "stopping"].includes(
     state.runStatus,
   );

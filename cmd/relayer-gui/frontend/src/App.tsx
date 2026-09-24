@@ -14,6 +14,7 @@ import { TopBar } from "./components/TopBar";
 import { useNotifications } from "./hooks/useNotifications";
 import { useRelayer } from "./hooks/useRelayer";
 import { supervisionEventKey } from "./lib/eventKey";
+import { nextPromptSelection } from "./lib/promptQueue";
 import type { AppState, RelayerBridge, RunStatus, UserInfo } from "./types/relayer";
 
 export function App({ bridge }: { bridge: RelayerBridge }) {
@@ -113,36 +114,11 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
       setModalOpen(false);
       return;
     }
-    if (pending.length === 0) {
-      setSelectedEventKey(undefined);
-      setModalOpen(false);
-      return;
-    }
-
-    if (
-      !selectedEventKey ||
-      !pending.some(
-        (event) =>
-          supervisionEventKey(event.runID, event.sessionID, event.id) === selectedEventKey,
-      )
-    ) {
-      setSelectedEventKey(
-        supervisionEventKey(pending[0].runID, pending[0].sessionID, pending[0].id),
-      );
-      setModalOpen(true);
-    }
-    const unseen = pending.find(
-      (event) =>
-        !seenEvents.current.has(
-          supervisionEventKey(event.runID, event.sessionID, event.id),
-        ),
-    );
-    if (unseen) {
-      const key = supervisionEventKey(unseen.runID, unseen.sessionID, unseen.id);
-      seenEvents.current.add(key);
-      setSelectedEventKey(key);
-      setModalOpen(true);
-    }
+    const next = nextPromptSelection(pending, selectedEventKey, seenEvents.current);
+    if (!next) return;
+    if (next.seen) seenEvents.current.add(next.seen);
+    setSelectedEventKey(next.selectedKey);
+    setModalOpen(next.open);
   }, [agentsOpen, preflightOpen, auditOpen, observabilityOpen, recordingsOpen, state.app?.pendingEvents, state.app?.runStatus, selectedEventKey]);
 
   useEffect(() => {

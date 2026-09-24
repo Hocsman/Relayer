@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { answerLocked, deliveryRequiresResync, policyDecisionInProgress } from "./delivery";
+import {
+  answerLocked,
+  awaitsPerson,
+  deliveryRequiresResync,
+  policyDecisionInProgress,
+} from "./delivery";
 import type { SupervisionEvent } from "../types/relayer";
 
 function event(
@@ -57,6 +62,23 @@ describe("policyDecisionInProgress", () => {
   it("is a person's again once the policy's delivery failed or became uncertain", () => {
     expect(policyDecisionInProgress(event("failed", true))).toBe(false);
     expect(policyDecisionInProgress(event("uncertain", true))).toBe(false);
+  });
+});
+
+describe("awaitsPerson", () => {
+  it("waits for a person on a pending prompt the policy left to one", () => {
+    expect(awaitsPerson(event("pending", false))).toBe(true);
+  });
+
+  it("does not wait for anyone while the policy answers or an answer is delivered", () => {
+    expect(awaitsPerson(event("pending", true))).toBe(false);
+    expect(awaitsPerson(event("delivering", true))).toBe(false);
+    expect(awaitsPerson(event("delivering", false))).toBe(false);
+  });
+
+  it("waits for a person again once any delivery failed or became uncertain", () => {
+    expect(awaitsPerson(event("failed", true))).toBe(true);
+    expect(awaitsPerson(event("uncertain", false))).toBe(true);
   });
 });
 

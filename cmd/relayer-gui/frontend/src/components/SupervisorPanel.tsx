@@ -1,3 +1,4 @@
+import { awaitsPerson, policyDecisionInProgress } from "../lib/delivery";
 import { safeEventSummary } from "../lib/safety";
 import { supervisionEventKey } from "../lib/eventKey";
 import type { AppState, SafeErrorEvent, SupervisionEvent } from "../types/relayer";
@@ -18,6 +19,11 @@ export function SupervisorPanel({
   selectedEventKey,
   onSelectEvent,
 }: SupervisorPanelProps) {
+  // The count is what the operator has to act on. The list still shows every
+  // pending prompt, the policy's included, so an automatic answer is visible
+  // while it happens rather than only in the journal afterwards.
+  const waiting = state.pendingEvents.filter(awaitsPerson).length;
+  const deciding = state.pendingEvents.filter(policyDecisionInProgress).length;
   return (
     <aside className="supervisor" aria-label="Supervisor">
       <header className="supervisor__header">
@@ -25,13 +31,14 @@ export function SupervisorPanel({
           <span className="eyebrow">Supervisor</span>
           <h2>Action queue</h2>
         </div>
-        <span className={`queue-count${state.pendingEvents.length ? " queue-count--active" : ""}`}>
-          {state.pendingEvents.length}
+        <span className={`queue-count${waiting ? " queue-count--active" : ""}`}>
+          {waiting}
         </span>
         <span className="sr-only" aria-live="polite">
-          {state.pendingEvents.length === 0
-            ? "No supervision request is pending"
-            : `${state.pendingEvents.length} supervision request${state.pendingEvents.length !== 1 ? "s" : ""} pending`}
+          {waiting === 0
+            ? "No supervision request is waiting for a person"
+            : `${waiting} supervision request${waiting !== 1 ? "s" : ""} waiting for a person`}
+          {deciding > 0 ? `; ${deciding} being answered by the policy` : ""}
         </span>
       </header>
 
@@ -118,19 +125,27 @@ function EventItem({
   selected: boolean;
   onSelect(): void;
 }) {
+  const policy = policyDecisionInProgress(event);
   return (
     <button
       type="button"
-      className={`event-item${selected ? " event-item--selected" : ""}`}
+      className={`event-item${selected ? " event-item--selected" : ""}${policy ? " event-item--policy" : ""}`}
       onClick={onSelect}
     >
       <span className={`risk-dot risk-dot--${event.risk}`} aria-hidden="true" />
       <span className="event-item__content">
         <strong>{safeEventSummary(event)}</strong>
         <span>{agentName || event.agentID} · {event.adapter}</span>
-        <span className="event-item__policy">
-          {riskLabels[event.risk]} · {event.evaluation.ruleName || "default rule"} · {actionLabels[event.evaluation.action]}
-        </span>
+        {policy ? (
+          <span className="event-item__policy">
+            Policy · {actionLabels[event.evaluation.action]} · {event.deliveryStatus === "delivering" ? "delivering" : "queued"}
+          </span>
+        ) : (
+          <span className="event-item__policy">
+            {riskLabels[event.risk]} · {event.evaluation.ruleName || "default rule"} · {actionLabels[event.evaluation.action]}
+            {event.deliveryStatus !== "pending" ? ` · ${event.deliveryStatus}` : ""}
+          </span>
+        )}
       </span>
       <span className="event-item__arrow" aria-hidden="true">›</span>
     </button>

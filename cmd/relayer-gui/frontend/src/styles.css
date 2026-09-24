@@ -1037,6 +1037,18 @@ input:focus-visible {
   background: rgba(255, 94, 115, 0.06);
 }
 
+/* A prompt the policy is answering. The red of a request waiting for a person
+   would ask for an action nobody has to take, so it reads calm and cyan. */
+.event-item.event-item--policy {
+  border-color: rgba(66, 217, 232, 0.2);
+  background: rgba(66, 217, 232, 0.04);
+}
+
+.event-item.event-item--policy:hover {
+  border-color: rgba(66, 217, 232, 0.36);
+  background: var(--cyan-soft);
+}
+
 .event-item.event-item--selected,
 .event-item.event-item--selected:hover {
   border-color: rgba(255, 94, 115, 0.58);
