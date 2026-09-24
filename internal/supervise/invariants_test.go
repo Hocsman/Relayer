@@ -685,31 +685,38 @@ func TestAStopOrRestartIsRefusedWhileAnAnswerIsWritten(t *testing.T) {
 	}
 }
 
-// Nor are they while the holder's keystrokes are being written: the session
-// takes one write at a time, and a Stop or a Restart is one. A Restart let the
-// old process's keystrokes reach its replacement.
-func TestAStopOrRestartIsRefusedWhileTheHoldersKeystrokesAreWritten(t *testing.T) {
+// While the holder's keystrokes are being written, a Restart and a Start are
+// refused: the old process's keystrokes could reach its replacement. A Stop is
+// taken: it writes nothing to the agent, and it is what ends a write blocked
+// on an agent that reads nothing, whose keystrokes fill its terminal's input
+// buffer. The Stop was refused, and with it the one action that ends such an
+// agent and its write, while every answer and line to it was refused too.
+func TestAStopIsTakenWhileTheHoldersKeystrokesAreWrittenAndARestartIsNot(t *testing.T) {
 	engine := newFakeEngine()
 	sup, _ := newCoreForTest(t, engine, "agent-a")
 	sup.SetHolder("agent-a", "conn-1")
 	release := admitted(t, sup, "agent-a", "conn-1")
 	t.Cleanup(release)
 
-	if err := sup.StopSession(testRunID, "agent-a"); !errors.Is(err, supervise.ErrDecisionInFlight) {
-		t.Fatalf("a stop during the holder's keystrokes = %v, want ErrDecisionInFlight", err)
-	}
 	if err := sup.RestartSession(testRunID, "agent-a"); !errors.Is(err, supervise.ErrDecisionInFlight) {
 		t.Fatalf("a restart during the holder's keystrokes = %v, want ErrDecisionInFlight", err)
 	}
-	if stops, _, restarts := engine.lifecycleCalls(); stops != 0 || restarts != 0 {
-		t.Fatalf("stops = %d, restarts = %d reached the runtime during the holder's keystrokes", stops, restarts)
+	if err := sup.StopSession(testRunID, "agent-a"); err != nil {
+		t.Fatalf("a stop during the holder's keystrokes = %v", err)
 	}
-	if agent := agentOf(t, sup, "agent-a"); !agent.Running || agent.Status != "running" {
-		t.Fatalf("a refused stop changed the agent: %#v", agent)
+	if stops, _, restarts := engine.lifecycleCalls(); stops != 1 || restarts != 0 {
+		t.Fatalf("stops = %d, restarts = %d reached the runtime during the holder's keystrokes, want the stop alone", stops, restarts)
+	}
+	if agent := agentOf(t, sup, "agent-a"); agent.Running {
+		t.Fatalf("the stopped agent is shown %#v", agent)
+	}
+	// The session is the keystrokes' until they return.
+	if err := sup.StartSession(testRunID, "agent-a"); !errors.Is(err, supervise.ErrDecisionInFlight) {
+		t.Fatalf("a start while the keystrokes are still written = %v, want ErrDecisionInFlight", err)
 	}
 	release()
-	if err := sup.StopSession(testRunID, "agent-a"); err != nil {
-		t.Fatalf("a stop once the keystrokes are written = %v", err)
+	if err := sup.StartSession(testRunID, "agent-a"); err != nil {
+		t.Fatalf("a start once the keystrokes are written = %v", err)
 	}
 }
 

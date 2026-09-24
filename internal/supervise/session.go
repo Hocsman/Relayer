@@ -11,12 +11,17 @@ import (
 
 // StopSession strictly stops one agent's process while its siblings keep
 // running. Its prompts stay until the process's exit arrives. It is refused
-// while anything is being written to the session (ErrLineInFlight for a
-// line, ErrDecisionInFlight for an answer or the holder's keystrokes): the
-// write's outcome would be lost with the process. Keystrokes are refused like
-// an answer, although a Stop writes nothing to the agent: their write is
-// bounded and returns at once, and the session's one write slot is simpler to
-// reason about when nothing overtakes it.
+// while an answer or a line is being written to the session (ErrLineInFlight
+// for a line, ErrDecisionInFlight for an answer): the write's outcome, which
+// is journaled, would be lost with the process.
+//
+// It is taken while the holder's keystrokes are being written. A Stop writes
+// nothing to the agent, keystrokes are never journaled, and their write is not
+// bounded: an agent that reads nothing fills its terminal's input buffer and
+// blocks the write, which then held the session's slot and refused the Stop,
+// the one action that ends the agent, and with it the write. The session
+// stays the keystrokes' until they return: a Start or a Restart is refused
+// meanwhile, since their bytes could reach the replacement.
 func (s *Supervisor) StopSession(runID, sessionID string) error {
 	if err := s.activeRun(runID); err != nil {
 		return err
@@ -35,7 +40,7 @@ func (s *Supervisor) StopSession(runID, sessionID string) error {
 		s.mu.Unlock()
 		return ErrLineInFlight
 	}
-	if _, busy := s.inFlight[sessionKey]; busy || s.rawInFlight[sessionKey] {
+	if _, busy := s.inFlight[sessionKey]; busy {
 		s.mu.Unlock()
 		return ErrDecisionInFlight
 	}
