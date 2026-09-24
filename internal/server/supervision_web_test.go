@@ -56,8 +56,13 @@ type faultEngine struct {
 	// applyErr is returned by every answer's write, which then writes
 	// nothing.
 	applyErr error
-	// holdApply, when set, holds the next answer's write until it is closed.
+	// holdApply, when set, holds the next answer's write until it is closed
+	// or the write's context ends.
 	holdApply chan struct{}
+	// holdApplyFirm, when set, holds the next answer's write until it is
+	// closed, whatever the write's context: a write stuck below the context,
+	// which is what a run's drain must wait for.
+	holdApplyFirm chan struct{}
 	// applyStarted receives the session of each answer's write as it starts.
 	applyStarted chan string
 	applying     int
@@ -93,6 +98,8 @@ func (f *faultEngine) ApplyDecision(ctx context.Context, sessionID string, event
 	}
 	hold := f.holdApply
 	f.holdApply = nil
+	firm := f.holdApplyFirm
+	f.holdApplyFirm = nil
 	err := f.applyErr
 	f.mu.Unlock()
 	defer func() {
@@ -101,6 +108,9 @@ func (f *faultEngine) ApplyDecision(ctx context.Context, sessionID string, event
 		f.mu.Unlock()
 	}()
 	f.applyStarted <- sessionID
+	if firm != nil {
+		<-firm
+	}
 	if hold != nil {
 		select {
 		case <-hold:
@@ -662,60 +672,5 @@ func TestAWebStopThatFailedFreezesTheSession(t *testing.T) {
 	}
 	if strings.Contains(g.broadcastText(), "secret-project") {
 		t.Fatal("the backend's own error reached the clients")
-	}
-}
-
-// A run started again, by saving the agents' profiles, knows who holds each
-// terminal. The hands are the gateway's and outlive a run, but every run's
-// agents started with nobody attached, so the interface showed a terminal its
-// holder was typing into as free, and the new run's policy would answer on it
-// what the holder was answering by typing.
-func TestAWebRunStartedAgainKnowsWhoHoldsEachTerminal(t *testing.T) {
-	g := startWebRun(t, webRun{
-		policy: "allow",
-		agents: []webAgent{{id: "web-held", mode: webAgentListen, adapter: "generic"}},
-	})
-	g.awaitScreen("web-held", "agent ready", 30*time.Second)
-	g.ctrl.RegisterPresence("conn-alice", "alice", string(RoleOperator))
-	if _, err := g.ctrl.TakeControl("web-held", "conn-alice", "alice"); err != nil {
-		t.Fatalf("TakeControl: %v", err)
-	}
-	profiles, err := g.ctrl.GetAgentProfiles()
-	if err != nil {
-		t.Fatalf("GetAgentProfiles: %v", err)
-	}
-	result, err := g.ctrl.SaveAgentProfilesAndRestart(SaveAgentProfilesAndRestartRequest{
-		ExpectedRevision: profiles.Revision,
-		Profiles: []AgentProfileInput{{
-			ID:      "web-held",
-			Name:    "web-held",
-			Cwd:     profiles.Profiles[0].Cwd,
-			Backend: "pty",
-			Adapter: "generic",
-			Argv:    webAgentArgv(t, webAgentListen),
-		}},
-	})
-	if err != nil {
-		t.Fatalf("SaveAgentProfilesAndRestart: %v", err)
-	}
-	if result.Outcome != "restarted" || result.State.RunID != g.runID() {
-		t.Fatalf("the run did not start again: %+v", result)
-	}
-	if agent := g.agent("web-held"); !agent.Attached || agent.HolderIdentity != "alice" {
-		t.Fatalf("after the restart the agent is %+v, want attached and held by alice", agent)
-	}
-	g.awaitScreen("web-held", "agent ready", 30*time.Second)
-	prompt := livePrompt(g.ctrl, "web-held", "after-restart", time.Now().UTC())
-	var offered SupervisionEvent
-	for _, pending := range g.pending("web-held") {
-		if pending.ID == prompt.ID {
-			offered = pending
-		}
-	}
-	if offered.ID == "" {
-		t.Fatal("the new run did not take the prompt in")
-	}
-	if offered.Evaluation.Automatic || offered.Evaluation.Reason != supervise.ReasonOperatorAttached {
-		t.Fatalf("the new run's prompt on a held terminal is %+v, want it asked for operator_attached", offered.Evaluation)
 	}
 }

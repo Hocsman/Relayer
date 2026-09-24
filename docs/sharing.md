@@ -45,7 +45,15 @@ stopped, stopping or starting, and while the run is stopping.
 | X is prompted | no answer | — | request expires after 30s, still held by X |
 | held by X | Release | X | free |
 | held by X | X disconnects | — | free |
+| held by X | the run is stopped or restarted | — | free |
 | held by X | Force takeover | operator Y | refused; still held by X (see below) |
+
+A hand belongs to a run's terminal. Stopping the run, or restarting it with
+"Save and restart", lets go of every terminal once the run has drained, and
+the new run's terminals are free: whoever wants one takes it again, which is
+journaled. No terminal is taken while a run is stopping. Before v0.8.9 the
+new run inherited the previous run's hands, and a connection could type into
+a process it had never attached to.
 
 Taking a terminal someone else holds is **refused, not queued and not stolen**.
 An operator typing into an agent can be interrupted mid-command by a takeover,
@@ -132,6 +140,7 @@ and reason.
 | `control_declined` | `applied` · `control_declined` | A holder refused. |
 | `control_released` | `applied` · `control_released` | A holder released it. |
 | `control_released` | `applied` · `control_released_disconnect` | A holder disconnected; recorded by the system. |
+| `control_released` | `applied` · `control_released_run_end` | The run was stopped or restarted, or the gateway shut down; recorded by the system. |
 | `control_forced` | `applied` · `control_forced` | An operator seized it without consent. |
 | `control_forced` | `failed` · `control_force_disabled` | An operator tried to, and the gateway refused. |
 | `attach_started` / `attach_finished` | `applied` | A terminal was taken or released through the attach control. |

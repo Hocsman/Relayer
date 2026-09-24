@@ -580,7 +580,9 @@ func (c *Controller) mutateHandRecorded(
 	connID = strings.TrimSpace(connID)
 
 	c.mu.Lock()
-	if atomic.LoadInt32(&c.stopped) != 0 {
+	// A run that ends lets go of its hands (releaseHandsAtRunEnd): one taken
+	// meanwhile would be dropped with no record, or outlive the run.
+	if atomic.LoadInt32(&c.stopped) != 0 || c.ending {
 		c.mu.Unlock()
 		return HandView{}, handTransition{}, errors.New("supervisor runtime not ready")
 	}

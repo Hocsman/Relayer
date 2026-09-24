@@ -189,8 +189,10 @@ func TestRestartRequiredAndSaveAndRestart(t *testing.T) {
 		},
 	}
 
-	// Save and restart using the fresh revision token
+	// Save and restart using the fresh revision token, for the run it restarts:
+	// a request that names no run is refused.
 	restartRes, err := ctrl.SaveAgentProfilesAndRestart(SaveAgentProfilesAndRestartRequest{
+		ExpectedRunID:    ctrl.GetState().RunID,
 		ExpectedRevision: current.Revision,
 		Profiles:         profilesInput,
 	})

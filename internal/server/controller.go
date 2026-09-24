@@ -54,6 +54,10 @@ var (
 	errStaleRevision  = errors.New("configuration has changed, reload before saving")
 	errStaleRun       = errors.New("run has changed, reload before retrying")
 	errUnknownSession = errors.New("unknown session")
+	// errLifecycleBlocked refuses to start or stop a run once a run's agents
+	// could not be confirmed stopped: another run started beside them would
+	// leave processes nothing supervises.
+	errLifecycleBlocked = errors.New("the previous run's agents could not be confirmed stopped; restart Relayer before starting another run")
 )
 
 // Controller owns the headless supervisor runtime and provides thread-safe
@@ -64,22 +68,38 @@ var (
 // an agent — its prompts, the policy's decisions, the agents' supervision
 // state and the journal's failure — is the run's supervision core's, which
 // GetState lays over the gateway's own. The core's sink takes c.mu (see
-// gatewaySink): c.mu is held while reading the core or calling SetHolder and
-// BeginDrain, never while calling an operation that changes the core, or Wait.
+// gatewaySink): c.mu is held while reading the core or calling SetHolder,
+// RecordAudit and BeginDrain, never while calling an operation that changes
+// the core, or Wait.
+//
+// lifecycleMu serialises what ends a run, StopRun, "Save and restart" and
+// Close, and is taken before c.mu, never after it. A run ends by draining,
+// which waits for what its core admitted and so never happens under c.mu.
 type Controller struct {
+	lifecycleMu sync.Mutex
 	mu          sync.RWMutex
 	configPath  string
 	diagnostics io.Writer
 
 	ctx    context.Context
 	cancel context.CancelFunc
+	// loopDone is closed once the run's event loop has returned.
+	loopDone chan struct{}
 
 	plan    *app.DesktopPlan
 	runtime *app.DesktopRuntime
 	runID   string
 	// sup is the run's supervision core, replaced with its runtime: nothing of
-	// a run's prompts, answers or freezes outlives it.
+	// a run's prompts, answers or freezes outlives it. It is nil once a run
+	// stopped, or failed to start, until another run starts.
 	sup *supervise.Supervisor
+	// ending is set from the moment a run begins to end until another run
+	// starts: no terminal is handed over meanwhile, since the hands go with
+	// the run.
+	ending bool
+	// lifecycleBlocked is set once a run's processes could not be confirmed
+	// stopped: no other run is started beside processes that may still run.
+	lifecycleBlocked bool
 	// engineWrap, when a test sets it before Start, wraps each run's runtime
 	// where the supervision core meets it: the gateway tests' seam for a
 	// journal, a write or a stop that fails.
@@ -143,13 +163,30 @@ func NewController(configPath string, diagnostics io.Writer) (*Controller, error
 
 // Start boots the supervisor runtime and begins event processing.
 func (c *Controller) Start(ctx context.Context) error {
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
+	runID, err := newRunID()
+	if err != nil {
+		return err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	return c.startLocked(ctx)
+	return c.startLocked(ctx, runID)
 }
 
-func (c *Controller) startLocked(ctx context.Context) error {
+// newRunID draws the ID of a run about to start.
+func newRunID() (string, error) {
+	runIDBytes := make([]byte, 8)
+	if _, err := rand.Read(runIDBytes); err != nil {
+		return "", fmt.Errorf("generating run id: %w", err)
+	}
+	return hex.EncodeToString(runIDBytes), nil
+}
+
+// startLocked starts the run runID, with a supervision core of its own and no
+// hand held: the caller holds c.mu, and has ended any previous run.
+func (c *Controller) startLocked(ctx context.Context, runID string) error {
 	opts := app.DesktopOptions{
 		ConfigPath:  c.configPath,
 		Diagnostics: c.diagnostics,
@@ -159,12 +196,6 @@ func (c *Controller) startLocked(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("preparing desktop runtime: %w", err)
 	}
-
-	runIDBytes := make([]byte, 8)
-	if _, err := rand.Read(runIDBytes); err != nil {
-		return fmt.Errorf("generating run id: %w", err)
-	}
-	runID := hex.EncodeToString(runIDBytes)
 
 	runCtx, cancel := context.WithCancel(ctx)
 	rt, err := app.StartDesktopRuntime(runCtx, plan, runID)
@@ -204,6 +235,8 @@ func (c *Controller) startLocked(ctx context.Context) error {
 	c.runtime = rt
 	c.runID = runID
 	c.sup = sup
+	c.ending = false
+	c.loopDone = make(chan struct{})
 
 	metadata := rt.Metadata()
 	c.activeConfigRevision = metadata.ConfigRevision
@@ -252,36 +285,178 @@ func (c *Controller) startLocked(ctx context.Context) error {
 		Notices:       rt.StartupLogs(),
 	}
 
-	// The hands are the gateway's and outlive a run, so the new core learns
-	// who holds each terminal before it takes in a prompt: a core that did not
-	// know would answer, automatically, a prompt its holder may be answering
-	// by typing. The agents' Attached is rebuilt with it.
-	for key, hand := range c.hands {
-		if hand.held() {
-			c.setAttachedLocked(key, true)
-		}
-	}
-
-	go c.eventLoop(runCtx, rt, sup)
+	go c.eventLoop(runCtx, rt, sup, c.loopDone)
 
 	return nil
 }
 
-// Close gracefully stops the running supervisor and all agent processes.
+// Close gracefully stops the running supervisor and all agent processes. It
+// drains the run first, as StopRun does, and within ctx: what the run's core
+// admitted, an answer, a line or keystrokes being written, reaches its
+// journaled outcome before the runtime and its journal close.
 func (c *Controller) Close(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
 
-	if atomic.CompareAndSwapInt32(&c.stopped, 0, 1) {
-		c.beginDrainLocked()
-		if c.cancel != nil {
-			c.cancel()
-		}
-		if c.runtime != nil {
-			return c.runtime.Close(ctx)
-		}
+	if !atomic.CompareAndSwapInt32(&c.stopped, 0, 1) {
+		return nil
 	}
-	return nil
+	c.mu.Lock()
+	end := c.beginRunEndLocked()
+	c.mu.Unlock()
+	err := c.endRun(ctx, end, false)
+	c.mu.Lock()
+	c.clearRunLocked()
+	c.state.RunStatus = "stopped"
+	c.mu.Unlock()
+	return err
+}
+
+// runEnd is what ending one run needs, taken under c.mu when it begins.
+type runEnd struct {
+	runID    string
+	sup      *supervise.Supervisor
+	runtime  *app.DesktopRuntime
+	cancel   context.CancelFunc
+	loopDone <-chan struct{}
+}
+
+// runEndBudget bounds each phase of a run's end, as the desktop's does: the
+// backends' stop, then the runtime's close.
+const runEndBudget = 12 * time.Second
+
+// beginRunEndLocked closes the current run to everything new, and returns
+// what ending it needs: its core admits nothing more and schedules no answer
+// (BeginDrain, which never calls the sink and so is made under c.mu), and no
+// terminal is handed over. The caller holds c.mu, then ends the run without it
+// (endRun).
+func (c *Controller) beginRunEndLocked() runEnd {
+	end := runEnd{runID: c.runID, sup: c.sup, runtime: c.runtime, cancel: c.cancel, loopDone: c.loopDone}
+	c.ending = true
+	if c.sup != nil {
+		c.sup.BeginDrain()
+	}
+	return end
+}
+
+// endRun ends a run beginRunEndLocked closed, never under c.mu, in the
+// desktop's order. The backends stop first, strictly for a restart or a stop,
+// every session explicitly, tmux ones that persist on exit included, so that
+// no write stays blocked below its context; the run's context is cancelled
+// and its event loop returns; the core's admitted writes and started
+// decisions reach their journaled outcome (Wait), while the run's journal is
+// still open; the run's hands are let go and journaled; and only then does
+// the runtime close, which writes the run's last entries and closes its
+// journal. The core's sink takes c.mu, and Wait waits on goroutines that call
+// it, so none of this may hold c.mu. The gateway closed the runtime under c.mu
+// without waiting at all: an answer being written lost its outcome with the
+// journal.
+//
+// Each phase is bounded by runEndBudget, and by parent when it is not nil. A
+// non-nil result means the run's processes may not all have stopped.
+func (c *Controller) endRun(parent context.Context, end runEnd, strict bool) error {
+	if parent == nil {
+		parent = context.Background()
+	}
+	phase := func() (context.Context, context.CancelFunc) {
+		return context.WithTimeout(parent, runEndBudget)
+	}
+	var result error
+	if end.runtime != nil {
+		ctx, cancel := phase()
+		if strict {
+			result = end.runtime.BeginRestart(ctx)
+		} else {
+			result = end.runtime.BeginShutdown(ctx)
+		}
+		cancel()
+	}
+	if end.cancel != nil {
+		end.cancel()
+	}
+	if end.loopDone != nil {
+		<-end.loopDone
+	}
+	if end.sup != nil {
+		end.sup.Wait()
+	}
+	c.releaseHandsAtRunEnd()
+	if end.runtime != nil {
+		ctx, cancel := phase()
+		result = errors.Join(result, end.runtime.Close(ctx))
+		cancel()
+	}
+	return result
+}
+
+// releaseHandsAtRunEnd lets go of every terminal of the run that ends, and
+// journals each hand it drops as control_released, by the system: the hands
+// go with the run. The run's journal is still open, and its core, drained,
+// still journals what a front end gives it. Every client is told the
+// terminals are free.
+//
+// The hands outlived a run: a restart gave the new run the previous run's,
+// so a holder's connection went on typing into a process it had never
+// attached to, with no attach of it in the new run's journal, and its tab
+// showed a terminal of the process that was gone as its own. A run's
+// terminals are its processes'; whoever wants one of the new run's takes it,
+// which is journaled.
+func (c *Controller) releaseHandsAtRunEnd() {
+	c.mu.Lock()
+	var dropped []handTransition
+	touched := make(map[string]struct{}, len(c.hands))
+	for key, hand := range c.hands {
+		touched[key] = struct{}{}
+		if !hand.held() {
+			continue
+		}
+		idx, known := c.agentIndex[key]
+		if !known || idx >= len(c.state.Agents) {
+			continue
+		}
+		holder, live := c.presence[hand.holderConnID]
+		if !live {
+			holder = presenceEntry{connID: hand.holderConnID, identity: hand.holderIdentity}
+		}
+		dropped = append(dropped, handTransition{actor: holder, agent: c.state.Agents[idx], before: hand})
+	}
+	c.hands = nil
+	for key := range touched {
+		c.setAttachedLocked(key, false)
+	}
+	views := c.snapshotsLocked(touched)
+	c.mu.Unlock()
+
+	for _, change := range dropped {
+		c.recordControlAudit(change, controlRecord{
+			kind:    audit.KindControlReleased,
+			by:      audit.DecisionBySystem,
+			outcome: audit.OutcomeApplied,
+			reason:  "control_released_run_end",
+		})
+	}
+	c.broadcastSnapshots(views)
+}
+
+// clearRunLocked forgets the run that ended: its core, its runtime and its
+// agents, whose supervision state was the core's, and the configuration it
+// ran, so the settings say a start is owed. The run's ID stays, with its
+// status, until another run starts: it is the run a client stopped, and
+// "Save and restart" names it. The presence of each connection stays: it is
+// the connection's, and the session IDs are the configured agents'. The
+// caller holds c.mu.
+func (c *Controller) clearRunLocked() {
+	c.sup = nil
+	c.runtime = nil
+	c.cancel = nil
+	c.loopDone = nil
+	c.plan = nil
+	c.hands = nil
+	c.activeConfigRevision = ""
+	c.agentIndex = make(map[string]int)
+	c.state.Agents = []AgentState{}
+	c.state.PendingEvents = []SupervisionEvent{}
+	c.state.StartedAt = ""
 }
 
 // Subscribe registers an event listener called on each broadcast.
@@ -314,7 +489,8 @@ func (c *Controller) broadcast(event string, payload any) {
 	}
 }
 
-func (c *Controller) eventLoop(ctx context.Context, rt *app.DesktopRuntime, sup *supervise.Supervisor) {
+func (c *Controller) eventLoop(ctx context.Context, rt *app.DesktopRuntime, sup *supervise.Supervisor, done chan<- struct{}) {
+	defer close(done)
 	events := rt.Events()
 	for {
 		select {
@@ -388,14 +564,6 @@ func (c *Controller) refreshOutput(rt *app.DesktopRuntime, sup *supervise.Superv
 	c.mu.Unlock()
 
 	c.broadcast(eventSnapshot, snap)
-}
-
-// beginDrainLocked closes the run's core: from here on it takes nothing in and
-// starts no write. BeginDrain never calls the sink, so it is made under c.mu.
-func (c *Controller) beginDrainLocked() {
-	if c.sup != nil {
-		c.sup.BeginDrain()
-	}
 }
 
 // supervisor returns the run's supervision core and its run ID, or nil between
@@ -690,17 +858,30 @@ func (c *Controller) SetInteractiveSession(runID, sessionID string, active bool,
 // holding the hand. A resize from anyone else is a silent no-op: two observers
 // with different window sizes must not fight over the PTY geometry and thrash
 // the agent's rendering.
+//
+// The resize is a write to the run's backend like any other, admitted by the
+// run's core (AdmitRun) as the desktop's is: a run that ends waits for it
+// before its runtime closes, and takes none once it drains. The gateway
+// resized whatever the run was doing, a runtime being closed included.
 func (c *Controller) ResizeSession(runID, sessionID string, columns, rows int, connID string) error {
 	c.mu.RLock()
-	rt := c.runtime
+	rt, sup := c.runtime, c.sup
 	c.mu.RUnlock()
 
-	if rt == nil {
+	if rt == nil || sup == nil {
 		return errors.New("supervisor runtime not ready")
 	}
 	if !c.HoldsHand(sessionID, connID) {
 		return nil
 	}
+	release, admitted := sup.AdmitRun()
+	if !admitted {
+		if sup.State().AuditFailed {
+			return supervise.ErrAuditUnavailable
+		}
+		return supervise.ErrRuntimeStopped
+	}
+	defer release()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -739,22 +920,65 @@ func (c *Controller) RestartSession(runID, sessionID string) error {
 // StopRun stops the run the caller names, and only that one. It stopped
 // whatever run was current, whatever the caller named, so a tab left open on a
 // replaced run, or a request naming none, stopped every agent of the new one.
+//
+// The run drains first (endRun): its core admits nothing more, every session
+// is stopped strictly, and what the core admitted reaches its journaled
+// outcome before the runtime and its journal close. None of it holds c.mu, so
+// every client can still read the state meanwhile; the gateway closed the
+// runtime under c.mu without waiting, which cut an answer being written off
+// from its journal and blocked every other call for as long as the close took.
+// Every client is told the run is stopping, then stopped. A stopped run keeps
+// its ID, which "Save and restart" names to start another, and nothing else:
+// its agents and prompts were its core's, and its hands are let go.
+//
+// A stop whose sessions could not all be confirmed stopped leaves the run
+// failed and the gateway refusing to start another beside processes that may
+// still run.
 func (c *Controller) StopRun(runID string) (AppState, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
 
+	c.mu.Lock()
+	if atomic.LoadInt32(&c.stopped) != 0 {
+		c.mu.Unlock()
+		return AppState{}, supervise.ErrRuntimeStopped
+	}
+	if c.lifecycleBlocked {
+		c.mu.Unlock()
+		return AppState{}, errLifecycleBlocked
+	}
 	if strings.TrimSpace(runID) == "" || runID != c.runID {
+		c.mu.Unlock()
 		return AppState{}, supervise.ErrRunStale
 	}
-	c.beginDrainLocked()
-	if c.cancel != nil {
-		c.cancel()
+	if c.sup == nil {
+		// Stopped already: there is nothing more to stop.
+		state := c.stateLocked()
+		c.mu.Unlock()
+		return state, nil
 	}
-	if c.runtime != nil {
-		_ = c.runtime.Close(context.Background())
+	end := c.beginRunEndLocked()
+	c.state.RunStatus = "stopping"
+	c.mu.Unlock()
+	c.broadcast(eventStatus, StatusEvent{RunID: end.runID, Scope: "run", Status: "stopping"})
+
+	err := c.endRun(context.Background(), end, true)
+
+	c.mu.Lock()
+	c.clearRunLocked()
+	status := "stopped"
+	if err != nil {
+		c.lifecycleBlocked = true
+		status = "failed"
 	}
-	c.state.RunStatus = "stopped"
-	return c.stateLocked(), nil
+	c.state.RunStatus = status
+	state := c.stateLocked()
+	c.mu.Unlock()
+	c.broadcast(eventStatus, StatusEvent{RunID: end.runID, Scope: "run", Status: status})
+	if err != nil {
+		return AppState{}, errLifecycleBlocked
+	}
+	return state, nil
 }
 
 // -------------------------------------------------------------
@@ -916,29 +1140,111 @@ func (c *Controller) SaveAgentProfiles(runID string, req SaveAgentProfilesReques
 	return c.loadAgentProfilesLocked()
 }
 
+// SaveAgentProfilesAndRestart writes the whole request in one write, then ends
+// the run the caller names and starts another on the new configuration.
+//
+// It acts only on the run the caller names, the stopped one after StopRun
+// included: the gateway ignored ExpectedRunID, so a tab left open on a run
+// another tab had already restarted restarted the new run, and the request
+// the settings panel sends with an empty run ID was taken too.
+//
+// The previous run drains as StopRun's does (endRun), strictly, without
+// c.mu, and the new run keeps nothing of it: a supervision core of its own,
+// with none of the previous run's prompts, and no hand held. The gateway
+// closed the runtime under c.mu without waiting for what its core admitted,
+// and handed the new run the previous run's hands, so a connection typed
+// into a new process it had never attached to. Every client is told the new
+// run's ID with its status, running, or failed when it could not start, so a
+// tab on the previous run can load the new one; a run that failed to start
+// keeps that ID, which a retry names. A previous run whose sessions could not
+// all be confirmed stopped starts nothing, as on the desktop.
 func (c *Controller) SaveAgentProfilesAndRestart(req SaveAgentProfilesAndRestartRequest) (LifecycleResult, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
 
+	c.mu.Lock()
+	if atomic.LoadInt32(&c.stopped) != 0 {
+		c.mu.Unlock()
+		return LifecycleResult{}, supervise.ErrRuntimeStopped
+	}
+	if c.lifecycleBlocked {
+		c.mu.Unlock()
+		return LifecycleResult{}, errLifecycleBlocked
+	}
+	if strings.TrimSpace(req.ExpectedRunID) == "" || req.ExpectedRunID != c.runID {
+		c.mu.Unlock()
+		return LifecycleResult{}, supervise.ErrRunStale
+	}
+	nextRunID, err := newRunID()
+	if err != nil {
+		c.mu.Unlock()
+		return LifecycleResult{}, err
+	}
+	if err := c.saveRestartConfigurationLocked(req); err != nil {
+		c.mu.Unlock()
+		return LifecycleResult{}, err
+	}
+	end := c.beginRunEndLocked()
+	if end.sup != nil {
+		c.state.RunStatus = "restarting"
+	}
+	c.mu.Unlock()
+	if end.sup != nil {
+		c.broadcast(eventStatus, StatusEvent{RunID: end.runID, Scope: "run", Status: "restarting"})
+	}
+
+	stopErr := c.endRun(context.Background(), end, true)
+
+	c.mu.Lock()
+	c.clearRunLocked()
+	if stopErr != nil {
+		c.lifecycleBlocked = true
+		c.state.RunStatus = "failed"
+		c.mu.Unlock()
+		c.broadcast(eventStatus, StatusEvent{RunID: end.runID, Scope: "run", Status: "failed"})
+		return LifecycleResult{}, errLifecycleBlocked
+	}
+	if startErr := c.startLocked(context.Background(), nextRunID); startErr != nil {
+		c.runID = nextRunID
+		c.state.RunID = nextRunID
+		c.state.RunStatus = "failed"
+		c.mu.Unlock()
+		c.broadcast(eventStatus, StatusEvent{RunID: nextRunID, Scope: "run", Status: "failed"})
+		return LifecycleResult{}, fmt.Errorf("restarting supervisor: %w", startErr)
+	}
+	profilesView, _ := c.loadAgentProfilesLocked()
+	result := LifecycleResult{
+		Outcome:  "restarted",
+		State:    c.stateLocked(),
+		Profiles: profilesView,
+	}
+	c.mu.Unlock()
+	c.broadcast(eventStatus, StatusEvent{RunID: nextRunID, Scope: "run", Status: "running"})
+	return result, nil
+}
+
+// saveRestartConfigurationLocked validates a "Save and restart" request and
+// writes it in one write. The caller holds c.mu.
+func (c *Controller) saveRestartConfigurationLocked(req SaveAgentProfilesAndRestartRequest) error {
 	specs, err := c.validateAndBuildSpecsLocked(req.Profiles)
 	if err != nil {
-		return LifecycleResult{}, err
+		return err
 	}
 
 	cfg, err := config.LoadExisting(c.configPath)
 	if err != nil {
-		return LifecycleResult{}, err
+		return err
 	}
 
 	if !c.revisionCurrentLocked(req.ExpectedRevision, cfg.Revision) {
-		return LifecycleResult{}, errStaleRevision
+		return errStaleRevision
 	}
 
 	update := config.FullConfigurationUpdate{Agents: specs, UpdateAgents: true}
 	if req.Security != nil {
 		pol, err := buildPolicyConfig(*req.Security, cfg.Policies, filepath.Dir(c.configPath))
 		if err != nil {
-			return LifecycleResult{}, fmt.Errorf("building policy config: %w", err)
+			return fmt.Errorf("building policy config: %w", err)
 		}
 		update.Policies = &pol
 	}
@@ -951,35 +1257,14 @@ func (c *Controller) SaveAgentProfilesAndRestart(req SaveAgentProfilesAndRestart
 	// written while the agents were not.
 	_, newRev, err := config.UpdateFullConfiguration(c.configPath, cfg.Revision, update)
 	if err != nil {
-		return LifecycleResult{}, err
+		return err
 	}
 
 	c.revisionHash = newRev
 	tokenBytes := make([]byte, 16)
 	_, _ = rand.Read(tokenBytes)
 	c.revisionToken = hex.EncodeToString(tokenBytes)
-
-	// Stop existing runtime. Its core takes nothing more in and starts no
-	// write, and what it still shows is dropped once the new run replaces it.
-	c.beginDrainLocked()
-	if c.cancel != nil {
-		c.cancel()
-	}
-	if c.runtime != nil {
-		_ = c.runtime.Close(context.Background())
-	}
-
-	// Restart runtime with new plan
-	if err := c.startLocked(context.Background()); err != nil {
-		return LifecycleResult{}, fmt.Errorf("restarting supervisor: %w", err)
-	}
-
-	profilesView, _ := c.loadAgentProfilesLocked()
-	return LifecycleResult{
-		Outcome:  "restarted",
-		State:    c.stateLocked(),
-		Profiles: profilesView,
-	}, nil
+	return nil
 }
 
 func (c *Controller) validateAndBuildSpecsLocked(inputs []AgentProfileInput) ([]agent.Spec, error) {
