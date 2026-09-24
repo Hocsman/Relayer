@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   answerLocked,
   awaitsPerson,
+  decisionFailure,
   deliveryRequiresResync,
   policyDecisionInProgress,
 } from "./delivery";
@@ -79,6 +80,33 @@ describe("awaitsPerson", () => {
   it("waits for a person again once any delivery failed or became uncertain", () => {
     expect(awaitsPerson(event("failed", true))).toBe(true);
     expect(awaitsPerson(event("uncertain", false))).toBe(true);
+  });
+});
+
+describe("decisionFailure", () => {
+  it.each([
+    ["a decision is already in progress for this agent", "decision_in_flight"],
+    ["request is no longer the awaited event", "decision_stale"],
+    ["delivery state is indeterminate, stop the session before further input", "decision_delivery_uncertain"],
+    ["audit journal unavailable, no decision was sent", "decision_audit_unavailable"],
+    ["the Relayer engine is stopped", "decision_run_inactive"],
+    ["this Relayer run is no longer active", "decision_run_inactive"],
+    ["permission denied: viewer role is read-only", "decision_read_only"],
+    ["permission denied: this role is read-only", "decision_read_only"],
+    ["this connection does not hold the session's terminal", "decision_not_holder"],
+    ["answer cannot be encoded for this request", "decision_unsupported"],
+    ["an empty answer is not a decision", "decision_empty"],
+  ])("recognises the core's refusal %s", (text, code) => {
+    expect(decisionFailure(new Error(text)).code).toBe(code);
+  });
+
+  // A timeout or a dropped socket proves nothing either way: the answer may
+  // have reached the server. It is unconfirmed, and never shown raw.
+  it("reports anything else as unconfirmed, in its own words", () => {
+    const failure = decisionFailure(new Error("RPC request submitDecision (id=4) timed out after 15000ms"));
+    expect(failure.code).toBe("decision_unconfirmed");
+    expect(failure.message).not.toContain("id=4");
+    expect(decisionFailure(undefined).code).toBe("decision_unconfirmed");
   });
 });
 

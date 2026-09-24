@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer } from "react";
+import { decisionFailure } from "../lib/delivery";
 import { safeError } from "../lib/safety";
 import {
   initialRelayerState,
@@ -44,47 +45,70 @@ export function useRelayer(bridge: RelayerBridge) {
     const disposers = [
       bridge.on("relayer:snapshot", (snapshot) => dispatch({ type: "snapshot", snapshot })),
       bridge.on("relayer:event", (event) => dispatch({ type: "event", event })),
-      bridge.on("relayer:status", (status) => dispatch({ type: "status", status })),
+      bridge.on("relayer:status", (status) => {
+        dispatch({ type: "status", status });
+        // A run-scope status is a lifecycle step (a start, a restart, a
+        // rollback, a stop), after which every prompt, agent and hand may be
+        // different. The status itself carries none of that, so take it all.
+        if (status.scope === "run") void refresh();
+      }),
       bridge.on("relayer:error", (error) => dispatch({ type: "error", error })),
       bridge.on("relayer:presence", (presence) => dispatch({ type: "presence", presence })),
       bridge.on("relayer:hand", (hand) => dispatch({ type: "hand", hand })),
     ];
+    // The gateway's socket can drop. Whatever it broadcast meanwhile is lost,
+    // a "delivered" included, which would leave an answered prompt on screen.
+    const stopReconnect = bridge.onReconnect?.(() => void refresh());
     void refresh();
-    return () => disposers.forEach((dispose) => dispose());
+    return () => {
+      disposers.forEach((dispose) => dispose());
+      stopReconnect?.();
+    };
   }, [bridge, refresh]);
+
+  // The server is the authority on every prompt: it delivers the policy's own
+  // answers, marks each prompt delivering, delivered, failed or uncertain, and
+  // refuses an answer with a typed error. So a failed answer is never turned
+  // into a local verdict. Most refusals send nothing at all (another answer
+  // was already in flight, the prompt is gone, the journal is down, the run
+  // stopped), and locking those as "uncertain" froze a prompt the server was
+  // happily delivering, with no way for the operator to clear it.
+  //
+  // Instead the operator reads a fixed message for the refusal, and the page
+  // takes the server's state again. A delivery the server itself found
+  // indeterminate comes back as "uncertain" and stays locked; one it never
+  // received comes back answerable. If the state cannot be read either, the
+  // prompt keeps the "delivering" it was given below, which is locked, until
+  // a reconnection or the next frame says what became of it.
+  const answerFailed = useCallback(
+    async (runID: string, sessionID: string, error: unknown) => {
+      const failure = decisionFailure(error);
+      dispatch({
+        type: "error",
+        error: localError(runID, failure.code, failure.message, sessionID),
+      });
+      await refresh();
+    },
+    [refresh],
+  );
 
   const submitDecision = useCallback(
     async (runID: string, sessionID: string, eventID: string, value: string) => {
       dispatch({ type: "delivery", runID, sessionID, eventID, status: "delivering" });
       try {
         await bridge.submitDecision(runID, sessionID, eventID, value);
-        dispatch({ type: "delivery", runID, sessionID, eventID, status: "delivered" });
-        await refresh();
-        return true;
-      } catch {
-        // Once the native bridge has accepted the call, an error cannot prove
-        // that zero bytes reached the PTY/tmux pane. Keep the occurrence
-        // locked until the native snapshot removes or reconciles it.
-        dispatch({ type: "delivery", runID, sessionID, eventID, status: "uncertain" });
-        dispatch({
-          type: "error",
-          error: localError(
-            runID,
-            "decision_delivery_uncertain",
-            "The delivery is indeterminate. Stop or resynchronize the session before any further input.",
-            sessionID,
-          ),
-        });
+      } catch (error) {
+        await answerFailed(runID, sessionID, error);
         return false;
       }
+      dispatch({ type: "delivery", runID, sessionID, eventID, status: "delivered" });
+      await refresh();
+      return true;
     },
-    [bridge, refresh],
+    [bridge, refresh, answerFailed],
   );
 
-  // The semantic path shares the manual path's uncertainty rule: once the
-  // native bridge has accepted the call, a failure cannot prove that zero bytes
-  // reached the pane, so the occurrence stays locked until the native snapshot
-  // reconciles it.
+  // The semantic path follows the same rule as the typed one.
   const submitAutomaticDecision = useCallback(
     async (
       runID: string,
@@ -95,24 +119,15 @@ export function useRelayer(bridge: RelayerBridge) {
       dispatch({ type: "delivery", runID, sessionID, eventID, status: "delivering" });
       try {
         await bridge.submitAutomaticDecision(runID, sessionID, eventID, decision);
-        dispatch({ type: "delivery", runID, sessionID, eventID, status: "delivered" });
-        await refresh();
-        return true;
-      } catch {
-        dispatch({ type: "delivery", runID, sessionID, eventID, status: "uncertain" });
-        dispatch({
-          type: "error",
-          error: localError(
-            runID,
-            "decision_delivery_uncertain",
-            "The delivery is indeterminate. Stop or resynchronize the session before any further input.",
-            sessionID,
-          ),
-        });
+      } catch (error) {
+        await answerFailed(runID, sessionID, error);
         return false;
       }
+      dispatch({ type: "delivery", runID, sessionID, eventID, status: "delivered" });
+      await refresh();
+      return true;
     },
-    [bridge, refresh],
+    [bridge, refresh, answerFailed],
   );
 
   const resizeSession = useCallback(

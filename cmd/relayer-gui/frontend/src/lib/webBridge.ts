@@ -41,6 +41,8 @@ export function createWebBridge(options: WebBridgeOptions = {}): RelayerBridge {
   const pendingRpcs = new Map<string, PendingRpc>();
   const sendQueue: string[] = [];
   const listeners = new Map<string, Set<(payload: unknown) => void>>();
+  const reconnectListeners = new Set<() => void>();
+  let openedBefore = false;
   let isClosed = false;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -93,6 +95,19 @@ export function createWebBridge(options: WebBridgeOptions = {}): RelayerBridge {
           const item = sendQueue.shift();
           if (item) ws.send(item);
         }
+        // Every frame broadcast while the socket was down is gone, and the
+        // server resends none of them. Tell the page after the flush, so the
+        // state it asks for is asked after whatever it had already queued.
+        const reconnected = openedBefore;
+        openedBefore = true;
+        if (!reconnected) return;
+        reconnectListeners.forEach((listener) => {
+          try {
+            listener();
+          } catch (err) {
+            console.error("Error in bridge reconnect listener:", err);
+          }
+        });
       };
 
       ws.onmessage = (evt: MessageEvent) => {
@@ -269,6 +284,13 @@ export function createWebBridge(options: WebBridgeOptions = {}): RelayerBridge {
       callRpc<string>("exportRecording", { id }),
     deleteRecording: (id) =>
       callRpc<void>("deleteRecording", { id }),
+
+    onReconnect(listener: () => void) {
+      reconnectListeners.add(listener);
+      return () => {
+        reconnectListeners.delete(listener);
+      };
+    },
 
     on<K extends BridgeEventName>(
       event: K,

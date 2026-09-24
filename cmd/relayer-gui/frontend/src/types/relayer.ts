@@ -626,6 +626,11 @@ export interface RelayerBridge {
   exportRecording?(id: string): Promise<string>;
   deleteRecording?(id: string): Promise<void>;
   on<K extends BridgeEventName>(event: K, listener: (payload: BridgeEventMap[K]) => void): () => void;
+  // Called each time the gateway's socket comes back after a drop, never on
+  // the first connection. What the server broadcast meanwhile is lost for
+  // good, a "delivered" included, so the page takes the whole state again.
+  // Optional: the desktop bridge has no socket to lose.
+  onReconnect?(listener: () => void): () => void;
 }
 
 

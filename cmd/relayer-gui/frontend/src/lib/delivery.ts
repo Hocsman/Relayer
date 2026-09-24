@@ -37,6 +37,69 @@ export function awaitsPerson(event: SupervisionEvent): boolean {
   return event.deliveryStatus !== "delivering" && !policyDecisionInProgress(event);
 }
 
+export interface DecisionFailure {
+  code: string;
+  message: string;
+}
+
+// The core's refusals, recognised by the text both bridges carry (the desktop
+// returns the core's error, the gateway puts err.Error() in the reply). Only
+// the fixed message beside each one is ever shown: the raw text can carry a
+// transport wrapper, a request id or anything else the path added.
+const decisionRefusals: Array<[RegExp, DecisionFailure]> = [
+  [/decision is already in progress/i, {
+    code: "decision_in_flight",
+    message: "Another answer to this prompt is already being delivered. The prompt now shows the server's state.",
+  }],
+  [/no longer the awaited event/i, {
+    code: "decision_stale",
+    message: "This prompt is no longer waiting: it was answered, withdrawn or replaced. Nothing was sent.",
+  }],
+  [/delivery state is indeterminate/i, {
+    code: "decision_delivery_uncertain",
+    message: "The delivery is indeterminate. Stop or resynchronize the session before any further input.",
+  }],
+  [/audit journal unavailable/i, {
+    code: "decision_audit_unavailable",
+    message: "The audit journal is unavailable, so no answer was sent.",
+  }],
+  [/engine is stopped|run is no longer active/i, {
+    code: "decision_run_inactive",
+    message: "The run is stopping or was replaced. No answer was sent.",
+  }],
+  [/permission denied|read-only/i, {
+    code: "decision_read_only",
+    message: "This connection is read-only. No answer was sent.",
+  }],
+  [/does not hold the session's terminal/i, {
+    code: "decision_not_holder",
+    message: "Another operator holds this terminal. No answer was sent.",
+  }],
+  [/cannot be encoded/i, {
+    code: "decision_unsupported",
+    message: "The adapter cannot encode this answer for this prompt. Nothing was sent.",
+  }],
+  [/empty answer/i, {
+    code: "decision_empty",
+    message: "An empty answer is not a decision. Nothing was sent.",
+  }],
+];
+
+// decisionFailure turns a failed answer into the message the operator reads.
+// Anything unrecognised, a timeout or a dropped socket included, is reported
+// as unconfirmed rather than failed: the answer may have reached the server,
+// and only the server's state, taken again right after, says what it did.
+export function decisionFailure(error: unknown): DecisionFailure {
+  const text = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  for (const [pattern, failure] of decisionRefusals) {
+    if (pattern.test(text)) return failure;
+  }
+  return {
+    code: "decision_unconfirmed",
+    message: "The answer could not be confirmed. The prompt now shows the server's state: check it before answering again.",
+  };
+}
+
 // answerLocked reports whether this screen may send anything to the prompt at
 // all: no semantic answer, no typed answer, and no keyboard shortcut.
 //

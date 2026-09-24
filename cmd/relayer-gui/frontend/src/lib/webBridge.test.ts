@@ -172,6 +172,56 @@ describe("webBridge", () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
+  // Whatever the server broadcast while the socket was down is lost for good.
+  // The page has to be told the socket came back so it can ask for the state
+  // again; the first connection is not a reconnection, the hook already loads
+  // the state when it mounts.
+  it("tells its listeners when the socket comes back, and not on the first open", async () => {
+    vi.useFakeTimers();
+    try {
+      const bridge = createWebBridge({ token: "tok" });
+      const reconnected = vi.fn();
+      const stop = bridge.onReconnect?.(reconnected);
+      expect(stop).toBeTypeOf("function");
+
+      await vi.advanceTimersByTimeAsync(10);
+      expect(reconnected).not.toHaveBeenCalled();
+
+      MockWebSocket.instances[0].close();
+      await vi.advanceTimersByTimeAsync(1600);
+      expect(MockWebSocket.instances).toHaveLength(2);
+      expect(reconnected).toHaveBeenCalledTimes(1);
+
+      stop?.();
+      MockWebSocket.instances[1].close();
+      await vi.advanceTimersByTimeAsync(1600);
+      expect(MockWebSocket.instances).toHaveLength(3);
+      expect(reconnected).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("flushes what was queued before it tells anyone the socket is back", async () => {
+    vi.useFakeTimers();
+    try {
+      const bridge = createWebBridge({ token: "tok", rpcTimeoutMs: 60000 });
+      await vi.advanceTimersByTimeAsync(10);
+      MockWebSocket.instances[0].close();
+
+      const order: string[] = [];
+      bridge.onReconnect?.(() => {
+        order.push(`reconnect after ${MockWebSocket.instances[1].sentMessages.length} sent`);
+      });
+      void bridge.getUserInfo?.();
+      await vi.advanceTimersByTimeAsync(1600);
+
+      expect(order).toEqual(["reconnect after 1 sent"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("queues requests before connection opens and flushes on open", async () => {
     const bridge = createWebBridge({ token: "tok" });
     const ws = MockWebSocket.instances[0];
