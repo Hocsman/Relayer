@@ -124,6 +124,11 @@
 //   - A chosen answer is taken only if the prompt still offers it, not only
 //     the adapter: an answer the adapter could not encode, which the core
 //     took off the prompt, was accepted again from a stale screen.
+//   - A prompt the policy denies, on its own or but for one of its limits,
+//     that goes to the operator all the same, for the hand, a repeat, a limit
+//     or an answer the adapter could not encode, offers deny alone: offered
+//     every answer, it let any operator allow what a deny rule refuses. A
+//     typed answer is still sent as typed.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

@@ -207,6 +207,35 @@ func askEvaluation(evaluation policy.Evaluation, reason string) policy.Evaluatio
 	return evaluation
 }
 
+// policyDenies reports whether the policy's evaluation denies the prompt on
+// its own, or would but for one of its limits. A prompt it denies that goes to
+// the operator all the same, for the hand, a repeat, a limit or an answer the
+// adapter could not encode, is offered deny alone (onlyDeny): offered every
+// answer its adapter encodes, it let any operator allow what a deny rule
+// refuses. A dry run denies nothing, and a sensitive prompt is always the
+// operator's, whatever the rule proposes.
+func policyDenies(evaluation policy.Evaluation) bool {
+	if evaluation.ProposedAction != policy.ActionDeny || evaluation.DryRun {
+		return false
+	}
+	if evaluation.Automatic {
+		return evaluation.Action == policy.ActionDeny
+	}
+	return evaluation.Reason == policy.ReasonConsecutiveLimit || evaluation.Reason == policy.ReasonRateLimit
+}
+
+// onlyDeny is offered without every answer but deny, in a new slice: the views
+// already shown share the old one.
+func onlyDeny(offered []string) []string {
+	kept := make([]string, 0, 1)
+	for _, decision := range offered {
+		if decision == string(adapters.DecisionDeny) {
+			kept = append(kept, decision)
+		}
+	}
+	return kept
+}
+
 // askOperator is fallbackToAsk with, when current is not nil, the policy's
 // evaluation of the prompt now in place of the one it was detected with: the
 // prompt then shows the proposal and the rule the policy has now.
@@ -220,6 +249,9 @@ func (s *Supervisor) askOperator(key eventKey, current *policy.Evaluation, reaso
 	evaluation := item.evaluation
 	if current != nil {
 		evaluation = *current
+	}
+	if policyDenies(item.evaluation) || policyDenies(evaluation) {
+		item.view.Decisions = onlyDeny(item.view.Decisions)
 	}
 	item.evaluation = askEvaluation(evaluation, reason)
 	item.view.DeliveryStatus = "pending"

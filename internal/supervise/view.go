@@ -27,7 +27,10 @@ type View struct {
 	// Decisions are the semantic answers this event's own adapter can encode,
 	// probed per event rather than assumed per adapter. An interface that
 	// offered an Allow button the adapter has no verified bytes for would be
-	// promising a delivery that fails at the last step.
+	// promising a delivery that fails at the last step. The core only ever
+	// takes answers away: one the adapter could not encode when it was tried,
+	// and every answer but deny when the policy denies the prompt but it goes
+	// to the operator all the same. An answer not offered is refused.
 	Decisions []string `json:"decisions"`
 }
 

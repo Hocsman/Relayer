@@ -132,7 +132,8 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 	// holder's keystrokes count as an answer to the prompts they may have
 	// answered, the prompt being taken in among them, which then repeats its
 	// own Signature.
-	evaluation := s.guardHeldSince(key.sessionID, hand, s.engine.Evaluate(event))
+	policyEvaluation := s.engine.Evaluate(event)
+	evaluation := s.guardHeldSince(key.sessionID, hand, policyEvaluation)
 	evaluation = s.guardRepeat(key, event, evaluation)
 	if !s.recordAudit(policyAuditEntry(event, backend, evaluation)) {
 		s.addFrozenEvent(event, evaluation)
@@ -156,6 +157,10 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 		evaluation = askEvaluation(evaluation, ReasonOperatorAttached)
 		view.Evaluation = evaluationView(evaluation)
 		previous, done = s.oweHeldEntriesLocked(key.sessionID)
+	}
+	// A prompt the policy denies, asked all the same, offers deny alone.
+	if !evaluation.Automatic && policyDenies(policyEvaluation) {
+		view.Decisions = onlyDeny(view.Decisions)
 	}
 	item := pendingEvent{event: event.Clone(), view: view, evaluation: evaluation}
 	s.pending[key] = item

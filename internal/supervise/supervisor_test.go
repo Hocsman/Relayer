@@ -880,6 +880,125 @@ func TestAnAnswerThePromptNoLongerOffersIsRefused(t *testing.T) {
 	}
 }
 
+// automaticDeny is the evaluation of a rule that denies without asking.
+func automaticDeny() policy.Evaluation {
+	return policy.Evaluation{
+		Action:         policy.ActionDeny,
+		ProposedAction: policy.ActionDeny,
+		RuleName:       "deny-risky",
+		Reason:         policy.ReasonRule,
+		Automatic:      true,
+	}
+}
+
+// A prompt the policy would deny, but that the hand, the repeat guard or one
+// of the policy's limits keeps it from denying on its own, goes to the
+// operator with deny as its only answer, when it is raised or when it waits.
+// It went with every answer the adapter offers, and any operator could then
+// allow what a deny rule refuses. The restriction binds: allow is refused
+// (ErrUnsupportedDecision) with nothing journaled, and deny is taken. A typed
+// answer is still sent as typed, since only the adapter knows what its bytes
+// mean.
+func TestADenyTheCoreHoldsBackOffersOnlyDeny(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		reason string
+		// raise brings prompt deny-2 of agent-a to the operator, the policy
+		// denying it automatically, or but for its limit.
+		raise func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine)
+	}{
+		{name: "the hand held when it is raised", reason: supervise.ReasonOperatorAttached,
+			raise: func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine) {
+				sup.SetHolder("agent-a", "conn-1")
+				sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "deny-2")})
+			}},
+		{name: "the hand taken while it waits", reason: supervise.ReasonOperatorAttached,
+			raise: func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine) {
+				letTheLineGo := holdWithALine(t, engine, sup, "agent-a")
+				sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "deny-2")})
+				sup.SetHolder("agent-a", "conn-1")
+				letTheLineGo()
+			}},
+		{name: "a repeat of an answer just written", reason: supervise.ReasonRepeatAfterDelivery,
+			raise: func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine) {
+				first := promptEvent("agent-a", "deny-1")
+				sup.Handle(session.AdapterEvent{Event: first})
+				waitForTheSessionToBeFree(t, sup, "agent-a")
+				sup.Handle(session.AdapterEvent{Event: repeatOf(first, "deny-2")})
+			}},
+		{name: "the policy's limit when it is raised", reason: policy.ReasonConsecutiveLimit,
+			raise: func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine) {
+				engine.set(func(f *fakeEngine) { f.maxConsecutiveAuto = 1 })
+				sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "deny-1")})
+				waitForTheSessionToBeFree(t, sup, "agent-a")
+				second := promptEvent("agent-a", "deny-2")
+				second.Sequence = 2
+				sup.Handle(session.AdapterEvent{Event: second})
+			}},
+		{name: "an answer the adapter could not encode", reason: "fallback_unsupported",
+			raise: func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine) {
+				engine.set(func(f *fakeEngine) { f.applyErrs = []error{adapters.ErrDecisionUnsupported} })
+				sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "deny-2")})
+				waitFor(t, 2*time.Second, "the prompt to go back to the operator", func() bool {
+					shown := viewOf(sup, "deny-2")
+					return shown != nil && !shown.Evaluation.Automatic && shown.DeliveryStatus == "pending"
+				})
+			}},
+		{name: "the policy's limit at its last check", reason: policy.ReasonConsecutiveLimit,
+			raise: func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine) {
+				engine.set(func(f *fakeEngine) { f.maxConsecutiveAuto = 1 })
+				letTheLineGo := holdWithALine(t, engine, sup, "agent-a")
+				sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "deny-1")})
+				second := promptEvent("agent-a", "deny-2")
+				second.Sequence = 2
+				sup.Handle(session.AdapterEvent{Event: second})
+				letTheLineGo()
+				waitFor(t, 2*time.Second, "the second prompt to go to the operator", func() bool {
+					shown := viewOf(sup, "deny-2")
+					return shown != nil && !shown.Evaluation.Automatic && shown.DeliveryStatus == "pending"
+				})
+			}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newFakeEngine()
+			engine.evaluation = automaticDeny()
+			engine.supportedDecisions = []adapters.Decision{adapters.DecisionAllow, adapters.DecisionDeny}
+			sup, _ := newCoreWithOptions(t, engine, supervise.Options{Now: newTestClock().Now}, "agent-a")
+			test.raise(t, sup, engine)
+
+			shown := viewOf(sup, "deny-2")
+			if shown == nil || shown.DeliveryStatus != "pending" || shown.Evaluation.Automatic ||
+				shown.Evaluation.ProposedAction != string(policy.ActionDeny) || shown.Evaluation.Reason != test.reason {
+				t.Fatalf("the prompt is shown as %#v, want it pending on the operator for %s", shown, test.reason)
+			}
+			if !reflect.DeepEqual(shown.Decisions, []string{"deny"}) {
+				t.Fatalf("the prompt offers %v, want deny alone", shown.Decisions)
+			}
+			journaled := len(engine.auditSnapshot())
+			if err := sup.SubmitAutomaticDecision(testRunID, "agent-a", "deny-2", "allow", alice); !errors.Is(err, supervise.ErrUnsupportedDecision) {
+				t.Fatalf("allowing what the policy denies = %v, want ErrUnsupportedDecision", err)
+			}
+			if entries := engine.auditSnapshot(); len(entries) != journaled {
+				t.Fatalf("the refused allow was journaled: %#v", entries[journaled:])
+			}
+			// The policy's last check releases the session a moment after it
+			// shows the prompt pending.
+			waitFor(t, 2*time.Second, "the deny to be taken", func() bool {
+				err := sup.SubmitAutomaticDecision(testRunID, "agent-a", "deny-2", "deny", alice)
+				if err != nil && !errors.Is(err, supervise.ErrDecisionInFlight) {
+					t.Fatalf("denying = %v", err)
+				}
+				return err == nil
+			})
+			for _, call := range engine.applySnapshot() {
+				if call.event.ID == "deny-2" && call.decision != adapters.DecisionDeny {
+					t.Fatalf("the prompt was answered %s", call.decision)
+				}
+			}
+		})
+	}
+}
+
 // A human answer the adapter cannot encode goes back to the operator. The
 // runtime encodes an answer before it writes a byte of it (the router's
 // ApplyDecision), so the delivery is not uncertain: it is journaled
