@@ -323,6 +323,46 @@ func TestAllowedMetadataKeyCoversAttachAndControlEmitters(t *testing.T) {
 	}
 }
 
+// A decision a person made on the web gateway, and its delivery, name the
+// connection it came from, as the attach and control records of the same
+// person do: one operator identity may be signed in from several tabs, and the
+// connection is what ties an answer to the terminal hand-over around it. The
+// key must survive the sanitizer, or the journal silently loses it, and the
+// verifier, which reads the same allowlist, must accept a journal holding it.
+func TestADecisionAndItsDeliveryKeepTheConnectionThatMadeThem(t *testing.T) {
+	want := map[string]string{"operator": "alice", "role": "operator", "conn_id": "conn-1"}
+	for _, kind := range []Kind{KindDecision, KindDelivery} {
+		got := SanitizeEntry(Entry{
+			Kind:       kind,
+			DecisionBy: DecisionByHuman,
+			Decision:   DecisionAllow,
+			Operator:   "alice",
+			Metadata: map[string]string{
+				"operator": "alice", "role": "operator", "conn_id": "conn-1", "stdout": "rm -rf /",
+			},
+		}, ModeDetailed)
+		if !reflect.DeepEqual(got.Metadata, want) {
+			t.Fatalf("kind %q metadata = %#v, want %#v", kind, got.Metadata, want)
+		}
+
+		entry := makeTestEntry("run-1", 1, time.Now().UTC())
+		entry.Kind = kind
+		entry.Metadata = want
+		report, err := VerifyJournal(bytes.NewReader(entriesToJSONL(t, []Entry{entry})))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !report.Passed {
+			t.Fatalf("kind %q with a connection: VerifyJournal = %#v", kind, report)
+		}
+	}
+	// The key stays confined to the kinds that name a person's act: a
+	// policy's evaluation has no connection.
+	if allowedMetadataKey(KindPolicyEvaluated, "conn_id") || allowedMetadataKey(KindEventDetected, "conn_id") {
+		t.Fatal("conn_id is admitted on an entry no connection makes")
+	}
+}
+
 type bufferSink struct {
 	buffer bytes.Buffer
 }

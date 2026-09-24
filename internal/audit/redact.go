@@ -235,8 +235,12 @@ func allowedMetadataKey(kind Kind, value string) bool {
 		}
 		return allowedToolCallKey(compact)
 	case KindDecision, KindDelivery:
+		// A person's decision, and its delivery, name who made it and from
+		// which connection: one identity may be signed in from several tabs,
+		// and the connection is what ties the answer to the attach and control
+		// records around it, which carry the same key.
 		switch compact {
-		case "operator", "role", "active":
+		case "operator", "role", "conn_id", "active":
 			return true
 		}
 		return allowedToolCallKey(compact)
