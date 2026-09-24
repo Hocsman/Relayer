@@ -78,6 +78,20 @@ describe("SupervisorPanel with policy decisions in progress", () => {
     expect(markup).not.toContain("event-item--policy");
   });
 
+  it("says in one line why a prompt was handed to a person", () => {
+    const markup = render([prompt("limited", false, {
+      evaluation: {
+        action: "ask",
+        proposedAction: "allow",
+        reason: "rate_limit_exceeded",
+        automatic: false,
+        dryRun: false,
+      },
+    })]);
+    expect(markup).toContain('class="event-item__reason"');
+    expect(markup).toContain("Automatic answer rate limit reached");
+  });
+
   it("shows all clear only when nothing at all is pending", () => {
     expect(render([])).toContain("All clear");
     expect(render([prompt("auto", true)])).not.toContain("All clear");

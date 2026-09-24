@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ToolCallBadge } from "./ToolCallBadge";
 import { useDialogKeyboard } from "../hooks/useDialogKeyboard";
+import { reasonText } from "../lib/reason";
 import { promptContextLines, safeEventSummary } from "../lib/safety";
 import { answerLocked, deliveryRequiresResync, policyDecisionInProgress } from "../lib/delivery";
 import type { AgentState, SemanticDecision, SupervisionEvent } from "../types/relayer";
@@ -70,6 +71,7 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
   // about to answer, is not this operator's to answer, whoever started it.
   const policyDeciding = event ? policyDecisionInProgress(event) : false;
   const locked = event ? answerLocked(event) : false;
+  const reason = event ? reasonText(event.evaluation.reason) : undefined;
   const context = event?.sensitive ? [] : promptContextLines(agent?.output ?? "");
   const offered = (event?.decisions ?? []).filter(
     (decision): decision is SemanticDecision => decision === "allow" || decision === "deny",
@@ -191,6 +193,8 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
           <div><span>Action</span><strong>{event.evaluation.action}</strong></div>
           <div><span>Delivery</span><strong>{event.deliveryStatus}</strong></div>
         </div>
+
+        {reason && <p className="decision-reason">{reason}</p>}
 
         {/* Above the transcript: the question is what this tool call will do,
             so it should be readable without scrolling the output. Suppressed on

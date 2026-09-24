@@ -1,4 +1,5 @@
 import { awaitsPerson, policyDecisionInProgress } from "../lib/delivery";
+import { reasonText } from "../lib/reason";
 import { safeEventSummary } from "../lib/safety";
 import { supervisionEventKey } from "../lib/eventKey";
 import type { AppState, SafeErrorEvent, SupervisionEvent } from "../types/relayer";
@@ -126,6 +127,7 @@ function EventItem({
   onSelect(): void;
 }) {
   const policy = policyDecisionInProgress(event);
+  const reason = reasonText(event.evaluation.reason);
   return (
     <button
       type="button"
@@ -146,6 +148,7 @@ function EventItem({
             {event.deliveryStatus !== "pending" ? ` · ${event.deliveryStatus}` : ""}
           </span>
         )}
+        {reason && <span className="event-item__reason">{reason}</span>}
       </span>
       <span className="event-item__arrow" aria-hidden="true">›</span>
     </button>

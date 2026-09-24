@@ -199,6 +199,38 @@ describe("DecisionModal while an answer is on its way", () => {
   });
 });
 
+// configuration.md promises that a tripped automatic limit is visible. The
+// TUI shows LIMIT • ASK; the web had the code on every prompt and showed none.
+describe("DecisionModal reason line", () => {
+  it("says why a prompt the policy would have answered is asked", () => {
+    const markup = render(event({
+      evaluation: {
+        action: "ask",
+        proposedAction: "allow",
+        reason: "consecutive_auto_limit",
+        automatic: false,
+        dryRun: false,
+      },
+    }));
+    expect(markup).toContain('class="decision-reason"');
+    expect(markup).toContain("Automatic answer limit reached");
+  });
+
+  it("shows a code it does not know as the code, as text", () => {
+    const markup = render(event({
+      evaluation: {
+        action: "ask",
+        proposedAction: "ask",
+        reason: "future_reason<script>",
+        automatic: false,
+        dryRun: false,
+      },
+    }));
+    expect(markup).toContain("future_reasonscript");
+    expect(markup).not.toContain("<script>");
+  });
+});
+
 describe("DecisionModal readOnly mode (Viewer)", () => {
   it("renders viewer notice and disables all arbitration controls when readOnly", () => {
     const markup = renderToStaticMarkup(

@@ -1090,6 +1090,14 @@ input:focus-visible {
   color: #9eabc0 !important;
 }
 
+/* Why the prompt was asked, on one line: a long reason is cut, never wrapped,
+   so the row keeps its height and the summary above it stays the headline. */
+.event-item__reason {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .event-item__arrow {
   color: var(--faint);
   font-size: 18px;
@@ -1373,6 +1381,15 @@ input:focus-visible {
   background: rgba(154, 140, 255, 0.07);
   font-size: 9px;
   font-weight: 650;
+}
+
+.decision-reason {
+  margin: 10px 20px 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* An answer on its way — the policy's or anybody's. Cyan, not red: nothing is
