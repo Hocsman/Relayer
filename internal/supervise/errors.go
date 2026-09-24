@@ -31,6 +31,15 @@ var (
 // journaled or shown, as an empty answer is.
 var ErrAnswerInvalid = errors.New("a typed answer must be one line of text, with no control characters and no more than 4096 bytes")
 
+// ErrDenyOnly refuses a typed answer to a prompt the policy denies that went to
+// a person all the same, because somebody holds the terminal, a limit was
+// reached, it repeats an answer just written or the adapter could not encode
+// the deny: such a prompt takes the adapter's deny alone. Typed text is
+// whatever the adapter reads it as, its accept included. Where the adapter
+// encodes no deny, the prompt is answered at the terminal, whose taking is
+// journaled, or its agent is stopped.
+var ErrDenyOnly = errors.New("the policy denies this request: only its deny is accepted")
+
 // ErrReadOnlyActor refuses a decision or a line asked for by an Actor whose
 // role may only watch. It is checked before anything else, so the request
 // changes nothing and journals nothing, whatever else is wrong with it.

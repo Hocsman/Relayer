@@ -217,6 +217,10 @@ type pendingEvent struct {
 	event      adapters.Event
 	view       View
 	evaluation policy.Evaluation
+	// denyOnly marks a prompt the policy denies that goes to a person all the
+	// same: its view offers deny alone (onlyDeny), and a typed answer, whose
+	// bytes only the adapter understands, is refused (ErrDenyOnly).
+	denyOnly bool
 }
 
 // Supervisor is the supervision state machine of one run generation. A run

@@ -274,6 +274,7 @@ func (s *Supervisor) askOperator(key eventKey, current *policy.Evaluation, reaso
 	}
 	if policyDenies(item.evaluation) || policyDenies(evaluation) {
 		item.view.Decisions = onlyDeny(item.view.Decisions)
+		item.denyOnly = true
 	}
 	item.evaluation = askEvaluation(evaluation, reason)
 	item.view.DeliveryStatus = "pending"
@@ -529,6 +530,14 @@ func (s *Supervisor) applyHumanDecision(
 		// read it: another person's attempt at it was refused meanwhile.
 		s.mu.Unlock()
 		return ErrUnsupportedDecision
+	}
+	if decision == adapters.DecisionManual && item.denyOnly {
+		// What the policy denies, a person may only deny, with the adapter's
+		// own deny. Typed text is whatever the adapter reads it as: its accept
+		// typed by hand went through while the allow button was refused, and
+		// was journaled as asked.
+		s.mu.Unlock()
+		return ErrDenyOnly
 	}
 	if shuttingDown {
 		s.mu.Unlock()

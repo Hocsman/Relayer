@@ -195,10 +195,11 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 		previous, done = s.oweHeldEntriesLocked(key.sessionID)
 	}
 	// A prompt the policy denies, asked all the same, offers deny alone.
-	if !evaluation.Automatic && policyDenies(policyEvaluation) {
+	denyOnly := !evaluation.Automatic && policyDenies(policyEvaluation)
+	if denyOnly {
 		view.Decisions = onlyDeny(view.Decisions)
 	}
-	item := pendingEvent{event: event.Clone(), view: view, evaluation: evaluation}
+	item := pendingEvent{event: event.Clone(), view: view, evaluation: evaluation, denyOnly: denyOnly}
 	s.pending[key] = item
 	s.setAgentWaitingLocked(event.SessionID)
 	s.rebuildPendingLocked()

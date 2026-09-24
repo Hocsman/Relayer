@@ -983,8 +983,9 @@ func automaticDeny() policy.Evaluation {
 // It went with every answer the adapter offers, and any operator could then
 // allow what a deny rule refuses. The restriction binds: allow is refused
 // (ErrUnsupportedDecision) with nothing journaled, and deny is taken. A typed
-// answer is still sent as typed, since only the adapter knows what its bytes
-// mean.
+// answer is refused too (ErrDenyOnly): only the adapter knows what its bytes
+// mean, and its accept typed by hand went through while the allow button was
+// refused, journaled as asked.
 func TestADenyTheCoreHoldsBackOffersOnlyDeny(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -1077,6 +1078,13 @@ func TestADenyTheCoreHoldsBackOffersOnlyDeny(t *testing.T) {
 			journaled := len(engine.auditSnapshot())
 			if err := sup.SubmitAutomaticDecision(testRunID, "agent-a", "deny-2", "allow", alice); !errors.Is(err, supervise.ErrUnsupportedDecision) {
 				t.Fatalf("allowing what the policy denies = %v, want ErrUnsupportedDecision", err)
+			}
+			// Nor is the adapter's accept typed by hand, from the gateway or
+			// the desktop: typed text is whatever the adapter reads it as.
+			for _, actor := range []supervise.Actor{alice, desktop} {
+				if err := sup.SubmitDecision(testRunID, "agent-a", "deny-2", "y", actor); !errors.Is(err, supervise.ErrDenyOnly) {
+					t.Fatalf("typing the accept into what the policy denies, as %#v = %v, want ErrDenyOnly", actor, err)
+				}
 			}
 			if entries := engine.auditSnapshot(); len(entries) != journaled {
 				t.Fatalf("the refused allow was journaled: %#v", entries[journaled:])

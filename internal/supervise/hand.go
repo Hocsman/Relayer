@@ -88,6 +88,7 @@ func (s *Supervisor) SetHolder(sessionID, connID string) {
 		if policyDenies(item.evaluation) {
 			// What the policy denies, the operator may only deny.
 			item.view.Decisions = onlyDeny(item.view.Decisions)
+			item.denyOnly = true
 		}
 		item.evaluation = askEvaluation(item.evaluation, ReasonOperatorAttached)
 		item.view.Evaluation = evaluationView(item.evaluation)
