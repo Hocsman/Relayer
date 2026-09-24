@@ -135,7 +135,7 @@ func safeReason(value string) string {
 		"sensitive_path_blocked", "outside_workspace_blocked",
 		"destructive_command_blocked", "exfiltration_attempt_blocked",
 		"guardrail_pattern_blocked", "consecutive_auto_limit", "rate_limit_exceeded",
-		ReasonRepeatAfterDelivery, ReasonOperatorAttached:
+		ReasonRepeatAfterDelivery, ReasonOperatorAttached, ReasonTypedAtTerminal:
 		return value
 	default:
 		return "unknown"

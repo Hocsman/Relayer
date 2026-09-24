@@ -201,11 +201,13 @@ type writeClaim struct {
 // hand taken since, even one released again, may have typed its answer.
 // signature is the prompt's, which keystrokes written meanwhile count as
 // answered (finishRaw). withdrawn is the tombstone its withdrawal leaves
-// when it arrives before the prompt is pending.
+// when it arrives before the prompt is pending, and typedOver the one those
+// keystrokes leave: the prompt is the terminal's once it is pending.
 type ingestion struct {
 	hand      uint64
 	signature string
 	withdrawn bool
+	typedOver bool
 }
 
 // pendingEvent is a prompt the run waits on. evaluation is the policy's, as
@@ -221,6 +223,10 @@ type pendingEvent struct {
 	// same: its view offers deny alone (onlyDeny), and a typed answer, whose
 	// bytes only the adapter understands, is refused (ErrDenyOnly).
 	denyOnly bool
+	// typedOver marks a prompt that was shown while its terminal's holder
+	// typed into it (finishRaw): it is the terminal's, and neither the policy
+	// nor a person answers it through the core (ErrTypedAtTerminal).
+	typedOver bool
 }
 
 // Supervisor is the supervision state machine of one run generation. A run

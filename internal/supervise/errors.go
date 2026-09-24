@@ -40,6 +40,12 @@ var ErrAnswerInvalid = errors.New("a typed answer must be one line of text, with
 // journaled, or its agent is stopped.
 var ErrDenyOnly = errors.New("the policy denies this request: only its deny is accepted")
 
+// ErrTypedAtTerminal refuses an answer to a prompt that was shown while its
+// terminal's holder typed into it (ReasonTypedAtTerminal): the keystrokes may
+// have answered it, and an answer given now would reach whatever the agent
+// asks next. It is answered at the terminal.
+var ErrTypedAtTerminal = errors.New("keys were typed at this request's terminal while it was shown: answer it at the terminal")
+
 // ErrReadOnlyActor refuses a decision or a line asked for by an Actor whose
 // role may only watch. It is checked before anything else, so the request
 // changes nothing and journals nothing, whatever else is wrong with it.

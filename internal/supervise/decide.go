@@ -467,6 +467,9 @@ func (s *Supervisor) SubmitAutomaticDecision(runID, sessionID, eventID, decision
 	if !exists {
 		return ErrDecisionStale
 	}
+	if item.typedOver {
+		return ErrTypedAtTerminal
+	}
 	offered := false
 	for _, supported := range s.engine.SupportedDecisions(item.event) {
 		if supported == adapters.Decision(decision) {
@@ -524,6 +527,13 @@ func (s *Supervisor) applyHumanDecision(
 	if _, going := s.withdrawing[key]; going {
 		s.mu.Unlock()
 		return ErrDecisionStale
+	}
+	if item.typedOver {
+		// Its terminal's holder typed into it while it was shown, and may
+		// have answered it: this answer would go to whatever the agent asks
+		// next.
+		s.mu.Unlock()
+		return ErrTypedAtTerminal
 	}
 	if decision != adapters.DecisionManual && !offers(item.view, decision) {
 		// The prompt stopped offering the answer since SubmitAutomaticDecision

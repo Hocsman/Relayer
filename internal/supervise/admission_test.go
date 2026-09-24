@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/supervise"
@@ -209,17 +210,14 @@ func TestRawInputIsRefusedWhenTheSessionCannotTakeAWrite(t *testing.T) {
 
 // While the holder's keystrokes are admitted they hold the session's one
 // write slot: a person's answer and a line are refused as while an answer is
-// being written, and so is more raw input; the policy's answer waits and is
-// written once the keystrokes are released. Other sessions are not held up.
-//
-// The policy's prompt has no Signature. The keystrokes count as an answer to
-// every prompt pending while they are written, and a prompt with a Signature
-// is then asked as a repeat rather than answered
-// (TestAPromptRaisedWhileKeystrokesAreWrittenIsAskedOnceTheyAre); one without
-// repeats nothing.
+// being written, and so is more raw input; the policy's answer waits. Other
+// sessions are not held up. Once the keystrokes are written, the prompts they
+// found pending are the terminal's (TestAPromptItsHolderTypedIntoIsTheTerminals),
+// and the policy answers the session's next prompt as usual.
 func TestAdmittedRawInputHoldsTheSessionsWriteSlot(t *testing.T) {
 	engine := newFakeEngine()
 	engine.evaluationByID["automatic-2"] = automaticAllow()
+	engine.evaluationByID["automatic-3"] = automaticAllow()
 	engine.evaluationByID["other-1"] = automaticAllow()
 	sup, _ := newCoreForTest(t, engine, "agent-a", "agent-b")
 	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "asked-1")})
@@ -247,9 +245,10 @@ func TestAdmittedRawInputHoldsTheSessionsWriteSlot(t *testing.T) {
 		t.Fatalf("an answer while keystrokes are written = %v, want ErrDecisionInFlight", err)
 	}
 	release()
-	if err := sup.SubmitDecision(testRunID, "agent-a", "asked-1", "y", alice); err != nil {
-		t.Fatalf("an answer once the keystrokes are written = %v", err)
+	if err := sup.SubmitDecision(testRunID, "agent-a", "asked-1", "y", alice); !errors.Is(err, supervise.ErrTypedAtTerminal) {
+		t.Fatalf("an answer once the keystrokes are written = %v, want ErrTypedAtTerminal", err)
 	}
+	sup.Handle(session.AdapterEventWithdrawn{Event: promptEvent("agent-a", "asked-1")})
 
 	// A line, and the policy's answer.
 	sup.SetHolder("agent-a", "conn-1")
@@ -274,8 +273,21 @@ func TestAdmittedRawInputHoldsTheSessionsWriteSlot(t *testing.T) {
 		t.Fatalf("the policy answered while keystrokes were written: %#v", decisions)
 	}
 	release()
-	waitFor(t, 2*time.Second, "the policy's answer once the keystrokes are written", func() bool {
-		return len(engine.auditFor(audit.KindDelivery, "automatic-2")) == 1
+	waitFor(t, 2*time.Second, "the waiting prompt to be the terminal's once the keystrokes are written", func() bool {
+		shown := viewOf(sup, "automatic-2")
+		return shown != nil && shown.Evaluation.Reason == supervise.ReasonTypedAtTerminal
+	})
+	if decisions := engine.auditFor(audit.KindDecision, "automatic-2"); len(decisions) != 0 {
+		t.Fatalf("the policy answered a prompt the keystrokes may have answered: %#v", decisions)
+	}
+	// The agent takes it back, and the policy answers the next prompt.
+	sup.Handle(session.AdapterEventWithdrawn{Event: automatic})
+	next := promptEvent("agent-a", "automatic-3")
+	next.Sequence = 3
+	next.Signature = ""
+	sup.Handle(session.AdapterEvent{Event: next})
+	waitFor(t, 2*time.Second, "the policy's answer to the next prompt", func() bool {
+		return len(engine.auditFor(audit.KindDelivery, "automatic-3")) == 1
 	})
 }
 
@@ -317,9 +329,8 @@ func TestADrainWaitsForAdmittedRawInput(t *testing.T) {
 
 // A front end admits and releases keystrokes as they come, possibly under a
 // lock of its own that its sink takes. Neither Admit nor its release calls
-// the sink on the caller's goroutine, even when the release lets the policy
-// answer a prompt that waited for it: one without a Signature, which the
-// keystrokes cannot be taken to have answered already.
+// the sink on the caller's goroutine, even when the release has a prompt that
+// waited for the keystrokes to show: it is the terminal's now.
 func TestReleasingRawInputShowsNothingOnItsCaller(t *testing.T) {
 	engine := newFakeEngine()
 	engine.evaluationByID["automatic-1"] = automaticAllow()
@@ -351,8 +362,13 @@ func TestReleasingRawInputShowsNothingOnItsCaller(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("the release called the sink on its caller while the caller held the lock the sink takes")
 	}
-	waitFor(t, 2*time.Second, "the policy's answer once the keystrokes are written", func() bool {
-		return len(engine.auditFor(audit.KindDelivery, "automatic-1")) == 1
+	waitFor(t, 2*time.Second, "the prompt to be shown the terminal's once the keystrokes are written", func() bool {
+		for _, call := range sink.snapshot() {
+			if call.kind == "prompt" && call.view.ID == "automatic-1" && call.view.Evaluation.Reason == supervise.ReasonTypedAtTerminal {
+				return true
+			}
+		}
+		return false
 	})
 }
 
@@ -522,5 +538,68 @@ func TestOnlyAFrontEndsOwnEntriesAreJournaledThroughTheCore(t *testing.T) {
 	}
 	if entries := engine.auditSnapshot(); len(entries) != len(accepted) {
 		t.Fatalf("journaled %d of the front end's %d entries", len(entries), len(accepted))
+	}
+}
+
+// A prompt shown while its terminal's holder types is the terminal's: the
+// keystrokes may have answered it, and the core cannot tell. A person's answer
+// to it, the holder's or anybody else's, chosen or typed, is refused
+// (ErrTypedAtTerminal) with nothing written or journaled, and it offers no
+// answer; the policy never answers it either, and letting go of the terminal
+// changes none of that. It stays shown until the agent takes it back. It used
+// to stay open to anybody until then, and a click on its card typed a second
+// answer into whatever the agent asked next, journaled as the answer to the
+// prompt the holder had already answered.
+func TestAPromptItsHolderTypedIntoIsTheTerminals(t *testing.T) {
+	engine := newFakeEngine()
+	engine.supportedDecisions = []adapters.Decision{adapters.DecisionAllow, adapters.DecisionDeny}
+	sup, _ := newCoreForTest(t, engine, "agent-a")
+	sup.SetHolder("agent-a", "conn-1")
+	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
+	// The holder types the answer at the terminal.
+	admitted(t, sup, "agent-a", "conn-1")()
+	waitFor(t, 2*time.Second, "the prompt to be the terminal's", func() bool {
+		shown := viewOf(sup, "prompt-1")
+		return shown != nil && shown.Evaluation.Reason == supervise.ReasonTypedAtTerminal
+	})
+	journaled := len(engine.auditSnapshot())
+
+	bob := supervise.Actor{Identity: "bob", Role: supervise.RoleOperator, ConnID: "conn-2"}
+	refusals := []struct {
+		name string
+		err  error
+	}{
+		{"the holder's click", sup.SubmitAutomaticDecision(testRunID, "agent-a", "prompt-1", "allow", alice)},
+		{"another operator's click", sup.SubmitAutomaticDecision(testRunID, "agent-a", "prompt-1", "deny", bob)},
+		{"another operator's typed answer", sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y", bob)},
+	}
+	sup.SetHolder("agent-a", "")
+	refusals = append(refusals, struct {
+		name string
+		err  error
+	}{"a typed answer once the terminal is let go", sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y", bob)})
+	for _, refusal := range refusals {
+		if !errors.Is(refusal.err, supervise.ErrTypedAtTerminal) {
+			t.Errorf("%s = %v, want ErrTypedAtTerminal", refusal.name, refusal.err)
+		}
+	}
+	if calls := engine.applySnapshot(); len(calls) != 0 {
+		t.Fatalf("a prompt the holder typed into was answered again: %#v", calls)
+	}
+	if entries := engine.auditSnapshot(); len(entries) != journaled {
+		t.Fatalf("a refused answer was journaled: %#v", entries[journaled:])
+	}
+	if shown := viewOf(sup, "prompt-1"); shown == nil || shown.DeliveryStatus != "pending" || len(shown.Decisions) != 0 {
+		t.Fatalf("the prompt the holder typed into is shown as %#v, want pending with no answer offered", shown)
+	}
+
+	// The agent consumed the answer and takes the question back: its next
+	// question is anybody's.
+	sup.Handle(session.AdapterEventWithdrawn{Event: promptEvent("agent-a", "prompt-1")})
+	next := promptEvent("agent-a", "prompt-2")
+	next.Sequence = 2
+	sup.Handle(session.AdapterEvent{Event: next})
+	if err := sup.SubmitAutomaticDecision(testRunID, "agent-a", "prompt-2", "allow", bob); err != nil {
+		t.Fatalf("an answer to the agent's next question: %v", err)
 	}
 }

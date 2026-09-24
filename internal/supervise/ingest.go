@@ -192,6 +192,17 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 	if heldSince {
 		evaluation = askEvaluation(evaluation, ReasonOperatorAttached)
 		view.Evaluation = evaluationView(evaluation)
+	}
+	// Keystrokes were written while it was taken in, and may have answered
+	// it: it is the terminal's, as the prompts they found pending are
+	// (finishRaw). One the policy would have answered is journaled asked.
+	typedOver := s.ingesting[key].typedOver
+	if typedOver {
+		heldSince = heldSince || evaluation.Automatic
+		evaluation = askEvaluation(evaluation, ReasonTypedAtTerminal)
+		view.Evaluation = evaluationView(evaluation)
+	}
+	if heldSince {
 		previous, done = s.oweHeldEntriesLocked(key.sessionID)
 	}
 	// A prompt the policy denies, asked all the same, offers deny alone.
@@ -199,7 +210,10 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 	if denyOnly {
 		view.Decisions = onlyDeny(view.Decisions)
 	}
-	item := pendingEvent{event: event.Clone(), view: view, evaluation: evaluation, denyOnly: denyOnly}
+	if typedOver {
+		view.Decisions = []string{}
+	}
+	item := pendingEvent{event: event.Clone(), view: view, evaluation: evaluation, denyOnly: denyOnly, typedOver: typedOver}
 	s.pending[key] = item
 	s.setAgentWaitingLocked(event.SessionID)
 	s.rebuildPendingLocked()

@@ -1,6 +1,7 @@
 package supervise
 
 import (
+	"sort"
 	"strings"
 	"sync"
 
@@ -104,32 +105,75 @@ func (s *Supervisor) rawRefusalLocked(sessionKey, connID string) error {
 // The goroutine is counted before the write's admission is released, so a
 // drain waits for it too.
 //
-// The keystrokes count as an answer, for the repeat guard, to every prompt of
-// the session they may have answered: those pending, and those still being
-// taken in. Raw keystrokes never resolve the runtime's prompt, and nothing
-// else tells the core that the holder answered one by typing; the repeat the
-// agent's echo raises once the hand is released was the policy's to answer,
-// a second answer. The core cannot tell which prompt, if any, they answered,
-// and takes them for an answer to each: the cost is a question asked again
-// within the window going to the operator, the guard's usual one.
+// The keystrokes count as an answer to every prompt of the session they may
+// have answered: those pending, and those still being taken in. Raw
+// keystrokes never resolve the runtime's prompt, and nothing else tells the
+// core that the holder answered one by typing. The core cannot tell which
+// prompt, if any, they answered, and takes them for an answer to each:
+//   - for the repeat guard, which asks a question asked again within its
+//     window rather than let the policy answer it: the repeat the agent's echo
+//     raises once the hand is released was the policy's to answer, a second
+//     answer;
+//   - and for the prompts themselves, which become the terminal's
+//     (ReasonTypedAtTerminal): neither the policy nor a person answers them
+//     through the core any more, and each is shown so. One the policy would
+//     have answered is journaled asked, as the hand's are. A person's answer
+//     to a prompt the holder had just answered by typing was written into
+//     whatever the agent asked next.
+//
+// The mark is set under the lock the slot is freed under, so no decision
+// claims such a prompt between the two. What it shows and journals is shown
+// and journaled on the goroutine, never on the caller's.
 func (s *Supervisor) finishRaw(sessionKey string) {
 	now := s.now()
 	s.mu.Lock()
 	delete(s.rawInFlight, sessionKey)
+	var asked []pendingEvent
 	for key, item := range s.pending {
-		if key.sessionID == sessionKey {
-			s.recordAnsweredLocked(sessionKey, item.event.Signature, now)
+		if key.sessionID != sessionKey {
+			continue
+		}
+		s.recordAnsweredLocked(sessionKey, item.event.Signature, now)
+		if item.typedOver || item.view.DeliveryStatus != "pending" {
+			continue
+		}
+		if _, going := s.withdrawing[key]; going {
+			// Its withdrawal is being journaled: it is nobody's already.
+			continue
+		}
+		automatic := item.evaluation.Automatic
+		item.typedOver = true
+		item.evaluation = askEvaluation(item.evaluation, ReasonTypedAtTerminal)
+		item.view.Evaluation = evaluationView(item.evaluation)
+		// A new slice: the views already shown share the old one.
+		item.view.Decisions = []string{}
+		s.pending[key] = item
+		s.showPromptLocked(item.view)
+		if automatic {
+			asked = append(asked, item)
 		}
 	}
 	for key, taking := range s.ingesting {
 		if key.sessionID == sessionKey {
 			s.recordAnsweredLocked(sessionKey, taking.signature, now)
+			taking.typedOver = true
+			s.ingesting[key] = taking
 		}
+	}
+	s.rebuildPendingLocked()
+	var previous, done chan struct{}
+	if len(asked) > 0 {
+		sort.Slice(asked, func(left, right int) bool { return eventBefore(asked[left].event, asked[right].event) })
+		previous, done = s.oweHeldEntriesLocked(sessionKey)
 	}
 	s.eventWG.Add(1)
 	s.mu.Unlock()
 	go func() {
 		defer s.eventWG.Done()
+		if done != nil {
+			s.journalHeldEntries(sessionKey, asked, previous, done)
+		}
+		s.flush()
 		s.scheduleAutomatic(sessionKey)
 	}()
 	s.endDelivery()

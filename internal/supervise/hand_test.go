@@ -59,6 +59,44 @@ func assertAskedForTheHand(t *testing.T, engine *fakeEngine, sup *supervise.Supe
 	assertShownAskedForTheHand(t, sup, eventID)
 }
 
+// assertTheTerminals checks that the prompt was journaled asked, its last
+// evaluation entry for reason, was never decided, and is shown the
+// terminal's: pending, with no answer offered.
+func assertTheTerminals(t *testing.T, engine *fakeEngine, sup *supervise.Supervisor, eventID string, evaluations int, reason string) {
+	t.Helper()
+	evaluated := engine.auditFor(audit.KindPolicyEvaluated, eventID)
+	if len(evaluated) != evaluations {
+		t.Fatalf("policy_evaluated entries of %s = %#v, want %d", eventID, evaluated, evaluations)
+	}
+	last := evaluated[len(evaluated)-1]
+	wantMetadata := map[string]string{
+		"automatic": "false", "effective_action": "ask", "mode": "enforce", "proposed_action": string(policy.ActionAllow),
+	}
+	if last.DecisionBy != audit.DecisionByPolicy || last.Decision != audit.DecisionAsk || last.Outcome != audit.OutcomeAsk ||
+		last.Reason != reason || last.Rule != "allow-safe" || last.Operator != "" ||
+		!reflect.DeepEqual(last.Metadata, wantMetadata) {
+		t.Fatalf("the evaluation entry of %s = %#v, want it asked for %s", eventID, last, reason)
+	}
+	if decisions := engine.auditFor(audit.KindDecision, eventID); len(decisions) != 0 {
+		t.Fatalf("%s was decided: %#v", eventID, decisions)
+	}
+	assertShownTheTerminals(t, sup, eventID)
+}
+
+// assertShownTheTerminals checks that the prompt is shown pending, asked for
+// the keystrokes typed while it was shown, with no answer offered.
+func assertShownTheTerminals(t *testing.T, sup *supervise.Supervisor, eventID string) {
+	t.Helper()
+	shown := viewOf(sup, eventID)
+	want := supervise.EvaluationView{
+		Action: string(policy.ActionAsk), ProposedAction: string(policy.ActionAllow), RuleName: "allow-safe",
+		Reason: supervise.ReasonTypedAtTerminal,
+	}
+	if shown == nil || shown.DeliveryStatus != "pending" || shown.Evaluation != want || len(shown.Decisions) != 0 {
+		t.Fatalf("%s is shown as %#v, want pending, the terminal's, with no answer offered", eventID, shown)
+	}
+}
+
 func assertShownAskedForTheHand(t *testing.T, sup *supervise.Supervisor, eventID string) {
 	t.Helper()
 	shown := viewOf(sup, eventID)
@@ -324,21 +362,22 @@ func TestAPromptTakenInAsTheHandIsTakenIsAskedAllTheSame(t *testing.T) {
 
 // The hand may be taken, typed into and released again while a prompt is
 // being taken in, before the prompt joins those SetHolder asks: the holder may
-// have answered it by typing, so the prompt is theirs as if the hand were
-// still held. Only who held the hand when the prompt was inserted used to be
+// have answered it by typing, so the prompt is the terminal's, never the
+// policy's. Only who held the hand when the prompt was inserted used to be
 // checked, and a hand already released left the prompt the policy's, which
 // then typed a second answer. Taken while the prompt's detection is
 // journaled, the hand is seen before the evaluation is, whose one entry says
 // operator_attached; taken while the evaluation is journaled, a second entry
-// says so.
+// says why it was asked.
 func TestAHandTakenAndReleasedWhileAPromptIsTakenInLeavesItAsked(t *testing.T) {
 	for _, test := range []struct {
 		name        string
 		blocked     audit.Kind
 		evaluations int
+		reason      string
 	}{
-		{name: "while its detection is journaled", blocked: audit.KindEventDetected, evaluations: 1},
-		{name: "while its evaluation is journaled", blocked: audit.KindPolicyEvaluated, evaluations: 2},
+		{name: "while its detection is journaled", blocked: audit.KindEventDetected, evaluations: 1, reason: supervise.ReasonOperatorAttached},
+		{name: "while its evaluation is journaled", blocked: audit.KindPolicyEvaluated, evaluations: 2, reason: supervise.ReasonTypedAtTerminal},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			engine := newFakeEngine()
@@ -376,7 +415,7 @@ func TestAHandTakenAndReleasedWhileAPromptIsTakenInLeavesItAsked(t *testing.T) {
 			sup.BeginDrain()
 			sup.Wait()
 
-			assertAskedForTheHand(t, engine, sup, "prompt-1", test.evaluations)
+			assertTheTerminals(t, engine, sup, "prompt-1", test.evaluations, test.reason)
 			if calls := engine.applySnapshot(); len(calls) != 0 {
 				t.Fatalf("the policy answered a prompt the holder may have typed into: %#v", calls)
 			}

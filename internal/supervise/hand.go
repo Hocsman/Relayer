@@ -18,6 +18,19 @@ import (
 // holder may have answered is never the policy's again.
 const ReasonOperatorAttached = "operator_attached"
 
+// ReasonTypedAtTerminal is the reason of a prompt that was shown while its
+// terminal's holder typed into it: it is the terminal's, answered neither by
+// the policy nor by a person through the core, until the agent withdraws it
+// or its process ends.
+//
+// Raw keystrokes never resolve the runtime's prompt, and the core cannot tell
+// whether they answered it. When they did, the prompt stayed pending under the
+// same ID until the agent withdrew it, and an answer given to it meanwhile, by
+// a click on its card, was typed into whatever the agent asked next, and
+// journaled as the answer to the prompt the holder had already answered. Its
+// holder answers such a prompt by typing, as they may have already.
+const ReasonTypedAtTerminal = "typed_at_terminal"
+
 // SetHolder records which connection holds the session's terminal, the hand:
 // connID, or nobody when connID is empty. The hand is the front end's; the
 // core changes it only when told, whatever the session's process does, so
@@ -40,7 +53,9 @@ const ReasonOperatorAttached = "operator_attached"
 //   - a line is refused (ErrLineUnavailable): it would interleave with the
 //     holder's keystrokes;
 //   - a person's decision is still accepted, from anyone who may act: the
-//     hand governs the terminal, not supervision.
+//     hand governs the terminal, not supervision. Only a prompt that was
+//     shown while the holder's keystrokes were written is refused to them,
+//     since the keystrokes may have answered it (ReasonTypedAtTerminal).
 //
 // Releasing the hand never makes a prompt automatic again: the holder may
 // have answered it by typing, which the runtime never learns. A prompt the

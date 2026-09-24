@@ -426,9 +426,10 @@ func TestKeystrokesCountAsAnAnswerForTheRepeatGuard(t *testing.T) {
 			first := promptEvent("agent-a", "prompt-1")
 			sup.SetHolder("agent-a", "conn-1")
 			test.raise(t, sup, engine, first)
-			if shown := viewOf(sup, "prompt-1"); shown == nil || shown.Evaluation.Reason != supervise.ReasonOperatorAttached {
-				t.Fatalf("the prompt the holder typed into is shown as %#v", shown)
-			}
+			waitFor(t, 2*time.Second, "the prompt the holder typed into to be the terminal's", func() bool {
+				shown := viewOf(sup, "prompt-1")
+				return shown != nil && shown.Evaluation.Reason == supervise.ReasonTypedAtTerminal
+			})
 			// The agent consumed the typed answer and took its question back;
 			// the holder lets go of the terminal.
 			sup.Handle(session.AdapterEventWithdrawn{Event: first})
@@ -456,9 +457,8 @@ func TestKeystrokesCountAsAnAnswerForTheRepeatGuard(t *testing.T) {
 // A prompt raised while the holder's keystrokes are written, once the hand
 // was released, waits for them as the policy's answer always does, and is
 // then asked rather than answered: the keystrokes count as an answer to it,
-// since the holder may have typed ahead of the question reaching the core. A
-// prompt without a Signature repeats nothing, and the policy answers it once
-// the keystrokes are written (TestAdmittedRawInputHoldsTheSessionsWriteSlot).
+// since the holder may have typed ahead of the question reaching the core. It
+// is the terminal's, and a second entry says so.
 func TestAPromptRaisedWhileKeystrokesAreWrittenIsAskedOnceTheyAre(t *testing.T) {
 	engine := newFakeEngine()
 	engine.evaluation = automaticAllow()
@@ -478,7 +478,7 @@ func TestAPromptRaisedWhileKeystrokesAreWrittenIsAskedOnceTheyAre(t *testing.T) 
 	})
 	sup.BeginDrain()
 	sup.Wait()
-	assertAskedAsARepeat(t, engine, sup, "automatic-1", 2)
+	assertTheTerminals(t, engine, sup, "automatic-1", 2, supervise.ReasonTypedAtTerminal)
 	if calls := engine.applySnapshot(); len(calls) != 0 {
 		t.Fatalf("the policy answered a prompt the keystrokes may have answered: %#v", calls)
 	}
