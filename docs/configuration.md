@@ -337,9 +337,11 @@ deny: the prompt offers the adapter's Deny alone and takes no typed answer.
 This covers a deny the adapter cannot encode, one held back by
 `max_consecutive_auto_decisions` or `rate_limit_per_minute`, one that repeats a
 question answered less than two seconds earlier, and one on a terminal an
-operator holds on the web gateway. For the generic and Claude adapters, which
-encode no deny, such a prompt is answered by typing into its web terminal, on
-the gateway, or its agent is stopped. The TUI asks without this restriction.
+operator holds on the web gateway. The generic and Claude adapters encode no
+deny, so such a prompt of theirs offers no button, and a typed answer is the
+only one there is: it is taken, whatever it says, and the person's decision is
+journaled with the reason `typed_over_policy_deny`. The TUI asks without this
+restriction.
 
 ### Security Profiles and Guardrails
 

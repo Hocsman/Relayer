@@ -28,8 +28,9 @@ what an answer given this way can carry:
   terminal is held, a limit was reached, it repeats an answer just written, or
   the adapter could not encode the deny), takes the adapter's Deny alone:
   neither Allow nor a typed answer, whose bytes only the adapter understands.
-  An adapter that encodes no deny, such as the generic one, leaves such a
-  prompt to be answered at the terminal, or its agent to be stopped.
+  An adapter that encodes no deny, such as the generic one, has no Deny to
+  offer: there a typed answer is taken, from any operator, and journaled as an
+  answer to what the policy would have denied (`typed_over_policy_deny`).
 
 Holding a terminal does change what the policy does on it. Its holder types
 into the agent directly, and keystrokes never resolve the prompt Relayer is

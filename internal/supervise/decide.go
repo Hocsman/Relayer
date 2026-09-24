@@ -541,13 +541,22 @@ func (s *Supervisor) applyHumanDecision(
 		s.mu.Unlock()
 		return ErrUnsupportedDecision
 	}
+	overridesDeny := false
 	if decision == adapters.DecisionManual && item.denyOnly {
-		// What the policy denies, a person may only deny, with the adapter's
-		// own deny. Typed text is whatever the adapter reads it as: its accept
-		// typed by hand went through while the allow button was refused, and
-		// was journaled as asked.
-		s.mu.Unlock()
-		return ErrDenyOnly
+		if offers(item.view, adapters.DecisionDeny) {
+			// What the policy denies, a person may only deny, with the
+			// adapter's own deny. Typed text is whatever the adapter reads it
+			// as: its accept typed by hand went through while the allow
+			// button was refused, and was journaled as asked.
+			s.mu.Unlock()
+			return ErrDenyOnly
+		}
+		// An adapter that encodes no deny, the generic one and Claude's,
+		// leaves typed text as the only answer Relayer can give: refused, the
+		// prompt could be answered by nobody, and on the desktop only a Stop
+		// ended the wait. It is taken, as it was before v0.8.9, and the
+		// journal says the person answered what the policy would have denied.
+		overridesDeny = true
 	}
 	if shuttingDown {
 		s.mu.Unlock()
@@ -583,7 +592,11 @@ func (s *Supervisor) applyHumanDecision(
 	// The prompt may be one the hand just turned into an ask: the journal
 	// says so before it says who answered it.
 	awaitHeldEntries(owed)
-	if !s.recordAudit(attributed(decisionAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman), actor)) {
+	decisionEntry := decisionAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman)
+	if overridesDeny {
+		decisionEntry.Reason = ReasonTypedOverPolicyDeny
+	}
+	if !s.recordAudit(attributed(decisionEntry, actor)) {
 		return ErrAuditUnavailable
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 8*time.Second)

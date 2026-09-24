@@ -170,6 +170,12 @@ person's, is followed by a `delivery` entry with the outcome and reason
 `fallback_unsupported`: nothing reached the agent, and the prompt went back to
 a person.
 
+A person's `decision` entry carries the reason `typed_over_policy_deny`
+instead of `decision_selected` when they typed the answer to a prompt the
+policy would have denied, on an adapter that encodes no deny, the generic one
+and Claude's: such a prompt has no Deny to offer, so a typed answer is taken,
+whatever it says, and the journal says it answered what the policy refused.
+
 ## Fields never recorded
 
 The audit API intentionally has no field for:

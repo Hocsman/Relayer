@@ -498,7 +498,10 @@ encoded exactly with a trailing carriage return for the terminal; input
 containing a NUL byte is rejected. On the Desktop GUI and the web gateway the
 supervision core refuses a typed answer before any adapter sees it unless it is
 one line of text of at most 4096 bytes with no control character, and refuses
-any typed answer to a prompt that offers Deny alone.
+a typed answer to a prompt that offers Deny alone. A prompt the policy would
+deny on an adapter that encodes no deny, the generic one included, offers no
+button at all, and there a typed answer is taken and journaled with the reason
+`typed_over_policy_deny`.
 
 No front end logs or audits the manual value. Delivery errors keep or restore
 human-pending state when it is safe to do so. An uncertain automatic delivery

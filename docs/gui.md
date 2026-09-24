@@ -422,9 +422,9 @@ no control character, as an ordinary line is, and an empty one is refused. A
 prompt the policy denies that goes to you all the same, because a limit was
 reached, it repeats a question answered a moment ago, or the adapter could not
 encode the deny, offers Deny alone and takes no typed answer. With the generic
-and Claude adapters, which encode no deny, the desktop can then only stop the
-agent; on the web gateway, the holder of its terminal can also answer it by
-typing.
+and Claude adapters, which encode no deny, it offers no button, and a typed
+answer is taken: the journal records it as an answer to what the policy would
+have denied (`typed_over_policy_deny`).
 
 ### What the decision queue shows
 

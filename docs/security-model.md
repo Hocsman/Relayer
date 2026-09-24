@@ -254,7 +254,10 @@ and has neither of the other two.
   have it answered twice;
 - a prompt the policy denies, that goes to a person all the same because of a
   limit, a repeat, a held terminal or an adapter that could not encode the
-  deny, offers Deny alone and takes no typed answer.
+  deny, offers Deny alone and takes no typed answer. On an adapter that
+  encodes no deny it offers no button, and a typed answer, the only one there
+  is, is taken and journaled as `typed_over_policy_deny`: an operator can
+  still answer what the policy would deny there, and the journal says so.
 
 The generic and Claude adapters support manual input only, so their policy
 allow and deny proposals cannot be automatically encoded. On the Desktop GUI

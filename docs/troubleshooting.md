@@ -208,8 +208,8 @@ then read the state again. The refusals come from the supervision core:
   exceeds 4096 bytes: a typed answer is one line of text;
 - the prompt offers Deny alone, because the policy denies it: only Deny is
   taken, never Allow or a typed answer. With the generic and Claude adapters,
-  which encode no deny, type the answer into the web terminal, on the gateway,
-  or stop the agent;
+  which encode no deny, such a prompt offers no button and a typed answer is
+  taken, journaled as `typed_over_policy_deny`;
 - keys were typed at the prompt's terminal while it was shown (reason
   `typed_at_terminal`): answer it at the terminal;
 - the audit journal has failed, or the session is frozen: stop the agent;

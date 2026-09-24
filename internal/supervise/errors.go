@@ -33,12 +33,17 @@ var ErrAnswerInvalid = errors.New("a typed answer must be one line of text, with
 
 // ErrDenyOnly refuses a typed answer to a prompt the policy denies that went to
 // a person all the same, because somebody holds the terminal, a limit was
-// reached, it repeats an answer just written or the adapter could not encode
-// the deny: such a prompt takes the adapter's deny alone. Typed text is
-// whatever the adapter reads it as, its accept included. Where the adapter
-// encodes no deny, the prompt is answered at the terminal, whose taking is
-// journaled, or its agent is stopped.
+// reached or it repeats an answer just written: such a prompt takes the
+// adapter's deny alone. Typed text is whatever the adapter reads it as, its
+// accept included. Where the adapter encodes no deny, typed text is the only
+// answer there is, and it is taken, journaled as ReasonTypedOverPolicyDeny.
 var ErrDenyOnly = errors.New("the policy denies this request: only its deny is accepted")
+
+// ReasonTypedOverPolicyDeny is the reason of a person's decision entry that
+// answered, by typing, a prompt the policy would have denied, on an adapter
+// that encodes no deny: the journal says the person answered what the policy
+// refused, whatever they typed.
+const ReasonTypedOverPolicyDeny = "typed_over_policy_deny"
 
 // ErrTypedAtTerminal refuses an answer to a prompt that was shown while its
 // terminal's holder typed into it (ReasonTypedAtTerminal): the keystrokes may

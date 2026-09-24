@@ -1115,6 +1115,73 @@ func TestADenyTheCoreHoldsBackOffersOnlyDeny(t *testing.T) {
 	}
 }
 
+// Where the adapter encodes no deny, the generic one and Claude's, a prompt the
+// policy would deny reaches the operator with no answer to click: the policy's
+// deny could not be written, and there is no deny button to offer. Typed text
+// is then the only answer Relayer can give. Refused, as it briefly was, the
+// prompt could be answered by nobody, and on the desktop only a Stop ended the
+// wait. It is taken, and the journal's decision entry says the person answered
+// what the policy would have denied, whatever they typed.
+func TestATypedAnswerIsTakenWhereTheAdapterEncodesNoDeny(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		raise func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine)
+	}{
+		{name: "the policy's deny the adapter could not write",
+			raise: func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine) {
+				engine.set(func(f *fakeEngine) { f.applyErrs = []error{adapters.ErrDecisionUnsupported} })
+				sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "deny-2")})
+				waitFor(t, 2*time.Second, "the prompt to go back to the operator", func() bool {
+					shown := viewOf(sup, "deny-2")
+					return shown != nil && !shown.Evaluation.Automatic && shown.DeliveryStatus == "pending"
+				})
+			}},
+		{name: "the hand held when it is raised",
+			raise: func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine) {
+				sup.SetHolder("agent-a", "conn-1")
+				sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "deny-2")})
+				waitFor(t, 2*time.Second, "the hand's evaluation entry", func() bool {
+					evaluated := engine.auditFor(audit.KindPolicyEvaluated, "deny-2")
+					return len(evaluated) > 0 && evaluated[len(evaluated)-1].Reason == supervise.ReasonOperatorAttached
+				})
+			}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newFakeEngine()
+			engine.evaluation = automaticDeny()
+			engine.supportedDecisions = nil
+			sup, _ := newCoreWithOptions(t, engine, supervise.Options{Now: newTestClock().Now}, "agent-a")
+			test.raise(t, sup, engine)
+
+			shown := viewOf(sup, "deny-2")
+			if shown == nil || len(shown.Decisions) != 0 {
+				t.Fatalf("the prompt is shown as %#v, want it pending with no answer to click", shown)
+			}
+			waitFor(t, 2*time.Second, "the typed answer to be taken", func() bool {
+				err := sup.SubmitDecision(testRunID, "agent-a", "deny-2", "n", alice)
+				if err != nil && !errors.Is(err, supervise.ErrDecisionInFlight) {
+					t.Fatalf("typing an answer where the adapter encodes no deny = %v, want it taken", err)
+				}
+				return err == nil
+			})
+			typed := false
+			for _, call := range engine.applySnapshot() {
+				if call.event.ID == "deny-2" && call.decision == adapters.DecisionManual && call.manualInput == "n" {
+					typed = true
+				}
+			}
+			if !typed {
+				t.Fatalf("the typed answer was not written: %#v", engine.applySnapshot())
+			}
+			decisions := engine.auditFor(audit.KindDecision, "deny-2")
+			last := decisions[len(decisions)-1]
+			if last.DecisionBy != audit.DecisionByHuman || last.Reason != supervise.ReasonTypedOverPolicyDeny || last.Operator != "alice" {
+				t.Fatalf("the person's decision is journaled as %#v, want it named an answer over the policy's deny", last)
+			}
+		})
+	}
+}
+
 // A prompt the policy was to answer, handed back to the operator after it was
 // detected, is notified like any prompt that waits on a person: the policy's
 // last check found a limit reached, a repeat, or another answer, or the
