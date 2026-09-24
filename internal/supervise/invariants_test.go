@@ -875,6 +875,20 @@ func TestTheSinkIsNeverCalledUnderTheCoreLockOnTheFailurePaths(t *testing.T) {
 			},
 		},
 		{
+			name: "a decision the journal refuses shows its prompt failed",
+			setup: func(f *fakeEngine) {
+				f.evaluation = automaticAllow()
+				// The detection, the evaluation, then the policy's decision.
+				f.auditFailAt = 3
+			},
+			operate: func(sup *supervise.Supervisor) {
+				sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
+			},
+			reached: func(state supervise.State) bool {
+				return len(state.Pending) == 1 && state.Pending[0].DeliveryStatus == "failed" && state.AuditFailed
+			},
+		},
+		{
 			name:    "an uncertain line freezes the session",
 			setup:   func(f *fakeEngine) { f.lineErr = errors.New("write failed half way") },
 			operate: func(sup *supervise.Supervisor) { _ = sup.SubmitLine(testRunID, "agent-a", "hello", desktop) },

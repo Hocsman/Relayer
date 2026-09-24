@@ -44,6 +44,10 @@ type fakeEngine struct {
 	// its decision. It may block, as a slow policy would.
 	onEvaluate  func(event adapters.Event, call int)
 	evaluations map[string]int
+	// onSupportedDecisions, when set, runs on each SupportedDecisions outside
+	// the fixture's lock, as another goroutine acting while the core asks the
+	// adapter what it encodes would.
+	onSupportedDecisions func(adapters.Event)
 
 	applyCalls []applyCall
 	// applyErrs are returned by the first calls, in order, before applyErr.
@@ -156,7 +160,13 @@ func (f *fakeEngine) Evaluate(event adapters.Event) policy.Evaluation {
 	return evaluation
 }
 
-func (f *fakeEngine) SupportedDecisions(adapters.Event) []adapters.Decision {
+func (f *fakeEngine) SupportedDecisions(event adapters.Event) []adapters.Decision {
+	f.mu.Lock()
+	hook := f.onSupportedDecisions
+	f.mu.Unlock()
+	if hook != nil {
+		hook(event)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]adapters.Decision(nil), f.supportedDecisions...)

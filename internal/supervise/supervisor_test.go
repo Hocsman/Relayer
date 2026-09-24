@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -880,6 +881,91 @@ func TestAnAnswerThePromptNoLongerOffersIsRefused(t *testing.T) {
 	}
 }
 
+// A chosen answer is judged before anything about the session. The adapter is
+// asked again, and an answer it stopped offering since the prompt was shown
+// is refused although the prompt still offers it; the prompt's own offer is
+// read with it, so an answer the prompt no longer offers is refused as
+// unsupported whatever state the run is in, as one the adapter does not offer
+// is. Neither is journaled or written.
+func TestAnAnswerIsJudgedByTheAdapterAndThePromptBeforeTheSession(t *testing.T) {
+	engine := newFakeEngine()
+	engine.supportedDecisions = []adapters.Decision{adapters.DecisionAllow, adapters.DecisionDeny}
+	engine.applyErrs = []error{adapters.ErrDecisionUnsupported}
+	sup, _ := newCoreForTest(t, engine, "agent-a")
+	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
+	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-2")})
+
+	// The adapter stops offering deny: the prompt still does.
+	engine.set(func(f *fakeEngine) { f.supportedDecisions = []adapters.Decision{adapters.DecisionAllow} })
+	if shown := viewOf(sup, "prompt-2"); shown == nil || !reflect.DeepEqual(shown.Decisions, []string{"allow", "deny"}) {
+		t.Fatalf("the prompt offers %#v", shown)
+	}
+	if err := sup.SubmitAutomaticDecision(testRunID, "agent-a", "prompt-2", "deny", alice); !errors.Is(err, supervise.ErrUnsupportedDecision) {
+		t.Fatalf("an answer the adapter stopped offering = %v, want ErrUnsupportedDecision", err)
+	}
+	if decisions := engine.auditFor(audit.KindDecision, "prompt-2"); len(decisions) != 0 {
+		t.Fatalf("an answer the adapter stopped offering was journaled: %#v", decisions)
+	}
+
+	// prompt-1 no longer offers allow, which the adapter could not encode;
+	// then the journal fails and the run is frozen.
+	if err := sup.SubmitAutomaticDecision(testRunID, "agent-a", "prompt-1", "allow", alice); !errors.Is(err, supervise.ErrUnsupportedDecision) {
+		t.Fatalf("an answer the adapter cannot encode = %v", err)
+	}
+	engine.set(func(f *fakeEngine) { f.auditFailAt = f.auditCalls + 1 })
+	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-3")})
+	if !sup.State().AuditFailed {
+		t.Fatal("the journal did not fail")
+	}
+	written := len(engine.applySnapshot())
+	if err := sup.SubmitAutomaticDecision(testRunID, "agent-a", "prompt-1", "allow", alice); !errors.Is(err, supervise.ErrUnsupportedDecision) {
+		t.Fatalf("an answer the prompt no longer offers, once the run is frozen = %v, want ErrUnsupportedDecision", err)
+	}
+	if calls := engine.applySnapshot(); len(calls) != written {
+		t.Fatalf("an answer the prompt no longer offers was written: %#v", calls[written:])
+	}
+}
+
+// Two people may choose the same answer at once. When the adapter cannot
+// encode the first one's, the prompt stops offering it, and the second one's,
+// which read the prompt before, is refused all the same when it claims the
+// session: it is checked there against what the prompt offers then. It used
+// to be journaled and handed to the runtime a second time.
+func TestAnAnswerRefusedToOnePersonIsRefusedToTheNextAtOnce(t *testing.T) {
+	engine := newFakeEngine()
+	engine.supportedDecisions = []adapters.Decision{adapters.DecisionAllow, adapters.DecisionDeny}
+	engine.applyErrs = []error{adapters.ErrDecisionUnsupported}
+	sup, _ := newCoreForTest(t, engine, "agent-a")
+	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
+	bob := supervise.Actor{Identity: "bob", Role: supervise.RoleOperator, ConnID: "conn-2"}
+	var asked atomic.Bool
+	var first error
+	// alice's answer reads the prompt, then asks the adapter: bob's is
+	// refused by the adapter's runtime while she does. Bob's asks the adapter
+	// too, and goes on.
+	engine.set(func(f *fakeEngine) {
+		f.onSupportedDecisions = func(adapters.Event) {
+			if asked.CompareAndSwap(false, true) {
+				first = sup.SubmitAutomaticDecision(testRunID, "agent-a", "prompt-1", "allow", bob)
+			}
+		}
+	})
+
+	err := sup.SubmitAutomaticDecision(testRunID, "agent-a", "prompt-1", "allow", alice)
+	if !errors.Is(first, supervise.ErrUnsupportedDecision) {
+		t.Fatalf("the first answer = %v, want ErrUnsupportedDecision", first)
+	}
+	if !errors.Is(err, supervise.ErrUnsupportedDecision) {
+		t.Fatalf("the same answer, read before it was refused = %v, want ErrUnsupportedDecision", err)
+	}
+	if decisions := engine.auditFor(audit.KindDecision, "prompt-1"); len(decisions) != 1 || decisions[0].Operator != "bob" {
+		t.Fatalf("decision entries = %#v, want bob's alone", decisions)
+	}
+	if calls := engine.applySnapshot(); len(calls) != 1 {
+		t.Fatalf("writes = %#v, want the first alone", calls)
+	}
+}
+
 // automaticDeny is the evaluation of a rule that denies without asking.
 func automaticDeny() policy.Evaluation {
 	return policy.Evaluation{
@@ -954,6 +1040,20 @@ func TestADenyTheCoreHoldsBackOffersOnlyDeny(t *testing.T) {
 				sup.Handle(session.AdapterEvent{Event: second})
 				letTheLineGo()
 				waitFor(t, 2*time.Second, "the second prompt to go to the operator", func() bool {
+					shown := viewOf(sup, "deny-2")
+					return shown != nil && !shown.Evaluation.Automatic && shown.DeliveryStatus == "pending"
+				})
+			}},
+		// The policy's evaluation at its last check is its deny; the repeat
+		// guard is what hands the prompt back.
+		{name: "a repeat at the policy's last check", reason: supervise.ReasonRepeatAfterDelivery,
+			raise: func(t *testing.T, sup *supervise.Supervisor, engine *fakeEngine) {
+				letTheLineGo := holdWithALine(t, engine, sup, "agent-a")
+				first := promptEvent("agent-a", "deny-1")
+				sup.Handle(session.AdapterEvent{Event: first})
+				sup.Handle(session.AdapterEvent{Event: repeatOf(first, "deny-2")})
+				letTheLineGo()
+				waitFor(t, 2*time.Second, "the repeat to go to the operator", func() bool {
 					shown := viewOf(sup, "deny-2")
 					return shown != nil && !shown.Evaluation.Automatic && shown.DeliveryStatus == "pending"
 				})
@@ -1084,6 +1184,43 @@ func TestAPromptHandedBackAfterItsDetectionIsNotified(t *testing.T) {
 			}
 			if len(notices) != 1 || notices[0] != want {
 				t.Fatalf("notices = %#v, want one that the prompt waits on a person", notices)
+			}
+		})
+	}
+}
+
+// Only a deny the policy makes by itself is restricted. A prompt whose rule
+// proposes deny but that the policy asks about anyway, being sensitive or in
+// a dry run, and an allow the hand holds back, offer every answer the adapter
+// encodes, as they always did.
+func TestAPromptThePolicyDoesNotDenyByItselfOffersEveryAnswer(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		evaluation policy.Evaluation
+		sensitive  bool
+		reason     string
+	}{
+		{name: "a sensitive prompt a deny rule matches", sensitive: true, reason: policy.ReasonSensitive,
+			evaluation: policy.Evaluation{Action: policy.ActionAsk, ProposedAction: policy.ActionDeny, RuleName: "deny-risky", Reason: policy.ReasonSensitive}},
+		{name: "a deny rule in a dry run", reason: policy.ReasonDryRun,
+			evaluation: policy.Evaluation{Action: policy.ActionAsk, ProposedAction: policy.ActionDeny, RuleName: "deny-risky", Reason: policy.ReasonDryRun, DryRun: true}},
+		{name: "an allow the hand holds back", reason: supervise.ReasonOperatorAttached, evaluation: automaticAllow()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newFakeEngine()
+			engine.evaluation = test.evaluation
+			engine.supportedDecisions = []adapters.Decision{adapters.DecisionAllow, adapters.DecisionDeny}
+			sup, _ := newCoreForTest(t, engine, "agent-a")
+			sup.SetHolder("agent-a", "conn-1")
+			prompt := promptEvent("agent-a", "prompt-1")
+			prompt.Sensitive = test.sensitive
+			sup.Handle(session.AdapterEvent{Event: prompt})
+			shown := viewOf(sup, "prompt-1")
+			if shown == nil || shown.Evaluation.Reason != test.reason || !reflect.DeepEqual(shown.Decisions, []string{"allow", "deny"}) {
+				t.Fatalf("the prompt is shown as %#v, want every answer offered for %s", shown, test.reason)
+			}
+			if err := sup.SubmitAutomaticDecision(testRunID, "agent-a", "prompt-1", "allow", alice); err != nil {
+				t.Fatalf("allowing = %v", err)
 			}
 		})
 	}
