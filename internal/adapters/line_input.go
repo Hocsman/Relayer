@@ -72,6 +72,16 @@ func (p *Processor) SendLine(ctx context.Context, line string, deliver func([]by
 	return nil
 }
 
+// ValidateLine reports ErrInvalidLine for text that is not one line of
+// application text as the line boundary takes it: valid UTF-8, no control
+// character at all, CR and LF included, and no more than MaxLineBytes. The
+// supervision core holds a person's typed answer to the same rule: it reaches
+// the agent as typed, followed by the adapter's own terminator, and the rule
+// is what keeps it one answer rather than a stream of keystrokes.
+func ValidateLine(line string) error {
+	return validateLine(line)
+}
+
 func validateLine(line string) error {
 	if len(line) > MaxLineBytes || !utf8.ValidString(line) {
 		return ErrInvalidLine

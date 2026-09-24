@@ -413,12 +413,25 @@ func (s *Supervisor) reconcilePending(sessionID string) {
 // It is always sent as typed text, DecisionManual, and journaled ask: only the
 // adapter knows what the bytes mean. actor is who typed it; a read-only one is
 // refused before anything else, and an empty value before any claim or entry.
+//
+// The value is one line of text, as a line is (ErrAnswerInvalid otherwise,
+// before any claim or entry): valid UTF-8, no control character and no more
+// than a line's bytes. The adapter appends its own terminator. Only a NUL byte
+// was refused, by the adapters, so a typed answer carried CR, LF, escape
+// sequences and control keys of any length: several answers, or keystrokes of
+// any kind, written through the one path that needs no hand, while a line,
+// which is refused while anybody holds the terminal, was held to a single
+// line. The journal records a typed answer as asked, never its bytes, so what
+// it had carried said nothing.
 func (s *Supervisor) SubmitDecision(runID, sessionID, eventID, manualInput string, actor Actor) error {
 	if actor.readOnly() {
 		return ErrReadOnlyActor
 	}
 	if strings.TrimSpace(manualInput) == "" {
 		return ErrEmptyDecision
+	}
+	if adapters.ValidateLine(manualInput) != nil {
+		return ErrAnswerInvalid
 	}
 	return s.applyHumanDecision(runID, sessionID, eventID, adapters.DecisionManual, manualInput, actor)
 }

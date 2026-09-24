@@ -3,6 +3,7 @@ package supervise_test
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -303,6 +304,59 @@ func TestAnAnswerThatIsNoneIsRefusedWithNothingChanged(t *testing.T) {
 		// The session was never claimed: an offered answer goes through.
 		if err := sup.SubmitAutomaticDecision(testRunID, "agent-a", "prompt-1", "deny", actor); err != nil {
 			t.Fatalf("the offered answer after those that are none: %v", err)
+		}
+	}
+}
+
+// A typed answer is one line of text, as a line is: no control character, CR,
+// LF and escape included, valid UTF-8, and no more than a line's 4096 bytes.
+// Anything else is refused before anything is claimed, journaled or shown,
+// from the gateway and from the desktop alike. Only a NUL byte was refused, by
+// the adapters, so a typed answer wrote several answers, escape sequences and
+// control keys of any length into the agent: the one input that needs no hand
+// was a raw keyboard, journaled as a single answer asked, while a line was
+// held to one line and refused while anybody held the terminal.
+func TestATypedAnswerIsOneLineOfTextAsALineIs(t *testing.T) {
+	for _, actor := range []supervise.Actor{alice, desktop} {
+		engine := newFakeEngine()
+		sup, sink := newCoreForTest(t, engine, "agent-a")
+		sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
+		journaled, shown := len(engine.auditSnapshot()), len(sink.snapshot())
+
+		for name, typed := range map[string]string{
+			"a second answer after a carriage return": "y\rrm -rf ~\r",
+			"a second answer after a line feed":       "y\nrm -rf ~",
+			"an escape sequence":                      "y\x1b[A\x1b[A\r",
+			"a control key":                           "\x03",
+			"a tab":                                   "y\tn",
+			"a delete":                                "y\x7f",
+			"a C1 control":                            "y\u0085n",
+			"text that is not UTF-8":                  "y\xff",
+			"more than a line's bytes":                strings.Repeat("y", adapters.MaxLineBytes+1),
+		} {
+			if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", typed, actor); !errors.Is(err, supervise.ErrAnswerInvalid) {
+				t.Errorf("%#v, %s = %v, want ErrAnswerInvalid", actor, name, err)
+			}
+		}
+		if calls := engine.applySnapshot(); len(calls) != 0 {
+			t.Fatalf("a typed answer that is not one line reached the agent: %#v", calls)
+		}
+		if entries := engine.auditSnapshot(); len(entries) != journaled {
+			t.Fatalf("a typed answer that is not one line was journaled: %#v", entries[journaled:])
+		}
+		if calls := sink.snapshot(); len(calls) != shown {
+			t.Fatalf("a typed answer that is not one line showed %v", trace(calls[shown:]))
+		}
+		if state := sup.State(); len(state.Pending) != 1 || state.Pending[0].DeliveryStatus != "pending" {
+			t.Fatalf("the prompt after the refused answers = %#v", state.Pending)
+		}
+		// The longest line is an answer, and goes through as typed.
+		longest := strings.Repeat("y", adapters.MaxLineBytes)
+		if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", longest, actor); err != nil {
+			t.Fatalf("a typed answer of one line: %v", err)
+		}
+		if calls := engine.applySnapshot(); len(calls) != 1 || calls[0].decision != adapters.DecisionManual || calls[0].manualInput != longest {
+			t.Fatalf("the answer of one line reached the agent as %#v", calls)
 		}
 	}
 }

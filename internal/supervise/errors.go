@@ -25,6 +25,12 @@ var (
 	ErrAgentStillRunning   = errors.New("the agent process is still running")
 )
 
+// ErrAnswerInvalid refuses a typed answer that is not one line of text: it
+// holds a control character, CR, LF and escape included, is not valid UTF-8,
+// or is longer than a line may be. It is checked before anything is claimed,
+// journaled or shown, as an empty answer is.
+var ErrAnswerInvalid = errors.New("a typed answer must be one line of text, with no control characters and no more than 4096 bytes")
+
 // ErrReadOnlyActor refuses a decision or a line asked for by an Actor whose
 // role may only watch. It is checked before anything else, so the request
 // changes nothing and journals nothing, whatever else is wrong with it.
