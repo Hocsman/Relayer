@@ -524,25 +524,54 @@ func (c *Controller) SubmitLine(runID, sessionID, line string, actor supervise.A
 // SendTerminalInput delivers raw terminal input bytes directly to the session backend.
 // Used by the web interactive terminal (full PTY mode) to stream keystrokes and signals.
 //
-// The hand is checked before the write. The check and the write cannot share a
-// single lock acquisition without holding c.mu across five seconds of I/O, so
-// at most one already-in-flight keystroke may land just after a release. That
-// window is documented in docs/sharing.md rather than papered over.
+// Keystrokes reach the agent without the policy and are never journaled: the
+// documented bypass of an interactive terminal. They are bounded instead, by
+// the run's supervision core, which admits a write only from the connection
+// that holds the session's hand (Admit): a terminal nobody holds takes no
+// keystrokes, from anybody, and neither does a call that names no connection.
+// Every keystroke therefore falls within a hand whose taking was journaled.
+// The write takes the session's one write slot, the one an answer and a line
+// take: it is refused while either is being written, and while it is admitted
+// they are refused or, for the policy's answers, wait. It is refused as well
+// once the journal has failed, on a session frozen by a write whose outcome
+// is unknown, on one whose process is stopped, stopping or starting, and once
+// the run drains, which waits for every admitted write before its runtime
+// closes.
+//
+// A terminal nobody held was writable by any operator connection, the binary
+// frames that carry no connection's run included, and the keystrokes went to
+// the terminal whatever else was being written: with the policy answering on
+// its own, a client typing without the hand typed alongside the policy's
+// answer to the same question, and nothing said anybody had been at the
+// terminal. The resize, which writes nothing the agent reads, keeps the rule
+// that a free terminal is anybody's (HoldsHand).
+//
+// The hand is checked when the write is admitted, and the write happens once
+// it is: at most one already-in-flight keystroke may land just after a
+// release. That window is documented in docs/sharing.md rather than papered
+// over.
 func (c *Controller) SendTerminalInput(runID, sessionID string, data []byte, operator, connID string) error {
 	c.mu.RLock()
-	rt := c.runtime
+	rt, sup := c.runtime, c.sup
 	currentRun := c.runID
 	c.mu.RUnlock()
 
-	if rt == nil {
+	if rt == nil || sup == nil {
 		return errors.New("supervisor runtime not ready")
 	}
 	if trimmed := strings.TrimSpace(runID); trimmed != "" && trimmed != currentRun {
 		return errStaleRun
 	}
-	if !c.HoldsHand(sessionID, connID) {
-		return ErrNotHolder
+	release, err := sup.Admit(sessionID, connID)
+	if err != nil {
+		if errors.Is(err, supervise.ErrNotHolder) {
+			// The gateway's own refusal, which corrects a client still typing
+			// into a terminal it lost.
+			return ErrNotHolder
+		}
+		return err
 	}
+	defer release()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

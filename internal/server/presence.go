@@ -495,9 +495,10 @@ func (c *Controller) ForceTakeControl(sessionID, connID, operator string) (HandV
 	return view, err
 }
 
-// HoldsHand reports whether a connection may currently write to a session. A
-// session nobody has claimed is writable by any operator, which preserves the
-// single-operator behavior of deployments that never use sharing.
+// HoldsHand reports whether a connection may currently resize a session's
+// terminal. A session nobody has claimed may be resized by any operator: a
+// resize writes nothing the agent reads. Keystrokes are stricter, and need the
+// hand held by the connection that types them (SendTerminalInput).
 func (c *Controller) HoldsHand(sessionID, connID string) bool {
 	key := sessionKey(sessionID)
 	connID = strings.TrimSpace(connID)

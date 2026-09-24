@@ -19,8 +19,19 @@ A viewer can never hold the hand. An operator who does not hold it can still
 arbitrate prompts, stop and restart agents, and change settings — the hand
 governs raw terminal input and geometry, not supervision.
 
-A terminal nobody has claimed is writable by any operator. A deployment that
-never uses sharing therefore behaves exactly as it did before.
+A terminal nobody holds takes no keystrokes, from anybody: an operator takes
+the terminal first, which the bundled interface does when you open the
+interactive session. Every keystroke therefore falls within a hand whose
+taking was journaled. Before v0.8.9 a terminal nobody had claimed was writable
+by any operator connection, and its keystrokes could land alongside an answer
+the policy was writing to the same question.
+
+Keystrokes also wait on supervision. They share the session's one write slot
+with answers and lines: they are refused while an answer or a line is being
+written, and an answer or a line is refused, or for the policy's, delayed,
+while they are. They are refused once the audit journal has failed, on a
+session frozen after a write whose outcome is unknown, on a session that is
+stopped, stopping or starting, and while the run is stopping.
 
 ## Taking, requesting, and releasing
 
