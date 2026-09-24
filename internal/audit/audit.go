@@ -125,6 +125,13 @@ const (
 	OutcomeUnknown                   Outcome = "unknown"
 )
 
+// ReasonProcessExitStale is the reason of a session_finished entry for the
+// exit of a process that a replacement had already superseded when its exit
+// arrived. The entry keeps the exit's real outcome, but the session it ends is
+// not the one running: what reads the journal, such as the telemetry's count
+// of active sessions and pending prompts, leaves the replacement's alone.
+const ReasonProcessExitStale = "process_exit_stale"
+
 // Config controls local audit persistence. MaxFiles counts the active file as
 // well as its rotated generations.
 type Config struct {

@@ -22,6 +22,10 @@
 //     prompt the new process raised shows the agent waiting, not running, and
 //     a prompt raised while a Stop or a Restart holds the agent leaves it
 //     stopping.
+//   - The exit of a process a replacement already superseded is journaled
+//     with its real outcome, failed when it failed, and the reason
+//     process_exit_stale (audit.ReasonProcessExitStale), which the telemetry
+//     does not read as the end of the running session.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

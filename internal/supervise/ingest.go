@@ -208,15 +208,23 @@ func (s *Supervisor) releaseEventReservation(key eventKey) {
 func (s *Supervisor) handleProcessExit(event adapters.Event, backend string) {
 	current := s.engine.MarkProcessExited(event.SessionID)
 	key := makeEventKey(event.SessionID, event.ID)
+	finished := eventAuditEntry(audit.KindSessionFinished, event, backend)
+	finished.Outcome = audit.OutcomeFinished
+	if event.Metadata["failed"] == "true" {
+		finished.Outcome = audit.OutcomeFailed
+	}
+	finished.Reason = "process_exit"
 	if !current {
 		// A replacement already runs: this is the exit of the process before
 		// it, which can be emitted after the replacement started. It is still
-		// a finished session and is journaled, but showing the agent stopped
-		// would hide a live process and offer to start a second one.
+		// a finished session and is journaled with its real outcome, but under
+		// a reason of its own: the session it ends is not the running one, and
+		// the telemetry read as the replacement's end dropped the
+		// replacement's pending prompts and counted it inactive. Showing the
+		// agent stopped would hide a live process and offer to start a second
+		// one.
+		finished.Reason = audit.ReasonProcessExitStale
 		_ = s.recordAudit(eventDetectedEntry(event, backend))
-		finished := eventAuditEntry(audit.KindSessionFinished, event, backend)
-		finished.Outcome = audit.OutcomeFinished
-		finished.Reason = "process_exit"
 		_ = s.recordAudit(finished)
 		s.mu.Lock()
 		s.markResolvedLocked(key)
@@ -226,12 +234,6 @@ func (s *Supervisor) handleProcessExit(event adapters.Event, backend string) {
 	// Lifecycle state still has to converge even when audit has failed, so the
 	// result is deliberately ignored rather than short-circuiting the exit.
 	_ = s.recordAudit(eventDetectedEntry(event, backend))
-	finished := eventAuditEntry(audit.KindSessionFinished, event, backend)
-	finished.Outcome = audit.OutcomeFinished
-	if event.Metadata["failed"] == "true" {
-		finished.Outcome = audit.OutcomeFailed
-	}
-	finished.Reason = "process_exit"
 	_ = s.recordAudit(finished)
 
 	s.mu.Lock()

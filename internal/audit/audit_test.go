@@ -147,6 +147,27 @@ func TestRequireRelayerJournalAcceptsRecordingAndControlFirstLines(t *testing.T)
 	}
 }
 
+// The telemetry tells a stale exit from the running session's end by its
+// reason alone, so the sanitizer must journal both reasons as they are, in
+// every enabled mode, or the registry would read a stale exit as the
+// replacement's end.
+func TestSanitizeEntryKeepsTheProcessExitReasons(t *testing.T) {
+	for _, mode := range []Mode{ModeMetadata, ModeDetailed} {
+		for _, reason := range []string{"process_exit", ReasonProcessExitStale} {
+			entry := SanitizeEntry(Entry{
+				Kind:       KindSessionFinished,
+				SessionID:  "agent-a",
+				DecisionBy: DecisionBySystem,
+				Outcome:    OutcomeFailed,
+				Reason:     reason,
+			}, mode)
+			if entry.Reason != reason || entry.Outcome != OutcomeFailed {
+				t.Fatalf("%s: sanitized session_finished = reason %q, outcome %q; want %q, failed", mode, entry.Reason, entry.Outcome, reason)
+			}
+		}
+	}
+}
+
 func TestSafeCodeBoundsReasonCodes(t *testing.T) {
 	for _, code := range []string{
 		"recording_started", "recording_completed", "recording_truncated",

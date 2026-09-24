@@ -408,6 +408,60 @@ func TestPromptsOfAnEndedProcessAreNotPending(t *testing.T) {
 	}
 }
 
+// TestAStaleExitLeavesTheReplacementCounted: a restart journals the previous
+// process's end (operator_restart) and the replacement's start, and the
+// previous process's own exit can reach the journal after both. The core
+// journals that exit session_finished with reason process_exit_stale, and it
+// ends nothing the registry counts: the session active and the prompts
+// pending are the replacement's. Read as an ordinary exit, it dropped the
+// replacement's pending prompts and decremented relayer_sessions_active under
+// a session that was still running, so the gauge read zero, or one short
+// with other agents running.
+func TestAStaleExitLeavesTheReplacementCounted(t *testing.T) {
+	reg := NewRegistry()
+	now := time.Now().UTC()
+	observe := func(session string, kind audit.Kind, reason, eventID string) {
+		now = now.Add(time.Millisecond)
+		reg.Observe(audit.Entry{
+			RunID: "run-1", SessionID: session, AgentID: session, Backend: "pty", EventID: eventID,
+			Kind: kind, Reason: reason, EventType: adapters.EventConfirmation, Timestamp: now,
+		})
+	}
+	active := func() float64 {
+		t.Helper()
+		samples := reg.Snapshot().SessionsActive
+		if len(samples) != 1 {
+			t.Fatalf("sessions_active = %#v, want one pty series", samples)
+		}
+		return samples[0].Value
+	}
+	observe("other", audit.KindSessionStarted, "", "")
+	observe("agent", audit.KindSessionStarted, "", "")
+	observe("agent", audit.KindEventDetected, "event_detected", "evt-old")
+	observe("agent", audit.KindSessionFinished, "operator_restart", "")
+	observe("agent", audit.KindSessionStarted, "operator_restart", "")
+	observe("agent", audit.KindEventDetected, "event_detected", "evt-new")
+	if got, pending := active(), reg.Snapshot().EventsPending; got != 2 || pending != 1 {
+		t.Fatalf("after the restart: sessions_active = %v, events_pending = %d; want 2 and the replacement's prompt", got, pending)
+	}
+
+	observe("agent", audit.KindSessionFinished, "process_exit_stale", "")
+	if got := active(); got != 2 {
+		t.Fatalf("sessions_active after the previous process's stale exit = %v, want both sessions still counted", got)
+	}
+	if pending := reg.Snapshot().EventsPending; pending != 1 {
+		t.Fatalf("events_pending after the previous process's stale exit = %d, want the replacement's prompt still pending", pending)
+	}
+
+	observe("agent", audit.KindSessionFinished, "process_exit", "")
+	if got := active(); got != 1 {
+		t.Fatalf("sessions_active after the replacement's own exit = %v, want the other session's", got)
+	}
+	if pending := reg.Snapshot().EventsPending; pending != 0 {
+		t.Fatalf("events_pending after the replacement's own exit = %d, want 0", pending)
+	}
+}
+
 // TestAPromptIsPendingUntilItIsDecided: the front ends journal the policy's
 // evaluation right after each detection, and the registry closed the prompt
 // there, so events_pending stayed at zero while an operator had a question in

@@ -115,6 +115,13 @@ func (r *Registry) Observe(entry audit.Entry) {
 		r.sessionsTotal[key]++
 
 	case audit.KindSessionFinished, audit.KindSupervisionFinished:
+		if entry.Kind == audit.KindSessionFinished && entry.Reason == audit.ReasonProcessExitStale {
+			// The exit of a process a replacement had already superseded:
+			// the session that is active, and the prompts that are pending,
+			// are the replacement's. Its own end was counted when it was
+			// stopped for the replacement.
+			return
+		}
 		r.dropSessionPending(entry.RunID, entry.SessionID)
 		if r.sessionsActive[backend] > 0 {
 			r.sessionsActive[backend]--

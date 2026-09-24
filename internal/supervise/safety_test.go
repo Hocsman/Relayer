@@ -16,6 +16,7 @@ func TestSafeReason(t *testing.T) {
 		"engine_unavailable",
 		"event_detected",
 		"process_exit",
+		"process_exit_stale",
 		"decision_selected",
 		"delivery_applied",
 		"fallback_unsupported",

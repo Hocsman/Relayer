@@ -400,35 +400,76 @@ func TestAProcessExitJournalsItsDetectionAndTheSessionsEnd(t *testing.T) {
 	}
 }
 
-// DEFECT (v0.8.8 fix "stale failed exit journaled failed"): the exit of a
-// process a replacement already superseded is journaled finished even when it
-// failed; the current exit above is journaled failed. The fix flips the
-// expected outcome to failed. Showing nothing is right: the replacement runs.
-func TestAStaleFailedExitIsJournaledAsFinished(t *testing.T) {
-	engine := newFakeEngine()
-	engine.staleExits = true
-	sup, sink := newCoreForTest(t, engine, "agent-a")
-	exit := exitEvent("agent-a", 3, true)
+// The exit of a process a replacement already superseded is journaled with its
+// real outcome, failed when it failed, as the current exit above is. Its reason
+// says it is stale: the session it ends is not the one running now, and what
+// reads the journal — the telemetry's count of active sessions and pending
+// prompts — must not end the replacement's. The stale exit used to be
+// journaled finished whatever its outcome, under the current exit's reason.
+// Showing nothing is right: the replacement runs.
+func TestAStaleExitIsJournaledWithItsOutcomeAsStale(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		code        int
+		failed      bool
+		wantOutcome audit.Outcome
+		wantMeta    map[string]string
+		wantSummary string
+	}{
+		{
+			name: "clean", code: 0, wantOutcome: audit.OutcomeFinished,
+			wantMeta: map[string]string{"exit_code": "0"}, wantSummary: "process exited",
+		},
+		{
+			name: "failed", code: 3, failed: true, wantOutcome: audit.OutcomeFailed,
+			wantMeta: map[string]string{"exit_code": "3", "failed": "true"}, wantSummary: "process exited with error",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newFakeEngine()
+			engine.staleExits = true
+			sup, sink := newCoreForTest(t, engine, "agent-a")
+			exit := exitEvent("agent-a", test.code, test.failed)
 
-	sup.Handle(session.AdapterEvent{Event: exit})
+			sup.Handle(session.AdapterEvent{Event: exit})
 
-	finished := engine.auditFor(audit.KindSessionFinished, exit.ID)
-	if len(finished) != 1 || finished[0].Reason != "process_exit" ||
-		!reflect.DeepEqual(finished[0].Metadata, map[string]string{"exit_code": "3", "failed": "true"}) {
-		t.Fatalf("stale exit journal = %#v", finished)
-	}
-	if finished[0].Outcome != audit.OutcomeFinished {
-		t.Fatalf("stale failed exit outcome = %q: the defect is fixed, flip this test", finished[0].Outcome)
-	}
-	if agent := agentOf(t, sup, "agent-a"); !agent.Running || agent.Status != "running" {
-		t.Fatalf("a stale exit stopped the replacement: %#v", agent)
-	}
-	if calls := sink.snapshot(); len(calls) != 0 {
-		t.Fatalf("a stale exit was shown: %v", trace(calls))
-	}
-	sup.Handle(session.AdapterEvent{Event: exit})
-	if again := engine.auditFor(audit.KindSessionFinished, exit.ID); len(again) != 1 {
-		t.Fatalf("a repeated stale exit was journaled again: %#v", again)
+			base := audit.Entry{
+				SessionID:  "agent-a",
+				AgentID:    "agent-a",
+				Backend:    "pty",
+				Adapter:    "generic",
+				EventID:    exit.ID,
+				EventType:  adapters.EventProcessExit,
+				Risk:       adapters.RiskUnknown,
+				Summary:    test.wantSummary,
+				DecisionBy: audit.DecisionBySystem,
+				Metadata:   test.wantMeta,
+			}
+			detected := base
+			detected.Kind = audit.KindEventDetected
+			detected.Outcome = audit.OutcomeDetected
+			detected.Reason = "event_detected"
+			finished := base
+			finished.Kind = audit.KindSessionFinished
+			finished.Outcome = test.wantOutcome
+			finished.Reason = "process_exit_stale"
+			if got := engine.auditFor(audit.KindEventDetected, exit.ID); len(got) != 1 || !reflect.DeepEqual(got[0], detected) {
+				t.Fatalf("event_detected = %#v, want %#v", got, detected)
+			}
+			if got := engine.auditFor(audit.KindSessionFinished, exit.ID); len(got) != 1 || !reflect.DeepEqual(got[0], finished) {
+				t.Fatalf("session_finished = %#v, want %#v", got, finished)
+			}
+			if agent := agentOf(t, sup, "agent-a"); !agent.Running || agent.Status != "running" {
+				t.Fatalf("a stale exit stopped the replacement: %#v", agent)
+			}
+			if calls := sink.snapshot(); len(calls) != 0 {
+				t.Fatalf("a stale exit was shown: %v", trace(calls))
+			}
+			sup.Handle(session.AdapterEvent{Event: exit})
+			if again := engine.auditFor(audit.KindSessionFinished, exit.ID); len(again) != 1 {
+				t.Fatalf("a repeated stale exit was journaled again: %#v", again)
+			}
+		})
 	}
 }
 
