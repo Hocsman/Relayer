@@ -321,11 +321,17 @@ func (s *Supervisor) reconcilePending(sessionID string) {
 
 // SubmitDecision relays a manual value to the exact canonical occurrence. The
 // value is never copied into application state, events, errors or audit data.
-func (s *Supervisor) SubmitDecision(runID, sessionID, eventID, manualInput string) error {
+// It is always sent as typed text, DecisionManual, and journaled ask: only the
+// adapter knows what the bytes mean. actor is who typed it; a read-only one is
+// refused before anything else, and an empty value before any claim or entry.
+func (s *Supervisor) SubmitDecision(runID, sessionID, eventID, manualInput string, actor Actor) error {
+	if actor.readOnly() {
+		return ErrReadOnlyActor
+	}
 	if strings.TrimSpace(manualInput) == "" {
 		return ErrEmptyDecision
 	}
-	return s.applyHumanDecision(runID, sessionID, eventID, adapters.DecisionManual, manualInput)
+	return s.applyHumanDecision(runID, sessionID, eventID, adapters.DecisionManual, manualInput, actor)
 }
 
 // SubmitAutomaticDecision relays an answer the adapter encodes itself, so the
@@ -334,8 +340,14 @@ func (s *Supervisor) SubmitDecision(runID, sessionID, eventID, manualInput strin
 // The set of answers a given occurrence accepts is reported on the event, and
 // the adapter is asked again here: a decision that arrived from a stale
 // interface must be refused by the core rather than by the screen that offered
-// it.
-func (s *Supervisor) SubmitAutomaticDecision(runID, sessionID, eventID, decision string) error {
+// it. Only allow and deny are answers here, and only when the adapter offers
+// them for this occurrence; anything else is ErrUnsupportedDecision, with
+// nothing changed and nothing journaled. actor is who chose it; a read-only one
+// is refused before anything else.
+func (s *Supervisor) SubmitAutomaticDecision(runID, sessionID, eventID, decision string, actor Actor) error {
+	if actor.readOnly() {
+		return ErrReadOnlyActor
+	}
 	switch adapters.Decision(decision) {
 	case adapters.DecisionAllow, adapters.DecisionDeny:
 	default:
@@ -359,13 +371,14 @@ func (s *Supervisor) SubmitAutomaticDecision(runID, sessionID, eventID, decision
 	if !offered {
 		return ErrUnsupportedDecision
 	}
-	return s.applyHumanDecision(runID, sessionID, eventID, adapters.Decision(decision), "")
+	return s.applyHumanDecision(runID, sessionID, eventID, adapters.Decision(decision), "", actor)
 }
 
 func (s *Supervisor) applyHumanDecision(
 	runID, sessionID, eventID string,
 	decision adapters.Decision,
 	manualInput string,
+	actor Actor,
 ) error {
 	if runErr := s.activeRun(runID); runErr != nil {
 		return runErr
@@ -416,7 +429,7 @@ func (s *Supervisor) applyHumanDecision(
 	defer s.finishDecision(key)
 
 	backend := s.backendFor(sessionID)
-	if !s.recordAudit(decisionAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman)) {
+	if !s.recordAudit(attributed(decisionAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman), actor)) {
 		return ErrAuditUnavailable
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 8*time.Second)
@@ -429,28 +442,28 @@ func (s *Supervisor) applyHumanDecision(
 			// the delivery is not uncertain and freezing the session, as an
 			// uncertain one does, left a prompt nobody could answer any more.
 			// It goes back to the operator without the answer it cannot take.
-			if !s.recordAudit(deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackUnsupported, "fallback_unsupported")) {
+			if !s.recordAudit(attributed(deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackUnsupported, "fallback_unsupported"), actor)) {
 				return ErrAuditUnavailable
 			}
 			s.fallbackToAsk(key, "fallback_unsupported", decision)
 			return ErrUnsupportedDecision
 		}
 		if errors.Is(err, adapters.ErrEventMismatch) {
-			if !s.recordAudit(deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackStale, "fallback_stale")) {
+			if !s.recordAudit(attributed(deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackStale, "fallback_stale"), actor)) {
 				return ErrAuditUnavailable
 			}
 			s.resolveEvent(key)
 			s.reconcilePending(sessionID)
 			return ErrDecisionStale
 		}
-		if !s.recordAudit(deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackDeliveryUncertain, "delivery_uncertain")) {
+		if !s.recordAudit(attributed(deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackDeliveryUncertain, "delivery_uncertain"), actor)) {
 			return ErrAuditUnavailable
 		}
 		s.freezeSession(key, "delivery_uncertain")
 		return ErrDeliveryUncertain
 	}
 	s.recordAnswered(key.sessionID, item.event.Signature)
-	if !s.recordAudit(deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeApplied, "delivery_applied")) {
+	if !s.recordAudit(attributed(deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeApplied, "delivery_applied"), actor)) {
 		return ErrAuditUnavailable
 	}
 	s.resolveEvent(key)

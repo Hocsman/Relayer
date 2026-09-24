@@ -24,3 +24,8 @@ var (
 	ErrAgentUnknown        = errors.New("unknown agent for this run")
 	ErrAgentStillRunning   = errors.New("the agent process is still running")
 )
+
+// ErrReadOnlyActor refuses a decision or a line asked for by an Actor whose
+// role may only watch. It is checked before anything else, so the request
+// changes nothing and journals nothing, whatever else is wrong with it.
+var ErrReadOnlyActor = errors.New("permission denied: this role is read-only")

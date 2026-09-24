@@ -152,7 +152,7 @@ func TestAStaleHumanDecisionIsJournaledAndReconciled(t *testing.T) {
 	sup, _ := newCoreForTest(t, engine, "agent-a")
 	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
 
-	err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y")
+	err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y", desktop)
 	if !errors.Is(err, supervise.ErrDecisionStale) {
 		t.Fatalf("SubmitDecision = %v, want ErrDecisionStale", err)
 	}
@@ -215,10 +215,10 @@ func TestAnUncertainAutomaticDeliveryFreezesTheSession(t *testing.T) {
 		}
 	}
 
-	if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y"); !errors.Is(err, supervise.ErrDeliveryUncertain) {
+	if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y", desktop); !errors.Is(err, supervise.ErrDeliveryUncertain) {
 		t.Fatalf("a human answer after the uncertainty = %v, want ErrDeliveryUncertain", err)
 	}
-	if err := sup.SubmitLine(testRunID, "agent-a", "hello"); !errors.Is(err, supervise.ErrDeliveryUncertain) {
+	if err := sup.SubmitLine(testRunID, "agent-a", "hello", desktop); !errors.Is(err, supervise.ErrDeliveryUncertain) {
 		t.Fatalf("a line after the uncertainty = %v, want ErrDeliveryUncertain", err)
 	}
 	second := promptEvent("agent-a", "prompt-2")
@@ -252,7 +252,7 @@ func TestAnUncertainHumanDeliveryFreezesTheSession(t *testing.T) {
 	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
 	sink.reset()
 
-	if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y"); !errors.Is(err, supervise.ErrDeliveryUncertain) {
+	if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y", desktop); !errors.Is(err, supervise.ErrDeliveryUncertain) {
 		t.Fatalf("SubmitDecision = %v, want ErrDeliveryUncertain", err)
 	}
 	deliveries := engine.auditFor(audit.KindDelivery, "prompt-1")
@@ -270,10 +270,10 @@ func TestAnUncertainHumanDeliveryFreezesTheSession(t *testing.T) {
 	if got := trace(sink.snapshot()); !reflect.DeepEqual(got, []string{"prompt:delivering", "prompt:uncertain", "error:delivery_uncertain"}) {
 		t.Fatalf("sink = %v", got)
 	}
-	if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "n"); !errors.Is(err, supervise.ErrDeliveryUncertain) {
+	if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "n", desktop); !errors.Is(err, supervise.ErrDeliveryUncertain) {
 		t.Fatalf("a second answer after the uncertainty = %v, want ErrDeliveryUncertain", err)
 	}
-	if err := sup.SubmitLine(testRunID, "agent-a", "hello"); !errors.Is(err, supervise.ErrDeliveryUncertain) {
+	if err := sup.SubmitLine(testRunID, "agent-a", "hello", desktop); !errors.Is(err, supervise.ErrDeliveryUncertain) {
 		t.Fatalf("a line after the uncertainty = %v, want ErrDeliveryUncertain", err)
 	}
 	if calls := engine.applySnapshot(); len(calls) != 1 {
@@ -329,7 +329,7 @@ func TestABackendStreamErrorIsJournaledAndLeavesPromptsAnswerable(t *testing.T) 
 	if strings.Contains(sinkText(calls), "secret-stream-detail") {
 		t.Fatal("the stream error's text reached the sink")
 	}
-	if err := sup.SubmitDecision(testRunID, "Agent-A", "prompt-1", "y"); err != nil {
+	if err := sup.SubmitDecision(testRunID, "Agent-A", "prompt-1", "y", desktop); err != nil {
 		t.Fatalf("the prompt was not answerable after a stream error: %v", err)
 	}
 }
@@ -553,7 +553,7 @@ func TestWithdrawingTheDeliveringPromptKeepsTheSessionUntilItsWriteReturns(t *te
 			sup.Handle(session.AdapterEvent{Event: first})
 			answered := make(chan error, 1)
 			if human {
-				go func() { answered <- sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y") }()
+				go func() { answered <- sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y", desktop) }()
 			}
 			select {
 			case <-applyStarted:
@@ -586,7 +586,7 @@ func TestWithdrawingTheDeliveringPromptKeepsTheSessionUntilItsWriteReturns(t *te
 			case <-time.After(100 * time.Millisecond):
 			}
 			err := returnsBeforeReaching(t, applyStarted, "a human answer was written while the withdrawn prompt's still was", func() error {
-				return sup.SubmitDecision(testRunID, "agent-a", "prompt-2", "y")
+				return sup.SubmitDecision(testRunID, "agent-a", "prompt-2", "y", desktop)
 			})
 			if !errors.Is(err, supervise.ErrDecisionInFlight) {
 				t.Fatalf("a human answer while the withdrawn prompt's is written = %v, want ErrDecisionInFlight", err)
@@ -771,7 +771,7 @@ func TestAHumanAnswerTheAdapterCannotEncodeGoesBackToTheOperator(t *testing.T) {
 		{
 			name: "a typed answer",
 			answer: func(sup *supervise.Supervisor) error {
-				return sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y")
+				return sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y", desktop)
 			},
 			wantDecision:  audit.DecisionAsk,
 			wantDecisions: []string{"allow", "deny"},
@@ -779,7 +779,7 @@ func TestAHumanAnswerTheAdapterCannotEncodeGoesBackToTheOperator(t *testing.T) {
 		{
 			name: "a button",
 			answer: func(sup *supervise.Supervisor) error {
-				return sup.SubmitAutomaticDecision(testRunID, "agent-a", "prompt-1", "deny")
+				return sup.SubmitAutomaticDecision(testRunID, "agent-a", "prompt-1", "deny", desktop)
 			},
 			wantDecision:  audit.DecisionDeny,
 			wantDecisions: []string{"allow"},
@@ -821,7 +821,7 @@ func TestAHumanAnswerTheAdapterCannotEncodeGoesBackToTheOperator(t *testing.T) {
 				t.Fatalf("sink = %v, want the prompt shown delivering then pending again", got)
 			}
 
-			if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "n"); err != nil {
+			if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "n", desktop); err != nil {
 				t.Fatalf("another answer after the refused one = %v", err)
 			}
 			if ids := pendingIDs(sup); len(ids) != 0 {
@@ -844,7 +844,7 @@ func TestAHumanAnswerTheAdapterCannotEncodeGoesBackToTheOperator(t *testing.T) {
 		automatic.Sequence = 2
 		sup.Handle(session.AdapterEvent{Event: automatic})
 
-		if err := sup.SubmitAutomaticDecision(testRunID, "agent-a", "automatic-2", "deny"); !errors.Is(err, supervise.ErrUnsupportedDecision) {
+		if err := sup.SubmitAutomaticDecision(testRunID, "agent-a", "automatic-2", "deny", desktop); !errors.Is(err, supervise.ErrUnsupportedDecision) {
 			t.Fatalf("the operator's refused answer = %v, want ErrUnsupportedDecision", err)
 		}
 		for _, view := range sup.State().Pending {
@@ -854,7 +854,7 @@ func TestAHumanAnswerTheAdapterCannotEncodeGoesBackToTheOperator(t *testing.T) {
 			}
 		}
 		sink.reset()
-		if err := sup.SubmitDecision(testRunID, "agent-a", "human-1", "y"); err != nil {
+		if err := sup.SubmitDecision(testRunID, "agent-a", "human-1", "y", desktop); err != nil {
 			t.Fatalf("the earlier prompt's answer = %v", err)
 		}
 		sup.BeginDrain()
@@ -882,7 +882,7 @@ func TestAHumanAnswerTheAdapterCannotEncodeGoesBackToTheOperator(t *testing.T) {
 		// The decision entry, then the delivery entry, which fails.
 		engine.set(func(f *fakeEngine) { f.auditFailAt = f.auditCalls + 2 })
 
-		if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y"); !errors.Is(err, supervise.ErrAuditUnavailable) {
+		if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y", desktop); !errors.Is(err, supervise.ErrAuditUnavailable) {
 			t.Fatalf("a refused answer the journal could not record = %v, want ErrAuditUnavailable", err)
 		}
 		state := sup.State()
@@ -890,7 +890,7 @@ func TestAHumanAnswerTheAdapterCannotEncodeGoesBackToTheOperator(t *testing.T) {
 			state.Pending[0].Evaluation.Reason != "audit_unavailable" {
 			t.Fatalf("state = %#v, want the journal failed and the prompt with it", state)
 		}
-		if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "n"); err == nil {
+		if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "n", desktop); err == nil {
 			t.Fatal("an answer was taken after the journal failed")
 		}
 		if calls := engine.applySnapshot(); len(calls) != 1 {
@@ -948,7 +948,7 @@ func holdWithALine(t *testing.T, engine *fakeEngine, sup *supervise.Supervisor, 
 	})
 	releaseLine := releaser(t, release)
 	sent := make(chan error, 1)
-	go func() { sent <- sup.SubmitLine(testRunID, sessionID, "hello") }()
+	go func() { sent <- sup.SubmitLine(testRunID, sessionID, "hello", desktop) }()
 	select {
 	case <-started:
 	case <-time.After(2 * time.Second):
@@ -1212,7 +1212,7 @@ func TestTheSinkSeesTheDesktopsEmissionOrder(t *testing.T) {
 		sup, sink := newCoreForTest(t, engine, "agent-a")
 		sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
 		sink.reset()
-		if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y"); err != nil {
+		if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y", desktop); err != nil {
 			t.Fatalf("SubmitDecision: %v", err)
 		}
 		want := []string{"prompt:delivering", "prompt:delivered", "status:running"}
@@ -1469,12 +1469,12 @@ func TestTheSinkIsNeverCalledUnderTheCoreLock(t *testing.T) {
 		ask := promptEvent("agent-a", "ask-1")
 		ask.Sequence = 2
 		sup.Handle(session.AdapterEvent{Event: ask})
-		_ = sup.SubmitAutomaticDecision(testRunID, "agent-a", "ask-1", "deny")
+		_ = sup.SubmitAutomaticDecision(testRunID, "agent-a", "ask-1", "deny", desktop)
 		withdrawn := promptEvent("agent-a", "ask-2")
 		withdrawn.Sequence = 3
 		sup.Handle(session.AdapterEvent{Event: withdrawn})
 		sup.Handle(session.AdapterEventWithdrawn{Event: withdrawn})
-		_ = sup.SubmitLine(testRunID, "agent-a", "hello")
+		_ = sup.SubmitLine(testRunID, "agent-a", "hello", desktop)
 		_ = sup.StopSession(testRunID, "agent-a")
 		_ = sup.StartSession(testRunID, "agent-a")
 		_ = sup.RestartSession(testRunID, "agent-a")
@@ -1513,11 +1513,11 @@ func TestAnOperationWithoutARunRefusesAfterCheckingItsArguments(t *testing.T) {
 		err  error
 		want error
 	}{
-		"empty answer":   {sup.SubmitDecision("", "agent-a", "prompt-1", " "), supervise.ErrEmptyDecision},
-		"answer":         {sup.SubmitDecision("", "agent-a", "prompt-1", "y"), supervise.ErrRuntimeStopped},
-		"unknown choice": {sup.SubmitAutomaticDecision("", "agent-a", "prompt-1", "maybe"), supervise.ErrUnsupportedDecision},
-		"choice":         {sup.SubmitAutomaticDecision("", "agent-a", "prompt-1", "allow"), supervise.ErrRuntimeStopped},
-		"line":           {sup.SubmitLine("", "agent-a", "hello"), supervise.ErrRuntimeStopped},
+		"empty answer":   {sup.SubmitDecision("", "agent-a", "prompt-1", " ", desktop), supervise.ErrEmptyDecision},
+		"answer":         {sup.SubmitDecision("", "agent-a", "prompt-1", "y", desktop), supervise.ErrRuntimeStopped},
+		"unknown choice": {sup.SubmitAutomaticDecision("", "agent-a", "prompt-1", "maybe", desktop), supervise.ErrUnsupportedDecision},
+		"choice":         {sup.SubmitAutomaticDecision("", "agent-a", "prompt-1", "allow", desktop), supervise.ErrRuntimeStopped},
+		"line":           {sup.SubmitLine("", "agent-a", "hello", desktop), supervise.ErrRuntimeStopped},
 		"stop":           {sup.StopSession("", "agent-a"), supervise.ErrRuntimeStopped},
 		"start":          {sup.StartSession("", "agent-a"), supervise.ErrRuntimeStopped},
 		"restart":        {sup.RestartSession("", "agent-a"), supervise.ErrRuntimeStopped},
@@ -1572,7 +1572,7 @@ func TestADrainWaitsForAdmittedWritesAndAdmitsNoMore(t *testing.T) {
 	if _, admitted := sup.Admit(); admitted {
 		t.Fatal("a draining run admitted a write")
 	}
-	if err := sup.SubmitLine(testRunID, "agent-a", "hello"); !errors.Is(err, supervise.ErrRuntimeStopped) {
+	if err := sup.SubmitLine(testRunID, "agent-a", "hello", desktop); !errors.Is(err, supervise.ErrRuntimeStopped) {
 		t.Fatalf("a line during the drain = %v, want ErrRuntimeStopped", err)
 	}
 	waited := make(chan struct{})

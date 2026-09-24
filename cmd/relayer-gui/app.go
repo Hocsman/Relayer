@@ -487,21 +487,25 @@ func (a *App) refreshOutputForRun(run *runGeneration, sessionID string) {
 
 // SubmitDecision relays a manual value to the exact canonical occurrence. The
 // value is never copied into application state, events, errors or audit data.
+//
+// The desktop has one operator, at the machine, and no roles or connections:
+// it passes the core the zero Actor here, in SubmitAutomaticDecision and in
+// SubmitLine, so that its journal names nobody, exactly as it always has.
 func (a *App) SubmitDecision(runID, sessionID, eventID, manualInput string) error {
-	return a.supervisor().SubmitDecision(runID, sessionID, eventID, manualInput)
+	return a.supervisor().SubmitDecision(runID, sessionID, eventID, manualInput, supervise.Actor{})
 }
 
 // SubmitAutomaticDecision relays an answer the adapter encodes itself, so the
 // operator does not have to know the keystroke a given CLI expects.
 func (a *App) SubmitAutomaticDecision(runID, sessionID, eventID, decision string) error {
-	return a.supervisor().SubmitAutomaticDecision(runID, sessionID, eventID, decision)
+	return a.supervisor().SubmitAutomaticDecision(runID, sessionID, eventID, decision, supervise.Actor{})
 }
 
 // SubmitLine sends one ordinary application line to a detached, running
 // session. The line crosses this method only as a call argument: it is never
 // copied into bridge state, events, errors or audit entries.
 func (a *App) SubmitLine(runID, sessionID, line string) error {
-	return a.supervisor().SubmitLine(runID, sessionID, line)
+	return a.supervisor().SubmitLine(runID, sessionID, line, supervise.Actor{})
 }
 
 func (a *App) ResizeSession(runID, sessionID string, columns, rows int) error {

@@ -37,7 +37,7 @@ func repeatOf(prompt adapters.Event, eventID string) adapters.Event {
 func waitForTheSessionToBeFree(t *testing.T, sup *supervise.Supervisor, sessionID string) {
 	t.Helper()
 	waitFor(t, 2*time.Second, "the session to be free", func() bool {
-		return sup.SubmitLine(testRunID, sessionID, "next") == nil
+		return sup.SubmitLine(testRunID, sessionID, "next", desktop) == nil
 	})
 }
 
@@ -95,14 +95,14 @@ func TestAPromptRepeatingAnAnswerIsAskedNotAnswered(t *testing.T) {
 	answerByTyping := func(t *testing.T, sup *supervise.Supervisor, _ *fakeEngine, prompt adapters.Event) {
 		t.Helper()
 		sup.Handle(session.AdapterEvent{Event: prompt})
-		if err := sup.SubmitDecision(testRunID, prompt.SessionID, prompt.ID, "y"); err != nil {
+		if err := sup.SubmitDecision(testRunID, prompt.SessionID, prompt.ID, "y", desktop); err != nil {
 			t.Fatalf("SubmitDecision: %v", err)
 		}
 	}
 	answerByChoosing := func(t *testing.T, sup *supervise.Supervisor, _ *fakeEngine, prompt adapters.Event) {
 		t.Helper()
 		sup.Handle(session.AdapterEvent{Event: prompt})
-		if err := sup.SubmitAutomaticDecision(testRunID, prompt.SessionID, prompt.ID, string(adapters.DecisionAllow)); err != nil {
+		if err := sup.SubmitAutomaticDecision(testRunID, prompt.SessionID, prompt.ID, string(adapters.DecisionAllow), desktop); err != nil {
 			t.Fatalf("SubmitAutomaticDecision: %v", err)
 		}
 	}
@@ -190,12 +190,12 @@ func TestAnAnswerIsRememberedAfterAnotherIsWritten(t *testing.T) {
 	second.Signature = "signature-another-question"
 
 	sup.Handle(session.AdapterEvent{Event: first})
-	if err := sup.SubmitDecision(testRunID, "agent-a", "first-1", "y"); err != nil {
+	if err := sup.SubmitDecision(testRunID, "agent-a", "first-1", "y", desktop); err != nil {
 		t.Fatalf("the first answer: %v", err)
 	}
 	clock.advance(time.Second)
 	sup.Handle(session.AdapterEvent{Event: second})
-	if err := sup.SubmitDecision(testRunID, "agent-a", "second-2", "y"); err != nil {
+	if err := sup.SubmitDecision(testRunID, "agent-a", "second-2", "y", desktop); err != nil {
 		t.Fatalf("the second answer: %v", err)
 	}
 	clock.advance(500 * time.Millisecond)
@@ -216,7 +216,7 @@ func TestARepeatThePolicyAsksAboutAnywayKeepsThePolicysReason(t *testing.T) {
 	sup, sink := newCoreWithOptions(t, engine, supervise.Options{Now: newTestClock().Now}, "agent-a")
 	first := promptEvent("agent-a", "first-1")
 	sup.Handle(session.AdapterEvent{Event: first})
-	if err := sup.SubmitDecision(testRunID, "agent-a", "first-1", "y"); err != nil {
+	if err := sup.SubmitDecision(testRunID, "agent-a", "first-1", "y", desktop); err != nil {
 		t.Fatalf("SubmitDecision: %v", err)
 	}
 	sink.reset()
@@ -270,7 +270,7 @@ func TestAPromptRepeatingOneBeingAnsweredIsAskedNotAnswered(t *testing.T) {
 			sup.Handle(session.AdapterEvent{Event: first})
 			answered := make(chan error, 1)
 			if test.human {
-				go func() { answered <- sup.SubmitDecision(testRunID, "agent-a", "first-1", "y") }()
+				go func() { answered <- sup.SubmitDecision(testRunID, "agent-a", "first-1", "y", desktop) }()
 			}
 			select {
 			case <-applyStarted:

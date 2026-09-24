@@ -472,6 +472,9 @@ func trace(calls []sinkCall) []string {
 
 const testRunID = "run-test"
 
+// desktop is the zero Actor, the desktop's: it names nobody, and may act.
+var desktop supervise.Actor
+
 // newCoreForTest starts the supervisor of a run whose agents are the given
 // sessions, each on the pty backend with the generic adapter. The run is
 // drained when the test ends, and a drain that does not finish fails it.

@@ -12,8 +12,13 @@ import (
 
 // SubmitLine sends one ordinary application line to a detached, running
 // session. The line crosses this method only as a call argument: it is never
-// copied into core state, events, errors or audit entries.
-func (s *Supervisor) SubmitLine(runID, sessionID, line string) error {
+// copied into core state, events, errors or audit entries. actor is who sent
+// it, whom the line's entries name; a read-only one is refused before anything
+// else.
+func (s *Supervisor) SubmitLine(runID, sessionID, line string, actor Actor) error {
+	if actor.readOnly() {
+		return ErrReadOnlyActor
+	}
 	if err := s.activeRun(runID); err != nil {
 		return err
 	}
@@ -72,7 +77,7 @@ func (s *Supervisor) SubmitLine(runID, sessionID, line string) error {
 	s.mu.Unlock()
 	defer s.finishLine(sessionKey)
 
-	if !s.recordAudit(operatorInputAuditEntry(agent, audit.OutcomeInFlight, "operator_input_started")) {
+	if !s.recordAudit(operatorInputAuditEntry(agent, actor, audit.OutcomeInFlight, "operator_input_started")) {
 		return ErrAuditUnavailable
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 8*time.Second)
@@ -80,7 +85,7 @@ func (s *Supervisor) SubmitLine(runID, sessionID, line string) error {
 	line = ""
 	cancel()
 	if err == nil {
-		if !s.recordAudit(operatorInputAuditEntry(agent, audit.OutcomeApplied, "operator_input_applied")) {
+		if !s.recordAudit(operatorInputAuditEntry(agent, actor, audit.OutcomeApplied, "operator_input_applied")) {
 			return ErrAuditUnavailable
 		}
 		return nil
@@ -88,40 +93,40 @@ func (s *Supervisor) SubmitLine(runID, sessionID, line string) error {
 
 	switch {
 	case errors.Is(err, terminal.ErrEventPending):
-		if !s.recordAudit(operatorInputAuditEntry(agent, audit.OutcomeFallbackStale, "operator_input_prompt_pending")) {
+		if !s.recordAudit(operatorInputAuditEntry(agent, actor, audit.OutcomeFallbackStale, "operator_input_prompt_pending")) {
 			return ErrAuditUnavailable
 		}
 		s.reconcilePending(sessionID)
 		s.emitSafeError("line_prompt_pending", "A supervision request arrived before the line. No free text was sent.", sessionID)
 		return ErrLinePromptPending
 	case errors.Is(err, terminal.ErrInvalidLine):
-		if !s.recordAudit(operatorInputAuditEntry(agent, audit.OutcomeSkipped, "operator_input_invalid")) {
+		if !s.recordAudit(operatorInputAuditEntry(agent, actor, audit.OutcomeSkipped, "operator_input_invalid")) {
 			return ErrAuditUnavailable
 		}
 		s.emitSafeError("line_invalid", "The input must be a single UTF-8 line, with no control characters and no more than 4096 bytes.", sessionID)
 		return ErrLineInvalid
 	case errors.Is(err, terminal.ErrLineUnsupported):
-		if !s.recordAudit(operatorInputAuditEntry(agent, audit.OutcomeSkipped, "operator_input_unsupported")) {
+		if !s.recordAudit(operatorInputAuditEntry(agent, actor, audit.OutcomeSkipped, "operator_input_unsupported")) {
 			return ErrAuditUnavailable
 		}
 		s.emitSafeError("line_unsupported", "This backend cannot send a line reliably.", sessionID)
 		return ErrLineUnsupported
 	case errors.Is(err, terminal.ErrClosed):
-		if !s.recordAudit(operatorInputAuditEntry(agent, audit.OutcomeSkipped, "operator_input_session_unavailable")) {
+		if !s.recordAudit(operatorInputAuditEntry(agent, actor, audit.OutcomeSkipped, "operator_input_session_unavailable")) {
 			return ErrAuditUnavailable
 		}
 		s.markLineSessionUnavailable(sessionKey, "exited")
 		s.emitSafeError("line_session_unavailable", "The session ended before delivery. No line was sent.", sessionID)
 		return ErrLineUnavailable
 	case errors.Is(err, terminal.ErrSessionNotFound):
-		if !s.recordAudit(operatorInputAuditEntry(agent, audit.OutcomeSkipped, "operator_input_session_unavailable")) {
+		if !s.recordAudit(operatorInputAuditEntry(agent, actor, audit.OutcomeSkipped, "operator_input_session_unavailable")) {
 			return ErrAuditUnavailable
 		}
 		s.markLineSessionUnavailable(sessionKey, "failed")
 		s.emitSafeError("line_session_unavailable", "The session is no longer available. No line was sent.", sessionID)
 		return ErrLineUnavailable
 	default:
-		if !s.recordAudit(operatorInputAuditEntry(agent, audit.OutcomeFallbackDeliveryUncertain, "operator_input_delivery_uncertain")) {
+		if !s.recordAudit(operatorInputAuditEntry(agent, actor, audit.OutcomeFallbackDeliveryUncertain, "operator_input_delivery_uncertain")) {
 			return ErrAuditUnavailable
 		}
 		s.freezeLineSession(sessionKey)

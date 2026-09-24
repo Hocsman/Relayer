@@ -77,7 +77,7 @@ func TestAnAutomaticPromptWaitsForAnEarlierHumanOneAndGoesOnceItIsAnswered(t *te
 		}
 	}
 	releaseWrites()
-	if err := sup.SubmitDecision(testRunID, "agent-a", "human-1", "y"); err != nil {
+	if err := sup.SubmitDecision(testRunID, "agent-a", "human-1", "y", desktop); err != nil {
 		t.Fatalf("SubmitDecision: %v", err)
 	}
 	waitFor(t, 2*time.Second, "the queued automatic answer", func() bool {
@@ -130,7 +130,7 @@ func TestQueuedAutomaticPromptsAreAnsweredInTheAgentsOrder(t *testing.T) {
 	sup.Handle(session.AdapterEvent{Event: late})
 	sup.Handle(session.AdapterEvent{Event: early})
 
-	if err := sup.SubmitDecision(testRunID, "agent-a", "human-1", "y"); err != nil {
+	if err := sup.SubmitDecision(testRunID, "agent-a", "human-1", "y", desktop); err != nil {
 		t.Fatalf("SubmitDecision: %v", err)
 	}
 	waitFor(t, 2*time.Second, "both automatic answers", func() bool { return len(engine.applySnapshot()) == 3 })
@@ -206,7 +206,7 @@ func TestAFreezeDoesNotOutliveItsProcess(t *testing.T) {
 	engine := newFakeEngine()
 	engine.lineErr = errors.New("write failed half way")
 	sup, _ := newCoreForTest(t, engine, "agent-a")
-	if err := sup.SubmitLine(testRunID, "agent-a", "hello"); !errors.Is(err, supervise.ErrDeliveryUncertain) {
+	if err := sup.SubmitLine(testRunID, "agent-a", "hello", desktop); !errors.Is(err, supervise.ErrDeliveryUncertain) {
 		t.Fatalf("first line = %v, want ErrDeliveryUncertain", err)
 	}
 	sup.Handle(session.AdapterEvent{Event: exitEvent("agent-a", 0, false)})
@@ -218,7 +218,7 @@ func TestAFreezeDoesNotOutliveItsProcess(t *testing.T) {
 	if agent := agentOf(t, sup, "agent-a"); agent.InputFrozen {
 		t.Fatalf("the replacement inherited the freeze: %#v", agent)
 	}
-	if err := sup.SubmitLine(testRunID, "agent-a", "hello"); err != nil {
+	if err := sup.SubmitLine(testRunID, "agent-a", "hello", desktop); err != nil {
 		t.Fatalf("a line to the new process = %v, want it sent", err)
 	}
 }
@@ -231,7 +231,7 @@ func TestAFrozenSessionTakesNoAutomaticDecision(t *testing.T) {
 	engine.evaluation = automaticAllow()
 	engine.lineErr = errors.New("write failed half way")
 	sup, _ := newCoreForTest(t, engine, "agent-a")
-	if err := sup.SubmitLine(testRunID, "agent-a", "hello"); !errors.Is(err, supervise.ErrDeliveryUncertain) {
+	if err := sup.SubmitLine(testRunID, "agent-a", "hello", desktop); !errors.Is(err, supervise.ErrDeliveryUncertain) {
 		t.Fatalf("line = %v, want ErrDeliveryUncertain", err)
 	}
 
@@ -290,7 +290,7 @@ func TestAPromptTheJournalCouldNotRecordOffersNoAnswer(t *testing.T) {
 			if agent := agentOf(t, sup, "agent-a"); !agent.InputFrozen {
 				t.Fatalf("agent = %#v, want the session frozen", agent)
 			}
-			if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y"); !errors.Is(err, supervise.ErrDeliveryUncertain) {
+			if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y", desktop); !errors.Is(err, supervise.ErrDeliveryUncertain) {
 				t.Fatalf("an answer to it = %v, want ErrDeliveryUncertain", err)
 			}
 			if calls := engine.applySnapshot(); len(calls) != 0 {
@@ -347,7 +347,7 @@ func TestAFailedStopOrRestartFreezesTheSession(t *testing.T) {
 			if agent := agentOf(t, sup, "agent-a"); !agent.InputFrozen {
 				t.Fatalf("agent after a failed %s = %#v, want it frozen", test.name, agent)
 			}
-			if err := sup.SubmitLine(testRunID, "agent-a", "hello"); !errors.Is(err, supervise.ErrDeliveryUncertain) {
+			if err := sup.SubmitLine(testRunID, "agent-a", "hello", desktop); !errors.Is(err, supervise.ErrDeliveryUncertain) {
 				t.Fatalf("a line after a failed %s = %v, want ErrDeliveryUncertain", test.name, err)
 			}
 		})
@@ -367,7 +367,7 @@ func TestAnAutomaticAnswerWaitsForALineBeingWrittenAndGoesAfterIt(t *testing.T) 
 	sup, _ := newCoreForTest(t, engine, "agent-a")
 	releaseLine := releaser(t, release)
 	sent := make(chan error, 1)
-	go func() { sent <- sup.SubmitLine(testRunID, "agent-a", "hello") }()
+	go func() { sent <- sup.SubmitLine(testRunID, "agent-a", "hello", desktop) }()
 	select {
 	case <-lineStarted:
 	case <-time.After(2 * time.Second):
@@ -407,7 +407,7 @@ func TestASessionTakesOneAnswerAtATime(t *testing.T) {
 		human.Sequence = 2
 		sup.Handle(session.AdapterEvent{Event: human})
 		answered := make(chan error, 1)
-		go func() { answered <- sup.SubmitDecision(testRunID, "agent-a", "human-2", "y") }()
+		go func() { answered <- sup.SubmitDecision(testRunID, "agent-a", "human-2", "y", desktop) }()
 		select {
 		case <-applyStarted:
 		case <-time.After(2 * time.Second):
@@ -453,7 +453,7 @@ func TestASessionTakesOneAnswerAtATime(t *testing.T) {
 		sup.Handle(session.AdapterEvent{Event: human})
 
 		err := returnsBeforeReaching(t, applyStarted, "a human answer was written while an automatic one was", func() error {
-			return sup.SubmitDecision(testRunID, "agent-a", "human-2", "y")
+			return sup.SubmitDecision(testRunID, "agent-a", "human-2", "y", desktop)
 		})
 		if !errors.Is(err, supervise.ErrDecisionInFlight) {
 			t.Fatalf("human answer = %v, want ErrDecisionInFlight", err)
@@ -467,7 +467,7 @@ func TestASessionTakesOneAnswerAtATime(t *testing.T) {
 		// has.
 		var answerErr error
 		waitFor(t, 2*time.Second, "the session to be free for the human answer", func() bool {
-			answerErr = sup.SubmitDecision(testRunID, "agent-a", "human-2", "y")
+			answerErr = sup.SubmitDecision(testRunID, "agent-a", "human-2", "y", desktop)
 			return !errors.Is(answerErr, supervise.ErrDecisionInFlight)
 		})
 		if answerErr != nil {
@@ -498,7 +498,7 @@ func TestAHumanAnswerIsRefusedWhileTheAgentIsStopped(t *testing.T) {
 		t.Fatal("the stop never reached the runtime")
 	}
 
-	if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y"); !errors.Is(err, supervise.ErrRuntimeStopped) {
+	if err := sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y", desktop); !errors.Is(err, supervise.ErrRuntimeStopped) {
 		t.Fatalf("an answer during the stop = %v, want ErrRuntimeStopped", err)
 	}
 	if calls := engine.applySnapshot(); len(calls) != 0 {
@@ -550,7 +550,7 @@ func TestALineIsRefusedWhileTheAgentIsStoppedWhateverItsStatusShows(t *testing.T
 			}
 			sink.reset()
 
-			if err := sup.SubmitLine(testRunID, "agent-a", "hello"); !errors.Is(err, supervise.ErrLineUnavailable) {
+			if err := sup.SubmitLine(testRunID, "agent-a", "hello", desktop); !errors.Is(err, supervise.ErrLineUnavailable) {
 				t.Fatalf("a line during the stop = %v, want ErrLineUnavailable", err)
 			}
 			if lines := engine.lineSnapshot(); len(lines) != 0 {
@@ -579,7 +579,7 @@ func TestAStopOrRestartIsRefusedWhileAnAnswerIsWritten(t *testing.T) {
 	releaseWrite := releaser(t, release)
 	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
 	answered := make(chan error, 1)
-	go func() { answered <- sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y") }()
+	go func() { answered <- sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y", desktop) }()
 	select {
 	case <-applyStarted:
 	case <-time.After(2 * time.Second):
@@ -680,7 +680,7 @@ func TestTheSinkIsNeverCalledUnderTheCoreLockOnTheFailurePaths(t *testing.T) {
 		{
 			name:    "an uncertain line freezes the session",
 			setup:   func(f *fakeEngine) { f.lineErr = errors.New("write failed half way") },
-			operate: func(sup *supervise.Supervisor) { _ = sup.SubmitLine(testRunID, "agent-a", "hello") },
+			operate: func(sup *supervise.Supervisor) { _ = sup.SubmitLine(testRunID, "agent-a", "hello", desktop) },
 			reached: func(state supervise.State) bool { return state.Agents[0].InputFrozen },
 		},
 		{
@@ -777,7 +777,7 @@ func TestEveryAnsweredPromptStaysAnswered(t *testing.T) {
 	second.Sequence = 2
 	for _, prompt := range []adapters.Event{first, second} {
 		sup.Handle(session.AdapterEvent{Event: prompt})
-		if err := sup.SubmitDecision(testRunID, "agent-a", prompt.ID, "y"); err != nil {
+		if err := sup.SubmitDecision(testRunID, "agent-a", prompt.ID, "y", desktop); err != nil {
 			t.Fatalf("answering %s: %v", prompt.ID, err)
 		}
 	}
@@ -887,7 +887,7 @@ func TestALineRefusedForAWaitingPromptBringsInThePromptTheAgentShows(t *testing.
 	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-1")})
 	sink.reset()
 
-	if err := sup.SubmitLine(testRunID, "agent-a", "hello"); !errors.Is(err, supervise.ErrLinePromptPending) {
+	if err := sup.SubmitLine(testRunID, "agent-a", "hello", desktop); !errors.Is(err, supervise.ErrLinePromptPending) {
 		t.Fatalf("SubmitLine = %v, want ErrLinePromptPending", err)
 	}
 	if ids := pendingIDs(sup); len(ids) != 2 || ids[0] != "prompt-1" || ids[1] != "prompt-2" {

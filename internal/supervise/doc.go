@@ -59,6 +59,19 @@
 //     lock, and two goroutines reached the sink in either order: a prompt
 //     could be shown delivering after it was shown delivered, and an agent
 //     running after it was shown exited.
+//   - A decision or a line says who asked for it, an Actor: the person, their
+//     role and their connection. The journal names them on that person's
+//     decision entry, on its delivery entry however it ends (Operator, and the
+//     operator, role and conn_id metadata) and on their line's entries, whose
+//     closed shape takes only the Operator. The policy's entries, and those
+//     the core writes on its own, never name anybody. The desktop passes the
+//     zero Actor and its journal is what it always was. An Actor whose role
+//     may only watch, RoleViewer or any role but RoleOperator, is refused with
+//     ErrReadOnlyActor before anything else: nothing is claimed, written,
+//     journaled or shown. A typed answer is always sent as text and journaled
+//     ask, an empty one is refused before any claim or entry, and a chosen one
+//     is only allow or deny, and only one the adapter offers, or it is refused
+//     with nothing changed.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

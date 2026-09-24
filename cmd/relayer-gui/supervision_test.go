@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/supervise"
 )
 
@@ -109,3 +112,75 @@ func TestTheSinkOfARunThatIsNoLongerActiveShowsNothing(t *testing.T) {
 		t.Fatalf("the active run's journal state = %q, want failed", state.Audit.Status)
 	}
 }
+
+// The core names who made a decision or sent a line when its front end says
+// so, and the desktop never does: it has one operator, at the machine, and
+// passes the core the zero Actor. What the desktop journals for a person's
+// answers and lines is therefore exactly what it journaled before the core
+// knew of actors, entry for entry and byte for byte: no operator, no role, no
+// connection, and the human entries' metadata as empty as ever. The expected
+// journal was captured from the desktop before actors existed.
+func TestTheDesktopJournalsWhatAPersonDidAsItAlwaysHas(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	engine.supportedDecisions = []adapters.Decision{adapters.DecisionAllow, adapters.DecisionDeny}
+	application := newBridgeForTest(engine)
+	runID := activeRunIDForTest(application)
+
+	// A button, a typed answer, a button the adapter cannot encode then a
+	// typed answer to the same prompt, and a line.
+	application.handleAdapterEvent(bridgeEvent("agent-a", "prompt-1"))
+	if err := application.SubmitAutomaticDecision(runID, "agent-a", "prompt-1", "allow"); err != nil {
+		t.Fatalf("SubmitAutomaticDecision: %v", err)
+	}
+	application.handleAdapterEvent(bridgeEvent("agent-a", "prompt-2"))
+	if err := application.SubmitDecision(runID, "agent-a", "prompt-2", "typed answer"); err != nil {
+		t.Fatalf("SubmitDecision: %v", err)
+	}
+	application.handleAdapterEvent(bridgeEvent("agent-a", "prompt-3"))
+	engine.mu.Lock()
+	engine.applyErr = adapters.ErrDecisionUnsupported
+	engine.mu.Unlock()
+	if err := application.SubmitAutomaticDecision(runID, "agent-a", "prompt-3", "deny"); !errors.Is(err, errUnsupportedDecision) {
+		t.Fatalf("an answer the adapter cannot encode = %v", err)
+	}
+	engine.mu.Lock()
+	engine.applyErr = nil
+	engine.mu.Unlock()
+	if err := application.SubmitDecision(runID, "agent-a", "prompt-3", "n"); err != nil {
+		t.Fatalf("SubmitDecision after the fallback: %v", err)
+	}
+	if err := application.SubmitLine(runID, "agent-a", "hello"); err != nil {
+		t.Fatalf("SubmitLine: %v", err)
+	}
+
+	var journal strings.Builder
+	for _, entry := range engine.auditSnapshot() {
+		encoded, err := json.Marshal(entry)
+		if err != nil {
+			t.Fatalf("marshal entry: %v", err)
+		}
+		journal.Write(encoded)
+		journal.WriteByte('\n')
+	}
+	if got := journal.String(); got != desktopHumanJournal {
+		t.Fatalf("the desktop's journal changed:\n got:\n%s\nwant:\n%s", got, desktopHumanJournal)
+	}
+}
+
+const desktopHumanJournal = `{"schema_version":0,"sequence":0,"timestamp":"0001-01-01T00:00:00Z","entry_id":"","run_id":"","kind":"event_detected","session_id":"agent-a","agent_id":"agent-a","backend":"pty","adapter":"generic","event_id":"prompt-1","event_type":"confirmation","risk":"low","decision_by":"system","outcome":"detected","reason":"event_detected","summary":"Overwrite file?","sensitive":false}
+{"schema_version":0,"sequence":0,"timestamp":"0001-01-01T00:00:00Z","entry_id":"","run_id":"","kind":"policy_evaluated","session_id":"agent-a","agent_id":"agent-a","backend":"pty","adapter":"generic","event_id":"prompt-1","event_type":"confirmation","risk":"low","decision":"ask","decision_by":"policy","outcome":"ask","reason":"default_action","summary":"Overwrite file?","sensitive":false,"metadata":{"automatic":"false","effective_action":"ask","mode":"enforce","proposed_action":"ask"}}
+{"schema_version":0,"sequence":0,"timestamp":"0001-01-01T00:00:00Z","entry_id":"","run_id":"","kind":"decision","session_id":"agent-a","agent_id":"agent-a","backend":"pty","adapter":"generic","event_id":"prompt-1","event_type":"confirmation","risk":"low","decision":"allow","decision_by":"human","outcome":"in_flight","reason":"decision_selected","sensitive":false}
+{"schema_version":0,"sequence":0,"timestamp":"0001-01-01T00:00:00Z","entry_id":"","run_id":"","kind":"delivery","session_id":"agent-a","agent_id":"agent-a","backend":"pty","adapter":"generic","event_id":"prompt-1","event_type":"confirmation","risk":"low","decision":"allow","decision_by":"human","outcome":"applied","reason":"delivery_applied","sensitive":false}
+{"schema_version":0,"sequence":0,"timestamp":"0001-01-01T00:00:00Z","entry_id":"","run_id":"","kind":"event_detected","session_id":"agent-a","agent_id":"agent-a","backend":"pty","adapter":"generic","event_id":"prompt-2","event_type":"confirmation","risk":"low","decision_by":"system","outcome":"detected","reason":"event_detected","summary":"Overwrite file?","sensitive":false}
+{"schema_version":0,"sequence":0,"timestamp":"0001-01-01T00:00:00Z","entry_id":"","run_id":"","kind":"policy_evaluated","session_id":"agent-a","agent_id":"agent-a","backend":"pty","adapter":"generic","event_id":"prompt-2","event_type":"confirmation","risk":"low","decision":"ask","decision_by":"policy","outcome":"ask","reason":"default_action","summary":"Overwrite file?","sensitive":false,"metadata":{"automatic":"false","effective_action":"ask","mode":"enforce","proposed_action":"ask"}}
+{"schema_version":0,"sequence":0,"timestamp":"0001-01-01T00:00:00Z","entry_id":"","run_id":"","kind":"decision","session_id":"agent-a","agent_id":"agent-a","backend":"pty","adapter":"generic","event_id":"prompt-2","event_type":"confirmation","risk":"low","decision":"ask","decision_by":"human","outcome":"in_flight","reason":"decision_selected","sensitive":false}
+{"schema_version":0,"sequence":0,"timestamp":"0001-01-01T00:00:00Z","entry_id":"","run_id":"","kind":"delivery","session_id":"agent-a","agent_id":"agent-a","backend":"pty","adapter":"generic","event_id":"prompt-2","event_type":"confirmation","risk":"low","decision":"ask","decision_by":"human","outcome":"applied","reason":"delivery_applied","sensitive":false}
+{"schema_version":0,"sequence":0,"timestamp":"0001-01-01T00:00:00Z","entry_id":"","run_id":"","kind":"event_detected","session_id":"agent-a","agent_id":"agent-a","backend":"pty","adapter":"generic","event_id":"prompt-3","event_type":"confirmation","risk":"low","decision_by":"system","outcome":"detected","reason":"event_detected","summary":"Overwrite file?","sensitive":false}
+{"schema_version":0,"sequence":0,"timestamp":"0001-01-01T00:00:00Z","entry_id":"","run_id":"","kind":"policy_evaluated","session_id":"agent-a","agent_id":"agent-a","backend":"pty","adapter":"generic","event_id":"prompt-3","event_type":"confirmation","risk":"low","decision":"ask","decision_by":"policy","outcome":"ask","reason":"default_action","summary":"Overwrite file?","sensitive":false,"metadata":{"automatic":"false","effective_action":"ask","mode":"enforce","proposed_action":"ask"}}
+{"schema_version":0,"sequence":0,"timestamp":"0001-01-01T00:00:00Z","entry_id":"","run_id":"","kind":"decision","session_id":"agent-a","agent_id":"agent-a","backend":"pty","adapter":"generic","event_id":"prompt-3","event_type":"confirmation","risk":"low","decision":"deny","decision_by":"human","outcome":"in_flight","reason":"decision_selected","sensitive":false}
+{"schema_version":0,"sequence":0,"timestamp":"0001-01-01T00:00:00Z","entry_id":"","run_id":"","kind":"delivery","session_id":"agent-a","agent_id":"agent-a","backend":"pty","adapter":"generic","event_id":"prompt-3","event_type":"confirmation","risk":"low","decision":"deny","decision_by":"human","outcome":"fallback_unsupported","reason":"fallback_unsupported","sensitive":false}
+{"schema_version":0,"sequence":0,"timestamp":"0001-01-01T00:00:00Z","entry_id":"","run_id":"","kind":"decision","session_id":"agent-a","agent_id":"agent-a","backend":"pty","adapter":"generic","event_id":"prompt-3","event_type":"confirmation","risk":"low","decision":"ask","decision_by":"human","outcome":"in_flight","reason":"decision_selected","sensitive":false}
+{"schema_version":0,"sequence":0,"timestamp":"0001-01-01T00:00:00Z","entry_id":"","run_id":"","kind":"delivery","session_id":"agent-a","agent_id":"agent-a","backend":"pty","adapter":"generic","event_id":"prompt-3","event_type":"confirmation","risk":"low","decision":"ask","decision_by":"human","outcome":"applied","reason":"delivery_applied","sensitive":false}
+{"schema_version":0,"sequence":0,"timestamp":"0001-01-01T00:00:00Z","entry_id":"","run_id":"","kind":"operator_input","session_id":"agent-a","agent_id":"agent-a","backend":"pty","adapter":"generic","decision_by":"human","outcome":"in_flight","reason":"operator_input_started","sensitive":false}
+{"schema_version":0,"sequence":0,"timestamp":"0001-01-01T00:00:00Z","entry_id":"","run_id":"","kind":"operator_input","session_id":"agent-a","agent_id":"agent-a","backend":"pty","adapter":"generic","decision_by":"human","outcome":"applied","reason":"operator_input_applied","sensitive":false}
+`

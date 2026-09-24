@@ -95,7 +95,7 @@ func TestAPromptIsNeverShownDeliveringAfterItWasShownDelivered(t *testing.T) {
 	arrived, letGo := gateAt(t, sink, promptShown("prompt-1", "delivering"))
 
 	answered := make(chan error, 1)
-	go func() { answered <- sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y") }()
+	go func() { answered <- sup.SubmitDecision(testRunID, "agent-a", "prompt-1", "y", desktop) }()
 	within(t, arrived, "the answer to be shown delivering")
 	withdrawn := make(chan struct{})
 	go func() {
@@ -229,7 +229,7 @@ func TestWhatTheSinkSeesFollowsTheStateUnderConcurrency(t *testing.T) {
 				op()
 			}()
 		}
-		race(func() { _ = sup.SubmitDecision(testRunID, "agent-a", "human-1", "y") })
+		race(func() { _ = sup.SubmitDecision(testRunID, "agent-a", "human-1", "y", desktop) })
 		race(func() { sup.Handle(session.AdapterEventWithdrawn{Event: human}) })
 		race(func() { sup.Handle(session.AdapterEventWithdrawn{Event: automatic}) })
 		race(func() { sup.Handle(session.AdapterEvent{Event: exitEvent("agent-a", 0, false)}) })
