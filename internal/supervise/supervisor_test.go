@@ -1004,6 +1004,19 @@ func TestThePolicyIsAskedAgainJustBeforeItsDecision(t *testing.T) {
 			wantRule:     "deny-now",
 			wantProposed: policy.ActionDeny,
 		},
+		{
+			// The desktop's engine turns an evaluation it no longer answers
+			// into ask, but an engine need not: that it is no longer
+			// automatic is what counts.
+			name: "the policy no longer answers automatically, whatever its action",
+			now: &policy.Evaluation{
+				Action: policy.ActionAllow, ProposedAction: policy.ActionAllow, RuleName: "allow-safe",
+				Reason: policy.ReasonRateLimit,
+			},
+			wantReason:   policy.ReasonRateLimit,
+			wantRule:     "allow-safe",
+			wantProposed: policy.ActionAllow,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			engine := newFakeEngine()
@@ -1065,6 +1078,52 @@ func TestThePolicyIsAskedAgainJustBeforeItsDecision(t *testing.T) {
 				t.Fatalf("agent = %#v, want waiting on the operator", agent)
 			}
 		})
+	}
+}
+
+// A prompt the policy no longer answers is handed back only once the journal
+// has recorded why. When the journal refuses that entry, the prompt is shown
+// failed and its session frozen, as for a decision the journal refused, even
+// in a drain: the journal's failure freezes the whole run only while it is
+// active, and a drain waits for this answer, so the prompt would otherwise be
+// left shown delivering once the run had stopped.
+func TestAPromptWhoseSecondEvaluationTheJournalRefusesIsShownFailed(t *testing.T) {
+	engine := newFakeEngine()
+	engine.evaluation = automaticAllow()
+	sup, _ := newCoreForTest(t, engine, "agent-a")
+	letTheLineGo := holdWithALine(t, engine, sup, "agent-a")
+	sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "automatic-1")})
+	blocked := make(chan struct{}, 1)
+	release := make(chan struct{})
+	releaseEntry := releaser(t, release)
+	engine.set(func(f *fakeEngine) {
+		f.evaluationByID["automatic-1"] = policy.Evaluation{
+			Action: policy.ActionAsk, ProposedAction: policy.ActionAllow, Reason: policy.ReasonConsecutiveLimit,
+		}
+		f.auditBlockKind = audit.KindPolicyEvaluated
+		f.auditStarted = blocked
+		f.auditRelease = release
+	})
+
+	letTheLineGo()
+	within(t, blocked, "the second evaluation entry")
+	sup.BeginDrain()
+	engine.set(func(f *fakeEngine) { f.auditFailAt = f.auditCalls + 1 })
+	releaseEntry()
+	sup.Wait()
+
+	if calls := engine.applySnapshot(); len(calls) != 0 {
+		t.Fatalf("deliveries = %#v, want none", calls)
+	}
+	if decisions := engine.auditFor(audit.KindDecision, "automatic-1"); len(decisions) != 0 {
+		t.Fatalf("decision entries = %#v, want none", decisions)
+	}
+	state := sup.State()
+	if len(state.Pending) != 1 || state.Pending[0].DeliveryStatus != "failed" || state.Pending[0].Evaluation.Reason != "audit_unavailable" {
+		t.Fatalf("prompt after the refused entry = %#v, want it failed", state.Pending)
+	}
+	if agent := agentOf(t, sup, "agent-a"); !agent.InputFrozen {
+		t.Fatalf("agent after the refused entry = %#v, want it frozen", agent)
 	}
 }
 

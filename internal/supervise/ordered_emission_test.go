@@ -44,14 +44,18 @@ func gateAt(t *testing.T, sink *recordingSink, match func(sinkCall) bool) (arriv
 
 // shownWithin waits up to within for the sink to show a call match accepts.
 func shownWithin(sink *recordingSink, within time.Duration, match func(sinkCall) bool) bool {
-	for deadline := time.Now().Add(within); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+	deadline := time.Now().Add(within)
+	for {
 		for _, call := range sink.snapshot() {
 			if match(call) {
 				return true
 			}
 		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(time.Millisecond)
 	}
-	return false
 }
 
 func promptShown(eventID, delivery string) func(sinkCall) bool {
@@ -152,6 +156,34 @@ func TestASessionsStatusesAreShownInTheOrderOfItsChanges(t *testing.T) {
 	}
 	if want := []string{"running", "exited"}; !reflect.DeepEqual(statuses, want) {
 		t.Fatalf("the session was shown %v, want %v, the order its changes were made in", statuses, want)
+	}
+}
+
+// An operation returns only once what it changed has been shown, even while
+// another goroutine is showing what it queued: it waits for that goroutine
+// rather than leave its own calls to it. A front end that reads its screen
+// once a call returned, as the desktop's tests do, finds the call's change
+// there, and a run that drained has nothing left to show.
+func TestAnOperationReturnsOnceWhatItChangedIsShown(t *testing.T) {
+	sup, sink := newCoreForTest(t, newFakeEngine(), "agent-a", "agent-b")
+	arrived, letGo := gateAt(t, sink, promptShown("prompt-a", "pending"))
+	go sup.Handle(session.AdapterEvent{Event: promptEvent("agent-a", "prompt-a")})
+	within(t, arrived, "the first prompt to be shown")
+
+	returned := make(chan struct{})
+	go func() {
+		defer close(returned)
+		sup.Handle(session.AdapterEvent{Event: promptEvent("agent-b", "prompt-b")})
+	}()
+	select {
+	case <-returned:
+		t.Fatal("the second prompt's Handle returned before its prompt was shown")
+	case <-time.After(100 * time.Millisecond):
+	}
+	letGo()
+	within(t, returned, "the second prompt's Handle to return")
+	if !shownWithin(sink, 0, promptShown("prompt-b", "pending")) {
+		t.Fatalf("Handle returned and its prompt is not shown: %v", trace(sink.snapshot()))
 	}
 }
 
