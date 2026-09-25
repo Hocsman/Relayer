@@ -159,6 +159,24 @@ func TestASecuritySaveKeepsAnAbsoluteWorkspaceRootAsWritten(t *testing.T) {
 	}
 }
 
+// Turning the workspace guardrail on in a file that names no root writes the
+// guardrail and nothing else: the root it then uses is the configuration's
+// directory, which the file leaves implicit. The save wrote that directory
+// as an absolute workspace_root beside the guardrail, pinning the root to
+// where the file was, and naming the user's home directory.
+func TestTurningTheWorkspaceGuardrailOnWritesOnlyTheGuardrail(t *testing.T) {
+	document := strings.Replace(handWrittenPoliciesDocument, "    workspace_root: ./workspace\n", "", 1)
+	path, loaded := writeHandWrittenPolicies(t, document)
+	updated := settingsSave(t, path, loaded, func(settings *policy.Settings) { settings.BlockOutsideWorkspace = true })
+	want := strings.Replace(document, "block_outside_workspace: false # not yet\n", "block_outside_workspace: true # not yet\n", 1)
+	if got := readText(t, path); got != want {
+		t.Fatalf("turning the guardrail on wrote more than the guardrail:\n%s\nwant:\n%s", got, want)
+	}
+	if root := updated.Policies.Guardrails.WorkspaceRoot; root != filepath.Dir(path) {
+		t.Fatalf("workspace root = %q, want the configuration's directory", root)
+	}
+}
+
 // Choosing a preset in the editor names it in the file when the file names a
 // profile, so the file does not keep saying "strict" over a permissive
 // policy; the policy loads back as the editor asked either way.

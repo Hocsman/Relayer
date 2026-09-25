@@ -132,7 +132,12 @@ func writePolicyDifferences(node *yaml.Node, decoded, requested policy.Config) {
 			setTypedField(guardrails(), flag.key, "!!bool", strconv.FormatBool(flag.want))
 		}
 	}
-	if was.WorkspaceRoot != want.WorkspaceRoot {
+	// The workspace guardrail brings its own root, the configuration's
+	// directory, when the file names none. A root is written only once the
+	// guardrail is as requested and it still differs: written in the same
+	// round, the default root was pinned as an absolute path, which no longer
+	// follows the file when it is moved.
+	if was.WorkspaceRoot != want.WorkspaceRoot && was.BlockOutsideWorkspace == want.BlockOutsideWorkspace {
 		setTypedField(guardrails(), "workspace_root", "!!str", want.WorkspaceRoot)
 	}
 	if !reflect.DeepEqual(nonEmpty(was.BlockedPatterns), nonEmpty(want.BlockedPatterns)) {
