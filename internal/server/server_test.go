@@ -246,28 +246,30 @@ func TestServerLifecycleAndAgentAddition(t *testing.T) {
 		workerArgv = []string{"sh", "-c", "sleep 10"}
 	}
 	newAgentID := "agent-new-worker"
+	// As the interface adds a Custom CLI agent: the catalogue entry's adapter.
 	newProfile := AgentProfileInput{
-		ID:             newAgentID,
-		Name:           "New Worker Agent",
-		PresetID:       "custom",
-		Cwd:            tempDir,
-		Backend:        "auto",
-		Adapter:        "auto",
-		Argv:           workerArgv,
-		PreserveOnSave: false,
+		ID:       newAgentID,
+		Name:     "New Worker Agent",
+		PresetID: "custom",
+		Cwd:      tempDir,
+		Backend:  "auto",
+		Adapter:  "generic",
+		Argv:     workerArgv,
 	}
 
+	// The existing agents as the interface sends them back: preserved, with
+	// no argv, which the view does not carry.
 	var updatedProfiles []AgentProfileInput
 	for _, p := range profilesView.Profiles {
 		updatedProfiles = append(updatedProfiles, AgentProfileInput{
-			ID:             p.ID,
-			Name:           p.Name,
-			PresetID:       p.PresetID,
-			Cwd:            p.Cwd,
-			Backend:        p.Backend,
-			Adapter:        p.Adapter,
-			Argv:           p.Argv,
-			PreserveOnSave: p.PreserveOnSave,
+			ID:       p.ID,
+			Name:     p.Name,
+			PresetID: p.PresetID,
+			Cwd:      p.Cwd,
+			Backend:  p.Backend,
+			Adapter:  p.Adapter,
+			Argv:     p.Argv,
+			Preserve: p.PreserveOnSave,
 		})
 	}
 	updatedProfiles = append(updatedProfiles, newProfile)

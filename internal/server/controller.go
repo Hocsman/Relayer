@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,6 +21,7 @@ import (
 
 	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
+	"github.com/Hocsman/Relayer/internal/agentprofile"
 	"github.com/Hocsman/Relayer/internal/app"
 	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/config"
@@ -44,13 +44,9 @@ const (
 	eventPresence     = "relayer:presence"
 	eventHand         = "relayer:hand"
 	eventRecording    = "relayer:recording"
-
-	minAgentProfiles = 1
-	maxAgentProfiles = 8
 )
 
 var (
-	profileIDRegex    = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 	errStaleRevision  = errors.New("configuration has changed, reload before saving")
 	errStaleRun       = errors.New("run has changed, reload before retrying")
 	errUnknownSession = errors.New("unknown session")
@@ -1152,21 +1148,54 @@ func (c *Controller) loadAgentProfilesLocked() (AgentProfilesView, error) {
 
 	token := c.getOrGenerateToken(cfg.Revision)
 
+	// The desktop's view, from the package both front ends share: an agent
+	// the form cannot send back as it is, one with environment variables or a
+	// shell script among them, is read-only, and no existing command,
+	// environment value or shell body is sent, to an operator either. The
+	// gateway sent each agent's full argv and marked nothing read-only, and
+	// its save rebuilt every agent from the form, so every save lost every
+	// agent's environment and shell script.
 	profiles := make([]AgentProfile, 0, len(cfg.Agents))
 	for _, spec := range cfg.Agents {
-		profiles = append(profiles, profileFromSpec(spec))
+		profiles = append(profiles, AgentProfile(agentprofile.View(spec)))
 	}
 
-	return AgentProfilesView{
+	view := AgentProfilesView{
 		ConfigPath:      c.configPath,
 		Revision:        token,
 		Catalog:         c.catalogViewLocked(),
 		Profiles:        profiles,
-		MinProfiles:     minAgentProfiles,
-		MaxProfiles:     maxAgentProfiles,
+		MinProfiles:     agentprofile.MinProfiles,
+		MaxProfiles:     agentprofile.MaxProfiles,
 		RestartRequired: c.activeConfigRevision == "" || cfg.Revision != c.activeConfigRevision,
 		Editable:        !cfg.Legacy,
-	}, nil
+	}
+	if cfg.Legacy {
+		view.ReadOnlyReason = "legacy_config"
+	}
+	return view, nil
+}
+
+// resolveProfilesLocked turns the profiles a save sent into the agents to
+// write, against cfg, the configuration whose revision the save was checked
+// against. The writer publishes only while the file still has that revision,
+// so what a preserved agent keeps, its environment included, is exactly what
+// the file holds when it is written: a file edited meanwhile makes the save
+// stale, and nothing is kept from, or brought back into, a snapshot older
+// than the file.
+func (c *Controller) resolveProfilesLocked(inputs []AgentProfileInput, cfg config.Result) ([]agent.Spec, error) {
+	if cfg.Legacy {
+		return nil, errors.New("legacy configuration must be migrated to version: 1 before modifying agents")
+	}
+	baseDir, err := filepath.Abs(filepath.Dir(c.configPath))
+	if err != nil {
+		return nil, errors.New("could not resolve configuration directory")
+	}
+	shared := make([]agentprofile.Input, len(inputs))
+	for index, input := range inputs {
+		shared[index] = agentprofile.Input(input)
+	}
+	return agentprofile.Resolve(shared, cfg.Agents, baseDir, cfg.Backend)
 }
 
 // revisionCurrentLocked reports whether a save was prepared against the file as
@@ -1265,11 +1294,6 @@ func (c *Controller) SaveAgentProfiles(runID string, req SaveAgentProfilesReques
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	specs, err := c.validateAndBuildSpecsLocked(req.Profiles)
-	if err != nil {
-		return AgentProfilesView{}, err
-	}
-
 	cfg, err := config.LoadExisting(c.configPath)
 	if err != nil {
 		return AgentProfilesView{}, err
@@ -1277,6 +1301,11 @@ func (c *Controller) SaveAgentProfiles(runID string, req SaveAgentProfilesReques
 
 	if !c.revisionCurrentLocked(req.ExpectedRevision, cfg.Revision) {
 		return AgentProfilesView{}, errStaleRevision
+	}
+
+	specs, err := c.resolveProfilesLocked(req.Profiles, cfg)
+	if err != nil {
+		return AgentProfilesView{}, err
 	}
 
 	_, newRev, err := config.ReplaceAgents(c.configPath, cfg.Revision, specs)
@@ -1378,11 +1407,6 @@ func (c *Controller) SaveAgentProfilesAndRestart(req SaveAgentProfilesAndRestart
 // saveRestartConfigurationLocked validates a "Save and restart" request and
 // writes it in one write. The caller holds c.mu.
 func (c *Controller) saveRestartConfigurationLocked(req SaveAgentProfilesAndRestartRequest) error {
-	specs, err := c.validateAndBuildSpecsLocked(req.Profiles)
-	if err != nil {
-		return err
-	}
-
 	cfg, err := config.LoadExisting(c.configPath)
 	if err != nil {
 		return err
@@ -1390,6 +1414,11 @@ func (c *Controller) saveRestartConfigurationLocked(req SaveAgentProfilesAndRest
 
 	if !c.revisionCurrentLocked(req.ExpectedRevision, cfg.Revision) {
 		return errStaleRevision
+	}
+
+	specs, err := c.resolveProfilesLocked(req.Profiles, cfg)
+	if err != nil {
+		return err
 	}
 
 	update := config.FullConfigurationUpdate{Agents: specs, UpdateAgents: true}
@@ -1417,72 +1446,6 @@ func (c *Controller) saveRestartConfigurationLocked(req SaveAgentProfilesAndRest
 	_, _ = rand.Read(tokenBytes)
 	c.revisionToken = hex.EncodeToString(tokenBytes)
 	return nil
-}
-
-func (c *Controller) validateAndBuildSpecsLocked(inputs []AgentProfileInput) ([]agent.Spec, error) {
-	if len(inputs) < minAgentProfiles || len(inputs) > maxAgentProfiles {
-		return nil, fmt.Errorf("agent count must be between %d and %d", minAgentProfiles, maxAgentProfiles)
-	}
-
-	seenIDs := make(map[string]bool)
-	specs := make([]agent.Spec, 0, len(inputs))
-
-	for _, p := range inputs {
-		id := strings.TrimSpace(p.ID)
-		if !profileIDRegex.MatchString(id) {
-			return nil, fmt.Errorf("invalid agent ID %q: must match %s", id, profileIDRegex.String())
-		}
-		if seenIDs[id] {
-			return nil, fmt.Errorf("duplicate agent ID %q", id)
-		}
-		seenIDs[id] = true
-
-		name := strings.TrimSpace(p.Name)
-		if name == "" {
-			name = id
-		}
-
-		argv := p.Argv
-		if len(argv) == 0 {
-			// Preset fallback
-			if p.PresetID != "" {
-				desc, ok := toolcatalog.Lookup(toolcatalog.ProfileID(p.PresetID))
-				if ok && len(desc.Executables) > 0 {
-					argv = append([]string{desc.Executables[0]}, desc.ArgumentPrefix...)
-				}
-			}
-		}
-		if len(argv) == 0 {
-			argv = []string{id}
-		}
-
-		backend := strings.TrimSpace(p.Backend)
-		if backend == "" {
-			backend = "auto"
-		}
-
-		adapter := strings.TrimSpace(p.Adapter)
-		if adapter == "auto" {
-			adapter = ""
-		}
-		if adapter == "" && p.PresetID != "" {
-			desc, ok := toolcatalog.Lookup(toolcatalog.ProfileID(p.PresetID))
-			if ok && desc.DefaultAdapter != "" {
-				adapter = desc.DefaultAdapter
-			}
-		}
-
-		specs = append(specs, agent.Spec{
-			ID:      id,
-			Name:    name,
-			Command: argv,
-			Cwd:     p.Cwd,
-			Backend: backend,
-			Adapter: adapter,
-		})
-	}
-
-	return specs, nil
 }
 
 // -------------------------------------------------------------
@@ -1527,7 +1490,7 @@ func (c *Controller) SaveFullSettings(runID string, req SaveFullSettingsRequest)
 	var update config.FullConfigurationUpdate
 
 	if len(req.Profiles) > 0 {
-		specs, err := c.validateAndBuildSpecsLocked(req.Profiles)
+		specs, err := c.resolveProfilesLocked(req.Profiles, cfg)
 		if err != nil {
 			return FullSettingsView{}, err
 		}
@@ -2029,37 +1992,6 @@ func computeLatencyDistribution(samples []telemetry.HistogramSample) ([]LatencyB
 // -------------------------------------------------------------
 // Helper projections
 // -------------------------------------------------------------
-
-func profileFromSpec(spec agent.Spec) AgentProfile {
-	presetID := ""
-	for _, desc := range toolcatalog.Descriptors() {
-		for _, exe := range desc.Executables {
-			if len(spec.Command) > 0 && (spec.Command[0] == exe || filepath.Base(spec.Command[0]) == exe) {
-				presetID = string(desc.ID)
-				break
-			}
-		}
-		if presetID != "" {
-			break
-		}
-	}
-	label := ""
-	if len(spec.Command) > 0 {
-		label = filepath.Base(spec.Command[0])
-	}
-	return AgentProfile{
-		ID:              spec.ID,
-		Name:            spec.Name,
-		PresetID:        presetID,
-		Cwd:             spec.Cwd,
-		Backend:         spec.Backend,
-		Adapter:         spec.Adapter,
-		Argv:            spec.Command,
-		ExecutableLabel: label,
-		ArgumentCount:   len(spec.Command),
-		Locked:          false,
-	}
-}
 
 // extractSecuritySettings describes a policy for the settings editor. The
 // conversion is a plain type conversion from policy.Settings, so the editor's

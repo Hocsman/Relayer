@@ -170,16 +170,27 @@ preset uses stable `generic` detection. A preset never infers credentials or a
 model name. The Ollama / DeepSeek entry requires explicit argv for the `run`
 subcommand and model.
 
-Existing command vectors are masked from the WebView and remain authoritative
-inside Go until the user explicitly replaces the entire argv. Shell commands,
-environment overrides, and unknown advanced adapters are read-only in the GUI
-and remain editable in YAML. A plain GUI save does not mutate running sessions;
-the guarded restart action can apply the saved configuration without closing
-the application. Webhook and notification changes in the other tabs apply at
-once; security profiles and guardrails take effect when the run restarts, and
-the editor reports a restart as required until they do. Legacy documents and
-profiles with historical IDs outside the form's conservative syntax remain
-read-only; Relayer does not migrate or normalize them silently.
+The web interface of `relayer serve` has the same editor, with the same rules:
+both front ends call one resolver on the Go side.
+
+Existing command vectors are masked from the interface and remain
+authoritative inside Go until the user explicitly replaces the entire argv.
+Shell commands, environment overrides, and unknown advanced adapters are
+read-only in the editor and remain editable in YAML: such an agent is copied
+exactly as the file has it by every save, environment values and script
+included, and a save that leaves it out or sends it as a new agent is refused.
+An agent removed in the editor and added again under the same ID is a new
+agent and inherits nothing from the one it replaces. A save prepared before the
+file was last changed, by hand or by another editor, is refused as stale:
+reload the settings, which show the file as it is now.
+
+A plain GUI save does not mutate running sessions; the guarded restart action
+can apply the saved configuration without closing the application. Webhook and
+notification changes in the other tabs apply at once; security profiles and
+guardrails take effect when the run restarts, and the editor reports a restart
+as required until they do. Legacy documents and profiles with historical IDs
+outside the form's conservative syntax remain read-only; Relayer does not
+migrate or normalize them silently.
 
 Each configured agent supports:
 

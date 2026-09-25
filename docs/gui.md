@@ -222,7 +222,11 @@ For confidentiality, argv already stored in YAML never crosses into the
 WebView. The picker shows only a fixed known executable label (or “custom
 command”) and an argument count. Select **Replace the command** to enter a
 complete new argv. Profiles using `shell`, environment overrides, or
-unknown advanced adapters remain read-only and are preserved server-side.
+unknown advanced adapters remain read-only and are preserved server-side:
+every save copies them exactly as the file has them, and refuses a save that
+leaves one out. The web interface of `relayer serve` shows and saves the
+agents by the same rules; up to v0.8.9 it showed each
+agent's argv to operators and dropped every agent's environment on save.
 
 ### 2. `🛡️ Security & Guardrails` Tab
 

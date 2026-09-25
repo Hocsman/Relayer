@@ -50,9 +50,10 @@ func (g *webGateway) forgetScreens() {
 	g.mu.Unlock()
 }
 
-// profileInputs is the run's agents as the settings panel sends them back,
-// each with the command of a helper agent in the mode modes names for it.
-func profileInputs(t *testing.T, g *webGateway, modes map[string]string) (string, []AgentProfileInput) {
+// profileInputs is the run's agents as the settings panel sends them back
+// with nothing edited: each preserved, with no argv. The helper agents keep
+// their environment, which holds the mode each runs in.
+func profileInputs(t *testing.T, g *webGateway) (string, []AgentProfileInput) {
 	t.Helper()
 	profiles, err := g.ctrl.GetAgentProfiles()
 	if err != nil {
@@ -61,12 +62,13 @@ func profileInputs(t *testing.T, g *webGateway, modes map[string]string) (string
 	inputs := make([]AgentProfileInput, 0, len(profiles.Profiles))
 	for _, profile := range profiles.Profiles {
 		inputs = append(inputs, AgentProfileInput{
-			ID:      profile.ID,
-			Name:    profile.Name,
-			Cwd:     profile.Cwd,
-			Backend: "pty",
-			Adapter: "generic",
-			Argv:    webAgentArgv(t, modes[profile.ID]),
+			ID:       profile.ID,
+			Name:     profile.Name,
+			PresetID: profile.PresetID,
+			Cwd:      profile.Cwd,
+			Backend:  profile.Backend,
+			Adapter:  profile.Adapter,
+			Preserve: profile.PreserveOnSave,
 		})
 	}
 	return profiles.Revision, inputs
@@ -94,7 +96,7 @@ func TestAWebRunStartedAgainKeepsNothingOfThePreviousRun(t *testing.T) {
 	previousRun := g.runID()
 	alice.mustCall("setInteractiveSession", map[string]any{"runID": previousRun, "sessionID": "web-held", "active": true}, nil)
 	previousPrompt := g.awaitPending("web-generic", 30*time.Second)
-	revision, profiles := profileInputs(t, g, map[string]string{"web-generic": webAgentGeneric, "web-held": webAgentListen})
+	revision, profiles := profileInputs(t, g)
 
 	for _, runID := range []string{"", "a-run-that-was-replaced"} {
 		err := alice.call("saveAgentProfilesAndRestart", SaveAgentProfilesAndRestartRequest{
@@ -260,7 +262,7 @@ func TestAStoppedWebRunTakesNothingUntilItIsStartedAgain(t *testing.T) {
 	alice := dialSharedGateway(t, g.serve(), "opAlice")
 	g.awaitScreen("web-listen", "agent ready", 30*time.Second)
 	runID := g.runID()
-	revision, profiles := profileInputs(t, g, map[string]string{"web-listen": webAgentListen})
+	revision, profiles := profileInputs(t, g)
 
 	var stopped AppState
 	alice.mustCall("stopRun", map[string]any{"runID": runID}, &stopped)

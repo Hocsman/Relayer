@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net/http/httptest"
@@ -31,8 +30,6 @@ import (
 // could be written into one terminal.
 const (
 	webAgentModeEnv = "RELAYER_TEST_WEB_AGENT"
-	// webAgentModeArg prefixes the mode given as an argument.
-	webAgentModeArg = "relayer-web-agent="
 	// webAgentDelayEnv is how long the agent waits before it asks.
 	webAgentDelayEnv = "RELAYER_TEST_WEB_AGENT_DELAY"
 	// webAgentListenEnv is how long, once answered, it listens for an extra
@@ -70,30 +67,15 @@ const (
 
 // TestHelperProcessWebAgent is the agent, run as a child of this test binary.
 // It does nothing when the test binary runs its tests. Its mode comes from its
-// environment or, for an agent saved through the settings, which keep no
-// environment, from an argument after the test flags (webAgentModeArg).
+// environment, which a save through the settings keeps: until it did, an
+// agent saved there came back with none, and the mode was passed as an
+// argument instead.
 func TestHelperProcessWebAgent(t *testing.T) {
 	mode := os.Getenv(webAgentModeEnv)
-	for _, argument := range flag.Args() {
-		if value, found := strings.CutPrefix(argument, webAgentModeArg); found && mode == "" {
-			mode = value
-		}
-	}
 	if mode == "" {
 		return
 	}
 	os.Exit(runWebAgent(mode))
-}
-
-// webAgentArgv is the command of an agent run in mode, with its mode as an
-// argument.
-func webAgentArgv(t *testing.T, mode string) []string {
-	t.Helper()
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return []string{executable, "-test.run=^TestHelperProcessWebAgent$", "--", webAgentModeArg + mode}
 }
 
 // runWebAgent is the agent's life. It clears the screen and homes the cursor

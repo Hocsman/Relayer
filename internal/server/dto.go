@@ -123,15 +123,18 @@ type SafeErrorEvent struct {
 	Timestamp string `json:"timestamp"`
 }
 
+// AgentProfileInput is one profile a save sends back. Preserve, which the
+// interface sends as "preserve", keeps the existing agent of that ID; the
+// gateway read "preserveOnSave", which no client sends, and ignored it.
 type AgentProfileInput struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	PresetID       string   `json:"presetID,omitempty"`
-	Cwd            string   `json:"cwd,omitempty"`
-	Backend        string   `json:"backend,omitempty"`
-	Adapter        string   `json:"adapter,omitempty"`
-	Argv           []string `json:"argv,omitempty"`
-	PreserveOnSave bool     `json:"preserveOnSave,omitempty"`
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	PresetID string   `json:"presetID,omitempty"`
+	Cwd      string   `json:"cwd,omitempty"`
+	Backend  string   `json:"backend,omitempty"`
+	Adapter  string   `json:"adapter,omitempty"`
+	Argv     []string `json:"argv,omitempty"`
+	Preserve bool     `json:"preserve,omitempty"`
 }
 
 type SaveAgentProfilesRequest struct {

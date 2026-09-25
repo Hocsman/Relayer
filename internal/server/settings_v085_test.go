@@ -181,11 +181,12 @@ func TestRestartRequiredAndSaveAndRestart(t *testing.T) {
 	// Provide at least 1 valid agent profile
 	profilesInput := []AgentProfileInput{
 		{
-			ID:      "agent-1",
-			Name:    "Agent One",
-			Backend: "auto",
-			Adapter: "generic",
-			Argv:    workerArgv,
+			ID:       "agent-1",
+			Name:     "Agent One",
+			PresetID: "custom",
+			Backend:  "auto",
+			Adapter:  "generic",
+			Argv:     workerArgv,
 		},
 	}
 

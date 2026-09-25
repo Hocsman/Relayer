@@ -7,12 +7,14 @@ import (
 )
 
 // A viewer token is for watching agents, and the command line an agent was
-// started with can carry a credential: an --api-key flag, a token in a URL. The
-// desktop never sends argv to its interface at all; the web gateway sends it to
-// operators, who can already rewrite and restart agents, and — until v0.8.6 —
-// sent it to viewers too, through getAgentProfiles. v0.8.4's changelog said
-// viewers were given agent configurations "without exposing secrets"; a probe
-// token planted in argv came back verbatim.
+// started with can carry a credential: an --api-key flag, a token in a URL.
+// Neither front end sends an existing argv to its interface now, to operators
+// either; the web gateway sent it to operators up to v0.8.9, and — until
+// v0.8.6 — to viewers too, through getAgentProfiles.
+// v0.8.4's changelog said viewers were given agent configurations "without
+// exposing secrets"; a probe token planted in argv came back verbatim. The
+// masking below still applies: a viewer is not given the working directories
+// or the configuration's path either.
 
 // errViewerProfiles replaces a profile-loading error for a viewer: the
 // loader's error names the configuration file's path.

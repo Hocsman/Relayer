@@ -232,11 +232,18 @@ never journaled or screened. The gateway bounds only who may type and when:
 the connection holding the terminal, whose taking is journaled before it can
 type, never beside an answer or a line, and not once the journal has failed.
 
-An operator also receives each agent's full command line, because it can edit
-and restart the agents: a credential passed as an argument is visible to every
-operator token. A viewer receives only each agent's executable name, and no host
-path: not the configuration's, the audit journal's, the recordings' or an
-agent's working directory, and not in an error message either.
+No client receives an agent's existing command line, environment values or
+shell script, an operator's included: the Agents settings show each agent's
+executable label and argument count, as the Desktop GUI does, and a command can
+only be replaced as a whole. An agent with environment variables or a shell
+script is read-only there and is kept exactly as the file has it by every save;
+it is changed in the YAML. Up to v0.8.9, an operator received each agent's
+full argv, and a save from the web interface dropped every agent's environment
+variables and rewrote a shell agent as `command: [<id>]`. An operator does
+receive each agent's working directory and the configuration's path. A viewer
+receives only each agent's executable name, and no host path: not the
+configuration's, the audit journal's, the recordings' or an agent's working
+directory, and not in an error message either.
 
 A viewer does receive every agent's terminal, as it is: the output snapshots
 carry the screen verbatim, to viewers as to operators, but for the window

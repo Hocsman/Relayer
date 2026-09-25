@@ -119,9 +119,10 @@ func TestViewerNeverReceivesAnAgentsArguments(t *testing.T) {
 		t.Errorf("viewer profiles = %+v, want the agent's label and no configuration path", profiles)
 	}
 
-	// An operator, who can rewrite and restart the agent anyway, is unchanged.
-	if reply := rawReply(t, operator, "getAgentProfiles"); !strings.Contains(reply, viewerProbeSecret) {
-		t.Error("the operator's profiles lost the argument vector it edits")
+	// Nor does an operator: an existing command stays in the engine, as on
+	// the desktop, until the operator replaces it as a whole.
+	if reply := rawReply(t, operator, "getAgentProfiles"); strings.Contains(reply, viewerProbeSecret) {
+		t.Errorf("the operator's profiles carry the agent's credential:\n%s", reply)
 	}
 	if reply := rawReply(t, operator, "getAuditSummary"); !strings.Contains(reply, pathToken) {
 		t.Errorf("the operator's audit summary lost the journal's path:\n%s", reply)
