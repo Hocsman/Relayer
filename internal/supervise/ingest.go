@@ -19,7 +19,7 @@ func (s *Supervisor) Handle(message session.Event) {
 	case session.AdapterEvent:
 		s.handleAdapterEvent(value.Event.Clone())
 	case session.AdapterEventWithdrawn:
-		s.handleAdapterEventWithdrawn(value.Event.Clone())
+		s.handleAdapterEventWithdrawn(value.Event.Clone(), withdrawalReason(value.Reason))
 	case session.Error:
 		s.markSessionError(value.SessionID, "backend_stream_failed")
 	case session.Exited:
@@ -27,7 +27,20 @@ func (s *Supervisor) Handle(message session.Event) {
 	}
 }
 
-func (s *Supervisor) handleAdapterEventWithdrawn(event adapters.Event) {
+// withdrawalReason is the journal's reason for a withdrawal the backend
+// reported with reason: resync when a resynchronisation no longer found the
+// prompt, and the agent's own withdrawal otherwise, an empty or unknown
+// reason included. The backend's text never reaches the journal as it is.
+func withdrawalReason(reason string) string {
+	if reason == session.WithdrawnByResync {
+		return "resync"
+	}
+	return "agent_withdrew_occurrence"
+}
+
+// handleAdapterEventWithdrawn takes in the withdrawal of a prompt, journaled
+// with reason, one withdrawalReason gives.
+func (s *Supervisor) handleAdapterEventWithdrawn(event adapters.Event, reason string) {
 	if !s.isActiveRun() {
 		return
 	}
@@ -46,7 +59,12 @@ func (s *Supervisor) handleAdapterEventWithdrawn(event adapters.Event) {
 			// sets the prompt aside instead of making it pending and journals
 			// the withdrawal after the entries that took it in. Found nothing
 			// and done nothing, it left the prompt pending, waiting on the
-			// operator for a question the agent no longer asked.
+			// operator for a question the agent no longer asked. The
+			// tombstone keeps the first withdrawal's reason, which that
+			// entry gives: a resync's is not journaled as the agent's.
+			if !taking.withdrawn {
+				taking.withdrawnReason = reason
+			}
 			taking.withdrawn = true
 			s.ingesting[key] = taking
 			s.mu.Unlock()
@@ -66,7 +84,7 @@ func (s *Supervisor) handleAdapterEventWithdrawn(event adapters.Event) {
 	owed := s.heldEntries[key.sessionID]
 	s.mu.Unlock()
 	awaitHeldEntries(owed)
-	_ = s.recordAudit(eventWithdrawnEntry(event, backend, "agent_withdrew_occurrence"))
+	_ = s.recordAudit(eventWithdrawnEntry(event, backend, reason))
 
 	s.mu.Lock()
 	delete(s.withdrawing, key)
@@ -105,6 +123,7 @@ func (s *Supervisor) handleAdapterEventWithdrawn(event adapters.Event) {
 	s.rebuildPendingLocked()
 	view := pending.view
 	view.DeliveryStatus = "delivered"
+	view.resolution = ResolutionWithdrawn
 	s.showPromptLocked(view)
 	s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: event.SessionID, Status: currentStatus})
 	s.emitLocked(func(sink Sink) { sink.Refresh(event.SessionID) })
@@ -171,14 +190,15 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 		evaluation.Reason == policy.ReasonExfiltration ||
 		evaluation.Reason == policy.ReasonGuardrailBlocked
 	s.mu.Lock()
-	if s.ingesting[key].withdrawn {
+	if taking := s.ingesting[key]; taking.withdrawn {
 		// The agent withdrew the prompt while it was being taken in: it is
 		// set aside, remembered so that a late copy is refused, and its
-		// withdrawal journaled after the entries that took it in. It was
-		// never shown, and nothing waits on it.
+		// withdrawal journaled after the entries that took it in, for the
+		// reason the withdrawal gave. It was never shown, and nothing waits
+		// on it.
 		s.markResolvedLocked(key)
 		s.mu.Unlock()
-		_ = s.recordAudit(eventWithdrawnEntry(event, backend, "agent_withdrew_occurrence"))
+		_ = s.recordAudit(eventWithdrawnEntry(event, backend, taking.withdrawnReason))
 		return
 	}
 	// The hand may have been taken since the evaluation was journaled, while
@@ -209,6 +229,7 @@ func (s *Supervisor) handleAdapterEvent(event adapters.Event) {
 	denyOnly := !evaluation.Automatic && policyDenies(policyEvaluation)
 	if denyOnly {
 		view.Decisions = onlyDeny(view.Decisions)
+		view.denyOnly = true
 	}
 	if typedOver {
 		view.Decisions = []string{}

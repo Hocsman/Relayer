@@ -37,7 +37,50 @@ type View struct {
 	// desktop's interface has no badge for it, and its SupervisionEvent stays
 	// what it always was. The web gateway shows it, through ToolCall.
 	toolCall *adapters.ToolCall
+	// resolution says how a prompt shown delivered left the run (Resolution),
+	// and denyOnly that the policy denies it although it went to a person
+	// (DenyOnly). Neither is part of the JSON, for the reason toolCall is not.
+	resolution string
+	denyOnly   bool
 }
+
+// How a prompt shown delivered left the run, as View.Resolution reports it.
+const (
+	// ResolutionAnswered: the answer, the policy's or a person's, was written
+	// and applied.
+	ResolutionAnswered = "answered"
+	// ResolutionNotApplied: the agent no longer showed the prompt when its
+	// answer was to be written, and nothing was written. The prompt it shows
+	// instead, if any, is taken in on its own.
+	ResolutionNotApplied = "not_applied"
+	// ResolutionWithdrawn: the prompt went before an answer through the core
+	// was applied to it. The agent took the question back, possibly while an
+	// answer to it was being written, whose outcome the journal gives, or a
+	// resynchronisation no longer found it on screen, most likely because it
+	// was answered inside the terminal.
+	ResolutionWithdrawn = "withdrawn"
+)
+
+// Resolution is how the prompt left the run when the view shows it delivered:
+// ResolutionAnswered, ResolutionNotApplied or ResolutionWithdrawn. It is empty
+// for a prompt still pending, delivering, uncertain or failed. "delivered" only
+// says the prompt is gone, and a front end that read it as answered called a
+// stale answer, which was never written, applied.
+func (v View) Resolution() string { return v.resolution }
+
+// DenyOnly reports that the policy denies the prompt, on its own or but for
+// one of its limits, and that it went to a person all the same: for the hand,
+// a repeat, a limit or an answer the adapter could not encode. Its Decisions
+// then offer deny alone. While they offer it, a typed answer is refused
+// (ErrDenyOnly); where the adapter encodes no deny they are empty, and a typed
+// answer is taken and journaled with ReasonTypedOverPolicyDeny. A front end
+// tells the two apart from Decisions, and says why the prompt offers what it
+// does as the core decided it, instead of guessing it from the rule. A prompt
+// its terminal's holder typed into (Evaluation.Reason ReasonTypedAtTerminal)
+// stays DenyOnly but offers nothing, whatever the adapter encodes, and a typed
+// answer to it is refused (ErrTypedAtTerminal): a front end reads that reason
+// before it takes empty Decisions for an adapter that encodes no deny.
+func (v View) DenyOnly() bool { return v.denyOnly }
 
 // ToolCall is the MCP tool call the prompt asks about, as it may be shown to
 // anyone who may see the prompt, or nil. A prompt whose text must not be shown

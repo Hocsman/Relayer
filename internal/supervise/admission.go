@@ -33,10 +33,10 @@ func (s *Supervisor) AdmitRun() (release func(), admitted bool) {
 //
 // Admit refuses, in this order: a run that drains (ErrRuntimeStopped), a
 // journal that failed (ErrAuditUnavailable), a connection that does not hold
-// the hand (ErrNotHolder), a session frozen by an uncertain write
-// (ErrDeliveryUncertain), a session whose process is stopped, stopping or
-// starting (ErrLineUnavailable), and a session already being written to
-// (ErrDecisionInFlight). It journals nothing and shows nothing.
+// the hand (ErrNotHolder), a session frozen by an uncertain write or by
+// FreezeSession (ErrDeliveryUncertain), a session whose process is stopped,
+// stopping or starting (ErrLineUnavailable), and a session already being
+// written to (ErrDecisionInFlight). It journals nothing and shows nothing.
 //
 // release must be called once the write has returned; calling it again does
 // nothing. It frees the session's slot and, on another goroutine, considers

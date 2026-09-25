@@ -2077,6 +2077,7 @@ func TestAnOperationWithoutARunRefusesAfterCheckingItsArguments(t *testing.T) {
 		"stop":           {sup.StopSession("", "agent-a"), supervise.ErrRuntimeStopped},
 		"start":          {sup.StartSession("", "agent-a"), supervise.ErrRuntimeStopped},
 		"restart":        {sup.RestartSession("", "agent-a"), supervise.ErrRuntimeStopped},
+		"freeze":         {sup.FreezeSession("", "agent-a"), supervise.ErrRuntimeStopped},
 	} {
 		if !errors.Is(test.err, test.want) {
 			t.Errorf("%s = %v, want %v", name, test.err, test.want)

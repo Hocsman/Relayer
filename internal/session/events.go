@@ -39,7 +39,18 @@ func (AdapterEvent) sessionEvent() {}
 // gone from the agent's terminal.
 type AdapterEventWithdrawn struct {
 	Event adapters.Event
+	// Reason says how the backend learned that the question was gone: empty
+	// when the agent's own output took it back, WithdrawnByResync when a
+	// resynchronisation after a native attach no longer found it on screen,
+	// most likely because somebody answered it inside the terminal. The
+	// journal tells the two apart; any other value is read as the agent's.
+	Reason string
 }
+
+// WithdrawnByResync is the Reason of a withdrawal a backend's resynchronisation
+// found: the prompt was published, and the screen read back after a native
+// attach no longer shows it.
+const WithdrawnByResync = "resync"
 
 func (AdapterEventWithdrawn) sessionEvent() {}
 

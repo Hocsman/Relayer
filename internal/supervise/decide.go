@@ -165,7 +165,7 @@ func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluati
 			return
 		}
 		if s.pendingExists(key) {
-			s.resolveEvent(key)
+			s.resolveEvent(key, ResolutionAnswered)
 		}
 		return
 	}
@@ -183,7 +183,7 @@ func (s *Supervisor) applyAutomatic(key eventKey, event adapters.Event, evaluati
 			return
 		}
 		if s.pendingExists(key) {
-			s.resolveEvent(key)
+			s.resolveEvent(key, ResolutionNotApplied)
 			s.reconcilePending(event.SessionID)
 		}
 		return
@@ -274,6 +274,7 @@ func (s *Supervisor) askOperator(key eventKey, current *policy.Evaluation, reaso
 	}
 	if policyDenies(item.evaluation) || policyDenies(evaluation) {
 		item.view.Decisions = onlyDeny(item.view.Decisions)
+		item.view.denyOnly = true
 		item.denyOnly = true
 	}
 	item.evaluation = askEvaluation(evaluation, reason)
@@ -368,7 +369,11 @@ func (s *Supervisor) freezeSession(key eventKey, reason string) {
 	s.flush()
 }
 
-func (s *Supervisor) resolveEvent(key eventKey) {
+// resolveEvent lets a prompt go once its answer's write returned: shown
+// delivered, with resolution saying whether the answer was written
+// (ResolutionAnswered) or the agent no longer showed the prompt it answered
+// (ResolutionNotApplied).
+func (s *Supervisor) resolveEvent(key eventKey, resolution string) {
 	s.mu.Lock()
 	item, exists := s.pending[key]
 	status := "running"
@@ -383,6 +388,7 @@ func (s *Supervisor) resolveEvent(key eventKey) {
 		}
 		s.rebuildPendingLocked()
 		item.view.DeliveryStatus = "delivered"
+		item.view.resolution = resolution
 		s.showPromptLocked(item.view)
 		s.showStatusLocked(Status{RunID: s.runID, Scope: "session", SessionID: key.sessionID, Status: status})
 	}
@@ -619,7 +625,7 @@ func (s *Supervisor) applyHumanDecision(
 			if !s.recordAudit(attributed(deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeFallbackStale, "fallback_stale"), actor)) {
 				return ErrAuditUnavailable
 			}
-			s.resolveEvent(key)
+			s.resolveEvent(key, ResolutionNotApplied)
 			s.reconcilePending(sessionID)
 			return ErrDecisionStale
 		}
@@ -633,6 +639,6 @@ func (s *Supervisor) applyHumanDecision(
 	if !s.recordAudit(attributed(deliveryAuditEntry(item.event, backend, humanAuditDecision(decision), audit.DecisionByHuman, audit.OutcomeApplied, "delivery_applied"), actor)) {
 		return ErrAuditUnavailable
 	}
-	s.resolveEvent(key)
+	s.resolveEvent(key, ResolutionAnswered)
 	return nil
 }

@@ -907,6 +907,12 @@ func TestTheSinkIsNeverCalledUnderTheCoreLockOnTheFailurePaths(t *testing.T) {
 			operate: func(sup *supervise.Supervisor) { _ = sup.StopSession(testRunID, "agent-a") },
 			reached: func(state supervise.State) bool { return state.Agents[0].InputFrozen },
 		},
+		{
+			name:    "a front end freezes the session",
+			setup:   func(*fakeEngine) {},
+			operate: func(sup *supervise.Supervisor) { _ = sup.FreezeSession(testRunID, "agent-a") },
+			reached: func(state supervise.State) bool { return state.Agents[0].InputFrozen },
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			engine := newFakeEngine()

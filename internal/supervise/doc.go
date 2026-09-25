@@ -15,9 +15,9 @@
 //
 //   - A session takes one write at a time, and the claim a decision takes on
 //     it is released only when that decision's write returns, even when the
-//     agent withdraws the prompt meanwhile: the prompt is shown answered at
-//     once, and the next automatic prompt is considered once the write is
-//     over.
+//     agent withdraws the prompt meanwhile: the prompt is shown delivered
+//     (withdrawn) at once, and the next automatic prompt is considered once
+//     the write is over.
 //   - An agent's status follows its prompts: a Start or a Restart that kept a
 //     prompt the new process raised shows the agent waiting, not running, and
 //     a prompt raised while a Stop or a Restart holds the agent leaves it
@@ -112,9 +112,12 @@
 //   - A process that exits while something is written to its terminal leaves
 //     the session to that write until it returns, and a Start is refused
 //     (ErrDecisionInFlight) while an answer, a line or the holder's keystrokes
-//     are still being written; a Stop and a Restart are refused the same way
-//     while keystrokes are. The exit used to release an answer's claim at
-//     once, and the replacement's first answer could be written beside it.
+//     are still being written; a Restart is refused the same way while
+//     keystrokes are. A Stop is taken while keystrokes are written: it writes
+//     nothing to the agent, and an agent that reads nothing blocks their
+//     write, which the Stop is then the one action to end. The exit used to
+//     release an answer's claim at once, and the replacement's first answer
+//     could be written beside it.
 //   - The policy answers nothing the hand may have touched. A hand taken and
 //     released again while a prompt was being taken in leaves the prompt
 //     asked, as if still held, since its holder may have typed the answer;
@@ -132,7 +135,11 @@
 //     that goes to the operator all the same, for the hand, a repeat, a limit
 //     or an answer the adapter could not encode, offers deny alone: offered
 //     every answer, it let any operator allow what a deny rule refuses. A
-//     typed answer is still sent as typed.
+//     typed answer to it is refused (ErrDenyOnly) where the adapter encodes a
+//     deny, since typed text is whatever the adapter reads it as, its accept
+//     included. Where the adapter encodes none, the generic one and Claude's,
+//     typed text is the only answer there is: it is taken, and the person's
+//     decision entry carries the reason typed_over_policy_deny.
 //   - A prompt the policy was to answer, handed back to the operator after it
 //     was detected, is notified like any prompt that waits on a person: a
 //     limit, a repeat or another answer found at the policy's last check, or
@@ -161,6 +168,32 @@
 //     announces the process's finished recording on it, which it did only
 //     for a lost tmux session. The exit of a process a replacement already
 //     superseded reports nothing.
+//   - A front end can freeze a running session it can no longer vouch for
+//     (FreezeSession), such as a terminal whose screen could not be read back
+//     after a native attach: nothing more is written to it until a Start or a
+//     Restart replaces its process, a Stop is still taken, and the failure is
+//     shown with the code terminal_state_uncertain. Nothing is journaled.
+//     Holding the hand would not do, since a person's decision is taken
+//     whoever holds it.
+//   - A withdrawal says why the prompt went (session.AdapterEventWithdrawn's
+//     Reason): a backend's resynchronisation that no longer finds a prompt on
+//     screen, most likely one answered inside the terminal, is journaled with
+//     the reason resync, and every other withdrawal, whatever reason it gives,
+//     as the agent's (agent_withdrew_occurrence). A withdrawal that arrives
+//     while its prompt is taken in keeps its reason on the tombstone.
+//   - A view shown delivered says how its prompt left (View.Resolution): its
+//     answer was written (answered), the agent no longer showed it when its
+//     answer was to be written (not_applied), or it went before an answer
+//     through the core was applied to it (withdrawn). "delivered" alone read
+//     as answered, and a stale answer, which was never written, was shown
+//     applied.
+//   - A view says when it offers deny alone because the policy denies it
+//     (View.DenyOnly), so a front end says why as the core decided it,
+//     including where the adapter encodes no deny and nothing is offered. A
+//     prompt typed at its terminal offers nothing either, whatever the
+//     adapter encodes, and takes no typed answer; its reason,
+//     typed_at_terminal, tells it apart. Neither DenyOnly nor Resolution is
+//     part of a view's JSON.
 //
 // The package deliberately depends only on the adapter, audit, policy, session
 // and terminal vocabularies and the standard library (imports_test.go enforces

@@ -201,13 +201,15 @@ type writeClaim struct {
 // hand taken since, even one released again, may have typed its answer.
 // signature is the prompt's, which keystrokes written meanwhile count as
 // answered (finishRaw). withdrawn is the tombstone its withdrawal leaves
-// when it arrives before the prompt is pending, and typedOver the one those
+// when it arrives before the prompt is pending, and withdrawnReason the
+// reason that withdrawal is journaled with; typedOver is the tombstone those
 // keystrokes leave: the prompt is the terminal's once it is pending.
 type ingestion struct {
-	hand      uint64
-	signature string
-	withdrawn bool
-	typedOver bool
+	hand            uint64
+	signature       string
+	withdrawn       bool
+	withdrawnReason string
+	typedOver       bool
 }
 
 // pendingEvent is a prompt the run waits on. evaluation is the policy's, as
