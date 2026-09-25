@@ -104,11 +104,16 @@ func UpdateFullConfiguration(path, expectedRevision string, update FullConfigura
 		update.UpdateAgents = false
 		validatedAgents = nil
 	}
+	// So is a policy the file already has: the settings panel sends the
+	// security tab whenever it was touched, changed back or not.
+	if update.Policies != nil && samePolicy(*update.Policies, current.Policies) {
+		update.Policies = nil
+	}
 	if !update.UpdateAgents && update.Policies == nil && update.Notifications == nil {
 		return current, current.Revision, nil
 	}
 
-	rendered, err := replaceFullConfigurationYAML(data, update, validatedAgents, current.Agents, baseDir)
+	rendered, err := replaceFullConfigurationYAML(data, update, validatedAgents, current, baseDir)
 	if err != nil {
 		return Result{}, "", err
 	}
@@ -151,6 +156,9 @@ func UpdateFullConfiguration(path, expectedRevision string, update FullConfigura
 	}
 	if !sameAgents(candidate.Agents, effectiveAgents) {
 		return Result{}, "", errors.New("the written agents would differ from the requested ones")
+	}
+	if !samePolicy(candidate.Policies, effectivePolicies) {
+		return Result{}, "", errors.New("the written policies would differ from the requested ones")
 	}
 
 	latest, _, err := readRegularConfiguration(absolutePath)
@@ -206,7 +214,8 @@ func validateUpdatedPolicyAgentsWith(policies policy.Config, specs []agent.Spec)
 func replaceFullConfigurationYAML(
 	data []byte,
 	update FullConfigurationUpdate,
-	validatedAgents, loadedAgents []agent.Spec,
+	validatedAgents []agent.Spec,
+	current Result,
 	baseDir string,
 ) ([]byte, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
@@ -226,7 +235,7 @@ func replaceFullConfigurationYAML(
 	// 1. Update agents if requested
 	if update.UpdateAgents {
 		agentsNode := mappingValue(root, "agents")
-		replacement := agentSequenceNode(validatedAgents, update.Agents, loadedAgents, agentsNode, baseDir)
+		replacement := agentSequenceNode(validatedAgents, update.Agents, current.Agents, agentsNode, baseDir)
 		if agentsNode != nil {
 			replacement.HeadComment = agentsNode.HeadComment
 			replacement.LineComment = agentsNode.LineComment
@@ -237,10 +246,9 @@ func replaceFullConfigurationYAML(
 		}
 	}
 
-	// 2. Update policies if requested
+	// 2. Update policies if requested: the block is edited, not rebuilt.
 	if update.Policies != nil {
-		configured := configuredPoliciesFrom(*update.Policies)
-		node, err := yamlNodeFrom(configured)
+		node, err := policiesNode(mappingValue(root, "policies"), current.Policies, *update.Policies, baseDir)
 		if err != nil {
 			return nil, fmt.Errorf("could not encode policies: %w", err)
 		}

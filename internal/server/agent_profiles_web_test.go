@@ -278,6 +278,43 @@ func TestAWebRestartWithNothingEditedWritesNothing(t *testing.T) {
 	}
 }
 
+// A security save from the web interface changes the fields it changed and
+// keeps the rest of the policies block as written: "profile: custom", the
+// guardrail set to false and the relative workspace root, which the block's
+// rebuild dropped, dropped and wrote as an absolute path. One that changes
+// nothing writes nothing.
+func TestAWebSecuritySaveKeepsThePolicyAsWritten(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		change func(*SecuritySettings)
+		want   string
+	}{
+		{"dry-run toggled", func(security *SecuritySettings) { security.DryRun = true },
+			strings.Replace(handWrittenAgents, "  dry_run: false\n", "  dry_run: true\n", 1)},
+		{"nothing changed", func(*SecuritySettings) {}, handWrittenAgents},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctrl, configPath := handWrittenController(t, handWrittenAgents)
+			view, err := ctrl.GetFullSettings()
+			if err != nil {
+				t.Fatalf("GetFullSettings: %v", err)
+			}
+			security := view.Security
+			test.change(&security)
+			request := decodedAsTheGatewayDoes[SaveFullSettingsRequest](t, map[string]any{
+				"expectedRevision": view.Revision,
+				"security":         security,
+			})
+			if _, err := ctrl.SaveFullSettings("", request); err != nil {
+				t.Fatalf("SaveFullSettings: %v", err)
+			}
+			if after, _ := os.ReadFile(configPath); string(after) != test.want {
+				t.Fatalf("the security save rewrote the policy:\n%s\nwant:\n%s", after, test.want)
+			}
+		})
+	}
+}
+
 // A read-only agent can only be changed in the YAML: a save that leaves it
 // out, sends it as a new agent or with a command, or preserves an agent the
 // file does not have, is refused and writes nothing.

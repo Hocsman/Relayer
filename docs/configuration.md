@@ -377,6 +377,15 @@ Guardrail options:
   - `block_outside_workspace`: Intercepts file access outside `workspace_root`, which defaults to the configuration file's directory and is resolved against it when relative.
   - `blocked_patterns`: Custom list of Go regular expressions that force operator arbitration when matched.
 
+A save of the settings editor's security tab edits this block rather than
+rewriting it. A field whose value the file already gives keeps its text: the
+`profile`, a guardrail set to `false`, a relative `workspace_root`, the rules,
+comments and flow lists. A field the save changes is written where it is, or
+added to its section; a workspace root entered in the editor is written as an
+absolute path. When the editor switches to a preset and the file names a
+`profile`, the file names that preset afterwards. A save that changes nothing
+writes nothing.
+
 ## Telemetry
 
 ```yaml

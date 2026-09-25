@@ -460,7 +460,7 @@ func newAgentEntry(spec agent.Spec, cwd string) *yaml.Node {
 	appendStringField(entry, "id", spec.ID)
 	appendStringField(entry, "name", spec.Name)
 	if len(spec.Command) > 0 {
-		appendNodeField(entry, "command", commandNode(spec.Command, 0))
+		appendNodeField(entry, "command", stringSequenceNode(spec.Command, 0))
 	} else {
 		appendStringField(entry, "shell", spec.Shell)
 	}
@@ -498,7 +498,7 @@ func changedAgentEntry(entry *yaml.Node, was, spec agent.Spec, requestedCwd stri
 			if previous := mappingValue(&updated, "command"); previous != nil {
 				style = previous.Style & yaml.FlowStyle
 			}
-			replaceField(&updated, "command", "shell", commandNode(spec.Command, style))
+			replaceField(&updated, "command", "shell", stringSequenceNode(spec.Command, style))
 		} else {
 			replaceField(&updated, "shell", "command", scalarLike(mappingValue(&updated, "shell"), spec.Shell))
 		}
@@ -554,10 +554,12 @@ func workingDirectoryText(resolved, requested string, writtenDirectories []strin
 	return resolved
 }
 
-func commandNode(command []string, style yaml.Style) *yaml.Node {
+// stringSequenceNode is a sequence of strings: a command, or a policy's
+// blocked patterns.
+func stringSequenceNode(values []string, style yaml.Style) *yaml.Node {
 	node := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: style}
-	for _, argument := range command {
-		node.Content = append(node.Content, stringNode(argument))
+	for _, value := range values {
+		node.Content = append(node.Content, stringNode(value))
 	}
 	return node
 }

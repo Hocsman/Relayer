@@ -95,6 +95,68 @@ func TestRenamingOneAgentOnTheDesktopLeavesEverythingElseAsWritten(t *testing.T)
 	}
 }
 
+// A security save on the desktop changes the fields it changed and keeps the
+// rest of the policies block as written: "profile: custom", the guardrail set
+// to false and the relative workspace root, which the block's rebuild
+// dropped, dropped and wrote as an absolute path naming the user's home
+// directory. One that changes nothing writes nothing.
+func TestADesktopSecuritySaveKeepsThePolicyAsWritten(t *testing.T) {
+	document := strings.Replace(handWrittenDesktopAgents, "backend: pty\nagents:\n", `backend: pty
+policies:
+  profile: custom
+  default_action: ask
+  dry_run: false
+  rate_limit_per_minute: 30
+  guardrails:
+    block_destructive: true
+    block_outside_workspace: false
+    workspace_root: ./workspace
+  rules:
+    - name: deny-reviewer-rm
+      match:
+        agent_ids: [reviewer]
+        command_regex: (?i)^rm\b
+      action: deny
+agents:
+`, 1)
+	for _, test := range []struct {
+		name   string
+		change func(*SecuritySettings)
+		want   string
+	}{
+		{"dry-run toggled", func(security *SecuritySettings) { security.DryRun = true },
+			strings.Replace(document, "  dry_run: false\n", "  dry_run: true\n", 1)},
+		{"nothing changed", func(*SecuritySettings) {}, document},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			application, path := profileTestApp(t, nil)
+			for _, sub := range []string{"ws", "workspace"} {
+				if err := os.Mkdir(filepath.Join(filepath.Dir(path), sub), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			view, err := application.GetFullSettings()
+			if err != nil {
+				t.Fatalf("GetFullSettings: %v", err)
+			}
+			security := view.Security
+			test.change(&security)
+			if _, err := application.SaveFullSettings(activeRunIDForTest(application), SaveFullSettingsRequest{
+				ExpectedRevision: view.Revision,
+				Security:         &security,
+			}); err != nil {
+				t.Fatalf("SaveFullSettings: %v", err)
+			}
+			if after, _ := os.ReadFile(path); string(after) != test.want {
+				t.Fatalf("the security save rewrote the policy:\n%s\nwant:\n%s", after, test.want)
+			}
+		})
+	}
+}
+
 // The rule for a file edited while the editor was open, the same as the web
 // gateway's: the save is refused as stale, whatever it sends, so it can neither
 // drop an environment variable added in the YAML nor bring back one removed
