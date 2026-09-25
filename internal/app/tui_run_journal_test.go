@@ -314,15 +314,30 @@ func TestATUIRunJournalsItsStartAndEnd(t *testing.T) {
 	}
 	assertTUIJournal(t, "while the interface ran", atRun, cleanTUIRunStart())
 	assertTUIJournal(t, "after the run", h.entries(), append(cleanTUIRunStart(), cleanTUIRunEnd(audit.OutcomeSucceeded)...))
+}
 
-	// The tmux backend is built without the run's ID today, so the names of
-	// its sessions do not carry the journal's run_id.
+// The run has one ID: the journal's run_id is the one the tmux backend names
+// its sessions after, so a session left running, or one tmux keeps on exit,
+// can be traced to the run that started it.
+func TestTheTUIRunSharesOneRunID(t *testing.T) {
+	h := newTUIRunHarness(t, false, agent.BackendPTY, agent.BackendTmux)
+
+	if err := h.run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	entries := h.entries()
+	// assertTUIJournal has checked that every entry carries the first one's.
+	assertTUIJournal(t, "after the run", entries, append(cleanTUIRunStart(), cleanTUIRunEnd(audit.OutcomeSucceeded)...))
 	options := h.builtTmuxOptions()
 	if len(options) != 1 {
 		t.Fatalf("the tmux backend was built %d time(s), want once", len(options))
 	}
-	if options[0].RunID != "" {
-		t.Fatalf("tmux RunID = %q, want empty", options[0].RunID)
+	if options[0].RunID != entries[0].RunID {
+		t.Fatalf("tmux names its sessions after run ID %q, want the journal's %q", options[0].RunID, entries[0].RunID)
+	}
+	if !validDesktopRunID(options[0].RunID) {
+		t.Fatalf("the run ID %q is not one the runtime accepts", options[0].RunID)
 	}
 }
 
@@ -350,8 +365,8 @@ func TestATUIRunWhoseInterfaceFailsIsJournaledFailed(t *testing.T) {
 }
 
 // A startup that fails part-way: agent 1 runs on tmux with persist_on_exit,
-// agent 2 does not start. The interface never comes up, and the journal is
-// pinned as the terminal command writes it today.
+// agent 2 does not start. The interface never comes up, and the run ends as
+// the runtime ends every run that failed to start.
 func TestATUIRunWhoseSecondAgentFailsToStart(t *testing.T) {
 	h := newTUIRunHarness(t, true, agent.BackendTmux, agent.BackendTmux)
 	failure := errors.New("planned start failure")
@@ -367,15 +382,22 @@ func TestATUIRunWhoseSecondAgentFailsToStart(t *testing.T) {
 	assertTUIJournal(t, "after the run", h.entries(), []tuiJournalRow{
 		{Kind: audit.KindRunStarted, Outcome: audit.OutcomeStarted},
 		{Kind: audit.KindSessionStarted, Outcome: audit.OutcomeStarted, SessionID: "agent-1", AgentID: "agent-1", Backend: agent.BackendTmux, Adapter: agent.AdapterGeneric},
-		// The command's own startup failure entry names no agent, backend or
-		// adapter.
-		{Kind: audit.KindBackendError, Outcome: audit.OutcomeFailed, Reason: "session_start_failed"},
-		{Kind: audit.KindSupervisionFinished, Outcome: audit.OutcomeFinished, Reason: "supervision_ended", SessionID: "agent-1", AgentID: "agent-1", Backend: agent.BackendTmux, Adapter: agent.AdapterGeneric},
-		// persist_on_exit holds even for a run that failed to start: the tmux
-		// session is left behind.
-		{Kind: audit.KindSessionCleanup, Outcome: audit.OutcomeSkipped, Reason: "persistence_requested", SessionID: "agent-1", AgentID: "agent-1", Backend: agent.BackendTmux, Adapter: agent.AdapterGeneric},
+		// The startup failure names the agent that did not start, its backend
+		// and its adapter.
+		{Kind: audit.KindBackendError, Outcome: audit.OutcomeFailed, Reason: "session_start_failed", AgentID: "agent-2", Backend: agent.BackendTmux, Adapter: agent.AdapterGeneric},
+		// Agent 1's supervision ends failed, with the run that failed to start.
+		{Kind: audit.KindSupervisionFinished, Outcome: audit.OutcomeFailed, Reason: "supervision_ended", SessionID: "agent-1", AgentID: "agent-1", Backend: agent.BackendTmux, Adapter: agent.AdapterGeneric},
+		// A run that failed to start leaves no session behind, not even one
+		// tmux keeps on exit: agent 1 is stopped before the backend closes.
+		{Kind: audit.KindSessionCleanup, Outcome: audit.OutcomeSucceeded, Reason: "backend_cleanup_completed", SessionID: "agent-1", AgentID: "agent-1", Backend: agent.BackendTmux, Adapter: agent.AdapterGeneric},
 		{Kind: audit.KindRunFinished, Outcome: audit.OutcomeFailed},
 	})
+	h.tmux.mu.Lock()
+	stops := append([]string(nil), h.tmux.stops...)
+	h.tmux.mu.Unlock()
+	if !reflect.DeepEqual(stops, []string{"agent-1"}) {
+		t.Fatalf("the tmux backend stopped %q, want the agent that had started", stops)
+	}
 }
 
 // Each agent starts at the size of its own pane in the first layout, not at

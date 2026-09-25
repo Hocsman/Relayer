@@ -219,18 +219,6 @@ func cloneAgentSpecs(specs []agent.Spec) []agent.Spec {
 	return cloned
 }
 
-func buildBackendRouter(
-	parent context.Context,
-	events chan<- session.Event,
-	registry *adapters.Registry,
-	ringCapacity int,
-	selection backendResolution,
-	policy config.SessionPolicy,
-	dependencies backendDependencies,
-) (*backendRouter, error) {
-	return buildBackendRouterForRun(parent, events, registry, ringCapacity, selection, policy, dependencies, "")
-}
-
 func buildBackendRouterForRun(
 	parent context.Context,
 	events chan<- session.Event,

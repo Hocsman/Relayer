@@ -188,7 +188,7 @@ func TestResolveAgentBackendsReturnsDefensiveCopies(t *testing.T) {
 func TestBuildBackendRouterPTYOnlyNeverConstructsTmux(t *testing.T) {
 	pty := newRouterFakeBackend(agent.BackendPTY)
 	ptyCalls := 0
-	router, err := buildBackendRouter(
+	router, err := buildBackendRouterForRun(
 		context.Background(),
 		make(chan session.Event, 1),
 		mustBackendTestRegistry(t),
@@ -205,9 +205,10 @@ func TestBuildBackendRouterPTYOnlyNeverConstructsTmux(t *testing.T) {
 				return nil, nil
 			},
 		},
+		"",
 	)
 	if err != nil {
-		t.Fatalf("buildBackendRouter: %v", err)
+		t.Fatalf("buildBackendRouterForRun: %v", err)
 	}
 	if ptyCalls != 1 || router.Name() != agent.BackendPTY {
 		t.Fatalf("PTY factory calls = %d, router name = %q", ptyCalls, router.Name())
@@ -243,7 +244,7 @@ func TestBuildBackendRouterPassesTmuxPathPolicyAndCaptureLimit(t *testing.T) {
 		"desktop-run-17",
 	)
 	if err != nil {
-		t.Fatalf("buildBackendRouter: %v", err)
+		t.Fatalf("buildBackendRouterForRun: %v", err)
 	}
 	defer router.Close(context.Background())
 	if captured.TmuxPath != "/resolved/bin/tmux" || captured.RunID != "desktop-run-17" || !captured.PersistOnExit || captured.CleanupOnSuccess || captured.CaptureLimit != 8192 {
@@ -254,7 +255,7 @@ func TestBuildBackendRouterPassesTmuxPathPolicyAndCaptureLimit(t *testing.T) {
 func TestBuildBackendRouterRollsBackPTYWhenTmuxConstructionFails(t *testing.T) {
 	pty := newRouterFakeBackend(agent.BackendPTY)
 	tmuxFailure := errors.New("planned tmux construction failure")
-	router, err := buildBackendRouter(
+	router, err := buildBackendRouterForRun(
 		context.Background(),
 		make(chan session.Event, 1),
 		mustBackendTestRegistry(t),
@@ -269,6 +270,7 @@ func TestBuildBackendRouterRollsBackPTYWhenTmuxConstructionFails(t *testing.T) {
 				return nil, tmuxFailure
 			},
 		},
+		"",
 	)
 	if router != nil || err == nil || !errors.Is(err, tmuxFailure) {
 		t.Fatalf("build result = router %#v error %v", router, err)

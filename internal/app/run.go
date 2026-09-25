@@ -14,14 +14,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/notify"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
-	"github.com/Hocsman/Relayer/internal/telemetry"
 	"github.com/Hocsman/Relayer/internal/terminal"
 	"github.com/Hocsman/Relayer/internal/tui"
 	buildversion "github.com/Hocsman/Relayer/internal/version"
@@ -126,7 +124,14 @@ func runWithOutputAndPreflight(
 	return run(arguments, diagnostics, dependencies)
 }
 
-func run(arguments []string, diagnostics io.Writer, dependencies backendDependencies) (returnErr error) {
+// tuiRunEndBudget bounds each phase of the end of a terminal run: the
+// backends' stop, then the runtime's close. The desktop gives each phase the
+// same 12 s, and the gateway its runEndBudget. The command used to give the
+// backends' close session.StopBudget and three seconds more, 10.35 s on
+// Windows, so a stop that fit before still fits.
+const tuiRunEndBudget = 12 * time.Second
+
+func run(arguments []string, diagnostics io.Writer, dependencies backendDependencies) error {
 	if diagnostics == nil {
 		diagnostics = io.Discard
 	}
@@ -134,226 +139,101 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 	if err != nil {
 		return err
 	}
-
-	configuration, err := config.LoadOrCreate(options.configPath)
-	if err != nil {
-		return err
-	}
-	workingDirectory, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("read the current directory: %w", err)
-	}
-	resolution, err := resolveAgentPlans(configuration, options, workingDirectory)
-	if err != nil {
-		return err
-	}
-	policyEngine, err := policy.New(configuration.Policies)
-	if err != nil {
-		return fmt.Errorf("initialize the policies: %w", err)
-	}
-	if err := validatePolicyAgentIDs(policyEngine.Config(), resolution.Specs); err != nil {
-		return err
-	}
-	registry, err := adapters.NewRegistry(configuration.Patterns)
-	if err != nil {
-		return fmt.Errorf("initialize the adapters: %w", err)
-	}
-	resolution.Specs, err = resolveAgentAdapters(resolution.Specs, registry)
-	if err != nil {
-		return err
-	}
-	backendSelection, err := resolveAgentBackends(
-		context.Background(), resolution.Specs, dependencies.lookup, dependencies.probeTmux)
-	if err != nil {
-		return err
-	}
-	resolution.Specs = backendSelection.Specs
-	resolution.Warnings = append(resolution.Warnings, backendSelection.Warnings...)
-	for _, warning := range resolution.Warnings {
-		fmt.Fprintln(diagnostics, warning)
-	}
-	auditor, err := initializeAudit(configuration.Audit, dependencies)
-	if err != nil {
-		return fmt.Errorf("initialize the audit journal: %w", err)
-	}
-	if configuration.Telemetry.Enabled {
-		telemetryEngine, telErr := telemetry.NewEngine(configuration.Telemetry)
-		if telErr != nil {
-			return fmt.Errorf("initialize telemetry: %w", telErr)
-		}
-		auditor.AddObserver(telemetryEngine.Registry())
-		if startErr := telemetryEngine.Start(context.Background()); startErr != nil {
-			return fmt.Errorf("start telemetry: %w", startErr)
-		}
-		defer func() {
-			if closeErr := telemetryEngine.Close(); closeErr != nil {
-				joinRunError(&returnErr, "closing telemetry", closeErr)
-			}
-		}()
-	}
-	defer func() {
-		outcome := audit.OutcomeSucceeded
-		if returnErr != nil {
-			outcome = audit.OutcomeFailed
-		}
-		if recordErr := auditor.Record(audit.Entry{
-			Kind:       audit.KindRunFinished,
-			DecisionBy: audit.DecisionBySystem,
-			Outcome:    outcome,
-		}); recordErr != nil {
-			joinRunError(&returnErr, "writing the end of the run to the audit", recordErr)
-		}
-		if closeErr := auditor.Close(); closeErr != nil {
-			joinRunError(&returnErr, "closing the audit journal", closeErr)
-		}
-	}()
-	if err := auditor.Record(audit.Entry{
-		Kind:       audit.KindRunStarted,
-		DecisionBy: audit.DecisionBySystem,
-		Outcome:    audit.OutcomeStarted,
-	}); err != nil {
-		return fmt.Errorf("writing the run start to the audit: %w", err)
-	}
 	terminalSize := dependencies.terminalSize
 	if terminalSize == nil {
 		terminalSize = initialTerminalSize
 	}
 	initialWidth, initialHeight := terminalSize()
 
-	events := make(chan session.Event, defaultEventCapacity)
-	router, err := buildBackendRouter(
-		context.Background(),
-		events,
-		registry,
-		defaultRingCapacity,
-		backendSelection,
-		configuration.Sessions,
-		dependencies,
-	)
-	if err != nil {
-		if recordErr := auditor.Record(audit.Entry{
-			Kind:       audit.KindBackendError,
-			DecisionBy: audit.DecisionBySystem,
-			Outcome:    audit.OutcomeFailed,
-			Reason:     "backend_initialization_failed",
-		}); recordErr != nil {
-			return errors.Join(err, fmt.Errorf("auditing the backend failure: %w", recordErr))
-		}
-		return err
-	}
-	startedInfos := make([]session.Info, 0, len(resolution.Specs))
-	defer func() {
-		for _, info := range startedInfos {
-			if recordErr := auditor.Record(audit.Entry{
-				Kind:       audit.KindSupervisionFinished,
-				SessionID:  info.ID,
-				AgentID:    info.ID,
-				Backend:    info.Backend,
-				Adapter:    info.Adapter,
-				DecisionBy: audit.DecisionBySystem,
-				Outcome:    audit.OutcomeFinished,
-				Reason:     "supervision_ended",
-			}); recordErr != nil {
-				joinRunError(&returnErr, "writing the end of supervision to the audit", recordErr)
-			}
-		}
-		closeContext, cancel := context.WithTimeout(context.Background(), session.StopBudget+3*time.Second)
-		defer cancel()
-		closeErr := router.Close(closeContext)
-		if closeErr != nil {
-			joinRunError(&returnErr, "closing the backends", closeErr)
-		}
-		for _, info := range startedInfos {
-			closed, known := router.backendCloseStatus(info.Backend)
-			cleanupOutcome, cleanupReason := auditCleanupResult(
-				info,
-				configuration.Sessions,
-				closed,
-				known,
-			)
-			if recordErr := auditor.Record(audit.Entry{
-				Kind:       audit.KindSessionCleanup,
-				SessionID:  info.ID,
-				AgentID:    info.ID,
-				Backend:    info.Backend,
-				Adapter:    info.Adapter,
-				DecisionBy: audit.DecisionBySystem,
-				Outcome:    cleanupOutcome,
-				Reason:     cleanupReason,
-			}); recordErr != nil {
-				joinRunError(&returnErr, "writing the session cleanup to the audit", recordErr)
-			}
-		}
-	}()
-
-	panes, infos, err := startAgentSessionsObserved(
-		router,
-		resolution.Specs,
-		initialWidth,
-		initialHeight,
-		func(spec agent.Spec, info session.Info) error {
-			startedInfos = append(startedInfos, info)
-			return auditor.Record(audit.Entry{
-				Kind:       audit.KindSessionStarted,
-				SessionID:  info.ID,
-				AgentID:    spec.ID,
-				Backend:    info.Backend,
-				Adapter:    info.Adapter,
-				DecisionBy: audit.DecisionBySystem,
-				Outcome:    audit.OutcomeStarted,
-			})
+	// The terminal command runs on the runtime the desktop and the gateway
+	// share, which owns the backends, the journal, telemetry and the lifecycle,
+	// and writes every run-level entry. Each agent starts at the size of its own
+	// pane in the first layout, so a fast agent's first screen is already drawn
+	// for the pane it is shown in; an agent the lifecycle starts again later
+	// starts at the whole terminal, as it always has, and Bubble Tea resizes it
+	// to its pane. Recording stays off: the recorder reports on diagnostics,
+	// which is the screen the interface draws on.
+	plan, err := prepareRuntime(runtimeRequest{
+		configPath:   options.configPath,
+		diagnostics:  diagnostics,
+		cli:          options,
+		dependencies: dependencies,
+		initialSize:  terminal.Size{Columns: initialWidth, Rows: initialHeight},
+		sizeFor: func(index, count int) terminal.Size {
+			columns, rows := tui.AgentViewportSize(initialWidth, initialHeight, count, index)
+			return terminal.Size{Columns: columns, Rows: rows}
 		},
-	)
+		recording: false,
+	})
 	if err != nil {
-		if recordErr := auditor.Record(audit.Entry{
-			Kind:       audit.KindBackendError,
-			DecisionBy: audit.DecisionBySystem,
-			Outcome:    audit.OutcomeFailed,
-			Reason:     "session_start_failed",
-		}); recordErr != nil {
-			return errors.Join(err, fmt.Errorf("auditing the startup failure: %w", recordErr))
-		}
+		return err
+	}
+	// One run ID names the run in the journal and in the tmux sessions' names.
+	runID, err := newDesktopRunID()
+	if err != nil {
+		return err
+	}
+	// The run's context is its own, never one a signal ends: the run ends in the
+	// order below, whatever made the interface return.
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
+	// A startup that fails part-way stops the agents it already started, those
+	// tmux keeps on exit included, and ends the journal itself.
+	rt, err := StartDesktopRuntime(runCtx, plan, runID)
+	if err != nil {
 		return err
 	}
 
-	startupLogs := buildStartupLogs(configuration, resolution, infos, options.configPath)
-	if auditor.Enabled() {
-		startupLogs = append(startupLogs, fmt.Sprintf(
-			"Local audit: mode=%s, file=%s",
-			configuration.Audit.Mode,
-			auditor.Path(),
-		))
-	} else {
-		startupLogs = append(startupLogs, "Local audit disabled")
+	panes := make([]tui.Pane, 0, len(rt.infos))
+	for _, info := range rt.infos {
+		panes = append(panes, tui.Pane{
+			ID:      info.ID,
+			Name:    info.Name,
+			Command: paneDisplayCommand(info),
+			Backend: info.Backend,
+			Adapter: info.Adapter,
+			Shell:   info.Shell,
+		})
 	}
-	lifecycle := newAgentLifecycle(
-		router,
-		auditor,
-		resolution.Specs,
-		terminal.Size{Columns: initialWidth, Rows: initialHeight},
-		nil,
-	)
-	application, err := tui.NewModelWithPolicyAndAudit(
-		&tuiBackendAdapter{router: router, lifecycle: lifecycle},
-		events,
+	// The interface still supervises on its own: it evaluates the policy with a
+	// tracker of its own, and journals every prompt, decision and delivery
+	// straight to the run's journal. Only the run around it is the runtime's.
+	application, runErr := tui.NewModelWithPolicyAndAudit(
+		&tuiBackendAdapter{router: rt.router, lifecycle: rt.lifecycle},
+		rt.events,
 		panes,
 		initialWidth,
 		initialHeight,
-		startupLogs,
-		policyEngine,
-		auditor,
+		rt.startupLogs,
+		rt.policyEngine,
+		rt.auditor,
 	)
-	if err != nil {
-		return err
+	if runErr == nil {
+		application.SetNotifier(notify.New(rt.configuration.Notifications, diagnostics))
+		program := dependencies.newProgram(
+			application,
+			tea.WithAltScreen(),
+			tea.WithMouseCellMotion(),
+		)
+		_, runErr = program.Run()
 	}
-	application.SetNotifier(notify.New(configuration.Notifications, diagnostics))
-	program := dependencies.newProgram(
-		application,
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
-	)
-	_, err = program.Run()
-	return err
+
+	// The run ends as the desktop and the gateway end theirs, each phase
+	// bounded: the backends stop while the journal is still open, the run's
+	// context ends, and only then does the runtime close, which writes the run's
+	// last entries and closes the journal. A run whose interface failed, or
+	// whose backends did not all stop, ends failed in the journal.
+	beginCtx, cancelBegin := context.WithTimeout(context.Background(), tuiRunEndBudget)
+	beginErr := rt.BeginShutdown(beginCtx)
+	cancelBegin()
+	if beginErr != nil {
+		beginErr = fmt.Errorf("shut down the backends: %w", beginErr)
+	}
+	cancelRun()
+	closeCtx, cancelClose := context.WithTimeout(context.Background(), tuiRunEndBudget)
+	closeErr := rt.closeWithCause(closeCtx, errors.Join(runErr, beginErr))
+	cancelClose()
+	return errors.Join(runErr, beginErr, closeErr)
 }
 
 // uiProgram is the part of a Bubble Tea program that run depends on. run only
@@ -417,18 +297,6 @@ func initializeAuditForRun(configuration audit.Config, dependencies backendDepen
 	return audit.Open(configuration, audit.WithRunID(runID))
 }
 
-func joinRunError(target *error, operation string, err error) {
-	if err == nil {
-		return
-	}
-	wrapped := fmt.Errorf("%s: %w", operation, err)
-	if *target == nil {
-		*target = wrapped
-		return
-	}
-	*target = errors.Join(*target, wrapped)
-}
-
 func auditCleanupResult(
 	info session.Info,
 	sessionPolicy config.SessionPolicy,
@@ -466,74 +334,6 @@ func validatePolicyAgentIDs(configuration policy.Config, specs []agent.Spec) err
 		}
 	}
 	return nil
-}
-
-type sessionStarter interface {
-	Start(context.Context, agent.Spec, terminal.Size) (terminal.Info, error)
-	Close(context.Context) error
-}
-
-// startAgentSessions makes partial startup transactional: once an owner has
-// accepted any sessions, a later failure synchronously closes the complete
-// owner before the error can escape. Run keeps its defer as a second,
-// idempotent lifecycle guard for every later return path.
-func startAgentSessions(
-	owner sessionStarter,
-	specs []agent.Spec,
-	initialWidth int,
-	initialHeight int,
-) ([]tui.Pane, []session.Info, error) {
-	return startAgentSessionsObserved(owner, specs, initialWidth, initialHeight, nil)
-}
-
-type sessionStartedObserver func(agent.Spec, session.Info) error
-
-func startAgentSessionsObserved(
-	owner sessionStarter,
-	specs []agent.Spec,
-	initialWidth int,
-	initialHeight int,
-	observer sessionStartedObserver,
-) ([]tui.Pane, []session.Info, error) {
-	panes := make([]tui.Pane, 0, len(specs))
-	infos := make([]session.Info, 0, len(specs))
-	for index, spec := range specs {
-		columns, rows := tui.AgentViewportSize(
-			initialWidth,
-			initialHeight,
-			len(specs),
-			index,
-		)
-		info, startErr := owner.Start(
-			context.Background(),
-			spec,
-			terminal.Size{Columns: columns, Rows: rows},
-		)
-		if startErr != nil {
-			closeContext, cancel := context.WithTimeout(context.Background(), session.StopBudget+3*time.Second)
-			_ = owner.Close(closeContext)
-			cancel()
-			return nil, nil, fmt.Errorf("starting agent %q: %w", spec.ID, startErr)
-		}
-		if observer != nil {
-			if observeErr := observer(spec, info); observeErr != nil {
-				closeContext, cancel := context.WithTimeout(context.Background(), session.StopBudget+3*time.Second)
-				_ = owner.Close(closeContext)
-				cancel()
-				return nil, nil, fmt.Errorf("auditing the startup of agent %q: %w", spec.ID, observeErr)
-			}
-		}
-		infos = append(infos, info)
-		panes = append(panes, tui.Pane{
-			ID:      info.ID,
-			Name:    info.Name,
-			Command: paneDisplayCommand(info),
-			Backend: info.Backend,
-			Adapter: info.Adapter,
-			Shell:   info.Shell,
-		})
-	}
-	return panes, infos, nil
 }
 
 func buildStartupLogs(

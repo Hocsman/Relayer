@@ -11,28 +11,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/session"
-	"github.com/Hocsman/Relayer/internal/terminal"
 )
-
-type fakeSessionStarter struct {
-	failAt     int
-	startCalls []agent.Spec
-	closeCalls int
-}
-
-func (f *fakeSessionStarter) Start(_ context.Context, spec agent.Spec, _ terminal.Size) (terminal.Info, error) {
-	callIndex := len(f.startCalls)
-	f.startCalls = append(f.startCalls, spec)
-	if callIndex == f.failAt {
-		return session.Info{}, errors.New("planned startup failure")
-	}
-	return session.Info{ID: spec.ID, Name: spec.Name, DisplayCommand: spec.Command[0]}, nil
-}
-
-func (f *fakeSessionStarter) Close(context.Context) error {
-	f.closeCalls++
-	return nil
-}
 
 func TestResolveAgentPlansPreservesConfiguredAgentsFromOneToEight(t *testing.T) {
 	for count := 1; count <= 8; count++ {
@@ -299,20 +278,56 @@ func TestStartupLogsDistinguishLegacyFallbackWithoutLeakingCommands(t *testing.T
 	}
 }
 
-func TestStartAgentSessionsClosesOwnerImmediatelyOnPartialFailure(t *testing.T) {
-	owner := &fakeSessionStarter{failAt: 1}
-	panes, infos, err := startAgentSessions(owner, configuredAgentSpecs(4), 120, 40)
-	if err == nil || !strings.Contains(err.Error(), `agent-2`) {
-		t.Fatalf("startAgentSessions error = %v", err)
+// A startup that fails part-way is all or nothing: before the error escapes,
+// every agent already started is stopped, the tmux one set to persist on exit
+// included, and each backend is closed; no agent after the one that failed is
+// started; and the caller is handed no runtime whose agents it would have to
+// stop itself.
+func TestAStartupThatFailsStopsTheAgentsItStarted(t *testing.T) {
+	h := newTUIRunHarness(t, true, agent.BackendTmux, agent.BackendPTY, agent.BackendPTY, agent.BackendPTY)
+	failure := errors.New("planned startup failure")
+	h.pty.startErrs = map[string]error{"agent-3": failure}
+	plan, err := prepareRuntime(h.request(options{}))
+	if err != nil {
+		t.Fatalf("prepare the runtime: %v", err)
 	}
-	if panes != nil || infos != nil {
-		t.Fatalf("partial startup escaped metadata: panes=%#v infos=%#v", panes, infos)
+
+	runtime, err := StartDesktopRuntime(context.Background(), plan, "tui-startup-failure")
+	if !errors.Is(err, failure) || !strings.Contains(err.Error(), `"agent-3"`) {
+		t.Fatalf("StartDesktopRuntime error = %v, want agent-3's start failure", err)
 	}
-	if owner.closeCalls != 1 {
-		t.Fatalf("Close calls = %d, want 1", owner.closeCalls)
+	if errors.Is(err, ErrCleanupUncertain) {
+		t.Fatalf("the rollback of the started agents was not confirmed: %v", err)
 	}
-	if len(owner.startCalls) != 2 || owner.startCalls[0].ID != "agent-1" || owner.startCalls[1].ID != "agent-2" {
-		t.Fatalf("Start calls = %#v", owner.startCalls)
+	if runtime != nil {
+		t.Fatal("a startup that failed handed back a runtime")
+	}
+
+	for _, backend := range []struct {
+		fake       *routerFakeBackend
+		wantStarts []string
+		wantStops  []string
+	}{
+		{fake: h.tmux, wantStarts: []string{"agent-1"}, wantStops: []string{"agent-1"}},
+		{fake: h.pty, wantStarts: []string{"agent-2", "agent-3"}, wantStops: []string{"agent-2"}},
+	} {
+		backend.fake.mu.Lock()
+		starts := make([]string, len(backend.fake.starts))
+		for index, start := range backend.fake.starts {
+			starts[index] = start.spec.ID
+		}
+		stops := append([]string(nil), backend.fake.stops...)
+		closeCalls := backend.fake.closeCalls
+		backend.fake.mu.Unlock()
+		if !reflect.DeepEqual(starts, backend.wantStarts) {
+			t.Fatalf("the %s backend started %q, want %q", backend.fake.name, starts, backend.wantStarts)
+		}
+		if !reflect.DeepEqual(stops, backend.wantStops) {
+			t.Fatalf("the %s backend stopped %q, want %q", backend.fake.name, stops, backend.wantStops)
+		}
+		if closeCalls != 1 {
+			t.Fatalf("the %s backend was closed %d time(s), want once", backend.fake.name, closeCalls)
+		}
 	}
 }
 
