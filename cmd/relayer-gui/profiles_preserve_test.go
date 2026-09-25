@@ -3,7 +3,9 @@ package main
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Hocsman/Relayer/internal/agent"
@@ -25,6 +27,72 @@ func interfaceInputs(profiles []AgentProfile) []AgentProfileInput {
 		}
 	}
 	return inputs
+}
+
+// handWrittenDesktopAgents is a configuration a person wrote: comments, flow
+// sequences, quoted arguments, agents that inherit the file's backend and an
+// agent whose adapter is left to its executable.
+const handWrittenDesktopAgents = `# Relayer configuration (hand-written)
+version: 1
+backend: pty
+agents:
+  # the main coding agent
+  - id: claude
+    name: Claude
+    command: [claude, --model, opus]
+    cwd: ./ws
+    env:
+      ANTHROPIC_API_KEY: sk-ant-DESKTOP-AS-WRITTEN-0001 # secret
+  - id: reviewer
+    name: Repository reviewer
+    command: ["./bin/reviewer", "--mode", "read only", ""]
+    cwd: ./ws
+    adapter: generic
+  - id: scripted
+    name: Scripted
+    shell: 'prepare-input | exec ./agent --mode "$RELAYER_MODE"'
+    env:
+      RELAYER_MODE: fast
+  - id: codex
+    name: Codex
+    command: [codex] # inherits the backend
+intercept_patterns:
+  - pattern: (?i)\[[yn]/[yn]\]
+    description: yes/no confirmation
+`
+
+// Renaming one agent on the desktop changes that agent's name line and
+// nothing else in the file. The desktop kept every agent's data, but each save
+// rebuilt every entry: the other agents lost their comments and flow
+// sequences, the shell script's quoting changed, and every agent was pinned
+// to "backend: pty".
+func TestRenamingOneAgentOnTheDesktopLeavesEverythingElseAsWritten(t *testing.T) {
+	application, path := profileTestApp(t, nil)
+	if err := os.Mkdir(filepath.Join(filepath.Dir(path), "ws"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(handWrittenDesktopAgents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	view, err := application.GetAgentProfiles()
+	if err != nil {
+		t.Fatalf("GetAgentProfiles: %v", err)
+	}
+	inputs := interfaceInputs(view.Profiles)
+	inputs[1].Name = "Reviewer, renamed"
+	if _, err := saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
+		ExpectedRevision: view.Revision,
+		Profiles:         inputs,
+	}); err != nil {
+		t.Fatalf("SaveAgentProfiles: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := strings.Replace(handWrittenDesktopAgents, "name: Repository reviewer", "name: Reviewer, renamed", 1); string(after) != want {
+		t.Fatalf("the rename rewrote more than the name:\n%s\nwant:\n%s", after, want)
+	}
 }
 
 // The rule for a file edited while the editor was open, the same as the web

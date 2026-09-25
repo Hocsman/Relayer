@@ -96,7 +96,19 @@ func UpdateFullConfiguration(path, expectedRevision string, update FullConfigura
 		}
 	}
 
-	rendered, err := replaceFullConfigurationYAML(data, update, validatedAgents, baseDir)
+	// Agents the file already has are not written again: the web gateway
+	// sends every agent with each "Save and restart", edited or not, and
+	// each one rewrote the whole agents list. With nothing else to write,
+	// nothing is published and the revision stays.
+	if update.UpdateAgents && sameAgents(validatedAgents, current.Agents) {
+		update.UpdateAgents = false
+		validatedAgents = nil
+	}
+	if !update.UpdateAgents && update.Policies == nil && update.Notifications == nil {
+		return current, current.Revision, nil
+	}
+
+	rendered, err := replaceFullConfigurationYAML(data, update, validatedAgents, current.Agents, baseDir)
 	if err != nil {
 		return Result{}, "", err
 	}
@@ -133,8 +145,12 @@ func UpdateFullConfiguration(path, expectedRevision string, update FullConfigura
 	if err := temporary.Close(); err != nil {
 		return Result{}, "", errors.New("could not close temporary configuration")
 	}
-	if _, err := LoadExisting(temporaryPath); err != nil {
+	candidate, err := LoadExisting(temporaryPath)
+	if err != nil {
 		return Result{}, "", fmt.Errorf("invalid updated configuration: %w", err)
+	}
+	if !sameAgents(candidate.Agents, effectiveAgents) {
+		return Result{}, "", errors.New("the written agents would differ from the requested ones")
 	}
 
 	latest, _, err := readRegularConfiguration(absolutePath)
@@ -190,7 +206,7 @@ func validateUpdatedPolicyAgentsWith(policies policy.Config, specs []agent.Spec)
 func replaceFullConfigurationYAML(
 	data []byte,
 	update FullConfigurationUpdate,
-	validatedAgents []agent.Spec,
+	validatedAgents, loadedAgents []agent.Spec,
 	baseDir string,
 ) ([]byte, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
@@ -210,7 +226,7 @@ func replaceFullConfigurationYAML(
 	// 1. Update agents if requested
 	if update.UpdateAgents {
 		agentsNode := mappingValue(root, "agents")
-		replacement := agentSequenceNode(validatedAgents, update.Agents, agentsNode, baseDir)
+		replacement := agentSequenceNode(validatedAgents, update.Agents, loadedAgents, agentsNode, baseDir)
 		if agentsNode != nil {
 			replacement.HeadComment = agentsNode.HeadComment
 			replacement.LineComment = agentsNode.LineComment

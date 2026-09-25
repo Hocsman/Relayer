@@ -170,7 +170,13 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 	if err := validateUpdatedPolicyAgents(current, validated); err != nil {
 		return Result{}, "", err
 	}
-	rendered, err := replaceAgentsYAML(data, validated, specs, baseDir)
+	if sameAgents(validated, current.Agents) {
+		// Nothing to write. Publishing the same agents again only reformatted
+		// the file and gave it a new revision, which every open editor then
+		// had to reload.
+		return current, current.Revision, nil
+	}
+	rendered, err := replaceAgentsYAML(data, validated, specs, current.Agents, baseDir)
 	if err != nil {
 		return Result{}, "", err
 	}
@@ -209,8 +215,12 @@ func ReplaceAgents(path, expectedRevision string, specs []agent.Spec) (Result, s
 	if err := temporary.Close(); err != nil {
 		return Result{}, "", errors.New("could not close temporary configuration")
 	}
-	if _, err := LoadExisting(temporaryPath); err != nil {
+	candidate, err := LoadExisting(temporaryPath)
+	if err != nil {
 		return Result{}, "", fmt.Errorf("invalid updated configuration: %w", err)
+	}
+	if !sameAgents(candidate.Agents, validated) {
+		return Result{}, "", errors.New("the written agents would differ from the requested ones")
 	}
 
 	latest, _, err := readRegularConfiguration(absolutePath)
@@ -349,7 +359,7 @@ func contentRevision(data []byte) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func replaceAgentsYAML(data []byte, specs, requested []agent.Spec, baseDir string) ([]byte, error) {
+func replaceAgentsYAML(data []byte, specs, requested, loaded []agent.Spec, baseDir string) ([]byte, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	var document yaml.Node
 	if err := decoder.Decode(&document); err != nil {
@@ -366,7 +376,7 @@ func replaceAgentsYAML(data []byte, specs, requested []agent.Spec, baseDir strin
 	if agentsNode == nil {
 		return nil, errors.New("the agents field is absent")
 	}
-	replacement := agentSequenceNode(specs, requested, agentsNode, baseDir)
+	replacement := agentSequenceNode(specs, requested, loaded, agentsNode, baseDir)
 	replacement.HeadComment = agentsNode.HeadComment
 	replacement.LineComment = agentsNode.LineComment
 	replacement.FootComment = agentsNode.FootComment
@@ -384,69 +394,326 @@ func replaceAgentsYAML(data []byte, specs, requested []agent.Spec, baseDir strin
 	return output.Bytes(), nil
 }
 
-func agentSequenceNode(specs, requested []agent.Spec, previous *yaml.Node, baseDir string) *yaml.Node {
-	previousByID := make(map[string]*yaml.Node)
+// agentSequenceNode returns the agents sequence to write for specs, the
+// validated agents of a save. previous is the file's agents sequence and loaded
+// the agents the loader read from it, entry for entry; requested is the save's
+// agents as given, whose working directories may be relative.
+//
+// Every entry used to be rebuilt from its spec, so a save that changed one
+// agent rewrote them all: their comments went, flow sequences became block
+// lists, a shell script's quoting changed, and an agent that inherited the
+// file's backend was pinned to it with "backend: pty". Now an agent whose
+// spec is the one the file already gives it keeps its entry exactly as
+// written, and an agent that changed keeps every field that did not change,
+// written where it was. Only a new agent is built from its spec.
+func agentSequenceNode(specs, requested, loaded []agent.Spec, previous *yaml.Node, baseDir string) *yaml.Node {
+	type writtenAgent struct {
+		entry *yaml.Node
+		spec  agent.Spec
+	}
+	previousByID := make(map[string]writtenAgent)
+	var writtenDirectories []string
 	if previous != nil && previous.Kind == yaml.SequenceNode {
-		for _, entry := range previous.Content {
+		for index, entry := range previous.Content {
 			if entry.Kind != yaml.MappingNode {
 				continue
 			}
 			id := mappingValue(entry, "id")
-			if id != nil && id.Kind == yaml.ScalarNode {
-				previousByID[strings.ToLower(strings.TrimSpace(id.Value))] = entry
+			if id == nil || id.Kind != yaml.ScalarNode {
+				continue
+			}
+			// The loader reads the sequence in order, so loaded[index] is
+			// this entry's spec. An entry it cannot be paired with is
+			// rebuilt, as every entry was before.
+			if index < len(loaded) && strings.TrimSpace(loaded[index].ID) == strings.TrimSpace(id.Value) {
+				previousByID[strings.ToLower(strings.TrimSpace(id.Value))] = writtenAgent{entry: entry, spec: loaded[index]}
+			}
+			if cwd := mappingValue(entry, "cwd"); cwd != nil && cwd.Kind == yaml.ScalarNode {
+				writtenDirectories = append(writtenDirectories, cwd.Value)
 			}
 		}
 	}
 	sequence := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
 	for index, spec := range specs {
-		entry := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-		appendStringField(entry, "id", spec.ID)
-		appendStringField(entry, "name", spec.Name)
-		if len(spec.Command) > 0 {
-			command := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
-			for _, argument := range spec.Command {
-				command.Content = append(command.Content, stringNode(argument))
-			}
-			appendNodeField(entry, "command", command)
-		} else {
-			appendStringField(entry, "shell", spec.Shell)
+		requestedCwd := ""
+		if index < len(requested) {
+			requestedCwd = requested[index].Cwd
 		}
-		cwd := spec.Cwd
-		preservedPrevious := false
-		if previousEntry := previousByID[strings.ToLower(strings.TrimSpace(spec.ID))]; previousEntry != nil {
-			if previousCwd := mappingValue(previousEntry, "cwd"); previousCwd != nil &&
-				previousCwd.Kind == yaml.ScalarNode && equivalentWorkingDirectory(previousCwd.Value, spec.Cwd, baseDir) {
-				cwd = previousCwd.Value
-				preservedPrevious = true
-			}
+		written, found := previousByID[strings.ToLower(strings.TrimSpace(spec.ID))]
+		switch {
+		case found && sameAgent(written.spec, spec):
+			sequence.Content = append(sequence.Content, written.entry)
+		case found:
+			sequence.Content = append(sequence.Content,
+				changedAgentEntry(written.entry, written.spec, spec, requestedCwd, writtenDirectories, baseDir))
+		default:
+			sequence.Content = append(sequence.Content,
+				newAgentEntry(spec, workingDirectoryText(spec.Cwd, requestedCwd, writtenDirectories, baseDir)))
 		}
-		if !preservedPrevious && index < len(requested) && equivalentWorkingDirectory(requested[index].Cwd, spec.Cwd, baseDir) {
-			cwd = requested[index].Cwd
-		}
-		if cwd != "" {
-			appendStringField(entry, "cwd", cwd)
-		}
-		if len(spec.Env) > 0 {
-			environment := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-			names := make([]string, 0, len(spec.Env))
-			for name := range spec.Env {
-				names = append(names, name)
-			}
-			sort.Strings(names)
-			for _, name := range names {
-				appendStringField(environment, name, spec.Env[name])
-			}
-			appendNodeField(entry, "env", environment)
-		}
-		if spec.Adapter != "" {
-			appendStringField(entry, "adapter", spec.Adapter)
-		}
-		if spec.Backend != "" {
-			appendStringField(entry, "backend", spec.Backend)
-		}
-		sequence.Content = append(sequence.Content, entry)
 	}
 	return sequence
+}
+
+// newAgentEntry builds the entry of an agent the file does not have.
+func newAgentEntry(spec agent.Spec, cwd string) *yaml.Node {
+	entry := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	appendStringField(entry, "id", spec.ID)
+	appendStringField(entry, "name", spec.Name)
+	if len(spec.Command) > 0 {
+		appendNodeField(entry, "command", commandNode(spec.Command, 0))
+	} else {
+		appendStringField(entry, "shell", spec.Shell)
+	}
+	if cwd != "" {
+		appendStringField(entry, "cwd", cwd)
+	}
+	if len(spec.Env) > 0 {
+		appendNodeField(entry, "env", environmentNode(spec.Env))
+	}
+	if spec.Adapter != "" {
+		appendStringField(entry, "adapter", spec.Adapter)
+	}
+	if spec.Backend != "" {
+		appendStringField(entry, "backend", spec.Backend)
+	}
+	return entry
+}
+
+// changedAgentEntry is a copy of entry, whose agent the file gives as was,
+// with each field that differs in spec written in place. A field that did not
+// change keeps its node, its text and its comments. A backend the entry leaves
+// to the file stays left to it unless the save changes the agent's backend.
+func changedAgentEntry(entry *yaml.Node, was, spec agent.Spec, requestedCwd string, writtenDirectories []string, baseDir string) *yaml.Node {
+	updated := *entry
+	updated.Content = append([]*yaml.Node(nil), entry.Content...)
+	if was.ID != spec.ID {
+		setScalarField(&updated, "id", spec.ID)
+	}
+	if was.Name != spec.Name {
+		setScalarField(&updated, "name", spec.Name)
+	}
+	if !sameStrings(was.Command, spec.Command) || was.Shell != spec.Shell {
+		if len(spec.Command) > 0 {
+			style := yaml.Style(0)
+			if previous := mappingValue(&updated, "command"); previous != nil {
+				style = previous.Style & yaml.FlowStyle
+			}
+			replaceField(&updated, "command", "shell", commandNode(spec.Command, style))
+		} else {
+			replaceField(&updated, "shell", "command", scalarLike(mappingValue(&updated, "shell"), spec.Shell))
+		}
+	}
+	if was.Cwd != spec.Cwd {
+		if text := workingDirectoryText(spec.Cwd, requestedCwd, writtenDirectories, baseDir); text == "" {
+			removeField(&updated, "cwd")
+		} else {
+			setScalarField(&updated, "cwd", text)
+		}
+	}
+	if !sameEnvironment(was.Env, spec.Env) {
+		if len(spec.Env) == 0 {
+			removeField(&updated, "env")
+		} else {
+			setNodeField(&updated, "env", changedEnvironmentNode(mappingValue(&updated, "env"), spec.Env))
+		}
+	}
+	if was.Adapter != spec.Adapter {
+		if spec.Adapter == "" {
+			removeField(&updated, "adapter")
+		} else {
+			setScalarField(&updated, "adapter", spec.Adapter)
+		}
+	}
+	if was.Backend != spec.Backend {
+		setScalarField(&updated, "backend", spec.Backend)
+	}
+	return &updated
+}
+
+// workingDirectoryText is the text written for an agent's resolved working
+// directory: the text the save gave when it names the same directory and is
+// relative, else a relative text another entry of the file already uses for
+// it, else the save's own text. The editors show a working directory
+// resolved, so it comes back absolute, and a relative one was written as an
+// absolute path naming the user's home directory.
+func workingDirectoryText(resolved, requested string, writtenDirectories []string, baseDir string) string {
+	if strings.TrimSpace(resolved) == "" {
+		return ""
+	}
+	if strings.TrimSpace(requested) != "" && !filepath.IsAbs(requested) && equivalentWorkingDirectory(requested, resolved, baseDir) {
+		return requested
+	}
+	for _, written := range writtenDirectories {
+		if strings.TrimSpace(written) != "" && !filepath.IsAbs(written) && equivalentWorkingDirectory(written, resolved, baseDir) {
+			return written
+		}
+	}
+	if equivalentWorkingDirectory(requested, resolved, baseDir) {
+		return requested
+	}
+	return resolved
+}
+
+func commandNode(command []string, style yaml.Style) *yaml.Node {
+	node := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: style}
+	for _, argument := range command {
+		node.Content = append(node.Content, stringNode(argument))
+	}
+	return node
+}
+
+func environmentNode(environment map[string]string) *yaml.Node {
+	node := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	names := make([]string, 0, len(environment))
+	for name := range environment {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		appendStringField(node, name, environment[name])
+	}
+	return node
+}
+
+// changedEnvironmentNode edits the entry's env mapping in place, when it has
+// one, so each variable that did not change keeps its line and comment.
+func changedEnvironmentNode(previous *yaml.Node, environment map[string]string) *yaml.Node {
+	if previous == nil || previous.Kind != yaml.MappingNode {
+		return environmentNode(environment)
+	}
+	updated := *previous
+	updated.Content = nil
+	written := make(map[string]struct{}, len(environment))
+	for index := 0; index+1 < len(previous.Content); index += 2 {
+		name, value := previous.Content[index], previous.Content[index+1]
+		wanted, kept := environment[name.Value]
+		if !kept {
+			continue
+		}
+		written[name.Value] = struct{}{}
+		if value.Kind != yaml.ScalarNode || value.Value != wanted {
+			value = scalarLike(value, wanted)
+		}
+		updated.Content = append(updated.Content, name, value)
+	}
+	added := make([]string, 0, len(environment))
+	for name := range environment {
+		if _, done := written[name]; !done {
+			added = append(added, name)
+		}
+	}
+	sort.Strings(added)
+	for _, name := range added {
+		appendStringField(&updated, name, environment[name])
+	}
+	return &updated
+}
+
+// scalarLike is a string scalar holding value, quoted as previous was and
+// keeping its comments.
+func scalarLike(previous *yaml.Node, value string) *yaml.Node {
+	node := stringNode(value)
+	if previous != nil {
+		if previous.Kind == yaml.ScalarNode {
+			node.Style = previous.Style & (yaml.SingleQuotedStyle | yaml.DoubleQuotedStyle | yaml.LiteralStyle | yaml.FoldedStyle)
+		}
+		node.HeadComment = previous.HeadComment
+		node.LineComment = previous.LineComment
+		node.FootComment = previous.FootComment
+	}
+	return node
+}
+
+func fieldIndex(mapping *yaml.Node, key string) int {
+	for index := 0; index+1 < len(mapping.Content); index += 2 {
+		if mapping.Content[index].Value == key {
+			return index
+		}
+	}
+	return -1
+}
+
+func setScalarField(mapping *yaml.Node, key, value string) {
+	setNodeField(mapping, key, scalarLike(mappingValue(mapping, key), value))
+}
+
+func setNodeField(mapping *yaml.Node, key string, value *yaml.Node) {
+	if index := fieldIndex(mapping, key); index >= 0 {
+		mapping.Content[index+1] = value
+		return
+	}
+	appendNodeField(mapping, key, value)
+}
+
+// replaceField writes value under key, in the place of key or else of
+// alternative, which it removes: a shell agent given a command, or the
+// reverse, keeps its place in the entry.
+func replaceField(mapping *yaml.Node, key, alternative string, value *yaml.Node) {
+	if index := fieldIndex(mapping, key); index >= 0 {
+		mapping.Content[index+1] = value
+		removeField(mapping, alternative)
+		return
+	}
+	if index := fieldIndex(mapping, alternative); index >= 0 {
+		keyNode := *mapping.Content[index]
+		keyNode.Value = key
+		mapping.Content[index] = &keyNode
+		mapping.Content[index+1] = value
+		return
+	}
+	appendNodeField(mapping, key, value)
+}
+
+func removeField(mapping *yaml.Node, key string) {
+	if index := fieldIndex(mapping, key); index >= 0 {
+		mapping.Content = append(mapping.Content[:index:index], mapping.Content[index+2:]...)
+	}
+}
+
+// sameAgents reports whether two agent lists configure the same agents in
+// the same order.
+func sameAgents(left, right []agent.Spec) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if !sameAgent(left[index], right[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameAgent compares two validated specs. An absent and an empty env or
+// command are the same configuration.
+func sameAgent(left, right agent.Spec) bool {
+	return left.ID == right.ID && left.Name == right.Name && left.Shell == right.Shell &&
+		left.Cwd == right.Cwd && left.Adapter == right.Adapter && left.Backend == right.Backend &&
+		sameStrings(left.Command, right.Command) && sameEnvironment(left.Env, right.Env)
+}
+
+func sameStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func sameEnvironment(left, right map[string]string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for name, value := range left {
+		if other, found := right[name]; !found || other != value {
+			return false
+		}
+	}
+	return true
 }
 
 func equivalentWorkingDirectory(candidate, normalized, baseDir string) bool {

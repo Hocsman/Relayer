@@ -230,6 +230,54 @@ func TestAWebSaveKeepsEveryAgentItDidNotChange(t *testing.T) {
 	}
 }
 
+// Renaming one agent from the web interface changes that agent's name line
+// and nothing else in the file: the other agents keep their comments, flow
+// sequences, quoting, and the backend they inherit. Every save rewrote every
+// agent, pinning each to "backend: pty".
+func TestAWebRenameLeavesEverythingElseAsWritten(t *testing.T) {
+	ctrl, configPath := handWrittenController(t, handWrittenAgents)
+	view, err := ctrl.GetAgentProfiles()
+	if err != nil {
+		t.Fatalf("GetAgentProfiles: %v", err)
+	}
+	profiles := interfaceProfiles(view.Profiles)
+	profiles[1]["name"] = "Reviewer, renamed"
+	request := map[string]any{"expectedRevision": view.Revision, "profiles": profiles}
+	if _, err := ctrl.SaveAgentProfiles("", decodedAsTheGatewayDoes[SaveAgentProfilesRequest](t, request)); err != nil {
+		t.Fatalf("SaveAgentProfiles: %v", err)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := strings.Replace(handWrittenAgents, "name: Repository reviewer", "name: Reviewer, renamed", 1); string(after) != want {
+		t.Fatalf("the rename rewrote more than the name:\n%s\nwant:\n%s", after, want)
+	}
+}
+
+// "Restart the agents" with nothing edited writes nothing: the file keeps its
+// bytes and its revision, and the run simply restarts.
+func TestAWebRestartWithNothingEditedWritesNothing(t *testing.T) {
+	ctrl, configPath := handWrittenController(t, handWrittenAgents)
+	view, err := ctrl.GetFullSettings()
+	if err != nil {
+		t.Fatalf("GetFullSettings: %v", err)
+	}
+	request := decodedAsTheGatewayDoes[SaveAgentProfilesAndRestartRequest](t, map[string]any{
+		"expectedRevision": view.Revision,
+		"profiles":         interfaceProfiles(view.Profiles),
+	})
+	ctrl.mu.Lock()
+	err = ctrl.saveRestartConfigurationLocked(request)
+	ctrl.mu.Unlock()
+	if err != nil {
+		t.Fatalf("saveRestartConfigurationLocked: %v", err)
+	}
+	if after, _ := os.ReadFile(configPath); string(after) != handWrittenAgents {
+		t.Fatalf("a restart with nothing edited rewrote the file:\n%s", after)
+	}
+}
+
 // A read-only agent can only be changed in the YAML: a save that leaves it
 // out, sends it as a new agent or with a command, or preserves an agent the
 // file does not have, is refused and writes nothing.

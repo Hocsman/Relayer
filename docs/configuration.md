@@ -182,7 +182,11 @@ included, and a save that leaves it out or sends it as a new agent is refused.
 An agent removed in the editor and added again under the same ID is a new
 agent and inherits nothing from the one it replaces. A save prepared before the
 file was last changed, by hand or by another editor, is refused as stale:
-reload the settings, which show the file as it is now.
+reload the settings, which show the file as it is now. A save rewrites only
+the agents and fields it changes: every other agent keeps its entry as
+written, comments, flow sequences and quoting included, a field an agent
+leaves out, such as a `backend` it inherits from the file, stays left out, and
+a save that changes nothing writes nothing.
 
 A plain GUI save does not mutate running sessions; the guarded restart action
 can apply the saved configuration without closing the application. Webhook and
