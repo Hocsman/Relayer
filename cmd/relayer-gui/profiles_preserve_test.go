@@ -157,6 +157,44 @@ agents:
 	}
 }
 
+// A preset chosen on the desktop and then adjusted is named in the file where
+// it names a profile, with the adjusted field beside it, as on the gateway.
+// The writer was not told which preset was chosen and recognized only one the
+// policy matched exactly, so the profile line and its comments were dropped
+// and every field of the preset was written out.
+func TestADesktopPresetChosenThenAdjustedIsNamedInTheFile(t *testing.T) {
+	document := strings.Replace(handWrittenDesktopAgents, "backend: pty\nagents:\n",
+		"backend: pty\npolicies:\n  # head\n  profile: developer-friendly # base\n  dry_run: false\nagents:\n", 1)
+	application, path := profileTestApp(t, nil)
+	if err := os.Mkdir(filepath.Join(filepath.Dir(path), "ws"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	view, err := application.GetFullSettings()
+	if err != nil {
+		t.Fatalf("GetFullSettings: %v", err)
+	}
+	// The interface's presetSettings: the preset's values, the user's
+	// workspace root and dry-run kept; then one field adjusted.
+	security := view.SecurityPresets["strict"]
+	security.Profile = "strict"
+	security.WorkspaceRoot, security.DryRun = view.Security.WorkspaceRoot, view.Security.DryRun
+	security.RateLimitPerMinute = 5
+	if _, err := application.SaveFullSettings(activeRunIDForTest(application), SaveFullSettingsRequest{
+		ExpectedRevision: view.Revision,
+		Security:         &security,
+	}); err != nil {
+		t.Fatalf("SaveFullSettings: %v", err)
+	}
+	want := strings.Replace(document, "  profile: developer-friendly # base\n  dry_run: false\n",
+		"  profile: strict # base\n  dry_run: false\n  rate_limit_per_minute: 5\n", 1)
+	if after, _ := os.ReadFile(path); string(after) != want {
+		t.Fatalf("the adjusted preset was not named in the file:\n%s\nwant:\n%s", after, want)
+	}
+}
+
 // A settings save that writes nothing leaves the revision the editor holds
 // good, as the gateway's does: the settings are loaded twice, one save sends
 // the tabs back unchanged, and a save prepared from the other load is then

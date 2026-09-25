@@ -383,8 +383,9 @@ rewriting it. A field whose value the file already gives keeps its text: the
 comments and flow lists. A field the save changes is written where it is, or
 added to its section; a workspace root entered in the editor is written as an
 absolute path. When the editor switches to a preset and the file names a
-`profile`, the file names that preset afterwards. A save that changes nothing
-writes nothing.
+`profile`, the file names that preset afterwards, with any field adjusted
+after choosing it written beside it. A save that changes nothing writes
+nothing.
 
 ## Telemetry
 

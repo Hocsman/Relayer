@@ -383,6 +383,76 @@ func TestAWebSecuritySaveKeepsThePolicyAsWritten(t *testing.T) {
 	}
 }
 
+// uiPresetSettings is the interface's presetSettings
+// (frontend/src/components/AgentSettingsPanel.tsx): the preset's values, with
+// the user's workspace root and dry-run kept.
+func uiPresetSettings(current SecuritySettings, presets map[string]SecuritySettings, profile string) SecuritySettings {
+	chosen := presets[profile]
+	chosen.Profile = profile
+	chosen.WorkspaceRoot, chosen.DryRun = current.WorkspaceRoot, current.DryRun
+	return chosen
+}
+
+// A preset chosen in the web interface and then adjusted is named in the file
+// where it names a profile, with the adjusted field beside it, by both writes
+// that carry the security tab. The gateway did not tell the writer which
+// preset was chosen, and the writer recognized only a preset the policy
+// matched exactly, so the profile line and its comments were dropped and
+// every field of the preset was written out.
+func TestAWebPresetChosenThenAdjustedIsNamedInTheFile(t *testing.T) {
+	document := strings.Replace(handWrittenAgents, `policies:
+  profile: custom
+  default_action: ask
+  dry_run: false
+  rate_limit_per_minute: 30
+  max_consecutive_auto_decisions: 5
+  guardrails:
+    block_destructive: true
+    block_outside_workspace: false
+    workspace_root: ./workspace
+    blocked_patterns:
+      - (?i)terraform\s+destroy
+  rules:
+    - name: deny-reviewer-rm
+      match:
+        agent_ids: [reviewer]
+        command_regex: (?i)^rm\b
+      action: deny
+`, `policies:
+  # head
+  profile: developer-friendly # base
+  dry_run: false
+`, 1)
+	want := strings.Replace(document, "  profile: developer-friendly # base\n  dry_run: false\n",
+		"  profile: strict # base\n  dry_run: false\n  rate_limit_per_minute: 5\n", 1)
+	for _, path := range []string{"saveFullSettings", "saveAgentProfilesAndRestart"} {
+		t.Run(path, func(t *testing.T) {
+			ctrl, configPath := handWrittenController(t, document)
+			view, err := ctrl.GetFullSettings()
+			if err != nil {
+				t.Fatalf("GetFullSettings: %v", err)
+			}
+			security := uiPresetSettings(view.Security, view.SecurityPresets, "strict")
+			security.RateLimitPerMinute = 5
+			request := map[string]any{"expectedRevision": view.Revision, "security": security}
+			if path == "saveFullSettings" {
+				_, err = ctrl.SaveFullSettings("", decodedAsTheGatewayDoes[SaveFullSettingsRequest](t, request))
+			} else {
+				request["profiles"] = interfaceProfiles(view.Profiles)
+				ctrl.mu.Lock()
+				err = ctrl.saveRestartConfigurationLocked(decodedAsTheGatewayDoes[SaveAgentProfilesAndRestartRequest](t, request))
+				ctrl.mu.Unlock()
+			}
+			if err != nil {
+				t.Fatalf("%s: %v", path, err)
+			}
+			if after, _ := os.ReadFile(configPath); string(after) != want {
+				t.Fatalf("the adjusted preset was not named in the file:\n%s\nwant:\n%s", after, want)
+			}
+		})
+	}
+}
+
 // `relayer serve --config cfg/config.yaml` keeps the configuration's path
 // relative. Turning the outside-workspace guardrail on with the root left
 // empty makes the configuration's directory the root, as docs/configuration.md

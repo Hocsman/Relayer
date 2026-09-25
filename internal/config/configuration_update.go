@@ -19,9 +19,14 @@ import (
 // FullConfigurationUpdate defines atomic updates to the configuration file.
 // If a pointer/slice is nil, that section remains untouched.
 type FullConfigurationUpdate struct {
-	Agents        []agent.Spec
-	UpdateAgents  bool // Explicit flag indicating Agents slice should replace current agents
-	Policies      *policy.Config
+	Agents       []agent.Spec
+	UpdateAgents bool // Explicit flag indicating Agents slice should replace current agents
+	Policies     *policy.Config
+	// PolicyPreset is the preset the settings editor shows as chosen for
+	// Policies (policy.Settings.Profile). When the editor switched to it and
+	// the file names a profile, the file names this one, whether or not the
+	// fields were then adjusted.
+	PolicyPreset  string
 	Notifications *notify.Config
 }
 
@@ -248,7 +253,7 @@ func replaceFullConfigurationYAML(
 
 	// 2. Update policies if requested: the block is edited, not rebuilt.
 	if update.Policies != nil {
-		node, err := policiesNode(mappingValue(root, "policies"), current.Policies, *update.Policies, baseDir)
+		node, err := policiesNode(mappingValue(root, "policies"), current.Policies, *update.Policies, update.PolicyPreset, baseDir)
 		if err != nil {
 			return nil, fmt.Errorf("could not encode policies: %w", err)
 		}

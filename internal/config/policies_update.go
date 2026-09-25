@@ -32,13 +32,23 @@ func samePolicy(left, right policy.Config) bool {
 // no edit of the block load as requested — a profile whose own rules the
 // requested ones do not end with — the profile is dropped, and failing that
 // the block is rebuilt as before.
-func policiesNode(existing *yaml.Node, current, requested policy.Config, configDir string) (*yaml.Node, error) {
+//
+// chosen is the preset the editor shows as chosen, if the caller has one. A
+// preset the editor switched to is recognized by it, and failing that, as it
+// was before, by the requested policy matching a preset exactly: a preset
+// chosen and then adjusted matched none, so the profile line was dropped with
+// its comments, and every field of the preset was written out.
+func policiesNode(existing *yaml.Node, current, requested policy.Config, chosen, configDir string) (*yaml.Node, error) {
 	if existing != nil && existing.Kind == yaml.MappingNode {
 		var candidates []func(*yaml.Node)
 		keep := func(*yaml.Node) {}
 		if fieldIndex(existing, "profile") >= 0 {
+			shown := policy.SettingsFrom(current).Profile
 			preset := policy.SettingsFrom(requested).Profile
-			if preset != string(policy.ProfileCustom) && preset != policy.SettingsFrom(current).Profile {
+			if profile, err := policy.ParseProfile(chosen); err == nil && profile != policy.ProfileCustom && string(profile) != shown {
+				preset = string(profile)
+			}
+			if preset != string(policy.ProfileCustom) && preset != shown {
 				candidates = append(candidates, func(node *yaml.Node) { setTypedField(node, "profile", "!!str", preset) })
 			}
 			candidates = append(candidates, keep, func(node *yaml.Node) { removeField(node, "profile") })

@@ -68,7 +68,8 @@ func settingsSave(t *testing.T, path string, loaded Result, change func(*policy.
 	if err != nil {
 		t.Fatalf("ApplySettings: %v", err)
 	}
-	updated, _, err := UpdateFullConfiguration(path, loaded.Revision, FullConfigurationUpdate{Policies: &requested})
+	// As both front ends save: with the preset the editor shows as chosen.
+	updated, _, err := UpdateFullConfiguration(path, loaded.Revision, FullConfigurationUpdate{Policies: &requested, PolicyPreset: settings.Profile})
 	if err != nil {
 		t.Fatalf("UpdateFullConfiguration: %v", err)
 	}
@@ -174,6 +175,52 @@ func TestTurningTheWorkspaceGuardrailOnWritesOnlyTheGuardrail(t *testing.T) {
 	}
 	if root := updated.Policies.Guardrails.WorkspaceRoot; root != filepath.Dir(path) {
 		t.Fatalf("workspace root = %q, want the configuration's directory", root)
+	}
+}
+
+// A preset chosen in the editor and then adjusted is still named in the file,
+// with the adjusted field written beside it, and the profile line keeps its
+// comments. Only a preset the policy matches exactly was tried, so choosing
+// "strict" and then setting the rate limit to 5 removed the profile line and
+// its comments, and wrote every field of strict out, the guardrails, the
+// limits and the workspace root as an absolute path.
+func TestAPresetChosenThenAdjustedIsNamedWhereTheFileNamesAProfile(t *testing.T) {
+	document := strings.Replace(handWrittenPoliciesDocument, `policies:
+  profile: custom
+  default_action: ask
+  dry_run: false
+  rate_limit_per_minute: 30
+  max_consecutive_auto_decisions: 5
+  guardrails:
+    block_destructive: true
+    block_outside_workspace: false # not yet
+    workspace_root: ./workspace
+    blocked_patterns:
+      - (?i)terraform\s+destroy
+  rules:
+    - name: deny-reviewer-rm
+      match:
+        agent_ids: [reviewer]
+        command_regex: (?i)^rm\b
+      action: deny
+`, `policies:
+  # head
+  profile: developer-friendly # base
+  dry_run: false
+`, 1)
+	path, loaded := writeHandWrittenPolicies(t, document)
+	settingsSave(t, path, loaded, func(settings *policy.Settings) {
+		// The interface's presetSettings: the preset's values, the user's
+		// workspace root and dry-run kept; then one field adjusted.
+		root, dryRun := settings.WorkspaceRoot, settings.DryRun
+		*settings = policy.PresetSettings()[string(policy.ProfileStrict)]
+		settings.WorkspaceRoot, settings.DryRun = root, dryRun
+		settings.RateLimitPerMinute = 5
+	})
+	want := strings.Replace(document, "  profile: developer-friendly # base\n  dry_run: false\n",
+		"  profile: strict # base\n  dry_run: false\n  rate_limit_per_minute: 5\n", 1)
+	if got := readText(t, path); got != want {
+		t.Fatalf("the adjusted preset was not named in the file:\n%s\nwant:\n%s", got, want)
 	}
 }
 

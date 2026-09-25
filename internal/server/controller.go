@@ -1440,6 +1440,7 @@ func (c *Controller) saveRestartConfigurationLocked(req SaveAgentProfilesAndRest
 			return fmt.Errorf("building policy config: %w", err)
 		}
 		update.Policies = &pol
+		update.PolicyPreset = req.Security.Profile
 	}
 	if req.Notifications != nil {
 		update.Notifications = convertNotificationSettings(req.Notifications)
@@ -1519,6 +1520,7 @@ func (c *Controller) SaveFullSettings(runID string, req SaveFullSettingsRequest)
 			return FullSettingsView{}, fmt.Errorf("building policy config: %w", err)
 		}
 		update.Policies = &pol
+		update.PolicyPreset = req.Security.Profile
 	}
 
 	res, newRev, err := config.UpdateFullConfiguration(c.configPath, cfg.Revision, update)

@@ -226,6 +226,7 @@ func (a *App) writeFullSettingsLocked(request SaveFullSettingsRequest) (current,
 			return config.Result{}, config.Result{}, "", false, err
 		}
 		update.Policies = &policyCfg
+		update.PolicyPreset = request.Security.Profile
 	}
 
 	// 3. Process notification settings if provided
