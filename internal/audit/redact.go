@@ -13,6 +13,9 @@ import (
 
 const redactedValue = "[REDACTED]"
 
+// sensitiveSummary is the whole summary of a sensitive entry in detailed mode.
+const sensitiveSummary = "sensitive_event"
+
 const (
 	maxSummaryRunes       = 512
 	maxMetadataEntries    = 32
@@ -112,7 +115,13 @@ func SanitizeEntry(entry Entry, mode Mode) Entry {
 		return result
 	}
 	if result.Sensitive {
-		result.Summary = "sensitive_event"
+		// A person's decision carries no summary at all, the constant
+		// included: the verifier holds it to that, and a person's answer to a
+		// password prompt, or to any high-risk one, left a journal that failed
+		// its own verification in detailed mode.
+		if result.DecisionBy != DecisionByHuman {
+			result.Summary = sensitiveSummary
+		}
 		return result
 	}
 	if result.Kind == KindBackendError {

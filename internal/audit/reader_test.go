@@ -243,3 +243,31 @@ func TestVerifyJournalValidAndCorrupted(t *testing.T) {
 		t.Fatalf("expected security violation issue, got %#v", leakReport)
 	}
 }
+
+// A journal written before v0.8.9 in detailed mode carries the constant
+// sensitive summary on a person's decision on a sensitive prompt. It is no
+// free text, and such a journal verifies; any other summary on a person's
+// decision is still a violation.
+func TestAJournalWithThePersonsSensitiveConstantVerifies(t *testing.T) {
+	entry := makeTestEntry("run-1", 1, time.Now().UTC())
+	entry.Kind = KindDecision
+	entry.DecisionBy = DecisionByHuman
+	entry.EventID = ""
+	entry.Sensitive = true
+	entry.Summary = sensitiveSummary
+	report, err := VerifyJournal(bytes.NewReader(entriesToJSONL(t, []Entry{entry})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Passed {
+		t.Fatalf("a person's decision with the sensitive constant = %#v, want it to verify", report.Issues)
+	}
+	entry.Summary = "Password for alice:"
+	report, err = VerifyJournal(bytes.NewReader(entriesToJSONL(t, []Entry{entry})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Passed {
+		t.Fatal("a person's decision with free text verified")
+	}
+}

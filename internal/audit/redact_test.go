@@ -677,3 +677,27 @@ func TestSanitizeEntryBoundsReasonAndMetadataOnClosedKinds(t *testing.T) {
 		t.Fatalf("closing the free-form fields removed auditable content: %#v", got)
 	}
 }
+
+// A person's decision on a sensitive prompt, a password or any high-risk one,
+// carries no summary in detailed mode, not even the constant a sensitive
+// entry's summary is replaced with: the verifier rejects a person's decision
+// with any summary, and every such answer left a journal that failed its own
+// verification.
+func TestAPersonsDecisionOnASensitivePromptCarriesNoSummary(t *testing.T) {
+	for _, kind := range []Kind{KindDecision, KindDelivery} {
+		got := SanitizeEntry(Entry{
+			Kind:       kind,
+			DecisionBy: DecisionByHuman,
+			EventType:  adapters.EventCredential,
+			Risk:       adapters.RiskHigh,
+			Summary:    "Password for alice:",
+		}, ModeDetailed)
+		if !got.Sensitive || got.Summary != "" {
+			t.Fatalf("a person's %s on a sensitive prompt = %#v, want sensitive with no summary", kind, got)
+		}
+	}
+	policy := SanitizeEntry(Entry{Kind: KindDecision, DecisionBy: DecisionByPolicy, Risk: adapters.RiskHigh, Summary: "x"}, ModeDetailed)
+	if policy.Summary != sensitiveSummary {
+		t.Fatalf("the policy's decision on a sensitive prompt = %q, want the constant", policy.Summary)
+	}
+}

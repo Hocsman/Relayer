@@ -319,7 +319,10 @@ func VerifyJournal(r io.Reader) (VerificationReport, error) {
 		// attribution the sanitizer deliberately keeps. Neither the key nor the
 		// text is quoted into the message: both come from a file that may not
 		// be ours.
-		if entry.DecisionBy == DecisionByHuman && entry.Summary != "" {
+		// The constant a sensitive entry's summary is replaced with is no free
+		// text: before v0.8.9 the sanitizer wrote it on a person's decision too,
+		// and those journals must still verify.
+		if entry.DecisionBy == DecisionByHuman && entry.Summary != "" && !(entry.Sensitive && entry.Summary == sensitiveSummary) {
 			report.Issues = append(report.Issues, VerificationIssue{
 				Line:    lineNumber,
 				EntryID: entry.EntryID,
