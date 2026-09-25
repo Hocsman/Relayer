@@ -157,6 +157,62 @@ agents:
 	}
 }
 
+// A settings save that writes nothing leaves the revision the editor holds
+// good, as the gateway's does: the settings are loaded twice, one save sends
+// the tabs back unchanged, and a save prepared from the other load is then
+// taken. The desktop issued a new token after every settings save, written or
+// not, so the next save of any editor loaded before it was refused as stale.
+func TestADesktopSaveThatChangesNothingLeavesTheRevisionAsItWas(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		request func(FullSettingsView) SaveFullSettingsRequest
+	}{
+		{"unchanged security", func(view FullSettingsView) SaveFullSettingsRequest {
+			security := view.Security
+			return SaveFullSettingsRequest{ExpectedRevision: view.Revision, Security: &security}
+		}},
+		{"unchanged agents", func(view FullSettingsView) SaveFullSettingsRequest {
+			return SaveFullSettingsRequest{ExpectedRevision: view.Revision, Profiles: interfaceInputs(view.Profiles)}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			application, path := profileTestApp(t, nil)
+			if err := os.Mkdir(filepath.Join(filepath.Dir(path), "ws"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(handWrittenDesktopAgents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			first, err := application.GetFullSettings()
+			if err != nil {
+				t.Fatalf("GetFullSettings: %v", err)
+			}
+			second, err := application.GetFullSettings()
+			if err != nil {
+				t.Fatalf("GetFullSettings: %v", err)
+			}
+			saved, err := application.SaveFullSettings(activeRunIDForTest(application), test.request(second))
+			if err != nil {
+				t.Fatalf("SaveFullSettings: %v", err)
+			}
+			if written, _ := os.ReadFile(path); string(written) != handWrittenDesktopAgents {
+				t.Fatalf("a save that changed nothing wrote the file:\n%s", written)
+			}
+			if saved.Revision != first.Revision {
+				t.Fatalf("a save that changed nothing issued revision %q, want %q", saved.Revision, first.Revision)
+			}
+			inputs := interfaceInputs(first.Profiles)
+			inputs[1].Name = "Reviewer, renamed"
+			if _, err := saveAgentProfilesForTest(application, SaveAgentProfilesRequest{
+				ExpectedRevision: first.Revision,
+				Profiles:         inputs,
+			}); err != nil {
+				t.Fatalf("a save prepared before a save that wrote nothing: %v", err)
+			}
+		})
+	}
+}
+
 // The rule for a file edited while the editor was open, the same as the web
 // gateway's: the save is refused as stale, whatever it sends, so it can neither
 // drop an environment variable added in the YAML nor bring back one removed

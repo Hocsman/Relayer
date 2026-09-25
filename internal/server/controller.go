@@ -1211,6 +1211,22 @@ func (c *Controller) revisionCurrentLocked(expected, fileRevision string) bool {
 	return expected != "" && expected == c.revisionToken && fileRevision == c.revisionHash
 }
 
+// recordSavedRevisionLocked records the revision a save left the file with.
+// A new token is issued only when the save wrote the file: one that changed
+// nothing leaves the revision, and the token every open editor holds stays
+// good. A new token after every save, written or not, made another tab's next
+// save stale although the file had not changed, and the interface then
+// replaced every tab's unsaved edits with the file.
+func (c *Controller) recordSavedRevisionLocked(loaded, saved string) {
+	if saved == loaded && saved == c.revisionHash && c.revisionToken != "" {
+		return
+	}
+	c.revisionHash = saved
+	tokenBytes := make([]byte, 16)
+	_, _ = rand.Read(tokenBytes)
+	c.revisionToken = hex.EncodeToString(tokenBytes)
+}
+
 func (c *Controller) getOrGenerateToken(revisionHash string) string {
 	if c.revisionHash != revisionHash || c.revisionToken == "" {
 		tokenBytes := make([]byte, 16)
@@ -1312,11 +1328,7 @@ func (c *Controller) SaveAgentProfiles(runID string, req SaveAgentProfilesReques
 	if err != nil {
 		return AgentProfilesView{}, err
 	}
-
-	c.revisionHash = newRev
-	tokenBytes := make([]byte, 16)
-	_, _ = rand.Read(tokenBytes)
-	c.revisionToken = hex.EncodeToString(tokenBytes)
+	c.recordSavedRevisionLocked(cfg.Revision, newRev)
 
 	return c.loadAgentProfilesLocked()
 }
@@ -1440,11 +1452,7 @@ func (c *Controller) saveRestartConfigurationLocked(req SaveAgentProfilesAndRest
 	if err != nil {
 		return err
 	}
-
-	c.revisionHash = newRev
-	tokenBytes := make([]byte, 16)
-	_, _ = rand.Read(tokenBytes)
-	c.revisionToken = hex.EncodeToString(tokenBytes)
+	c.recordSavedRevisionLocked(cfg.Revision, newRev)
 	return nil
 }
 
@@ -1517,11 +1525,7 @@ func (c *Controller) SaveFullSettings(runID string, req SaveFullSettingsRequest)
 	if err != nil {
 		return FullSettingsView{}, err
 	}
-
-	c.revisionHash = newRev
-	tokenBytes := make([]byte, 16)
-	_, _ = rand.Read(tokenBytes)
-	c.revisionToken = hex.EncodeToString(tokenBytes)
+	c.recordSavedRevisionLocked(cfg.Revision, newRev)
 
 	// Live reload notifier if notifications were updated
 	if update.Notifications != nil {

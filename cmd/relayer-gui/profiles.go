@@ -176,6 +176,10 @@ func (a *App) saveAgentProfilesLocked(request SaveAgentProfilesRequest) (config.
 		}
 		return config.Result{}, "", errProfilesSave
 	}
+	if revision == current.Revision {
+		// The writer found nothing to write; the token stays good.
+		return updated, a.profileRevisionToken, nil
+	}
 	a.profileRevisionHash = revision
 	a.profileRevisionToken = token
 	return updated, token, nil

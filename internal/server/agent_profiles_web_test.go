@@ -278,6 +278,74 @@ func TestAWebRestartWithNothingEditedWritesNothing(t *testing.T) {
 	}
 }
 
+// A save that writes nothing leaves every other open editor current. Two tabs
+// load the settings; one saves without a change, by each of the gateway's save
+// paths, and the other then saves a rename, which is taken. The gateway issued
+// a new revision token after every save, written or not, so the second tab's
+// save was refused as stale and the interface replaced every tab's unsaved
+// edits with the file. A save that does write still makes the other tab stale.
+func TestASaveThatChangesNothingLeavesEveryOpenEditorCurrent(t *testing.T) {
+	for _, path := range []string{"saveAgentProfiles", "saveFullSettings", "saveAgentProfilesAndRestart", "unchanged security", "a real change"} {
+		t.Run(path, func(t *testing.T) {
+			ctrl, configPath := handWrittenController(t, handWrittenAgents)
+			first, err := ctrl.GetFullSettings()
+			if err != nil {
+				t.Fatalf("GetFullSettings: %v", err)
+			}
+			second, err := ctrl.GetFullSettings()
+			if err != nil {
+				t.Fatalf("GetFullSettings: %v", err)
+			}
+			request := map[string]any{"expectedRevision": second.Revision, "profiles": interfaceProfiles(second.Profiles)}
+			switch path {
+			case "saveAgentProfiles":
+				_, err = ctrl.SaveAgentProfiles("", decodedAsTheGatewayDoes[SaveAgentProfilesRequest](t, request))
+			case "saveFullSettings":
+				_, err = ctrl.SaveFullSettings("", decodedAsTheGatewayDoes[SaveFullSettingsRequest](t, request))
+			case "saveAgentProfilesAndRestart":
+				ctrl.mu.Lock()
+				err = ctrl.saveRestartConfigurationLocked(decodedAsTheGatewayDoes[SaveAgentProfilesAndRestartRequest](t, request))
+				ctrl.mu.Unlock()
+			case "unchanged security":
+				_, err = ctrl.SaveFullSettings("", decodedAsTheGatewayDoes[SaveFullSettingsRequest](t, map[string]any{
+					"expectedRevision": second.Revision, "security": second.Security,
+				}))
+			case "a real change":
+				security := second.Security
+				security.DryRun = true
+				_, err = ctrl.SaveFullSettings("", decodedAsTheGatewayDoes[SaveFullSettingsRequest](t, map[string]any{
+					"expectedRevision": second.Revision, "security": security,
+				}))
+			}
+			if err != nil {
+				t.Fatalf("the second tab's save: %v", err)
+			}
+			written, _ := os.ReadFile(configPath)
+			if changed := string(written) != handWrittenAgents; changed != (path == "a real change") {
+				t.Fatalf("the second tab's save wrote the file: %v", changed)
+			}
+
+			profiles := interfaceProfiles(first.Profiles)
+			profiles[1]["name"] = "Reviewer, renamed"
+			_, err = ctrl.SaveAgentProfiles("", decodedAsTheGatewayDoes[SaveAgentProfilesRequest](t, map[string]any{
+				"expectedRevision": first.Revision, "profiles": profiles,
+			}))
+			if path == "a real change" {
+				if !errors.Is(err, errStaleRevision) {
+					t.Fatalf("a save prepared before another tab's change: %v, want errStaleRevision", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("the first tab's save after a save that wrote nothing: %v", err)
+			}
+			if after, _ := os.ReadFile(configPath); !strings.Contains(string(after), "name: Reviewer, renamed") {
+				t.Fatalf("the first tab's rename is not in the file:\n%s", after)
+			}
+		})
+	}
+}
+
 // A security save from the web interface changes the fields it changed and
 // keeps the rest of the policies block as written: "profile: custom", the
 // guardrail set to false and the relative workspace root, which the block's

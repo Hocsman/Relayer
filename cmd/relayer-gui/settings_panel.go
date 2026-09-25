@@ -254,6 +254,12 @@ func (a *App) writeFullSettingsLocked(request SaveFullSettingsRequest) (current,
 		}
 		return config.Result{}, config.Result{}, "", false, errProfilesSave
 	}
+	if revision == current.Revision {
+		// Nothing was written: the revision, and the token the editor holds for
+		// it, stay good. A new token here made any editor loaded before this
+		// save stale although the file had not changed.
+		return current, updated, a.profileRevisionToken, specsChanged, nil
+	}
 
 	a.profileRevisionHash = revision
 	a.profileRevisionToken = token
