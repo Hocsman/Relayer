@@ -4,6 +4,8 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.9] - 2026-09-25
+
 Patch release that moves the web gateway onto the supervision core the desktop has run on since v0.8.8, and closes the security weaknesses of the gateway's own copy. `relayer serve` supervised prompts with a second state machine that had drifted from the desktop's: it never delivered the policy's automatic decisions, went on writing to agents after its audit journal failed, showed viewers a prompt's raw text, a backend's raw error and a tool call's arguments, sent a typed "y" as the adapter's allow, let any operator connection type into a terminal nobody held, and carried the previous run's prompts and terminals into the run "Save and restart" started. The gateway now decides, delivers, journals, refuses and freezes as the desktop does; keystrokes need the terminal's hand and take their turn with answers and lines; every request that acts on a run names it; and a run ends only once what it was writing is journaled, or is reported failed. A review of the core found faults the desktop had too, among them an uncertain write that left its session writable, a deny held back by a limit that offered Allow, and webhooks that received a password prompt's text; they are fixed for both. The web interface, which the desktop also serves, no longer opens the decision modal over a prompt the policy is answering, and says why each prompt was asked. The TUI keeps its own state machine and is unchanged. Each fix has a test that fails without it; the gateway's tests drive a real gateway through its websocket, against real agent processes. The gaps that remain are listed at the end of "Changed".
 
 ### Security
@@ -1000,7 +1002,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.8...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.9...main
+[0.8.9]: https://github.com/Hocsman/Relayer/compare/v0.8.8...v0.8.9
 [0.8.8]: https://github.com/Hocsman/Relayer/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/Hocsman/Relayer/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/Hocsman/Relayer/compare/v0.8.5...v0.8.6
