@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -55,7 +56,39 @@ type DesktopPlan struct {
 	registry      *adapters.Registry
 	dependencies  backendDependencies
 	initialSize   terminal.Size
+	sizeFor       func(index, count int) terminal.Size
+	recording     bool
 	diagnostics   io.Writer
+}
+
+// runtimeRequest is everything a run is prepared from. The desktop and the
+// gateway prepare theirs through PrepareDesktopRuntime, which fixes the parts
+// they may not choose. The terminal command prepares its own from the command
+// line, so that all three front ends run on the same runtime.
+type runtimeRequest struct {
+	configPath  string
+	diagnostics io.Writer
+	// cli carries the deprecated --pane1 and --pane2 overrides. Only the
+	// terminal command sets it; a desktop run never inherits them.
+	cli options
+	// dependencies are what the run is built on: the executable lookup, the
+	// tmux probe, the journal and the backends. Production passes
+	// productionBackendDependencies, and a test its fakes.
+	dependencies backendDependencies
+	// initialSize is the whole terminal, or the desktop's first viewport. An
+	// agent the lifecycle starts again later starts at it, and so does every
+	// agent at startup unless sizeFor is set.
+	initialSize terminal.Size
+	// sizeFor gives the size agent index of count starts at. The terminal
+	// interface sets it so that each agent starts at the size of its own pane,
+	// and a fast agent's first screen is already drawn for the pane it is shown
+	// in rather than for the whole terminal.
+	sizeFor func(index, count int) terminal.Size
+	// recording says whether the run honours the configuration's recording
+	// block. The terminal interface leaves it off: the recorder reports on the
+	// diagnostics writer the run is given, which for the terminal command is
+	// the screen the interface draws on.
+	recording bool
 }
 
 // DesktopSession is display-safe startup metadata. Shell bodies, environment
@@ -132,11 +165,27 @@ type DesktopRuntime struct {
 // PrepareDesktopRuntime performs every validation that can safely happen
 // before an existing desktop run is stopped.
 func PrepareDesktopRuntime(options DesktopOptions) (*DesktopPlan, error) {
-	configPath := strings.TrimSpace(options.ConfigPath)
+	return prepareRuntime(runtimeRequest{
+		configPath:   options.ConfigPath,
+		diagnostics:  options.Diagnostics,
+		cli:          optionsFromDesktop(),
+		dependencies: productionBackendDependencies(),
+		initialSize:  options.InitialSize,
+		recording:    true,
+	})
+}
+
+// prepareRuntime is PrepareDesktopRuntime for any front end: it reads the
+// configuration and resolves the agents, their adapters and their backends. It
+// opens no journal, backend or agent process; it may create the default
+// configuration when the file is missing, and it probes tmux, in a private
+// throwaway server, when an agent needs it.
+func prepareRuntime(request runtimeRequest) (*DesktopPlan, error) {
+	configPath := strings.TrimSpace(request.configPath)
 	if configPath == "" {
 		configPath = config.DefaultPath
 	}
-	diagnostics := options.Diagnostics
+	diagnostics := request.diagnostics
 	if diagnostics == nil {
 		diagnostics = io.Discard
 	}
@@ -150,7 +199,7 @@ func PrepareDesktopRuntime(options DesktopOptions) (*DesktopPlan, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read the current directory: %w", err)
 	}
-	resolution, err := resolveAgentPlans(configuration, optionsFromDesktop(), workingDirectory)
+	resolution, err := resolveAgentPlans(configuration, request.cli, workingDirectory)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +219,7 @@ func PrepareDesktopRuntime(options DesktopOptions) (*DesktopPlan, error) {
 		return nil, err
 	}
 
-	dependencies := productionBackendDependencies()
+	dependencies := request.dependencies
 	backendSelection, err := resolveAgentBackends(
 		context.Background(), resolution.Specs, dependencies.lookup, dependencies.probeTmux)
 	if err != nil {
@@ -178,11 +227,11 @@ func PrepareDesktopRuntime(options DesktopOptions) (*DesktopPlan, error) {
 	}
 	resolution.Specs = backendSelection.Specs
 	resolution.Warnings = append(resolution.Warnings, backendSelection.Warnings...)
-	size := options.InitialSize.Normalize()
-	if options.InitialSize.Columns <= 0 {
+	size := request.initialSize.Normalize()
+	if request.initialSize.Columns <= 0 {
 		size.Columns = defaultDesktopColumns
 	}
-	if options.InitialSize.Rows <= 0 {
+	if request.initialSize.Rows <= 0 {
 		size.Rows = defaultDesktopRows
 	}
 	return &DesktopPlan{
@@ -194,8 +243,20 @@ func PrepareDesktopRuntime(options DesktopOptions) (*DesktopPlan, error) {
 		registry:      registry,
 		dependencies:  dependencies,
 		initialSize:   size,
+		sizeFor:       request.sizeFor,
+		recording:     request.recording,
 		diagnostics:   diagnostics,
 	}, nil
+}
+
+// sessionSize is the size agent index of count starts at when the run starts:
+// its own pane's when the plan was prepared with sizeFor, the initial size
+// otherwise. The backends normalize whatever they are given.
+func (p *DesktopPlan) sessionSize(index, count int) terminal.Size {
+	if p.sizeFor == nil {
+		return p.initialSize
+	}
+	return p.sizeFor(index, count)
 }
 
 // StartDesktopRuntime starts an immutable preflight plan under the externally
@@ -285,14 +346,17 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 	// Attached before the first session starts, so a transcript never begins
 	// mid-stream. Deliberately non-fatal, unlike the audit journal above: a
 	// recording is observability, and a store that cannot be opened must not be
-	// able to stop an agent from running.
-	runtime.attachRecorder(plan.recordingConfig(), runID, plan.diagnostics)
+	// able to stop an agent from running. A plan prepared without recording
+	// does not even open the store, so its directory is never created.
+	if plan.recording {
+		runtime.attachRecorder(plan.recordingConfig(), runID, plan.diagnostics)
+	}
 
 	// The resolver marks the agents it substituted with the built-in mock. The
 	// session carries that through so the interface can say so per agent
 	// instead of leaving it in a startup log nobody reads.
 	for index, spec := range plan.resolution.Specs {
-		info, startErr := router.Start(ctx, spec, plan.initialSize)
+		info, startErr := router.Start(ctx, spec, plan.sessionSize(index, len(plan.resolution.Specs)))
 		if startErr != nil {
 			_ = auditor.Record(audit.Entry{
 				Kind:       audit.KindBackendError,
@@ -554,6 +618,29 @@ func (r *DesktopRuntime) Resize(ctx context.Context, sessionID string, size term
 	return r.router.Resize(ctx, sessionID, size.Normalize())
 }
 
+// attachCommand builds the client that attaches the person's own terminal to
+// a tmux session. It takes no context from its caller on purpose: tmux builds
+// the client on the context it is given (tmuxbackend/manager.go:1185-1212),
+// and the client lives for as long as the person stays attached, so a per-call
+// deadline would kill it under their hands. The router's context ends only
+// with the run, and a shutdown then ends the client with it.
+func (r *DesktopRuntime) attachCommand(sessionID string) (*exec.Cmd, error) {
+	if err := r.available(); err != nil {
+		return nil, err
+	}
+	return r.router.AttachCommand(r.router.Context(), sessionID)
+}
+
+// resync hands a session back from the person's terminal once they detach: the
+// backend takes its screen in again at the given size, and tmux ends the
+// attach there. Unlike the client, it is bounded by its caller.
+func (r *DesktopRuntime) resync(ctx context.Context, sessionID string, columns, rows int) error {
+	if err := r.available(); err != nil {
+		return err
+	}
+	return r.router.Resync(ctx, sessionID, columns, rows)
+}
+
 func (r *DesktopRuntime) Stop(ctx context.Context, sessionID string) error {
 	if err := r.available(); err != nil {
 		return err
@@ -749,6 +836,16 @@ func (r *DesktopRuntime) available() error {
 // Close stops supervision, closes every owned backend and then closes audit.
 // It is idempotent and preserves the first complete shutdown result.
 func (r *DesktopRuntime) Close(ctx context.Context) error {
+	return r.closeWithCause(ctx, nil)
+}
+
+// closeWithCause is Close for a run that may already have failed before its
+// close: a non-nil cause ends the journal with run_finished failed even when
+// every step of the close succeeds. The cause is the caller's to report, so it
+// is not part of the result, which holds only what went wrong closing. Like
+// Close, only the first call closes; a later one returns the first result and
+// its cause is not journaled.
+func (r *DesktopRuntime) closeWithCause(ctx context.Context, cause error) error {
 	if r == nil {
 		return nil
 	}
@@ -815,7 +912,7 @@ func (r *DesktopRuntime) Close(ctx context.Context) error {
 		result = errors.Join(result, fmt.Errorf("close the session recordings: %w", err))
 	}
 	outcome := audit.OutcomeSucceeded
-	if result != nil {
+	if result != nil || cause != nil {
 		outcome = audit.OutcomeFailed
 	}
 	if err := r.auditor.Record(audit.Entry{
