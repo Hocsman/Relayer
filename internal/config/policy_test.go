@@ -356,8 +356,10 @@ func TestLoadVersionOnePoliciesWithGuardrailsPathAndWorkspace(t *testing.T) {
 		t.Fatalf("Load returned an error: %v", err)
 	}
 
+	// A rooted root loads cleaned, as the settings editor saves it: on
+	// Windows, "\custom\workspace".
 	g := result.Policies.Guardrails
-	if !g.BlockSensitivePaths || !g.BlockOutsideWorkspace || g.WorkspaceRoot != "/custom/workspace" {
+	if !g.BlockSensitivePaths || !g.BlockOutsideWorkspace || g.WorkspaceRoot != filepath.Clean("/custom/workspace") {
 		t.Fatalf("guardrails mismatch: %#v", g)
 	}
 }

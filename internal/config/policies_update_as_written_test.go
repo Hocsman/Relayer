@@ -118,6 +118,47 @@ func TestASecuritySaveWritesAChangedFieldInPlace(t *testing.T) {
 	}
 }
 
+// A workspace root the file gives as an absolute or rooted path keeps its text
+// through a save that does not change it, as a relative one does. The loader
+// kept such a root as written, but the editor's save cleans it, so the two
+// differed and a save that only toggled dry-run rewrote the root: on Windows
+// "/srv/ws" became "\srv\ws", which Linux does not read as that directory, so
+// in a configuration shared with it every path an agent named was outside the
+// workspace; a trailing separator or a forward-slash Windows path was
+// rewritten too.
+func TestASecuritySaveKeepsAnAbsoluteWorkspaceRootAsWritten(t *testing.T) {
+	directory := t.TempDir()
+	workspace := filepath.Join(directory, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct{ name, root string }{
+		{"rooted", "/srv/ws"},
+		{"doubled and trailing separators", "/srv//ws/"},
+		{"forward slashes", filepath.ToSlash(workspace)},
+		{"trailing separator", workspace + string(filepath.Separator)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			document := strings.Replace(handWrittenPoliciesDocument,
+				"    block_outside_workspace: false # not yet\n    workspace_root: ./workspace\n",
+				"    block_outside_workspace: true\n    workspace_root: '"+test.root+"'\n", 1)
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := LoadExisting(path)
+			if err != nil {
+				t.Fatalf("LoadExisting: %v", err)
+			}
+			settingsSave(t, path, loaded, func(settings *policy.Settings) { settings.DryRun = true })
+			want := strings.Replace(document, "  dry_run: false\n", "  dry_run: true\n", 1)
+			if got := readText(t, path); got != want {
+				t.Fatalf("the security save rewrote the workspace root:\n%s\nwant:\n%s", got, want)
+			}
+		})
+	}
+}
+
 // Choosing a preset in the editor names it in the file when the file names a
 // profile, so the file does not keep saying "strict" over a permissive
 // policy; the policy loads back as the editor asked either way.

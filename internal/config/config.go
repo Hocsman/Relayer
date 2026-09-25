@@ -638,9 +638,19 @@ func decodePolicies(configured *configuredPolicies, configDir string) (policy.Co
 	if absolute, err := filepath.Abs(configDir); err == nil {
 		configDir = absolute
 	}
+	//
+	// A rooted root is cleaned, as the settings editor's save cleans it
+	// (policy.ApplySettings): the guardrail cleans it anyway, and a root kept
+	// as written — "/srv/ws" on Windows, a trailing separator — differed from
+	// the one a save computed, so a save that only toggled dry-run rewrote it,
+	// "/srv/ws" as "\srv\ws", which Linux does not read as that directory: in
+	// a configuration shared with it, every path was outside the workspace.
 	if configured.Guardrails != nil && configured.Guardrails.WorkspaceRoot != nil {
-		if root := strings.TrimSpace(*configured.Guardrails.WorkspaceRoot); root != "" && !policy.IsRootedPath(root) {
-			resolved := filepath.Join(configDir, root)
+		if root := strings.TrimSpace(*configured.Guardrails.WorkspaceRoot); root != "" {
+			resolved := filepath.Clean(root)
+			if !policy.IsRootedPath(root) {
+				resolved = filepath.Join(configDir, root)
+			}
 			configured.Guardrails.WorkspaceRoot = &resolved
 		}
 	}
