@@ -606,7 +606,7 @@ func (c *Controller) refreshOutput(rt *app.DesktopRuntime, sup *supervise.Superv
 		return
 	}
 	agent := &c.state.Agents[idx]
-	agent.Output = out
+	agent.Output = withoutHostReports(out)
 	agent.Revision++
 	snap := c.snapshotLocked(sup, idx)
 	c.mu.Unlock()
