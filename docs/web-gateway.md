@@ -239,7 +239,11 @@ path: not the configuration's, the audit journal's, the recordings' or an
 agent's working directory, and not in an error message either.
 
 A viewer does receive every agent's terminal, as it is: the output snapshots
-carry the screen verbatim, to viewers as to operators. What an agent prints —
+carry the screen verbatim, to viewers as to operators, but for the window
+title and current-directory sequences (OSC 0, 1, 2 and 7), which the web
+terminal does not show and which name the host: the pseudo console of every
+Windows session titles the terminal with the agent's full path. Session
+recordings keep them, as they keep everything. What an agent prints —
 a token it echoes, a file it displays, a secret in a command it runs — reaches
 every viewer. Only the prompt cards are redacted: a prompt's summary, its
 tool-call badge and every notification carry bounded, redacted text, and a
