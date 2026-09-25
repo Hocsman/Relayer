@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -63,7 +64,12 @@ func policiesNode(existing *yaml.Node, current, requested policy.Config, chosen,
 			}
 		}
 	}
-	rebuilt, err := yamlNodeFrom(configuredPoliciesFrom(requested))
+	configured := configuredPoliciesFrom(requested)
+	if guardrails := configured.Guardrails; guardrails != nil && guardrails.WorkspaceRoot != nil {
+		root := workspaceRootText(*guardrails.WorkspaceRoot, configDir)
+		guardrails.WorkspaceRoot = &root
+	}
+	rebuilt, err := yamlNodeFrom(configured)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +92,7 @@ func convergePolicies(node *yaml.Node, requested policy.Config, configDir string
 		if samePolicy(decoded, requested) {
 			return true
 		}
-		writePolicyDifferences(node, decoded, requested)
+		writePolicyDifferences(node, decoded, requested, configDir)
 	}
 	return false
 }
@@ -106,7 +112,7 @@ func decodePoliciesNode(node *yaml.Node, configDir string) (policy.Config, error
 	return decoded, nil
 }
 
-func writePolicyDifferences(node *yaml.Node, decoded, requested policy.Config) {
+func writePolicyDifferences(node *yaml.Node, decoded, requested policy.Config, configDir string) {
 	if decoded.DefaultAction != requested.DefaultAction {
 		setTypedField(node, "default_action", "!!str", string(requested.DefaultAction))
 	}
@@ -148,7 +154,7 @@ func writePolicyDifferences(node *yaml.Node, decoded, requested policy.Config) {
 	// round, the default root was pinned as an absolute path, which no longer
 	// follows the file when it is moved.
 	if was.WorkspaceRoot != want.WorkspaceRoot && was.BlockOutsideWorkspace == want.BlockOutsideWorkspace {
-		setTypedField(guardrails(), "workspace_root", "!!str", want.WorkspaceRoot)
+		setTypedField(guardrails(), "workspace_root", "!!str", workspaceRootText(want.WorkspaceRoot, configDir))
 	}
 	if !reflect.DeepEqual(nonEmpty(was.BlockedPatterns), nonEmpty(want.BlockedPatterns)) {
 		section := guardrails()
@@ -174,6 +180,27 @@ func writePolicyDifferences(node *yaml.Node, decoded, requested policy.Config) {
 			}
 		}
 	}
+}
+
+// workspaceRootText is the text a save writes for root: "." when root is the
+// configuration's directory, else root as the editor gave it. That directory
+// is the root the workspace guardrail brings when the file names none, and a
+// file that leaves it implicit still has to name it once the guardrail is off
+// and the editor keeps the root it shows, as it does when switching from
+// strict to permissive. It was written as an absolute path, naming the user's
+// home directory and pinned to where the file was; "." keeps following the
+// file, as the implicit root did.
+func workspaceRootText(root, configDir string) string {
+	if strings.TrimSpace(root) == "" || strings.TrimSpace(configDir) == "" {
+		return root
+	}
+	if absolute, err := filepath.Abs(configDir); err == nil {
+		configDir = absolute
+	}
+	if filepath.Clean(root) == filepath.Clean(configDir) {
+		return "."
+	}
+	return root
 }
 
 // profileRules are the rules of the profile node names, which the loader

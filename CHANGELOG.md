@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+### Fixed
+
+- **Switching from `strict` to `permissive` wrote the workspace root as an absolute path**, on the desktop and the web gateway alike. In a file that names no `workspace_root`, `strict` guards the configuration's directory; `permissive` turns the guardrail off and the editor keeps the root it shows, so the save had to name that root, and wrote it as an absolute path naming the user's home directory, which no longer followed the file when it moved. Turning the workspace guardrail off in a file that spells `strict` out did the same, and so did choosing a preset in a file without a `policies` block, which is written whole. The configuration's directory is now written `workspace_root: .`; a root the file already gives keeps its text, as before. `TestSwitchingFromStrictToPermissiveKeepsTheWorkspaceRootRelative` and `TestAPoliciesBlockWrittenWholeKeepsTheWorkspaceRootRelative` fail against v0.8.10.
+
 ## [0.8.10] - 2026-09-25
 
 Patch release that stops a settings save from losing configuration. A save from the web interface rebuilt every agent from the form alone, so it dropped every agent's environment variables and shell script, and "Restart the agents" did so even when nothing was edited, restarting the agents without their environment; on both front ends a save reformatted agents it had not changed, and the security tab dropped settings it did not show. A save now writes only what was edited, and a save that changes nothing leaves the file as it was.
