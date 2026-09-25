@@ -359,8 +359,38 @@ func contentRevision(data []byte) string {
 	return hex.EncodeToString(digest[:])
 }
 
+// byteOrderMark is the UTF-8 byte-order mark a Windows editor may start a
+// file with.
+var byteOrderMark = []byte("\xef\xbb\xbf")
+
+// unixText is data, a configuration file, as the writers decode it: without
+// a byte-order mark and with Unix line endings. YAML reads a line break the
+// same either way, but the decoder took the file's opening comment for the
+// document's when the lines ended with CRLF, and the encoder then wrote a
+// blank line after it. asWritten restores both.
+func unixText(data []byte) []byte {
+	return bytes.ReplaceAll(bytes.TrimPrefix(data, byteOrderMark), []byte("\r\n"), []byte("\n"))
+}
+
+// asWritten gives rendered, a configuration the writers re-encoded from
+// original, the line endings and the byte-order mark original has. The YAML
+// encoder writes Unix line endings and no mark, so a save in a file written
+// with Windows line endings changed every line of it, not only the edited
+// ones. Line endings are kept only when every line of original ends the same
+// way; a file that mixes them gets Unix line endings, as before.
+func asWritten(original, rendered []byte) []byte {
+	lines := bytes.Count(original, []byte("\n"))
+	if lines > 0 && bytes.Count(original, []byte("\r\n")) == lines {
+		rendered = bytes.ReplaceAll(rendered, []byte("\n"), []byte("\r\n"))
+	}
+	if bytes.HasPrefix(original, byteOrderMark) && !bytes.HasPrefix(rendered, byteOrderMark) {
+		rendered = append(append([]byte(nil), byteOrderMark...), rendered...)
+	}
+	return rendered
+}
+
 func replaceAgentsYAML(data []byte, specs, requested, loaded []agent.Spec, baseDir string) ([]byte, error) {
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder := yaml.NewDecoder(bytes.NewReader(unixText(data)))
 	var document yaml.Node
 	if err := decoder.Decode(&document); err != nil {
 		return nil, errors.New("could not decode configuration")
@@ -391,7 +421,7 @@ func replaceAgentsYAML(data []byte, specs, requested, loaded []agent.Spec, baseD
 	if err := encoder.Close(); err != nil {
 		return nil, errors.New("could not finalize configuration")
 	}
-	return output.Bytes(), nil
+	return asWritten(data, output.Bytes()), nil
 }
 
 // agentSequenceNode returns the agents sequence to write for specs, the

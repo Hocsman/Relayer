@@ -223,7 +223,7 @@ func replaceFullConfigurationYAML(
 	current Result,
 	baseDir string,
 ) ([]byte, error) {
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder := yaml.NewDecoder(bytes.NewReader(unixText(data)))
 	var document yaml.Node
 	if err := decoder.Decode(&document); err != nil {
 		return nil, errors.New("could not decode configuration")
@@ -279,7 +279,7 @@ func replaceFullConfigurationYAML(
 	if err := encoder.Close(); err != nil {
 		return nil, errors.New("could not finalize configuration")
 	}
-	return output.Bytes(), nil
+	return asWritten(data, output.Bytes()), nil
 }
 
 func setMappingField(mapping *yaml.Node, key string, value *yaml.Node) {

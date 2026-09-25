@@ -163,6 +163,41 @@ func TestAReplacedCommandKeepsItsComment(t *testing.T) {
 	}
 }
 
+// A save keeps the file's Windows line endings and its byte-order mark, as a
+// Windows editor may write them: renaming one agent changes that one line.
+// The file was re-encoded with Unix line endings and no mark, so every line
+// of a CRLF file changed with the one that was edited.
+func TestASaveKeepsTheFilesLineEndingsAndByteOrderMark(t *testing.T) {
+	const mark = "\xef\xbb\xbf"
+	windows := func(text string) string { return mark + strings.ReplaceAll(text, "\n", "\r\n") }
+	for _, writer := range []string{"ReplaceAgents", "UpdateFullConfiguration"} {
+		t.Run(writer, func(t *testing.T) {
+			path, _ := writeHandWrittenAgents(t)
+			if err := os.WriteFile(path, []byte(windows(handWrittenAgentsDocument)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := LoadExisting(path)
+			if err != nil {
+				t.Fatalf("LoadExisting: %v", err)
+			}
+			specs := append([]agent.Spec(nil), loaded.Agents...)
+			specs[1].Name = "Reviewer, renamed"
+			if writer == "ReplaceAgents" {
+				_, _, err = ReplaceAgents(path, loaded.Revision, specs)
+			} else {
+				_, _, err = UpdateFullConfiguration(path, loaded.Revision, FullConfigurationUpdate{Agents: specs, UpdateAgents: true})
+			}
+			if err != nil {
+				t.Fatalf("%s: %v", writer, err)
+			}
+			want := windows(strings.Replace(handWrittenAgentsDocument, "name: Repository reviewer", "name: Reviewer, renamed", 1))
+			if got := readText(t, path); got != want {
+				t.Fatalf("the save changed the file's line endings or mark:\n%q\nwant:\n%q", got, want)
+			}
+		})
+	}
+}
+
 // A save that changes nothing writes nothing: the file keeps its bytes and
 // its revision. The web gateway's "Restart the agents" sends every agent
 // even when none was edited, and each one rewrote the whole file.
