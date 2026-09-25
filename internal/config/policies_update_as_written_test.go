@@ -237,3 +237,159 @@ func TestChoosingAPresetNamesItWhereTheFileNamesAProfile(t *testing.T) {
 		t.Fatalf("the file does not name the preset chosen:\n%s", got)
 	}
 }
+
+// handWrittenPoliciesBlock is the policies block of handWrittenPoliciesDocument.
+const handWrittenPoliciesBlock = `policies:
+  profile: custom
+  default_action: ask
+  dry_run: false
+  rate_limit_per_minute: 30
+  max_consecutive_auto_decisions: 5
+  guardrails:
+    block_destructive: true
+    block_outside_workspace: false # not yet
+    workspace_root: ./workspace
+    blocked_patterns:
+      - (?i)terraform\s+destroy
+  rules:
+    - name: deny-reviewer-rm
+      match:
+        agent_ids: [reviewer]
+        command_regex: (?i)^rm\b
+      action: deny
+`
+
+// choosePreset is the interface's presetSettings: the preset's values, with
+// the user's workspace root and dry-run kept.
+func choosePreset(profile policy.Profile) func(*policy.Settings) {
+	return func(settings *policy.Settings) {
+		root, dryRun := settings.WorkspaceRoot, settings.DryRun
+		*settings = policy.PresetSettings()[string(profile)]
+		settings.WorkspaceRoot, settings.DryRun = root, dryRun
+	}
+}
+
+// requireRootFollowsTheFile checks that the file at path names no absolute
+// workspace root: a copy of it in another directory guards that directory.
+func requireRootFollowsTheFile(t *testing.T, path string) {
+	t.Helper()
+	text := readText(t, path)
+	if strings.Contains(text, filepath.Dir(path)) {
+		t.Fatalf("the file names its own directory as an absolute path:\n%s", text)
+	}
+	moved := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(moved, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadExisting(moved)
+	if err != nil {
+		t.Fatalf("LoadExisting: %v", err)
+	}
+	if root := loaded.Policies.Guardrails.WorkspaceRoot; root != filepath.Dir(moved) {
+		t.Fatalf("the moved file's workspace root = %q, want its new directory %q", root, filepath.Dir(moved))
+	}
+}
+
+// Switching from strict to permissive keeps a workspace root the file leaves
+// implicit relative. Strict guards the configuration's directory when the
+// file names no root; permissive turns the guardrail off, and the editor
+// keeps the root it shows, so the save had to write it, and wrote it as an
+// absolute path naming the user's home directory, pinned to where the file
+// was. It is now written ".", which keeps following the file.
+func TestSwitchingFromStrictToPermissiveKeepsTheWorkspaceRootRelative(t *testing.T) {
+	// As the editor writes strict in a file that names no profile.
+	const spelledOut = `policies:
+  default_action: ask
+  max_consecutive_auto_decisions: 1
+  rate_limit_per_minute: 10
+  guardrails:
+    block_destructive: true
+    block_exfiltration: true
+    block_sensitive_paths: true
+    block_outside_workspace: true # the configuration's directory
+`
+	for _, test := range []struct {
+		name, written string
+		change        func(*policy.Settings)
+		want          string
+	}{
+		{
+			name:    "the file names the profile",
+			written: "policies:\n  profile: strict # base\n",
+			change:  choosePreset(policy.ProfilePermissive),
+			want:    "policies:\n  profile: permissive # base\n  guardrails:\n    workspace_root: .\n",
+		},
+		{
+			name:    "the file spells the preset out",
+			written: spelledOut,
+			change:  choosePreset(policy.ProfilePermissive),
+			want: `policies:
+  default_action: allow
+  max_consecutive_auto_decisions: 50
+  rate_limit_per_minute: 120
+  guardrails:
+    block_destructive: true
+    block_exfiltration: true
+    block_sensitive_paths: true
+    block_outside_workspace: false # the configuration's directory
+    workspace_root: .
+`,
+		},
+		{
+			name:    "the workspace guardrail is turned off",
+			written: spelledOut,
+			change:  func(settings *policy.Settings) { settings.BlockOutsideWorkspace = false },
+			want: `policies:
+  default_action: ask
+  max_consecutive_auto_decisions: 1
+  rate_limit_per_minute: 10
+  guardrails:
+    block_destructive: true
+    block_exfiltration: true
+    block_sensitive_paths: true
+    block_outside_workspace: false # the configuration's directory
+    workspace_root: .
+`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			document := strings.Replace(handWrittenPoliciesDocument, handWrittenPoliciesBlock, test.written, 1)
+			if document == handWrittenPoliciesDocument {
+				t.Fatal("the document has no policies block to replace")
+			}
+			path, loaded := writeHandWrittenPolicies(t, document)
+			if root := loaded.Policies.Guardrails.WorkspaceRoot; root != filepath.Dir(path) {
+				t.Fatalf("the workspace root before the save = %q, want the configuration's directory", root)
+			}
+			updated := settingsSave(t, path, loaded, test.change)
+			want := strings.Replace(document, test.written, test.want, 1)
+			if got := readText(t, path); got != want {
+				t.Fatalf("the save did not keep the workspace root relative:\n%s\nwant:\n%s", got, want)
+			}
+			if root := updated.Policies.Guardrails.WorkspaceRoot; root != filepath.Dir(path) {
+				t.Fatalf("workspace root = %q, want the configuration's directory", root)
+			}
+			requireRootFollowsTheFile(t, path)
+		})
+	}
+}
+
+// A policies block the file does not have yet is written whole, and a
+// workspace root that is the configuration's directory is written "." in it
+// too: choosing strict in a file without the block wrote that directory as
+// an absolute path, which the next switch to permissive then kept.
+func TestAPoliciesBlockWrittenWholeKeepsTheWorkspaceRootRelative(t *testing.T) {
+	document := strings.Replace(handWrittenPoliciesDocument, handWrittenPoliciesBlock, "", 1)
+	if document == handWrittenPoliciesDocument {
+		t.Fatal("the document has no policies block to remove")
+	}
+	path, loaded := writeHandWrittenPolicies(t, document)
+	loaded = settingsSave(t, path, loaded, choosePreset(policy.ProfileStrict))
+	if !loaded.Policies.Guardrails.BlockOutsideWorkspace || loaded.Policies.Guardrails.WorkspaceRoot != filepath.Dir(path) {
+		t.Fatalf("strict loads back as %+v, want the configuration's directory guarded", loaded.Policies.Guardrails)
+	}
+	requireRootFollowsTheFile(t, path)
+
+	settingsSave(t, path, loaded, choosePreset(policy.ProfilePermissive))
+	requireRootFollowsTheFile(t, path)
+}

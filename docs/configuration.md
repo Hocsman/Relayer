@@ -394,10 +394,13 @@ rewriting it. A field whose value the file already gives keeps its text: the
 `profile`, a guardrail set to `false`, a relative `workspace_root`, the rules,
 comments and flow lists. A field the save changes is written where it is, or
 added to its section; a workspace root entered in the editor is written as an
-absolute path. When the editor switches to a preset and the file names a
-`profile`, the file names that preset afterwards, with any field adjusted
-after choosing it written beside it. A save that changes nothing writes
-nothing.
+absolute path, except the configuration's directory, the root the workspace
+guardrail defaults to, which is written `.` so that it keeps following the
+file: switching from `strict` to `permissive` in a file that names no root
+writes `workspace_root: .`. When the editor switches to a preset and the file
+names a `profile`, the file names that preset afterwards, with any field
+adjusted after choosing it written beside it. A save that changes nothing
+writes nothing.
 
 ## Telemetry
 
