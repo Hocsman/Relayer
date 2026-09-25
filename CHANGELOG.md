@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.10] - 2026-09-25
+
+Patch release that stops a settings save from losing configuration. A save from the web interface rebuilt every agent from the form alone, so it dropped every agent's environment variables and shell script, and "Restart the agents" did so even when nothing was edited, restarting the agents without their environment; on both front ends a save reformatted agents it had not changed, and the security tab dropped settings it did not show. A save now writes only what was edited, and a save that changes nothing leaves the file as it was.
+
 ### Fixed
 
 - **A save from the web interface lost every agent's environment variables and shell script**, and has since `relayer serve` was introduced in v0.5.0. The gateway rebuilt each agent from the form alone, and the form carries neither: every save of the Agents tab wrote each agent back without its `env`, API keys included, and turned a `shell:` agent into `command: [<id>]`, a program named after the agent. It also wrote the catalogue's adapter over a blank `adapter`. "Restart the agents" sends the agents even when nothing was edited, so a plain restart did the same, and the agents came back without their environment. The gateway now shows and saves agents through the desktop's resolver, now shared (`internal/agentprofile`), as `docs/configuration.md` always said it did:
@@ -1020,7 +1024,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.9...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.10...main
+[0.8.10]: https://github.com/Hocsman/Relayer/compare/v0.8.9...v0.8.10
 [0.8.9]: https://github.com/Hocsman/Relayer/compare/v0.8.8...v0.8.9
 [0.8.8]: https://github.com/Hocsman/Relayer/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/Hocsman/Relayer/compare/v0.8.6...v0.8.7
