@@ -383,6 +383,45 @@ func TestAWebSecuritySaveKeepsThePolicyAsWritten(t *testing.T) {
 	}
 }
 
+// `relayer serve --config cfg/config.yaml` keeps the configuration's path
+// relative. Turning the outside-workspace guardrail on with the root left
+// empty makes the configuration's directory the root, as docs/configuration.md
+// says, and writes only the guardrail. The gateway resolved that relative
+// directory against itself and wrote "workspace_root: <cwd>\cfg\cfg", a
+// directory that does not exist, so every path was outside the workspace.
+func TestAWebGuardrailOnARelativelyAddressedConfigurationGuardsItsDirectory(t *testing.T) {
+	document := strings.Replace(handWrittenAgents, "    workspace_root: ./workspace\n", "", 1)
+	_, absolutePath := handWrittenController(t, document)
+	t.Chdir(filepath.Dir(filepath.Dir(absolutePath)))
+	ctrl, err := NewController(filepath.Join("cfg", "config.yaml"), io.Discard)
+	if err != nil {
+		t.Fatalf("NewController: %v", err)
+	}
+	view, err := ctrl.GetFullSettings()
+	if err != nil {
+		t.Fatalf("GetFullSettings: %v", err)
+	}
+	security := view.Security
+	security.BlockOutsideWorkspace = true
+	security.WorkspaceRoot = ""
+	if _, err := ctrl.SaveFullSettings("", decodedAsTheGatewayDoes[SaveFullSettingsRequest](t, map[string]any{
+		"expectedRevision": view.Revision, "security": security,
+	})); err != nil {
+		t.Fatalf("SaveFullSettings: %v", err)
+	}
+	loaded, err := config.LoadExisting(absolutePath)
+	if err != nil {
+		t.Fatalf("LoadExisting: %v", err)
+	}
+	if got, want := loaded.Policies.Guardrails.WorkspaceRoot, filepath.Dir(absolutePath); got != want {
+		t.Fatalf("workspace root = %q, want the configuration's directory %q", got, want)
+	}
+	want := strings.Replace(document, "    block_outside_workspace: false\n", "    block_outside_workspace: true\n", 1)
+	if after, _ := os.ReadFile(absolutePath); string(after) != want {
+		t.Fatalf("the save wrote more than the guardrail:\n%s\nwant:\n%s", after, want)
+	}
+}
+
 // A read-only agent can only be changed in the YAML: a save that leaves it
 // out, sends it as a new agent or with a command, or preserves an agent the
 // file does not have, is refused and writes nothing.

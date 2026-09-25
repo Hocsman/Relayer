@@ -127,12 +127,16 @@ func ApplySettings(existing Config, settings Settings, configDir string) (Config
 // existing root when the guardrail needs one, and falls back to the
 // configuration's directory only then; with the guardrail off, clearing the
 // field clears the root.
+//
+// The fallback is the directory itself, ".", resolved like any relative root.
+// It was configDir, which the gateway passes as given on its command line: a
+// relative "cfg" was then resolved against itself, as "<cwd>/cfg/cfg".
 func workspaceRoot(settings Settings, existing Config, configDir string) (string, error) {
 	root := strings.TrimSpace(settings.WorkspaceRoot)
 	if root == "" && settings.BlockOutsideWorkspace {
 		root = strings.TrimSpace(existing.Guardrails.WorkspaceRoot)
 		if root == "" {
-			root = configDir
+			root = "."
 		}
 	}
 	if root == "" {

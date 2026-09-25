@@ -115,6 +115,23 @@ func TestWorkspaceRootIsAbsoluteAndOnlySetWhenNeeded(t *testing.T) {
 	}
 }
 
+// The default workspace root of a configuration addressed by a relative path,
+// as `relayer serve --config cfg/config.yaml` addresses it, is that
+// configuration's directory. The directory was taken as the root and then
+// resolved against itself, so turning the guardrail on with the root left
+// empty wrote "<cwd>/cfg/cfg", a directory that does not exist, and every
+// path an agent named was outside the workspace.
+func TestTheDefaultWorkspaceRootOfARelativelyAddressedConfigurationIsItsDirectory(t *testing.T) {
+	saved := saveWith(t, DefaultConfig(), "cfg", func(settings *Settings) { settings.BlockOutsideWorkspace = true })
+	want, err := filepath.Abs("cfg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Guardrails.WorkspaceRoot != want {
+		t.Fatalf("default workspace root = %q, want %q", saved.Guardrails.WorkspaceRoot, want)
+	}
+}
+
 func TestExplicitPresetSwitchReplacesRulesButKeepsBlockedPatterns(t *testing.T) {
 	custom := DefaultConfig()
 	custom.Rules = []Rule{{Name: "deny-all-risky", Match: Match{RiskLevels: []adapters.RiskLevel{adapters.RiskHigh}}, Action: ActionDeny}}
