@@ -451,6 +451,15 @@ notifications:
   - `generic`: Standard JSON payload.
   - `min_severity`: `info` (all events), `warning` (prompts needing review), or `critical` (guardrail intercepts and policy blocks).
 
+A save of the settings editor's notifications tab edits this block rather
+than rewriting it, as it does the agents. A field that behaves as the file's
+keeps its text: a webhook without `format`, `min_severity` or `timeout` is the
+`generic`, `warning`, `5s` one the editor shows. A field the save changes is
+written where it is, or added to its section; a webhook the save did not
+change keeps its entry as written, and a changed one keeps every field it did
+not change, with its comments and the style of its headers. A save that
+changes nothing writes nothing.
+
 ## Audit
 
 ```yaml

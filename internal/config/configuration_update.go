@@ -95,10 +95,12 @@ func UpdateFullConfiguration(path, expectedRevision string, update FullConfigura
 	}
 
 	// Validate notifications if updated
+	effectiveNotifications := current.Notifications
 	if update.Notifications != nil {
 		if err := notify.Validate(*update.Notifications); err != nil {
 			return Result{}, "", fmt.Errorf("invalid notifications configuration: %w", err)
 		}
+		effectiveNotifications = *update.Notifications
 	}
 
 	// Agents the file already has are not written again: the web gateway
@@ -113,6 +115,11 @@ func UpdateFullConfiguration(path, expectedRevision string, update FullConfigura
 	// security tab whenever it was touched, changed back or not.
 	if update.Policies != nil && samePolicy(*update.Policies, current.Policies) {
 		update.Policies = nil
+	}
+	// And notifications that behave as the file's: an editor sends them
+	// back with the defaults filled in, and each save rewrote the block.
+	if update.Notifications != nil && sameNotifications(*update.Notifications, current.Notifications) {
+		update.Notifications = nil
 	}
 	if !update.UpdateAgents && update.Policies == nil && update.Notifications == nil {
 		return current, current.Revision, nil
@@ -164,6 +171,9 @@ func UpdateFullConfiguration(path, expectedRevision string, update FullConfigura
 	}
 	if !samePolicy(candidate.Policies, effectivePolicies) {
 		return Result{}, "", errors.New("the written policies would differ from the requested ones")
+	}
+	if !sameNotifications(candidate.Notifications, effectiveNotifications) {
+		return Result{}, "", errors.New("the written notifications would differ from the requested ones")
 	}
 
 	latest, _, err := readRegularConfiguration(absolutePath)
@@ -260,10 +270,9 @@ func replaceFullConfigurationYAML(
 		setMappingField(root, "policies", node)
 	}
 
-	// 3. Update notifications if requested
+	// 3. Update notifications if requested: the block is edited, not rebuilt.
 	if update.Notifications != nil {
-		configured := configuredNotificationsPointer(*update.Notifications)
-		node, err := yamlNodeFrom(configured)
+		node, err := notificationsNode(mappingValue(root, "notifications"), current.Notifications, *update.Notifications)
 		if err != nil {
 			return nil, fmt.Errorf("could not encode notifications: %w", err)
 		}
