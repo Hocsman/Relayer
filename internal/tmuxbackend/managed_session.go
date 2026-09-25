@@ -34,17 +34,19 @@ type managedSession struct {
 	forceCleanup bool
 	// outputSequence lets the status monitor allow the FIFO reader one quiet
 	// interval to consume final bytes before lifecycle cleanup.
-	outputSequence   uint64
-	lastEmittedEvent string
-	eventSequence    uint64
-	attachActive     bool
-	attachCancel     context.CancelFunc
-	attachStop       func() bool
-	exitEmitted      bool
-	terminalEvent    *adapters.Event
-	captureDisabled  bool
-	appliedSize      terminal.Size
-	sizeKnown        bool
+	outputSequence    uint64
+	lastEmittedEvent  string
+	priorEmittedEvent string // published before lastEmittedEvent, see claimWithdrawal
+	withdrawnEvent    string // the last withdrawal claimed, see claimWithdrawal
+	eventSequence     uint64
+	attachActive      bool
+	attachCancel      context.CancelFunc
+	attachStop        func() bool
+	exitEmitted       bool
+	terminalEvent     *adapters.Event
+	captureDisabled   bool
+	appliedSize       terminal.Size
+	sizeKnown         bool
 
 	doneOnce      sync.Once
 	transportOnce sync.Once
@@ -151,7 +153,48 @@ func (s *managedSession) claimAdapterEvent(event adapters.Event) bool {
 	if !s.state.Running || s.exitEmitted || s.attachActive || s.lastEmittedEvent == event.ID {
 		return false
 	}
+	s.priorEmittedEvent = s.lastEmittedEvent
 	s.lastEmittedEvent = event.ID
+	return true
+}
+
+// claimWithdrawal reports whether the withdrawal of occurrence id is to be
+// published, and claims it if so.
+//
+// Only a published occurrence is withdrawn. One held back while the real
+// terminal was attached (claimAdapterEvent) is unknown to the consumer, which
+// journals every withdrawal it is told of and would record one for a prompt
+// it never saw. Nothing else is published while a prompt is pending, so the
+// Processor's pending prompt, when it was published, is the last one. The live
+// output and a resync both claim only once the Processor has let go of it,
+// though, and in between the other can publish the prompt that follows: the
+// output the agent's next question, a resync the question it finds on the
+// screen. The prompt published before the last one therefore counts too.
+//
+// It is withdrawn once, although the live output and a resync can both find
+// it gone: the output reader does not take interactionMu, so it can withdraw
+// the prompt a resync has just read as pending, and each would otherwise
+// publish its own withdrawal of it. A session whose process has ended
+// withdraws nothing: its exit ends every prompt it had.
+//
+// Two prompts published and one withdrawal are all it remembers, which is
+// enough: a claim comes within moments of the Processor letting go of its
+// prompt. Forgetting that the prompt was published would take two more
+// publications in that time, and forgetting that its withdrawal was claimed,
+// another prompt's publication and withdrawal.
+func (s *managedSession) claimWithdrawal(id string) bool {
+	if id == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.state.Running || s.exitEmitted || s.withdrawnEvent == id {
+		return false
+	}
+	if s.lastEmittedEvent != id && s.priorEmittedEvent != id {
+		return false
+	}
+	s.withdrawnEvent = id
 	return true
 }
 

@@ -135,7 +135,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		commands = append(commands, m.handleActionableEvent(observed))
 	case session.AdapterEventWithdrawn:
-		commands = append(commands, m.applyWithdrawnEvent(msg.Event.Clone()))
+		commands = append(commands, m.applyWithdrawnEvent(msg.Event.Clone(), msg.Reason))
 	case agentLifecycleMsg:
 		if command := m.applyLifecycleResult(msg); command != nil {
 			commands = append(commands, command)
@@ -559,13 +559,22 @@ func (m *Model) queueHumanEvent(event adapters.Event, evaluation policy.Evaluati
 // Only the occurrence actually on offer is taken back. A withdrawal that
 // arrives for one the operator has already answered, or after a later question
 // replaced it, has nothing left to stop asking.
-func (m *Model) applyWithdrawnEvent(event adapters.Event) tea.Cmd {
+//
+// A tmux resync reports the prompt it no longer finds as a withdrawal too,
+// with reason session.WithdrawnByResync, and that is journaled as the resync's
+// own reconciliation is. The withdrawal and the resync's result reach Update
+// in either order, and whichever comes first unblocks the pane and journals
+// it; the reason is the same either way.
+func (m *Model) applyWithdrawnEvent(event adapters.Event, reason string) tea.Cmd {
 	paneIndex := m.paneIndex(event.SessionID)
 	if paneIndex < 0 {
 		return nil
 	}
 	if !m.panes[paneIndex].blocked || m.panes[paneIndex].prompt.ID != event.ID {
 		return nil
+	}
+	if reason == session.WithdrawnByResync {
+		return m.reconcileEvent(event.SessionID, nil)
 	}
 	return m.reconcileEventWithReason(event.SessionID, nil, "agent_withdrew_occurrence")
 }

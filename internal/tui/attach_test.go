@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
+	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/policy"
 	"github.com/Hocsman/Relayer/internal/session"
 	tea "github.com/charmbracelet/bubbletea"
@@ -416,6 +417,102 @@ func TestAttachResyncClearsPromptEventsAnsweredInsideTmux(t *testing.T) {
 	application, _ = updateModel(t, application, stale)
 	if application.panes[0].blocked || application.inputTarget != "" {
 		t.Fatal("late stale prompt reblocked the pane")
+	}
+
+	// A prompt the pane shows and that was answered inside tmux. The resync
+	// withdraws it on the event stream, with the resync's reason, and reports
+	// the pane's pending state in its result, and Update can see the two in
+	// either order. Either order journals the one withdrawal, as the
+	// resync's: which one came first used to decide the reason.
+	for _, order := range []struct {
+		name            string
+		withdrawalFirst bool
+	}{
+		{name: "withdrawal first", withdrawalFirst: true},
+		{name: "resync result first", withdrawalFirst: false},
+	} {
+		t.Run(order.name, func(t *testing.T) {
+			events := make(chan session.Event, 2)
+			backend := newFakeAttachBackend(events)
+			t.Cleanup(backend.cancel)
+			sink := &tuiAuditSink{}
+			application := newAuditedModel(
+				t,
+				backend,
+				policy.Config{DefaultAction: policy.ActionAsk},
+				[]Pane{{ID: "tmux-agent", Name: "Tmux Agent", Backend: "tmux", Adapter: adapters.GenericID}},
+				sink,
+			)
+			application.execProcess = func(_ *exec.Cmd, callback tea.ExecCallback) tea.Cmd {
+				return func() tea.Msg { return callback(nil) }
+			}
+
+			shown := testAdapterEvent("tmux-agent", "confirmation", "answered inside tmux", false)
+			backend.mu.Lock()
+			pending := shown.Event.Clone()
+			backend.pendingEvent = &pending
+			backend.resyncEvent = session.AdapterEventWithdrawn{
+				Event:  shown.Event.Clone(),
+				Reason: session.WithdrawnByResync,
+			}
+			backend.mu.Unlock()
+			application, _ = updateModel(t, application, shown)
+			if !application.panes[0].blocked || application.inputTarget != "tmux-agent" {
+				t.Fatal("the prompt was not put to the operator")
+			}
+
+			// Enter answers the prompt on offer, so the key map never attaches
+			// over it: the attach is begun as Enter on an idle pane begins it.
+			attach := application.beginAttach(0)
+			application, resync := updateModel(t, application, executeCommand(t, attach))
+			resynced := executeCommand(t, resync)
+			var withdrawal session.Event
+			select {
+			case withdrawal = <-events:
+			default:
+				t.Fatal("the resync withdrew nothing")
+			}
+			first, second := tea.Msg(withdrawal), resynced
+			if !order.withdrawalFirst {
+				first, second = resynced, tea.Msg(withdrawal)
+			}
+			journaled := func(kind audit.Kind) []audit.Entry {
+				var kept []audit.Entry
+				for _, entry := range sink.entries(t) {
+					if entry.Kind == kind {
+						kept = append(kept, entry)
+					}
+				}
+				return kept
+			}
+			assertWithdrawnOnceByTheResync := func() {
+				t.Helper()
+				withdrawals := journaled(audit.KindEventWithdrawn)
+				if len(withdrawals) != 1 || withdrawals[0].EventID != shown.Event.ID ||
+					withdrawals[0].Reason != "resync_withdrew_occurrence" {
+					t.Fatalf("withdrawals = %#v, want the shown prompt's, once, as the resync's", withdrawals)
+				}
+			}
+
+			// Whichever comes first takes the prompt back on its own; the
+			// second finds nothing left on offer.
+			application, _ = updateModel(t, application, first)
+			if application.panes[0].blocked || application.inputTarget != "" {
+				t.Fatalf("the first to arrive left the answered prompt on offer: blocked=%t target=%q",
+					application.panes[0].blocked, application.inputTarget)
+			}
+			assertWithdrawnOnceByTheResync()
+
+			application, _ = updateModel(t, application, second)
+			if application.panes[0].blocked || application.inputTarget != "" || application.attachPending != "" {
+				t.Fatalf("the answered prompt survived the resync: blocked=%t target=%q attach=%q",
+					application.panes[0].blocked, application.inputTarget, application.attachPending)
+			}
+			assertWithdrawnOnceByTheResync()
+			if finishes := journaled(audit.KindAttachFinished); len(finishes) != 1 || finishes[0].Reason != "detach_resynced" {
+				t.Fatalf("attach finishes = %#v", finishes)
+			}
+		})
 	}
 }
 

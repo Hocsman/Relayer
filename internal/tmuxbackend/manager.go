@@ -67,6 +67,14 @@ type Manager struct {
 	closeGate      chan struct{}
 	secretBufferMu sync.Mutex
 	pendingBuffers map[string]struct{}
+
+	// resyncRead and resyncReconciled are nil outside tests. Resync calls the
+	// first once it has read the pending prompt, still under interactionMu,
+	// and the second once it has reconciled, before it claims a withdrawal.
+	// The output reader and the monitor bear on what a resync withdraws only
+	// when they run there, and nothing else lets a test stop a resync there.
+	resyncRead       func()
+	resyncReconciled func()
 }
 
 var _ terminal.Backend = (*Manager)(nil)
@@ -453,7 +461,11 @@ func (m *Manager) Start(ctx context.Context, spec agent.Spec, size terminal.Size
 				}
 			},
 			OnEventWithdrawn: func(event adapters.Event) {
-				m.emit(session.AdapterEventWithdrawn{Event: event.Clone()}, true)
+				// Even while attached, but only for a prompt that was
+				// published: see claimWithdrawal.
+				if managed.claimWithdrawal(event.ID) {
+					m.emit(session.AdapterEventWithdrawn{Event: event.Clone()}, true)
+				}
 			},
 			OnRawChunk: func(at time.Time, data []byte) {
 				if recorder != nil {
@@ -1220,9 +1232,12 @@ func (m *Manager) AttachCommand(ctx context.Context, id string) (*exec.Cmd, erro
 	return command, nil
 }
 
-// Resync suppresses live adapter events while the real terminal is attached,
-// then atomically reconciles the Processor against the current active pane
-// line. Event occurrence IDs provide deduplication across output and snapshots.
+// Resync ends a native attachment, during which live adapter events are held
+// back, and reconciles the Processor against the pane's current screen. The
+// published prompt that screen no longer shows is withdrawn, with
+// session.WithdrawnByResync unless the live output withdrew it first, and then
+// the prompt the Processor holds is published unless it already was. Event
+// occurrence IDs provide deduplication across output and snapshots.
 func (m *Manager) Resync(ctx context.Context, id string, columns, rows int) error {
 	operationCtx, finishOperation, err := m.beginOperation(ctx)
 	if err != nil {
@@ -1259,14 +1274,35 @@ func (m *Manager) Resync(ctx context.Context, id string, columns, rows int) erro
 		}
 		currentSnapshot = snapshot
 	}
+	// The reconciliation's result never names the prompt it dropped, and one
+	// of its paths returns nil while a prompt stays pending. What the
+	// Processor holds is therefore read on either side of it.
 	target.interactionMu.Lock()
-	pending, _, err := target.processor.ReconcileSnapshot(raw)
+	before := target.processor.Pending()
+	if m.resyncRead != nil {
+		m.resyncRead()
+	}
+	_, _, err = target.processor.ReconcileSnapshot(raw)
+	after := target.processor.Pending()
 	target.interactionMu.Unlock()
 	if err != nil {
 		return err
 	}
-	if pending != nil && target.claimAdapterEvent(*pending) {
-		m.emit(session.AdapterEvent{Event: pending.Clone()}, true)
+	if m.resyncReconciled != nil {
+		m.resyncReconciled()
+	}
+	// A published prompt the screen no longer shows was most likely answered
+	// inside tmux. Nothing else tells the consumer, which kept offering an
+	// answer to a question the agent no longer asked. It goes before the
+	// prompt that replaced it: a consumer answers a session's oldest prompt
+	// first, and would otherwise put the stale one ahead of it.
+	if before != nil && (after == nil || after.ID != before.ID) && target.claimWithdrawal(before.ID) {
+		m.emit(session.AdapterEventWithdrawn{Event: before.Clone(), Reason: session.WithdrawnByResync}, true)
+	}
+	// A prompt held back during the attachment is reported by nothing else:
+	// the live path does not detect again while one is pending.
+	if after != nil && target.claimAdapterEvent(*after) {
+		m.emit(session.AdapterEvent{Event: after.Clone()}, true)
 	}
 	if currentSnapshot.ID != "" && !currentSnapshot.Running {
 		m.finishSession(target, currentSnapshot)
