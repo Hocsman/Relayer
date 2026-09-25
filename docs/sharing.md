@@ -56,9 +56,13 @@ offers no answer, anybody's answer to it is refused, the policy's included,
 and it stays shown, reason `typed_at_terminal`, until the agent takes it back
 or its process ends. Its holder answers it by typing, as they may have
 already. An answer given to it from a card used to be typed into whatever the
-agent asked next. Any keystroke counts, including the focus and mouse reports a
-browser terminal sends by itself to an agent that asked for them: clicking into
-the terminal of such an agent is enough to make its prompts the terminal's.
+agent asked next. Any keystroke counts, a mouse report included: clicking into
+the terminal of an agent that asked for mouse reports is enough to make its
+prompts the terminal's. The terminal's own replies do not count: a focus
+report, a cursor position report or the terminal's identification reaches the
+agent but leaves its prompts answerable. The ConPTY of every Windows session
+asks for focus reports in its first bytes, so taking a terminal there always
+sends one.
 
 A terminal nobody holds takes no keystrokes, from anybody: an operator takes
 the terminal first, which the bundled interface does when you open the

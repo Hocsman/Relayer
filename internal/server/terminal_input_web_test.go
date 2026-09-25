@@ -189,3 +189,50 @@ func TestAWebKeystrokeIsRefusedWhenTheSessionCannotTakeAWrite(t *testing.T) {
 		})
 	}
 }
+
+// Taking a terminal on Windows sends a focus report: the ConPTY of every
+// session asks the browser terminal for focus reports in its first bytes, and
+// the terminal reports its focus as soon as it takes it. The gateway took that
+// report for typing, and every prompt shown on the terminal became the
+// terminal's, answerable only there, although nobody had typed. A focus report
+// still reaches the agent, but leaves the prompt answerable; what the holder
+// types does not.
+func TestAWebTerminalsFocusReportLeavesThePromptAnswerable(t *testing.T) {
+	g := startWebRun(t, webRun{
+		agents: []webAgent{{id: "web-generic", mode: webAgentGeneric, adapter: "generic"}},
+	})
+	alice := dialSharedGateway(t, g.serve(), "opAlice")
+	g.awaitScreen("web-generic", "agent ready", 30*time.Second)
+	runID := g.runID()
+	prompt := g.awaitPending("web-generic", 30*time.Second)
+	alice.mustCall("setInteractiveSession", map[string]any{"runID": runID, "sessionID": "web-generic", "active": true}, nil)
+
+	alice.sendKeys("web-generic", "\x1b[I")
+	if err := alice.typeKeys(runID, "web-generic", "\x1b[O\x1b[I"); err != nil {
+		t.Fatalf("the holder's focus reports were refused: %v", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	for _, shown := range g.pending("web-generic") {
+		if shown.ID == prompt.ID && shown.Evaluation.Reason == supervise.ReasonTypedAtTerminal {
+			t.Fatalf("a focus report made the prompt the terminal's: %+v", shown.Evaluation)
+		}
+	}
+
+	if err := alice.typeKeys(runID, "web-generic", "n"); err != nil {
+		t.Fatalf("the holder's keystroke was refused: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		typedOver := false
+		for _, shown := range g.pending("web-generic") {
+			typedOver = typedOver || (shown.ID == prompt.ID && shown.Evaluation.Reason == supervise.ReasonTypedAtTerminal)
+		}
+		if typedOver {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("a keystroke left the prompt answerable: %+v", g.pending("web-generic"))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}

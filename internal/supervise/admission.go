@@ -43,6 +43,24 @@ func (s *Supervisor) AdmitRun() (release func(), admitted bool) {
 // the automatic answer that waited for it: neither Admit nor release calls
 // the sink on the caller's goroutine. A drain waits for every admitted write.
 func (s *Supervisor) Admit(sessionID, connID string) (release func(), err error) {
+	return s.admitRaw(sessionID, connID, true)
+}
+
+// AdmitReport admits a raw write that is only the terminal's own replies,
+// which IsTerminalReport recognises: a focus report, a cursor position report,
+// the terminal's identification. It is admitted as Admit admits keystrokes, in
+// the same order and through the same write slot, but it is not typing: the
+// prompts of the session stay answerable, and it answers nothing for the
+// repeat guard. A browser terminal sends such replies by itself: the ConPTY
+// of every Windows session asks for focus reports in its first bytes, so
+// taking an agent's terminal sent a focus report at once, and every prompt
+// shown on it became the terminal's although nobody had typed.
+func (s *Supervisor) AdmitReport(sessionID, connID string) (release func(), err error) {
+	return s.admitRaw(sessionID, connID, false)
+}
+
+// admitRaw admits one raw write for Admit (typing) and AdmitReport (not).
+func (s *Supervisor) admitRaw(sessionID, connID string, typing bool) (release func(), err error) {
 	if s == nil {
 		return nil, ErrRuntimeStopped
 	}
@@ -70,7 +88,7 @@ func (s *Supervisor) Admit(sessionID, connID string) (release func(), err error)
 	s.rawInFlight[sessionKey] = true
 	s.mu.Unlock()
 	var once sync.Once
-	return func() { once.Do(func() { s.finishRaw(sessionKey) }) }, nil
+	return func() { once.Do(func() { s.finishRaw(sessionKey, typing) }) }, nil
 }
 
 // rawRefusalLocked is why a raw write by connID may not be admitted on the
@@ -124,12 +142,18 @@ func (s *Supervisor) rawRefusalLocked(sessionKey, connID string) error {
 // The mark is set under the lock the slot is freed under, so no decision
 // claims such a prompt between the two. What it shows and journals is shown
 // and journaled on the goroutine, never on the caller's.
-func (s *Supervisor) finishRaw(sessionKey string) {
+//
+// A write that was only the terminal's replies (typing false) frees the slot
+// and marks nothing.
+func (s *Supervisor) finishRaw(sessionKey string, typing bool) {
 	now := s.now()
 	s.mu.Lock()
 	delete(s.rawInFlight, sessionKey)
 	var asked []pendingEvent
 	for key, item := range s.pending {
+		if !typing {
+			break
+		}
 		if key.sessionID != sessionKey {
 			continue
 		}
@@ -154,7 +178,7 @@ func (s *Supervisor) finishRaw(sessionKey string) {
 		}
 	}
 	for key, taking := range s.ingesting {
-		if key.sessionID == sessionKey {
+		if typing && key.sessionID == sessionKey {
 			s.recordAnsweredLocked(sessionKey, taking.signature, now)
 			taking.typedOver = true
 			s.ingesting[key] = taking

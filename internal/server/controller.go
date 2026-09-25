@@ -838,7 +838,14 @@ func (c *Controller) SendTerminalInput(runID, sessionID string, data []byte, ope
 	if trimmed := strings.TrimSpace(runID); trimmed != "" && trimmed != currentRun {
 		return errStaleRun
 	}
-	release, err := sup.Admit(sessionID, connID)
+	// A write that is only the terminal's own replies, the focus report a
+	// browser terminal sends when it takes the focus on a ConPTY session, is
+	// not typing: the prompts shown stay answerable.
+	admit := sup.Admit
+	if supervise.IsTerminalReport(data) {
+		admit = sup.AdmitReport
+	}
+	release, err := admit(sessionID, connID)
 	if err != nil {
 		if errors.Is(err, supervise.ErrNotHolder) {
 			// The gateway's own refusal, which corrects a client still typing
