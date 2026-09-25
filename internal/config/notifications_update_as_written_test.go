@@ -41,8 +41,13 @@ intercept_patterns:
 
 func writeHandWrittenNotifications(t *testing.T) (string, Result) {
 	t.Helper()
+	return writeNotificationsDocument(t, handWrittenNotificationsDocument)
+}
+
+func writeNotificationsDocument(t *testing.T, document string) (string, Result) {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte(handWrittenNotificationsDocument), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := LoadExisting(path)
@@ -117,28 +122,36 @@ func notificationsSave(t *testing.T, path string, loaded Result, change func(*no
 // empty name, severity and timeout included, so that each save changed the
 // revision every open editor holds.
 func TestANotificationsSaveThatChangesNothingWritesNothing(t *testing.T) {
-	for _, test := range []struct {
-		name      string
-		requested func(notify.Config) notify.Config
-	}{
-		{"as loaded", func(loaded notify.Config) notify.Config { return loaded }},
-		{"as the editor sends them", func(loaded notify.Config) notify.Config {
-			sent := editorNotifications(loaded)
-			sent.Webhooks = notify.MergeWebhookHeaders(loaded.Webhooks, sent.Webhooks)
-			return sent
-		}},
+	// The notifier reads a format and a severity without case, and the
+	// desktop's editor sends them back in lower case.
+	mixedCase := strings.Replace(handWrittenNotificationsDocument, "      format: slack\n", "      format: Slack\n      min_severity: WARNING\n", 1)
+	for _, document := range []struct{ name, text string }{
+		{"hand-written", handWrittenNotificationsDocument},
+		{"mixed case", mixedCase},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			path, loaded := writeHandWrittenNotifications(t)
-			requested := test.requested(loaded.Notifications)
-			updated, revision, err := UpdateFullConfiguration(path, loaded.Revision, FullConfigurationUpdate{Notifications: &requested})
-			if err != nil {
-				t.Fatalf("UpdateFullConfiguration: %v", err)
-			}
-			if got := readText(t, path); got != handWrittenNotificationsDocument || revision != loaded.Revision || updated.Revision != loaded.Revision {
-				t.Fatalf("an unchanged notifications save rewrote the file:\n%s", got)
-			}
-		})
+		for _, test := range []struct {
+			name      string
+			requested func(notify.Config) notify.Config
+		}{
+			{"as loaded", func(loaded notify.Config) notify.Config { return loaded }},
+			{"as the editor sends them", func(loaded notify.Config) notify.Config {
+				sent := editorNotifications(loaded)
+				sent.Webhooks = notify.MergeWebhookHeaders(loaded.Webhooks, sent.Webhooks)
+				return sent
+			}},
+		} {
+			t.Run(document.name+"/"+test.name, func(t *testing.T) {
+				path, loaded := writeNotificationsDocument(t, document.text)
+				requested := test.requested(loaded.Notifications)
+				updated, revision, err := UpdateFullConfiguration(path, loaded.Revision, FullConfigurationUpdate{Notifications: &requested})
+				if err != nil {
+					t.Fatalf("UpdateFullConfiguration: %v", err)
+				}
+				if got := readText(t, path); got != document.text || revision != loaded.Revision || updated.Revision != loaded.Revision {
+					t.Fatalf("an unchanged notifications save rewrote the file:\n%s", got)
+				}
+			})
+		}
 	}
 }
 
@@ -246,6 +259,27 @@ agents:
 `},
 		},
 		{
+			// The editors add and remove webhooks, and change none in place:
+			// a webhook put in the place of a removed one is a new entry, and
+			// takes nothing from the entry it replaces, its comment included.
+			name: "a webhook replaced",
+			change: func(notifications *notify.Config) {
+				notifications.Webhooks = append(notifications.Webhooks[:1], notify.WebhookConfig{
+					Name:        "pager",
+					URL:         "https://hooks.example.test/pager",
+					Format:      string(notify.FormatGeneric),
+					MinSeverity: notify.SeverityWarning,
+					Timeout:     "5s",
+				})
+			},
+			replace: []string{"    - url: 'https://hooks.example.test/audit' # unnamed\n      min_severity: critical\n", `    - name: pager
+      url: https://hooks.example.test/pager
+      format: generic
+      min_severity: warning
+      timeout: 5s
+`},
+		},
+		{
 			name:   "a webhook removed",
 			change: func(notifications *notify.Config) { notifications.Webhooks = notifications.Webhooks[1:] },
 			replace: []string{`    - name: ops # the on-call channel
@@ -270,5 +304,24 @@ agents:
 				t.Fatalf("the save rewrote more than it changed:\n%s\nwant:\n%s", got, want)
 			}
 		})
+	}
+}
+
+// Turning notifications on in a file whose minimum severity is only spaces
+// writes the severity asked for. The notifier lets every notification through
+// with such a severity, as with "info", but the loader refuses it once
+// notifications are on, so keeping it as written made the save fail.
+func TestTurningNotificationsOnReplacesABlankMinimumSeverity(t *testing.T) {
+	document := strings.Replace(handWrittenNotificationsDocument, "  enabled: true # master switch\n",
+		"  enabled: false # master switch\n  min_severity: \"  \"\n", 1)
+	path, loaded := writeNotificationsDocument(t, document)
+	notificationsSave(t, path, loaded, func(notifications *notify.Config) {
+		notifications.Enabled = true
+		notifications.MinSeverity = notify.SeverityInfo
+	})
+	want := strings.Replace(document, "  enabled: false # master switch\n  min_severity: \"  \"\n",
+		"  enabled: true # master switch\n  min_severity: \"info\"\n", 1)
+	if got := readText(t, path); got != want {
+		t.Fatalf("turning notifications on did not replace the blank severity:\n%s\nwant:\n%s", got, want)
 	}
 }

@@ -41,11 +41,15 @@ func sameWebhook(left, right notify.WebhookConfig) bool {
 		sameEnvironment(left.Headers, right.Headers)
 }
 
+// behavingMinimumSeverity is the severity notifications are sent from, an
+// empty one being "info". One of spaces alone lets every notification
+// through too, but the loader refuses it once notifications are on, so it is
+// not the default: a save that turns them on writes the severity asked for.
 func behavingMinimumSeverity(severity string) string {
-	if normalized := strings.ToLower(strings.TrimSpace(severity)); normalized != "" {
-		return normalized
+	if severity == "" {
+		return notify.SeverityInfo
 	}
-	return notify.SeverityInfo
+	return strings.ToLower(strings.TrimSpace(severity))
 }
 
 func behavingWebhookFormat(format string) string {
@@ -120,10 +124,12 @@ func notificationsNode(existing *yaml.Node, current, requested notify.Config) (*
 // loaded.
 //
 // A requested webhook that behaves as one the file has keeps that entry as
-// written. One that does not is written into the entry of the webhook at the
-// same URL under the same name, else into the entry at its own position,
-// which an editor's form changes in place, keeping every field it did not
-// change; a webhook with neither is a new entry.
+// written. One that does not is written into the entry of the same webhook,
+// keeping every field it did not change: the entry at the same URL under the
+// same name, else, as a rename, the one entry at its URL when the save has
+// only it there too, the rule notify.MergeWebhookHeaders carries headers by.
+// Any other webhook is a new entry, and takes nothing from an entry it
+// replaces, its comments included.
 func webhookSequenceNode(previous *yaml.Node, loaded, requested []notify.WebhookConfig) *yaml.Node {
 	sequence := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
 	var entries []*yaml.Node
@@ -167,9 +173,20 @@ func webhookSequenceNode(previous *yaml.Node, loaded, requested []notify.Webhook
 		return sameWebhook(loaded[entryIndex], requested[requestedIndex])
 	}, asWritten)
 	pair(func(requestedIndex, entryIndex int) bool {
-		return loaded[entryIndex].URL == requested[requestedIndex].URL && loaded[entryIndex].Name == requested[requestedIndex].Name
+		return webhookURL(loaded[entryIndex]) == webhookURL(requested[requestedIndex]) &&
+			strings.TrimSpace(loaded[entryIndex].Name) == strings.TrimSpace(requested[requestedIndex].Name)
 	}, changed)
-	pair(func(requestedIndex, entryIndex int) bool { return requestedIndex == entryIndex }, changed)
+	inFile, inSave := make(map[string]int, len(loaded)), make(map[string]int, len(requested))
+	for _, webhook := range loaded {
+		inFile[webhookURL(webhook)]++
+	}
+	for _, webhook := range requested {
+		inSave[webhookURL(webhook)]++
+	}
+	pair(func(requestedIndex, entryIndex int) bool {
+		url := webhookURL(requested[requestedIndex])
+		return webhookURL(loaded[entryIndex]) == url && inFile[url] == 1 && inSave[url] == 1
+	}, changed)
 
 	sequence.Content = make([]*yaml.Node, len(requested))
 	for index, webhook := range requested {
@@ -179,6 +196,10 @@ func webhookSequenceNode(previous *yaml.Node, loaded, requested []notify.Webhook
 		sequence.Content[index] = written[index]
 	}
 	return sequence
+}
+
+func webhookURL(webhook notify.WebhookConfig) string {
+	return strings.TrimSpace(webhook.URL)
 }
 
 // newWebhookEntry builds the entry of a webhook the file does not have. A

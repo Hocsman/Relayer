@@ -197,8 +197,8 @@ final line break, an escape sequence in a double-quoted string becomes the
 character it stands for, the spacing before a comment becomes one space, a
 list at the margin is indented, the `%YAML`, `---` and `...` markers go, and
 a comment above an agent can end up below the previous one. Every value loads
-back the same, and the save refuses to publish a file whose agents or policy
-would not.
+back the same, and the save refuses to publish a file whose agents, policy or
+notifications would not.
 
 A plain GUI save does not mutate running sessions; the guarded restart action
 can apply the saved configuration without closing the application. Webhook and
@@ -454,10 +454,13 @@ notifications:
 A save of the settings editor's notifications tab edits this block rather
 than rewriting it, as it does the agents. A field that behaves as the file's
 keeps its text: a webhook without `format`, `min_severity` or `timeout` is the
-`generic`, `warning`, `5s` one the editor shows. A field the save changes is
-written where it is, or added to its section; a webhook the save did not
-change keeps its entry as written, and a changed one keeps every field it did
-not change, with its comments and the style of its headers. A save that
+`generic`, `warning`, `5s` one the desktop's editor sends back for it, and a
+format or a severity is read without regard to case. A field the save changes
+is written where it is, or added to its section. A webhook the save did not
+change keeps its entry as written; one changed at the same URL under the same
+name, or renamed at a URL no other webhook uses, keeps every field it did not
+change, with its comments and the style of its headers; any other webhook,
+one added in the place of a removed one included, is a new entry. A save that
 changes nothing writes nothing.
 
 ## Audit
