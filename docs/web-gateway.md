@@ -232,16 +232,26 @@ never journaled or screened. The gateway bounds only who may type and when:
 the connection holding the terminal, whose taking is journaled before it can
 type, never beside an answer or a line, and not once the journal has failed.
 
-No client receives an agent's existing command line, environment values or
-shell script, an operator's included: the Agents settings show each agent's
-executable label and argument count, as the Desktop GUI does, and a command can
-only be replaced as a whole. An agent with environment variables or a shell
-script is read-only there and is kept exactly as the file has it by every save;
-it is changed in the YAML. Up to v0.8.9, an operator received each agent's
-full argv, and a save from the web interface dropped every agent's environment
-variables and rewrote a shell agent as `command: [<id>]`. An operator does
-receive each agent's working directory and the configuration's path. A viewer
-receives only each agent's executable name, and no host path: not the
+The settings sent to a client carry no agent's existing command line,
+environment values or shell script, an operator's included: the Agents
+settings show each agent's executable label and argument count, as the Desktop
+GUI does, and a command can only be replaced as a whole. An agent with
+environment variables or a shell script is read-only there and is kept exactly
+as the file has it by every save; it is changed in the YAML. A read-only agent
+sent back with `preserve` keeps the file's name, working directory and
+backend: any sent with it are ignored, as the form never changes them. Up to
+v0.8.9, an operator received each agent's full argv, and a save from the web
+interface dropped every agent's environment variables and rewrote a shell
+agent as `command: [<id>]`. This keeps the values out of the settings, not out
+of an operator's reach: an operator can configure and start any command as an
+agent, a command that prints the configuration file included, and what it
+prints reaches every viewer, as described below.
+
+An operator also receives each agent's working directory and the
+configuration's path. A viewer receives of each agent its identifier, name,
+catalogue entry, adapter, backend, executable label and argument count, and
+whether it is read-only and why (it has environment variables, a shell script
+or fields the form cannot show), never their values; and no host path: not the
 configuration's, the audit journal's, the recordings' or an agent's working
 directory, and not in an error message either.
 

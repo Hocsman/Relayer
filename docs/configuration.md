@@ -188,6 +188,18 @@ written, comments, flow sequences and quoting included, a field an agent
 leaves out, such as a `backend` it inherits from the file, stays left out, and
 a save that changes nothing writes nothing.
 
+"As written" means the values, comments, flow sequences and quoting; the
+file keeps its Windows line endings and byte-order mark too. A save that
+writes still re-encodes the whole file, so what the YAML encoder normalizes
+changes wherever it is, in every section: blank lines between entries go, a
+folded (`>`) or multi-line plain scalar is written on one line or gains a
+final line break, an escape sequence in a double-quoted string becomes the
+character it stands for, the spacing before a comment becomes one space, a
+list at the margin is indented, the `%YAML`, `---` and `...` markers go, and
+a comment above an agent can end up below the previous one. Every value loads
+back the same, and the save refuses to publish a file whose agents or policy
+would not.
+
 A plain GUI save does not mutate running sessions; the guarded restart action
 can apply the saved configuration without closing the application. Webhook and
 notification changes in the other tabs apply at once; security profiles and
