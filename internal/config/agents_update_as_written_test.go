@@ -145,6 +145,24 @@ func TestFieldsTheEditorsNeverChangeAreWrittenInPlace(t *testing.T) {
 	}
 }
 
+// A command replaced as a whole keeps the comment written beside it, as a
+// changed name or working directory keeps its own. The replacement was a new
+// sequence, and the comment went with the old one.
+func TestAReplacedCommandKeepsItsComment(t *testing.T) {
+	path, loaded := writeHandWrittenAgents(t)
+	specs := append([]agent.Spec(nil), loaded.Agents...)
+	specs[3].Command = []string{"codex", "--full-auto"}
+	if _, _, err := ReplaceAgents(path, loaded.Revision, specs); err != nil {
+		t.Fatalf("ReplaceAgents: %v", err)
+	}
+	want := strings.Replace(handWrittenAgentsDocument,
+		"    command: [codex] # inherits the backend\n",
+		"    command: [codex, --full-auto] # inherits the backend\n", 1)
+	if got := readText(t, path); got != want {
+		t.Fatalf("the replaced command lost its comment:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 // A save that changes nothing writes nothing: the file keeps its bytes and
 // its revision. The web gateway's "Restart the agents" sends every agent
 // even when none was edited, and each one rewrote the whole file.

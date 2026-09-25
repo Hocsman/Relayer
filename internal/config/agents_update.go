@@ -494,11 +494,22 @@ func changedAgentEntry(entry *yaml.Node, was, spec agent.Spec, requestedCwd stri
 	}
 	if !sameStrings(was.Command, spec.Command) || was.Shell != spec.Shell {
 		if len(spec.Command) > 0 {
-			style := yaml.Style(0)
-			if previous := mappingValue(&updated, "command"); previous != nil {
-				style = previous.Style & yaml.FlowStyle
+			// The new command keeps the style and the comments of the value it
+			// replaces, as a changed scalar does (scalarLike).
+			previous := mappingValue(&updated, "command")
+			if previous == nil {
+				previous = mappingValue(&updated, "shell")
 			}
-			replaceField(&updated, "command", "shell", stringSequenceNode(spec.Command, style))
+			command := stringSequenceNode(spec.Command, 0)
+			if previous != nil {
+				if previous.Kind == yaml.SequenceNode {
+					command.Style = previous.Style & yaml.FlowStyle
+				}
+				command.HeadComment = previous.HeadComment
+				command.LineComment = previous.LineComment
+				command.FootComment = previous.FootComment
+			}
+			replaceField(&updated, "command", "shell", command)
 		} else {
 			replaceField(&updated, "shell", "command", scalarLike(mappingValue(&updated, "shell"), spec.Shell))
 		}
