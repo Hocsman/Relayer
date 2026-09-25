@@ -7,30 +7,20 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
-	"github.com/Hocsman/Relayer/internal/audit"
+	"github.com/Hocsman/Relayer/internal/agentprofile"
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/supervise"
 	"github.com/Hocsman/Relayer/internal/toolcatalog"
 )
 
 const (
-	minimumAgentProfiles = 1
-	maximumAgentProfiles = 8
-	maximumProfileArgs   = 64
-	maximumProfileName   = 80
-	maximumProfileValue  = 4096
-)
-
-var (
-	profileIDPattern  = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
-	keyLikeArgPattern = regexp.MustCompile(`(?i)^(?:sk|pk|api)[-_][a-z0-9_-]{12,}$`)
+	minimumAgentProfiles = agentprofile.MinProfiles
+	maximumAgentProfiles = agentprofile.MaxProfiles
 )
 
 var (
@@ -325,280 +315,23 @@ func profileDescription(id toolcatalog.ProfileID) string {
 	}
 }
 
+// profileView is the shared editor view of spec, internal/agentprofile's, in
+// this bridge's DTO.
 func profileView(spec agent.Spec) AgentProfile {
-	profile := AgentProfile{
-		ID:      spec.ID,
-		Name:    spec.Name,
-		Cwd:     spec.Cwd,
-		Backend: spec.Backend,
-	}
-	reason := lockedProfileReason(spec)
-	if reason != "advanced_adapter" {
-		// Known adapter IDs are safe bridge metadata. An unknown advanced ID is
-		// intentionally kept on the Go side with the rest of its locked spec.
-		profile.Adapter = effectiveProfileAdapter(spec)
-	}
-	if reason != "" {
-		profile.PresetID = string(toolcatalog.Custom)
-		profile.Locked = true
-		profile.PreserveOnSave = true
-		profile.ReadOnlyReason = reason
-		if spec.Shell != "" {
-			profile.ExecutableLabel = "explicit shell"
-		} else if len(spec.Command) > 0 {
-			profile.ExecutableLabel = safeExecutableLabel(profileForExecutable(spec.Command[0]))
-		}
-		return profile
-	}
-	profile.PresetID = string(profileForExecutable(spec.Command[0]))
-	// Existing argv may contain credentials that no heuristic can identify
-	// reliably. Keep it authoritative in Go and require an explicit full
-	// replacement before any command value crosses into the WebView.
-	profile.PreserveOnSave = true
-	profile.ExecutableLabel = safeExecutableLabel(toolcatalog.ProfileID(profile.PresetID))
-	profile.ArgumentCount = len(spec.Command) - 1
-	return profile
+	return AgentProfile(agentprofile.View(spec))
 }
 
-func safeExecutableLabel(profile toolcatalog.ProfileID) string {
-	switch profile {
-	case toolcatalog.Aider:
-		return "aider"
-	case toolcatalog.ClaudeCode:
-		return "claude"
-	case toolcatalog.CodexCLI:
-		return "codex"
-	case toolcatalog.GooseCLI:
-		return "goose"
-	case toolcatalog.OpenInterpreter:
-		return "open-interpreter"
-	case toolcatalog.MimoCode:
-		return "mimo"
-	case toolcatalog.Ollama:
-		return "ollama"
-	default:
-		return "custom command"
-	}
-}
-
-func effectiveProfileAdapter(spec agent.Spec) string {
-	if adapterID := strings.ToLower(strings.TrimSpace(spec.Adapter)); adapterID != "" {
-		return adapterID
-	}
-	if len(spec.Command) > 0 {
-		if descriptor, ok := toolcatalog.Lookup(profileForExecutable(spec.Command[0])); ok {
-			if adapterID := strings.ToLower(strings.TrimSpace(descriptor.DefaultAdapter)); adapterID != "" {
-				return adapterID
-			}
-		}
-	}
-	return agent.AdapterGeneric
-}
-
-func profileForExecutable(executable string) toolcatalog.ProfileID {
-	name := portableExecutableName(executable)
-	for _, descriptor := range toolcatalog.Descriptors() {
-		for _, candidate := range descriptor.Executables {
-			if name != "" && name == portableExecutableName(candidate) {
-				return descriptor.ID
-			}
-		}
-	}
-	return toolcatalog.Custom
-}
-
-func portableExecutableName(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	// Configurations can be prepared on another OS. filepath.Base follows the
-	// host separator, so normalize Windows paths before comparing catalog
-	// candidates and ignore the executable suffix just like adapter hints do.
-	value = strings.ReplaceAll(value, `\`, "/")
-	name := strings.ToLower(strings.TrimSpace(filepath.Base(value)))
-	return strings.TrimSuffix(name, ".exe")
-}
-
-func lockedProfileReason(spec agent.Spec) string {
-	switch {
-	case spec.Shell != "":
-		return "advanced_shell"
-	case len(spec.Env) > 0:
-		return "advanced_environment"
-	case len(spec.Command) == 0:
-		return "invalid_command"
-	case !editableProfileAdapter(spec):
-		return "advanced_adapter"
-	case !profileIDPattern.MatchString(spec.ID) ||
-		utf8.RuneCountInString(spec.Name) > maximumProfileName ||
-		utf8.RuneCountInString(spec.Cwd) > maximumProfileValue:
-		return "legacy_profile_fields"
-	default:
-		return ""
-	}
-}
-
-func editableProfileAdapter(spec agent.Spec) bool {
-	adapterID := strings.ToLower(strings.TrimSpace(spec.Adapter))
-	if adapterID == "" || adapterID == agent.AdapterGeneric {
-		return true
-	}
-	switch profileForExecutable(spec.Command[0]) {
-	case toolcatalog.Aider:
-		return adapterID == adapters.AiderID
-	case toolcatalog.ClaudeCode:
-		return adapterID == adapters.ClaudeID
-	case toolcatalog.CodexCLI:
-		return adapterID == adapters.CodexID
-	case toolcatalog.GooseCLI:
-		return adapterID == adapters.GooseID
-	case toolcatalog.OpenInterpreter:
-		return adapterID == adapters.OpenInterpreterID
-	default:
-		return false
-	}
-}
-
+// resolveProfileInputs is internal/agentprofile's Resolve, which the web
+// gateway uses too. Every refusal is errProfilesInvalid here: the desktop
+// shows no detail.
 func resolveProfileInputs(inputs []AgentProfileInput, current config.Result, baseDir string) ([]agent.Spec, error) {
-	currentByID := make(map[string]agent.Spec, len(current.Agents))
-	lockedCurrent := make(map[string]struct{})
-	for _, spec := range current.Agents {
-		normalizedID := strings.ToLower(strings.TrimSpace(spec.ID))
-		currentByID[normalizedID] = spec
-		if lockedProfileReason(spec) != "" {
-			lockedCurrent[normalizedID] = struct{}{}
-		}
+	shared := make([]agentprofile.Input, len(inputs))
+	for index, input := range inputs {
+		shared[index] = agentprofile.Input(input)
 	}
-	preservedLocked := make(map[string]struct{}, len(lockedCurrent))
-	specs := make([]agent.Spec, 0, len(inputs))
-	for _, input := range inputs {
-		normalizedID := strings.ToLower(strings.TrimSpace(input.ID))
-		existing, exists := currentByID[normalizedID]
-		_, isLocked := lockedCurrent[normalizedID]
-		if isLocked && !input.Preserve {
-			return nil, errProfilesInvalid
-		}
-		if input.Preserve {
-			if !exists || len(input.Argv) != 0 {
-				return nil, errProfilesInvalid
-			}
-			if input.Adapter != "" && !strings.EqualFold(strings.TrimSpace(input.Adapter), effectiveProfileAdapter(existing)) {
-				return nil, errProfilesInvalid
-			}
-			if isLocked {
-				specs = append(specs, existing)
-				preservedLocked[normalizedID] = struct{}{}
-				continue
-			}
-			if !validEditableProfileFields(input.ID, input.Name, input.Cwd) ||
-				!agent.IsSupportedBackend(input.Backend) {
-				return nil, errProfilesInvalid
-			}
-			preserved := existing
-			preserved.Name = input.Name
-			preserved.Cwd = input.Cwd
-			preserved.Backend = input.Backend
-			specs = append(specs, preserved)
-			continue
-		}
-		if !validEditableProfileFields(input.ID, input.Name, input.Cwd) ||
-			!agent.IsSupportedBackend(input.Backend) ||
-			len(input.Argv) == 0 || len(input.Argv) > maximumProfileArgs ||
-			argvContainsInvalidValue(input.Argv) || argvContainsSensitiveValue(input.Argv) {
-			return nil, errProfilesInvalid
-		}
-		adapterID, ok := validatedProfileAdapter(toolcatalog.ProfileID(input.PresetID), input.Adapter)
-		if !ok {
-			return nil, errProfilesInvalid
-		}
-		resolved, err := toolcatalog.Resolve(toolcatalog.LaunchRequest{
-			ProfileID:  toolcatalog.ProfileID(input.PresetID),
-			AgentID:    input.ID,
-			Name:       input.Name,
-			Executable: input.Argv[0],
-			Args:       append([]string(nil), input.Argv[1:]...),
-			Cwd:        input.Cwd,
-			Adapter:    adapterID,
-			Backend:    input.Backend,
-		})
-		if err != nil {
-			return nil, errProfilesInvalid
-		}
-		specs = append(specs, resolved)
-	}
-	if len(preservedLocked) != len(lockedCurrent) {
-		return nil, errProfilesInvalid
-	}
-	_, err := agent.ValidateAll(specs, baseDir, current.Backend)
+	specs, err := agentprofile.Resolve(shared, current.Agents, baseDir, current.Backend)
 	if err != nil {
 		return nil, errProfilesInvalid
 	}
 	return specs, nil
-}
-
-func validatedProfileAdapter(profileID toolcatalog.ProfileID, value string) (string, bool) {
-	descriptor, ok := toolcatalog.Lookup(profileID)
-	if !ok {
-		return "", false
-	}
-	adapterID := strings.ToLower(strings.TrimSpace(value))
-	if adapterID == "" {
-		adapterID = strings.ToLower(strings.TrimSpace(descriptor.DefaultAdapter))
-	}
-	if adapterID == agent.AdapterGeneric || adapterID == strings.ToLower(strings.TrimSpace(descriptor.DefaultAdapter)) {
-		return adapterID, adapterID != ""
-	}
-	return "", false
-}
-
-func validEditableProfileFields(id, name, cwd string) bool {
-	return profileIDPattern.MatchString(strings.TrimSpace(id)) &&
-		strings.TrimSpace(name) != "" &&
-		utf8.RuneCountInString(name) <= maximumProfileName &&
-		!strings.ContainsRune(name, '\x00') &&
-		utf8.RuneCountInString(cwd) <= maximumProfileValue &&
-		!strings.ContainsRune(cwd, '\x00')
-}
-
-func argvContainsInvalidValue(argv []string) bool {
-	for index, argument := range argv {
-		if utf8.RuneCountInString(argument) > maximumProfileValue || strings.ContainsRune(argument, '\x00') {
-			return true
-		}
-		if index == 0 && strings.TrimSpace(argument) == "" {
-			return true
-		}
-	}
-	return false
-}
-
-func argvContainsSensitiveValue(argv []string) bool {
-	markers := map[string]struct{}{
-		"access-key": {}, "api-key": {}, "apikey": {}, "auth": {},
-		"authentication": {}, "authorization": {}, "bearer": {},
-		"client-secret": {}, "cookie": {}, "credential": {}, "key": {},
-		"otp": {}, "passphrase": {}, "password": {}, "pin": {},
-		"private-key": {}, "secret": {}, "session": {}, "token": {},
-	}
-	for index, argument := range argv {
-		redacted := audit.Redact(argument)
-		if strings.Contains(redacted, "[REDACTED]") ||
-			strings.Contains(strings.ToUpper(redacted), "%5BREDACTED%5D") ||
-			keyLikeArgPattern.MatchString(strings.TrimSpace(argument)) {
-			return true
-		}
-		normalized := strings.ToLower(strings.TrimLeft(strings.TrimSpace(argument), "-"))
-		name := normalized
-		if separator := strings.IndexByte(name, '='); separator >= 0 {
-			name = name[:separator]
-		}
-		name = strings.NewReplacer("_", "-", ".", "-").Replace(name)
-		if _, sensitive := markers[name]; sensitive {
-			if strings.Contains(normalized, "=") || index+1 < len(argv) {
-				return true
-			}
-		}
-	}
-	return false
 }
