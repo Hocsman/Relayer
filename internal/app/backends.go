@@ -15,6 +15,7 @@ import (
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/terminal"
 	"github.com/Hocsman/Relayer/internal/tmuxbackend"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 type executableLookup func(string) (string, error)
@@ -30,6 +31,16 @@ type backendDependencies struct {
 	newAuditForRun func(audit.Config, string) (*audit.Recorder, error)
 	newPTY         func(context.Context, chan<- session.Event, *adapters.Registry, int) (terminal.Backend, error)
 	newTmux        func(context.Context, chan<- session.Event, *adapters.Registry, int, tmuxbackend.Options) (terminal.Backend, error)
+	// newProgram and terminalSize stand in for Bubble Tea and the controlling
+	// terminal. They let a test run the interface to its end, and read the
+	// journal it leaves, where there is no terminal to own. Production sets
+	// newProgram, and run calls the field itself. A fallback for nil would be a
+	// second step run could skip: every test that reaches the interface sets
+	// its own program, so they would all pass while the real command called a
+	// nil func. A nil terminalSize reads the console, which the startup tests
+	// that stop at an agent's start rely on.
+	newProgram   func(tea.Model, ...tea.ProgramOption) uiProgram
+	terminalSize func() (columns, rows int)
 }
 
 func productionBackendDependencies() backendDependencies {
@@ -61,6 +72,7 @@ func productionBackendDependencies() backendDependencies {
 		) (terminal.Backend, error) {
 			return tmuxbackend.NewManagerWithRegistry(ctx, events, registry, ringCapacity, options)
 		},
+		newProgram: newTeaProgram,
 	}
 }
 

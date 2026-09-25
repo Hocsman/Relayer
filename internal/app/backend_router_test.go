@@ -100,17 +100,23 @@ type routerFakeBackend struct {
 	name            string
 	returnedBackend string
 	startErr        error
-	attachErr       error
-	closeErr        error
-	closeErrors     []error
-	pending         *adapters.Event
-	starts          []routerStartCall
-	sends           []routerSendCall
-	resizes         []routerResizeCall
-	snapshots       []string
-	attaches        []string
-	stops           []string
-	closeCalls      int
+	// startErrs fails the start of one agent only, so a run can be stopped
+	// part-way with the agents before it already running on the same backend.
+	startErrs   map[string]error
+	attachErr   error
+	closeErr    error
+	closeErrors []error
+	pending     *adapters.Event
+	starts      []routerStartCall
+	sends       []routerSendCall
+	resizes     []routerResizeCall
+	snapshots   []string
+	attaches    []string
+	stops       []string
+	closeCalls  int
+	// reportAdapter has Start report the spec's adapter, as the real backends
+	// do. It is opt-in, so the tests that expect no adapter stay as they are.
+	reportAdapter bool
 }
 
 type routerBlockingCloseBackend struct {
@@ -186,12 +192,19 @@ func (b *routerFakeBackend) Start(_ context.Context, spec agent.Spec, size termi
 	if b.startErr != nil {
 		return terminal.Info{}, b.startErr
 	}
-	return terminal.Info{
+	if err := b.startErrs[spec.ID]; err != nil {
+		return terminal.Info{}, err
+	}
+	info := terminal.Info{
 		ID:             spec.ID,
 		Name:           spec.Name,
 		DisplayCommand: "safe command",
 		Backend:        b.returnedBackend,
-	}, nil
+	}
+	if b.reportAdapter {
+		info.Adapter = spec.Adapter
+	}
+	return info, nil
 }
 
 func (b *routerFakeBackend) Send(_ context.Context, id string, data []byte) error {

@@ -214,7 +214,11 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 	}); err != nil {
 		return fmt.Errorf("writing the run start to the audit: %w", err)
 	}
-	initialWidth, initialHeight := initialTerminalSize()
+	terminalSize := dependencies.terminalSize
+	if terminalSize == nil {
+		terminalSize = initialTerminalSize
+	}
+	initialWidth, initialHeight := terminalSize()
 
 	events := make(chan session.Event, defaultEventCapacity)
 	router, err := buildBackendRouter(
@@ -343,13 +347,32 @@ func run(arguments []string, diagnostics io.Writer, dependencies backendDependen
 		return err
 	}
 	application.SetNotifier(notify.New(configuration.Notifications, diagnostics))
-	program := tea.NewProgram(
+	program := dependencies.newProgram(
 		application,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
 	_, err = program.Run()
 	return err
+}
+
+// uiProgram is the part of a Bubble Tea program that run depends on. run only
+// runs it. Send, the one way to hand a running program a message from another
+// goroutine, is in the interface too, so that a stand-in has to take such
+// messages as the real program does. Naming the interface lets a test replace
+// the program and still take run through every entry the journal gets around
+// it.
+type uiProgram interface {
+	Run() (tea.Model, error)
+	Send(tea.Msg)
+}
+
+var _ uiProgram = (*tea.Program)(nil)
+
+// newTeaProgram builds the program the command runs, a real Bubble Tea one.
+// productionBackendDependencies hands it to run as newProgram.
+func newTeaProgram(model tea.Model, options ...tea.ProgramOption) uiProgram {
+	return tea.NewProgram(model, options...)
 }
 
 func initializeAudit(configuration audit.Config, dependencies backendDependencies) (*audit.Recorder, error) {
