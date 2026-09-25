@@ -316,7 +316,7 @@ func Serve(ctx context.Context, opts Options) error {
 	if err := ctrl.Start(ctx); err != nil {
 		return fmt.Errorf("starting supervisor controller: %w", err)
 	}
-	defer func() {
+	closeRun := func() {
 		// Every agent is stopped in parallel, so one stop's worst case bounds
 		// them all. Five seconds let serve exit while an agent the console
 		// close never reaches was still inside its grace period, and it kept
@@ -327,7 +327,10 @@ func Serve(ctx context.Context, opts Options) error {
 			// Said, not swallowed: an agent may have outlived the shutdown.
 			_, _ = fmt.Fprintf(opts.Diagnostics, "Closing the agents did not finish cleanly: %v\n", err)
 		}
-	}()
+	}
+	// Close is idempotent: the deferred call only matters on a path that
+	// returns before the shutdown below.
+	defer closeRun()
 
 	addr := fmt.Sprintf("%s:%d", opts.Bind, opts.Port)
 	listener, err := net.Listen("tcp", addr)
@@ -385,6 +388,12 @@ func Serve(ctx context.Context, opts Options) error {
 
 	select {
 	case <-ctx.Done():
+		// The run ends first, while its clients are still connected: they see
+		// it end, and a terminal a client held is let go with the run. Shutting
+		// the server down first closed every WebSocket, and each held terminal
+		// was journaled as let go by a disconnect before the run's end had
+		// begun.
+		closeRun()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		return httpServer.Shutdown(shutdownCtx)

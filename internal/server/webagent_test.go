@@ -292,15 +292,48 @@ func webYAMLQuote(value string) string {
 // directory is removed: Windows cannot remove a journal still open.
 func startWebRun(t *testing.T, run webRun) *webGateway {
 	t.Helper()
+	configPath, auditPath, recordingDir := writeWebRunConfig(t, run)
+
+	ctrl, err := NewController(configPath, io.Discard)
+	if err != nil {
+		t.Fatalf("NewController: %v", err)
+	}
+	ctrl.engineWrap = run.engineWrap
+	gateway := &webGateway{t: t, ctrl: ctrl, auditPath: auditPath, recordingDir: recordingDir, screens: map[string]string{}}
+	ctrl.Subscribe(func(event string, payload any) {
+		gateway.mu.Lock()
+		gateway.frames = append(gateway.frames, webFrame{at: time.Now(), event: event, payload: payload})
+		gateway.mu.Unlock()
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	gateway.cancelStart = cancel
+	if err := ctrl.Start(ctx); err != nil {
+		cancel()
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), session.StopBudget+5*time.Second)
+		defer closeCancel()
+		_ = ctrl.Close(closeCtx)
+		cancel()
+	})
+	return gateway
+}
+
+// writeWebRunConfig writes the run's configuration into a directory of its
+// own, which also holds its journal and recordings, and points the user's
+// directories there, so nothing reaches the real ones.
+func writeWebRunConfig(t *testing.T, run webRun) (configPath, auditPath, recordingDir string) {
+	t.Helper()
 	dir := t.TempDir()
 	for _, name := range []string{"APPDATA", "LOCALAPPDATA", "HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
 		t.Setenv(name, dir)
 	}
-	auditPath := filepath.Join(dir, "audit", "journal.jsonl")
+	auditPath = filepath.Join(dir, "audit", "journal.jsonl")
 	if err := os.MkdirAll(filepath.Dir(auditPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	recordingDir := filepath.Join(dir, "recordings")
+	recordingDir = filepath.Join(dir, "recordings")
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -360,35 +393,11 @@ func startWebRun(t *testing.T, run webRun) *webGateway {
 `)
 	enabled := strconv.FormatBool(run.notifications)
 	b.WriteString("notifications:\n  enabled: " + enabled + "\n  bell: false\n  desktop: false\n")
-	configPath := filepath.Join(dir, "config.yaml")
+	configPath = filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte(b.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
-	ctrl, err := NewController(configPath, io.Discard)
-	if err != nil {
-		t.Fatalf("NewController: %v", err)
-	}
-	ctrl.engineWrap = run.engineWrap
-	gateway := &webGateway{t: t, ctrl: ctrl, auditPath: auditPath, recordingDir: recordingDir, screens: map[string]string{}}
-	ctrl.Subscribe(func(event string, payload any) {
-		gateway.mu.Lock()
-		gateway.frames = append(gateway.frames, webFrame{at: time.Now(), event: event, payload: payload})
-		gateway.mu.Unlock()
-	})
-	ctx, cancel := context.WithCancel(context.Background())
-	gateway.cancelStart = cancel
-	if err := ctrl.Start(ctx); err != nil {
-		cancel()
-		t.Fatalf("Start: %v", err)
-	}
-	t.Cleanup(func() {
-		closeCtx, closeCancel := context.WithTimeout(context.Background(), session.StopBudget+5*time.Second)
-		defer closeCancel()
-		_ = ctrl.Close(closeCtx)
-		cancel()
-	})
-	return gateway
+	return configPath, auditPath, recordingDir
 }
 
 // runID is the run's ID, as every client reads it.
