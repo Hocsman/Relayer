@@ -126,7 +126,10 @@ function normalizePending(runID: string, events: SupervisionEvent[]): Supervisio
 export function normalizeState(state: AppState): AppState {
   return {
     ...state,
-    agents: state.agents.slice(0, 8).map((agent) => ({
+    // Go encodes an empty slice it never allocated as null. An idle desktop
+    // sent its agents that way, and reading them as a list here threw before
+    // the first render, which left the window empty.
+    agents: (state.agents ?? []).slice(0, 8).map((agent) => ({
       ...agent,
       revision: Math.max(0, Math.trunc(agent.revision || 0)),
       output: boundedOutput(agent.output || ""),

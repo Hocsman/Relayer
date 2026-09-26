@@ -53,6 +53,15 @@ function appState(): AppState {
 }
 
 describe("relayerReducer", () => {
+  // The desktop sent an idle application's agents as null, and the first
+  // render read them as a list: the window stayed empty.
+  it("takes a state whose lists are null as empty", () => {
+    const state = { ...appState(), agents: null, pendingEvents: null } as unknown as AppState;
+    const loaded = relayerReducer(initialRelayerState, { type: "loaded", state });
+    expect(loaded.app?.agents).toEqual([]);
+    expect(loaded.app?.pendingEvents).toEqual([]);
+  });
+
   it("deduplicates events by session and occurrence ID", () => {
     const normalized = normalizeState(appState());
     expect(normalized.pendingEvents).toHaveLength(2);

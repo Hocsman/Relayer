@@ -2014,3 +2014,23 @@ func TestGetStateShowsTheJournalsFailureBeforeTheBridgeRecordsIt(t *testing.T) {
 		t.Fatalf("journal state after = %q, want failed", state.Audit.Status)
 	}
 }
+
+// A freshly launched application is idle and has no agents. Its state reached
+// the interface as "agents": null, a nil slice once cloned, and the interface
+// read it as a list: every launch of the desktop app showed an empty window.
+func TestAnIdleApplicationSendsItsListsAsLists(t *testing.T) {
+	application := NewApp()
+	state, err := application.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	payload, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	for _, field := range []string{`"agents":[]`, `"pendingEvents":[]`} {
+		if !strings.Contains(string(payload), field) {
+			t.Fatalf("the idle state lacks %s: %s", field, payload)
+		}
+	}
+}
