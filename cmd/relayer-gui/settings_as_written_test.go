@@ -115,3 +115,55 @@ func TestADesktopSwitchFromStrictToPermissiveKeepsTheWorkspaceRootRelative(t *te
 		t.Fatalf("workspace root = %q, want the configuration's directory %q", got, want)
 	}
 }
+
+// The Windows trial on the desktop, in sequence: a hand-written configuration
+// with Windows line endings and a byte-order mark is switched from strict to
+// permissive as the editor switches it, then its notifications tab is sent
+// back as the editor shows it after that save. The switch writes
+// "workspace_root: ." and changes nothing else, the line endings and the mark
+// included, and the second save writes nothing and keeps the revision the
+// first one returned.
+func TestADesktopSwitchToPermissiveThenAnUnchangedNotificationsSaveKeepAWindowsFileAsWritten(t *testing.T) {
+	const mark = "\xef\xbb\xbf"
+	windows := func(text string) string { return mark + strings.ReplaceAll(text, "\n", "\r\n") }
+	written := strings.Replace(handWrittenDesktopAgents, "backend: pty\nagents:\n",
+		"backend: pty\npolicies:\n  profile: strict # base\nagents:\n", 1) + handWrittenDesktopNotifications
+	application, path, view := desktopSettingsApp(t, windows(written))
+	security := view.SecurityPresets["permissive"]
+	security.Profile = "permissive"
+	security.WorkspaceRoot, security.DryRun = view.Security.WorkspaceRoot, view.Security.DryRun
+	switched, err := application.SaveFullSettings(activeRunIDForTest(application), SaveFullSettingsRequest{
+		ExpectedRevision: view.Revision,
+		Security:         &security,
+	})
+	if err != nil {
+		t.Fatalf("SaveFullSettings (security): %v", err)
+	}
+	want := windows(strings.Replace(written, "  profile: strict # base\n",
+		"  profile: permissive # base\n  guardrails:\n    workspace_root: .\n", 1))
+	after, _ := os.ReadFile(path)
+	if string(after) != want {
+		t.Fatalf("the switch to permissive rewrote more than the policy:\n%q\nwant:\n%q", after, want)
+	}
+	loaded, err := config.LoadExisting(path)
+	if err != nil {
+		t.Fatalf("LoadExisting: %v", err)
+	}
+	if got, want := loaded.Policies.Guardrails.WorkspaceRoot, filepath.Dir(path); got != want {
+		t.Fatalf("workspace root = %q, want the configuration's directory %q", got, want)
+	}
+	notifications := switched.Notifications
+	saved, err := application.SaveFullSettings(activeRunIDForTest(application), SaveFullSettingsRequest{
+		ExpectedRevision: switched.Revision,
+		Notifications:    &notifications,
+	})
+	if err != nil {
+		t.Fatalf("SaveFullSettings (notifications): %v", err)
+	}
+	if again, _ := os.ReadFile(path); string(again) != string(after) {
+		t.Fatalf("the unchanged notifications save rewrote the file:\n%q\nwant:\n%q", again, after)
+	}
+	if saved.Revision != switched.Revision {
+		t.Fatalf("revision %q after the notifications save, %q before it", saved.Revision, switched.Revision)
+	}
+}
