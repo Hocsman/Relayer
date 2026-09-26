@@ -70,10 +70,14 @@ func TestAWebTerminalNobodyHoldsTakesNoKeystrokes(t *testing.T) {
 
 	alice.mustCall("setInteractiveSession", map[string]any{"runID": runID, "sessionID": "web-listen", "active": true}, nil)
 	alice.sendKeys("web-listen", "held-frame\r")
+	// The agent's reply is awaited before the next line is typed: typed at
+	// once, the terminal's echo of the second line, carriage return and all,
+	// landed on the line the reply was being written to and overwrote its
+	// start, so the reply was never seen whole.
+	g.awaitScreen("web-listen", webAgentLine+`"held-frame`, 10*time.Second)
 	if err := alice.typeKeys(runID, "web-listen", "held-call\r"); err != nil {
 		t.Fatalf("the holder's keystrokes were refused: %v", err)
 	}
-	g.awaitScreen("web-listen", webAgentLine+`"held-frame`, 10*time.Second)
 	g.awaitScreen("web-listen", webAgentLine+`"held-call`, 10*time.Second)
 	if screen := g.screen("web-listen"); strings.Contains(screen, "free-") || strings.Contains(screen, "no-connection") {
 		t.Fatalf("keystrokes typed without the hand reached the agent; screen:\n%s", screen)
