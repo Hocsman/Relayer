@@ -101,6 +101,11 @@ jobs:
           version: v2.17.1
           args: check
 
+      # The release page shows the CHANGELOG's section for the tag. Checked
+      # here so a tag with no section fails before anything is published.
+      - name: Check the CHANGELOG has notes for the tag
+        run: .github/scripts/release-notes.sh "${GITHUB_REF_NAME#v}" > /dev/null
+
   publish:
     name: Publish release
     needs: verify
@@ -144,8 +149,13 @@ jobs:
       - name: Install syft
         uses: anchore/sbom-action/download-syft@v0.17.9
 
+      # GoReleaser's own changelog is the raw commit list, reverts and all;
+      # the release page shows the CHANGELOG's section for the tag instead.
+      - name: Extract release notes from the CHANGELOG
+        run: .github/scripts/release-notes.sh "${GITHUB_REF_NAME#v}" > "$RUNNER_TEMP/release-notes.md"
+
       - name: Build and publish release artifacts
-        run: goreleaser release --clean
+        run: goreleaser release --clean --release-notes "$RUNNER_TEMP/release-notes.md"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
