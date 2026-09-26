@@ -84,4 +84,28 @@ describe("styles.css", () => {
       .map((rule) => rule.selector);
     expect(offenders).toEqual([]);
   });
+
+  // The settings dialog renders a header, a tab bar, a viewer's banner in some
+  // states, the tab's content and a footer. With three rows for four children
+  // the tab bar got no height and the content covered it, so a click on a tab
+  // landed on the content and did nothing.
+  it("gives each part of the settings dialog a row of its own", () => {
+    const declared = (selector: string, prop: string) => {
+      let value: string | undefined;
+      root.walkRules((rule) => {
+        if (rule.parent?.type !== "root" || !rule.selectors.includes(selector)) return;
+        rule.walkDecls(prop, (declaration) => { value = declaration.value; });
+      });
+      return value;
+    };
+    const tracks = declared(".agent-settings", "grid-template-rows")?.replace(/\([^)]*\)/g, "()").split(/\s+/);
+    expect(tracks).toEqual(["auto", "auto", "auto", "minmax()", "auto"]);
+    expect([
+      ".agent-settings > .agent-settings__header",
+      ".agent-settings > .settings-tabs",
+      ".agent-settings > .settings-readonly-banner",
+      ".agent-settings > *",
+      ".agent-settings > .agent-settings__footer",
+    ].map((selector) => declared(selector, "grid-row"))).toEqual(["1", "2", "3", "4", "5"]);
+  });
 });

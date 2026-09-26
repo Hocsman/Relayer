@@ -42,6 +42,23 @@ test.describe("Relayer Desktop Supervisor E2E", () => {
     await expect(modal).not.toBeVisible();
   });
 
+  // The tab bar sat in a row the grid gave no height, under the tab's content,
+  // so a click on a tab landed on the content and did nothing.
+  test("switches the settings tabs with the mouse", async ({ page }) => {
+    await page.locator(".button--agents").click();
+    const modal = page.locator('section.agent-settings[role="dialog"]');
+    await expect(modal.locator(".catalog-list")).toBeVisible({ timeout: 10000 });
+
+    await modal.getByRole("button", { name: /Security & Guardrails/ }).click();
+    await expect(modal.getByLabel("Security settings")).toBeVisible();
+
+    await modal.getByRole("button", { name: /Notifications & Webhooks/ }).click();
+    await expect(modal.locator(".settings-tab--active")).toContainText("Notifications");
+
+    await modal.getByRole("button", { name: /Agents/, exact: false }).first().click();
+    await expect(modal.locator(".catalog-list")).toBeVisible();
+  });
+
   test("adds an agent from the catalog without crashing and saves successfully", async ({ page }) => {
     await page.locator(".button--agents").click();
     const modal = page.locator('section.agent-settings[role="dialog"]');

@@ -14,5 +14,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.{ts,tsx}"],
+    // Vitest turns every CSS import into an empty string unless it is listed
+    // here, ?raw included, so styles.test.ts parsed nothing and checked
+    // nothing.
+    css: { include: [/styles\.css/] },
   },
 });

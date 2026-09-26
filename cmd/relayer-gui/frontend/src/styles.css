@@ -57,7 +57,8 @@ button {
 }
 
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
   outline: 2px solid var(--cyan);
   outline-offset: 2px;
 }
@@ -594,7 +595,6 @@ input:focus-visible {
   color: #e8edf7;
   font-family: var(--mono);
   font-size: 11px;
-  outline: none;
 }
 
 .terminal-search-input:focus {
@@ -757,7 +757,6 @@ input:focus-visible {
   color: #e8edf7;
   font-size: 12.5px;
   font-family: inherit;
-  outline: none;
 }
 
 .settings-select:focus,
@@ -3046,7 +3045,7 @@ input:focus-visible {
 
 .agent-settings {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   width: min(1380px, 100%);
   height: min(900px, 100%);
   overflow: hidden;
@@ -3058,6 +3057,16 @@ input:focus-visible {
   box-shadow: 0 38px 120px rgba(0, 0, 0, 0.7);
   animation: modal-in 170ms ease-out;
 }
+
+/* Each child has its row, so the tab bar and the viewer's banner, which only
+   some states render, never take the row the tab's content needs. With three
+   rows for four children, the tab bar got no height and the content covered
+   it, so a click on a tab landed on the content. */
+.agent-settings > * { grid-row: 4; }
+.agent-settings > .agent-settings__header { grid-row: 1; }
+.agent-settings > .settings-tabs { grid-row: 2; }
+.agent-settings > .settings-readonly-banner { grid-row: 3; }
+.agent-settings > .agent-settings__footer { grid-row: 5; }
 
 .agent-settings__header {
   display: flex;
@@ -3693,7 +3702,7 @@ input:focus-visible {
 .agent-settings__loading,
 .agent-settings__failure {
   display: grid;
-  grid-row: 2 / 4;
+  grid-row: 2 / -1;
   align-content: center;
   justify-items: center;
   gap: 10px;
@@ -3986,10 +3995,6 @@ input:focus-visible {
 
 .terminal-snapshot--interactive {
   cursor: text;
-}
-
-.terminal-snapshot--interactive .xterm {
-  outline: none;
 }
 
 
