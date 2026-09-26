@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+### Fixed
+
+- **The desktop app opened on an empty window**, on every launch, in v0.8.9, v0.8.10 and v0.8.11 at least. An application that has just started is idle and has no agents; the copy of its state that `GetState` returns turned that empty list into a nil slice, which reaches the interface as `"agents": null`, and the interface read it as a list before its first render, so nothing was drawn but the window's background. The state's lists are now always lists, and the interface takes a null list as empty. `TestAnIdleApplicationSendsItsListsAsLists` and a `relayerState` test fail against v0.8.11. The web gateway builds its lists another way and was not affected. Found by the v0.8.11 trial on Windows.
+
 ## [0.8.11] - 2026-09-26
 
 Patch release that finishes what v0.8.10 started: two settings saves still wrote more than was edited, and the settings dialog's tabs did not take a click. Switching from `strict` to `permissive` in a file that names no workspace root wrote that root as an absolute path, and a notifications save rebuilt the whole block. Both now write only what changed, on the desktop and the web gateway alike, and a save that changes nothing leaves the file as it was.

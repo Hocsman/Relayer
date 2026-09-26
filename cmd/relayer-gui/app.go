@@ -436,7 +436,7 @@ func (a *App) stateLocked() AppState {
 			state.Agents[index] = withSupervision(state.Agents[index], agent)
 		}
 	}
-	state.PendingEvents = nil
+	state.PendingEvents = make([]SupervisionEvent, 0, len(core.Pending))
 	for _, view := range core.Pending {
 		state.PendingEvents = append(state.PendingEvents, supervisionEventFromView(view))
 	}
@@ -616,11 +616,14 @@ func snapshotFromAgent(runID string, agent AgentState) SnapshotEvent {
 
 func cloneAppState(state AppState) AppState {
 	clone := state
-	clone.Agents = append([]AgentState(nil), state.Agents...)
+	// Never nil: the interface reads agents as a list, and a nil slice is
+	// JSON null. An idle application has no agents, so every launch sent
+	// "agents": null and the window stayed empty.
+	clone.Agents = append([]AgentState{}, state.Agents...)
 	for index := range clone.Agents {
 		clone.Agents[index].ExitCode = cloneInt(state.Agents[index].ExitCode)
 	}
-	clone.PendingEvents = append([]SupervisionEvent(nil), state.PendingEvents...)
+	clone.PendingEvents = append([]SupervisionEvent{}, state.PendingEvents...)
 	return clone
 }
 
