@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.11] - 2026-09-26
+
+Patch release that finishes what v0.8.10 started: two settings saves still wrote more than was edited, and the settings dialog's tabs did not take a click. Switching from `strict` to `permissive` in a file that names no workspace root wrote that root as an absolute path, and a notifications save rebuilt the whole block. Both now write only what changed, on the desktop and the web gateway alike, and a save that changes nothing leaves the file as it was.
+
 ### Fixed
 
 - **Switching from `strict` to `permissive` wrote the workspace root as an absolute path**, on the desktop and the web gateway alike. In a file that names no `workspace_root`, `strict` guards the configuration's directory; `permissive` turns the guardrail off and the editor keeps the root it shows, so the save had to name that root, and wrote it as an absolute path naming the user's home directory, which no longer followed the file when it moved. Turning the workspace guardrail off in a file that spells `strict` out did the same, and so did choosing a preset in a file without a `policies` block, which is written whole. The configuration's directory is now written `workspace_root: .`; a root the file already gives keeps its text, as before. `TestSwitchingFromStrictToPermissiveKeepsTheWorkspaceRootRelative`, `TestAPoliciesBlockWrittenWholeKeepsTheWorkspaceRootRelative`, `TestAWebSwitchFromStrictToPermissiveKeepsTheWorkspaceRootRelative` and `TestADesktopSwitchFromStrictToPermissiveKeepsTheWorkspaceRootRelative` fail against v0.8.10.
@@ -1030,7 +1034,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.10...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.11...main
+[0.8.11]: https://github.com/Hocsman/Relayer/compare/v0.8.10...v0.8.11
 [0.8.10]: https://github.com/Hocsman/Relayer/compare/v0.8.9...v0.8.10
 [0.8.9]: https://github.com/Hocsman/Relayer/compare/v0.8.8...v0.8.9
 [0.8.8]: https://github.com/Hocsman/Relayer/compare/v0.8.7...v0.8.8
