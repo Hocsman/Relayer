@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.12] - 2026-09-26
+
+Patch release that makes the desktop app usable again: since v0.8.9 at least, it opened on an empty window. An idle application sent its agents to the interface as `null`, and the interface stopped before drawing anything. The web gateway was not affected. Release pages now show this CHANGELOG's section for the tag rather than the raw commit list.
+
 ### Fixed
 
 - **The desktop app opened on an empty window**, on every launch, in v0.8.9, v0.8.10 and v0.8.11 at least. An application that has just started is idle and has no agents; the copy of its state that `GetState` returns turned that empty list into a nil slice, which reaches the interface as `"agents": null`, and the interface read it as a list before its first render, so nothing was drawn but the window's background. The state's lists are now always lists, and the interface takes a null list as empty. `TestAnIdleApplicationSendsItsListsAsLists` and a `relayerState` test fail against v0.8.11. The web gateway builds its lists another way and was not affected. Found by the v0.8.11 trial on Windows.
@@ -1038,7 +1042,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.11...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.12...main
+[0.8.12]: https://github.com/Hocsman/Relayer/compare/v0.8.11...v0.8.12
 [0.8.11]: https://github.com/Hocsman/Relayer/compare/v0.8.10...v0.8.11
 [0.8.10]: https://github.com/Hocsman/Relayer/compare/v0.8.9...v0.8.10
 [0.8.9]: https://github.com/Hocsman/Relayer/compare/v0.8.8...v0.8.9

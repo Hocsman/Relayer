@@ -30,7 +30,7 @@ go run github.com/Hocsman/Relayer/cmd/relayer@latest
 ```
 
 > [!NOTE]
-> **Relayer v0.8.11 is General Availability (GA)**. It provides production-ready
+> **Relayer v0.8.12 is General Availability (GA)**. It provides production-ready
 > supervision, a headless web gateway (`relayer serve`) with operator/viewer roles,
 > a fully interactive browser terminal shared between several operators,
 > optional session recording with in-browser replay, MCP tool-call badges,
@@ -232,7 +232,7 @@ Select a published `OS` (`linux` or `darwin`) and `ARCH` (`amd64` or `arm64`),
 then download and verify the matching archive:
 
 ```bash
-VERSION=0.8.11
+VERSION=0.8.12
 OS=linux
 ARCH=amd64
 ARCHIVE="relayer_${VERSION}_${OS}_${ARCH}.tar.gz"
