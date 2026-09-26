@@ -7,7 +7,7 @@ output after those programs have started. Read the complete
 
 ## Supported versions
 
-Relayer v0.8.10 is the current General Availability (GA) release. Security fixes
+Relayer v0.8.11 is the current General Availability (GA) release. Security fixes
 are published for the latest supported release and the `main` branch. Official
 releases, signatures, and SBOMs are published on GitHub Releases.
 
