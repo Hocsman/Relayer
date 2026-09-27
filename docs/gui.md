@@ -5,6 +5,21 @@ Bubble Tea TUI. Standalone, signed packages are published on GitHub Releases
 for macOS (Universal binary), Linux (`amd64`), and Windows (`x64`), accompanied
 by Cosign signatures, SHA-256 checksums, and SLSA SBOM attestations.
 
+## Installing on Windows
+
+Download `relayer-desktop_<version>_windows_amd64_setup.exe` from the
+[Releases page](https://github.com/Hocsman/Relayer/releases) and run it. It
+installs Relayer for the current user in `%LOCALAPPDATA%\Programs\Relayer`,
+without administrator rights, puts a **Relayer** shortcut on the desktop and in
+the Start menu, installs the WebView2 runtime if Windows lacks it, and offers to
+start Relayer when it ends. Relayer is removed from **Settings → Apps**; the
+uninstaller leaves the configuration in `%APPDATA%\relayer` in place. The
+installer is not code-signed, so SmartScreen may ask to confirm it: **More
+info**, then **Run anyway**.
+
+`relayer-desktop_<version>_windows_amd64.zip` holds the same `Relayer.exe`
+without an installer: extract it anywhere and double-click it.
+
 ## Platform status
  
 | Platform | GUI status | Terminal backend |
@@ -497,6 +512,6 @@ The **Metrics** button in the top bar opens the real-time observability panel:
 
 The Desktop GUI intentionally does not provide:
 
-- OS-specific installers (e.g. Windows `.msi`/`.exe` setup wizard, macOS `.pkg`); signed `.zip` and `.tar.gz` portable archives are provided instead;
+- OS-specific installers other than the Windows setup program (no `.msi`, no macOS `.pkg`); the macOS and Linux builds are signed `.zip` and `.tar.gz` portable archives;
 - Remote audit synchronization service (the audit log remains strictly local);
 - Complete VT/ANSI terminal emulation (the GUI uses xterm.js for crisp output rendering, while the TUI uses tmux native attach for full interactive sessions).

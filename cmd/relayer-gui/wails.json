@@ -9,5 +9,12 @@
   "author": {
     "name": "Relayer contributors",
     "email": ""
+  },
+  "info": {
+    "companyName": "Relayer",
+    "productName": "Relayer",
+    "productVersion": "0.0.0",
+    "copyright": "Copyright (c) 2026 Hocsman",
+    "comments": "Run several AI coding agents at once, and answer their prompts from one place."
   }
 }

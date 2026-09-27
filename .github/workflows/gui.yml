@@ -168,6 +168,14 @@ jobs:
           version_output="$("$wails_bin" version)"
           test "${version_output%%$'\n'*}" = "v2.14.0"
 
+      - name: Put NSIS on the PATH on Windows
+        if: runner.os == 'Windows'
+        run: |
+          if ! command -v makensis >/dev/null; then
+            [[ -x "/c/Program Files (x86)/NSIS/makensis.exe" ]] || choco install nsis --yes --no-progress
+            echo "C:\\Program Files (x86)\\NSIS" >> "$GITHUB_PATH"
+          fi
+
       - name: Build native GUI (verification only)
         run: |
           wails_bin="$RUNNER_TEMP/relayer-wails-bin/wails"
@@ -181,9 +189,21 @@ jobs:
             "$wails_bin" build \
               -clean \
               -skipbindings \
+              -nsis \
               -o Relayer.exe
           else
             "$wails_bin" build \
               -clean \
               -skipbindings
           fi
+
+      # The installer is built for every change, so it can be tried from the
+      # run's artifacts before a release publishes it.
+      - name: Upload the Windows installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: relayer-windows-installer
+          path: cmd/relayer-gui/build/bin/Relayer-amd64-installer.exe
+          if-no-files-found: error
+          retention-days: 14

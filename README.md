@@ -194,6 +194,9 @@ the eye picks. Everything else is answered by typing what the CLI expects.
 
 Pre-compiled, signed standalone desktop bundles are published for Windows (`x64`),
 macOS (Universal `x64` + `arm64`), and Linux (`amd64`) on the [Releases page](https://github.com/Hocsman/Relayer/releases).
+On Windows, `relayer-desktop_<version>_windows_amd64_setup.exe` installs Relayer
+for the current user, without administrator rights, with a desktop and Start
+menu shortcut; see the [desktop GUI guide](docs/gui.md#installing-on-windows).
 
 You can also build the desktop GUI from source using Wails v2.14.0:
 
