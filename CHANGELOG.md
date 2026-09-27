@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.13] - 2026-09-27
+
+Patch release that gives Windows an installer. `relayer-desktop_0.8.13_windows_amd64_setup.exe` installs Relayer for the current user, without administrator rights, with a shortcut on the desktop and in the Start menu; the zip remains for those who prefer it. The Windows executable now carries the release's version.
+
 ### Added
 
 - **A Windows installer**, `relayer-desktop_<version>_windows_amd64_setup.exe`, next to the zip. It installs Relayer for the current user in `%LOCALAPPDATA%\Programs\Relayer`, without administrator rights, with a shortcut on the desktop and in the Start menu, installs the WebView2 runtime when Windows lacks it, offers to start Relayer when it ends, and registers an uninstaller in Settings → Apps that leaves the configuration in `%APPDATA%\relayer` in place. Until now Windows users extracted a zip and had to make their own shortcut. The installer is built on every change by the GUI workflow, whose run keeps it as an artifact, and published with the release, included in the desktop checksums, their signature and the provenance attestation. The executable and the installer now carry the release's version; they said 1.0.0. The installer is not code-signed, so SmartScreen may ask to confirm it.
@@ -1046,7 +1050,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.12...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.13...main
+[0.8.13]: https://github.com/Hocsman/Relayer/compare/v0.8.12...v0.8.13
 [0.8.12]: https://github.com/Hocsman/Relayer/compare/v0.8.11...v0.8.12
 [0.8.11]: https://github.com/Hocsman/Relayer/compare/v0.8.10...v0.8.11
 [0.8.10]: https://github.com/Hocsman/Relayer/compare/v0.8.9...v0.8.10
