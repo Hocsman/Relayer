@@ -239,6 +239,26 @@ jobs:
         run: npm ci
         working-directory: cmd/relayer-gui/frontend
 
+      # The Windows executable and its installer carry the release's version;
+      # wails.json holds 0.0.0 for local builds. NSIS takes numbers only, so
+      # a prerelease or build suffix is dropped.
+      - name: Stamp the release version into wails.json
+        working-directory: cmd/relayer-gui
+        run: |
+          version="${{ needs.verify.outputs.version }}"
+          version="${version%%-*}"
+          version="${version%%+*}"
+          jq --arg v "$version" '.info.productVersion = $v' wails.json > wails.json.tmp
+          mv wails.json.tmp wails.json
+
+      - name: Put NSIS on the PATH on Windows
+        if: runner.os == 'Windows'
+        run: |
+          if ! command -v makensis >/dev/null; then
+            [[ -x "/c/Program Files (x86)/NSIS/makensis.exe" ]] || choco install nsis --yes --no-progress
+            echo "C:\\Program Files (x86)\\NSIS" >> "$GITHUB_PATH"
+          fi
+
       - name: Build native GUI
         working-directory: cmd/relayer-gui
         env:
@@ -249,7 +269,7 @@ jobs:
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             "$wails_bin" build -clean -tags webkit2_41 -o Relayer
           elif [[ "$RUNNER_OS" == "Windows" ]]; then
-            "$wails_bin" build -clean -o Relayer.exe
+            "$wails_bin" build -clean -nsis -o Relayer.exe
           else
             "$wails_bin" build -clean -platform darwin/universal
           fi
@@ -263,6 +283,8 @@ jobs:
             cp cmd/relayer-gui/build/bin/Relayer.exe "$RUNNER_TEMP/pkg/"
             cp README.md LICENSE "$RUNNER_TEMP/pkg/"
             (cd "$RUNNER_TEMP/pkg" && 7z a "$archive_path" *)
+            cp cmd/relayer-gui/build/bin/Relayer-amd64-installer.exe \
+              "$RUNNER_TEMP/dist/relayer-desktop_${{ needs.verify.outputs.version }}_windows_amd64_setup.exe"
           elif [[ "$RUNNER_OS" == "macOS" ]]; then
             mkdir -p "$RUNNER_TEMP/pkg"
             cp -R cmd/relayer-gui/build/bin/Relayer.app "$RUNNER_TEMP/pkg/"
@@ -338,4 +360,5 @@ jobs:
           subject-path: |
             release-desktop/*.zip
             release-desktop/*.tar.gz
+            release-desktop/*.exe
             release-desktop/*_checksums.txt
