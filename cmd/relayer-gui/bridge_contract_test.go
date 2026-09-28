@@ -6,6 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/Hocsman/Relayer/internal/adapters"
 )
 
 // The empty window of v0.8.9, v0.8.10 and v0.8.11 was a contract breach
@@ -22,9 +25,9 @@ import (
 // what Go emits. Neither side is ever tested against a fixture the other side
 // does not see.
 //
-// A deliberate payload change regenerates the file with:
+// A deliberate payload change regenerates the files with:
 //
-//	go test ./cmd/relayer-gui -run TestBridgeStateContract -update
+//	go test ./cmd/relayer-gui -run 'BridgeStateContract' -update
 var updateBridgeGolden = flag.Bool("update", false, "rewrite the bridge contract golden file")
 
 func TestBridgeStateContract(t *testing.T) {
@@ -32,13 +35,46 @@ func TestBridgeStateContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetState on an idle application: %v", err)
 	}
+	assertBridgeGolden(t, "bridge-state.idle.golden.json", state)
+}
+
+// TestRunningBridgeStateContract pins the payload of a run in progress, the
+// state an operator spends most of their time in: one agent waiting on a
+// prompt, one running, one whose process has exited with a code, and the
+// pending prompt itself. The idle payload has no agent and no prompt, so it
+// could not catch a field of either that one side stopped sending or the
+// other stopped reading.
+func TestRunningBridgeStateContract(t *testing.T) {
+	engine := newFakeDesktopEngine("Agent-A", "Agent-B", "Agent-C")
+	application := newBridgeForTest(engine)
+	application.handleAdapterEvent(bridgeEvent("Agent-A", "prompt-1"))
+	exitCode := 3
+	exit := adapters.NewProcessExitEvent("Agent-C", "Agent-C", "generic", 1, &exitCode, true)
+	exit.Timestamp = time.Date(2026, time.August, 27, 10, 5, 0, 0, time.UTC)
+	application.handleAdapterEvent(exit)
+
+	state, err := application.GetState()
+	if err != nil {
+		t.Fatalf("GetState on a running application: %v", err)
+	}
+	// The start time is the moment the fake run began; it is the one field
+	// that changes from run to run.
+	if state.StartedAt == "" {
+		t.Fatal("a running application sent no start time")
+	}
+	state.StartedAt = "2026-08-27T09:59:00Z"
+	assertBridgeGolden(t, "bridge-state.running.golden.json", state)
+}
+
+func assertBridgeGolden(t *testing.T, name string, state AppState) {
+	t.Helper()
 	payload, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		t.Fatalf("the state does not marshal: %v", err)
 	}
 	payload = append(payload, '\n')
 
-	golden := filepath.Join("frontend", "src", "state", "testdata", "bridge-state.idle.golden.json")
+	golden := filepath.Join("frontend", "src", "state", "testdata", name)
 	if *updateBridgeGolden {
 		if err := os.WriteFile(golden, payload, 0o644); err != nil {
 			t.Fatalf("rewrite the golden file: %v", err)
