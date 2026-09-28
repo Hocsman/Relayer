@@ -13,6 +13,9 @@ import type { AppState } from "../types/relayer";
 // what it emits, its test fails until the file is regenerated; if this page
 // stops being able to read what Go emits, this test fails.
 import idleBridgeState from "./testdata/bridge-state.idle.golden.json";
+// The same for a run in progress, pinned by TestRunningBridgeStateContract:
+// one agent waiting on a prompt, one running, one exited with a code.
+import runningBridgeState from "./testdata/bridge-state.running.golden.json";
 
 describe("the Go-to-interface bridge contract", () => {
   // The state an operator sees on every launch: no run, no agents. A null
@@ -29,5 +32,23 @@ describe("the Go-to-interface bridge contract", () => {
     expect(loaded.connection).toBe("ready");
     expect(loaded.app?.agents).toEqual([]);
     expect(loaded.app?.pendingEvents).toEqual([]);
+  });
+
+  it("keeps every agent and the waiting prompt of a run in progress", () => {
+    const state = runningBridgeState as unknown as AppState;
+    const loaded = relayerReducer(initialRelayerState, { type: "loaded", state });
+    expect(loaded.connection).toBe("ready");
+    expect(loaded.app?.runStatus).toBe("running");
+    expect(loaded.app?.agents.map((agent) => [agent.sessionID, agent.status, agent.running])).toEqual([
+      ["Agent-A", "waiting", true],
+      ["Agent-B", "running", true],
+      ["Agent-C", "failed", false],
+    ]);
+    expect(loaded.app?.agents[2].exitCode).toBe(3);
+    // A prompt is kept only when it belongs to the run the page shows; a
+    // payload whose prompts named another run would silently show none.
+    expect(loaded.app?.pendingEvents.map((event) => [event.sessionID, event.id, event.deliveryStatus])).toEqual([
+      ["Agent-A", "prompt-1", "pending"],
+    ]);
   });
 });

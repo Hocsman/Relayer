@@ -1,0 +1,87 @@
+{
+  "runID": "run-test",
+  "runStatus": "running",
+  "startedAt": "2026-08-27T09:59:00Z",
+  "policy": {
+    "defaultAction": "ask",
+    "dryRun": false
+  },
+  "audit": {
+    "enabled": true,
+    "mode": "metadata",
+    "status": "ready",
+    "path": "/private/test/audit.jsonl"
+  },
+  "agents": [
+    {
+      "sessionID": "Agent-A",
+      "agentID": "Agent-A",
+      "name": "Agent-A",
+      "displayCommand": "fixture-agent",
+      "backend": "pty",
+      "adapter": "generic",
+      "status": "waiting",
+      "output": "ready",
+      "revision": 2,
+      "running": true,
+      "attached": false,
+      "inputFrozen": false,
+      "simulated": false
+    },
+    {
+      "sessionID": "Agent-B",
+      "agentID": "Agent-B",
+      "name": "Agent-B",
+      "displayCommand": "fixture-agent",
+      "backend": "pty",
+      "adapter": "generic",
+      "status": "running",
+      "output": "ready",
+      "revision": 1,
+      "running": true,
+      "attached": false,
+      "inputFrozen": false,
+      "simulated": false
+    },
+    {
+      "sessionID": "Agent-C",
+      "agentID": "Agent-C",
+      "name": "Agent-C",
+      "displayCommand": "fixture-agent",
+      "backend": "pty",
+      "adapter": "generic",
+      "status": "failed",
+      "output": "ready",
+      "revision": 2,
+      "running": false,
+      "attached": false,
+      "inputFrozen": false,
+      "simulated": false,
+      "exitCode": 3
+    }
+  ],
+  "pendingEvents": [
+    {
+      "runID": "run-test",
+      "id": "prompt-1",
+      "sessionID": "Agent-A",
+      "agentID": "Agent-A",
+      "adapter": "generic",
+      "type": "confirmation",
+      "summary": "Overwrite file?",
+      "sensitive": false,
+      "risk": "low",
+      "timestamp": "2026-08-27T10:00:00.000000000Z",
+      "evaluation": {
+        "action": "ask",
+        "proposedAction": "ask",
+        "reason": "default_action",
+        "automatic": false,
+        "dryRun": false
+      },
+      "deliveryStatus": "pending",
+      "decisions": []
+    }
+  ],
+  "notices": []
+}
