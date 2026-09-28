@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -78,4 +79,37 @@ func TestStopIsConfirmedWhenAnOrphanIsLeftAsAZombie(t *testing.T) {
 	if err := manager.Stop(info.ID); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
+	// Nothing but Relayer would ever reap the orphans it adopted, so a Stop
+	// that left them would leave them in the process table for good.
+	if zombies := zombieChildren(t); len(zombies) != 0 {
+		t.Fatalf("the stop left zombie children behind: %v", zombies)
+	}
+}
+
+// zombieChildren lists this process's children that have exited and not been
+// waited for.
+func zombieChildren(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		t.Fatalf("list /proc: %v", err)
+	}
+	self := strconv.Itoa(os.Getpid())
+	var zombies []string
+	for _, entry := range entries {
+		stat, err := os.ReadFile("/proc/" + entry.Name() + "/stat")
+		if err != nil {
+			continue
+		}
+		name := strings.LastIndexByte(string(stat), ')')
+		if name < 0 {
+			continue
+		}
+		// state ppid ...
+		fields := strings.Fields(string(stat[name+1:]))
+		if len(fields) >= 2 && fields[0] == "Z" && fields[1] == self {
+			zombies = append(zombies, strings.TrimSpace(string(stat)))
+		}
+	}
+	return zombies
 }

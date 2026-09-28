@@ -89,6 +89,7 @@ type processSession struct {
 	killGroup      func(*exec.Cmd)
 	groupExists    func(*exec.Cmd) bool
 	groupLive      func(*exec.Cmd) bool
+	reapGroup      func(*exec.Cmd)
 
 	// recordInput and recordResize are nil unless a transcript is being
 	// written. They are set once, before the session is published, so no lock
@@ -368,9 +369,24 @@ func (s *processSession) settleDescendants() {
 		if s.processGroupExists() {
 			s.killProcessGroup()
 			leftover = !s.waitGroupDead(forcedStopTimeout)
+			if !leftover {
+				s.reapProcessGroup()
+			}
 		}
 	}
 	s.settleGroup(leftover)
+}
+
+// reapProcessGroup waits for the group's zombies that are Relayer's own
+// children: orphans it adopted as PID 1, which nothing else would reap. It
+// runs before the group is settled, while addressing the group is still
+// allowed, and only once nothing in it can run.
+func (s *processSession) reapProcessGroup() {
+	if s.reapGroup != nil {
+		s.reapGroup(s.cmd)
+		return
+	}
+	platform.ReapProcessGroupZombies(s.cmd)
 }
 
 // waitGroupDead polls, once the group was sent SIGKILL, until no member of it
