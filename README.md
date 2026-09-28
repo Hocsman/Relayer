@@ -287,6 +287,43 @@ gh attestation verify "${ARCHIVE}" --repo Hocsman/Relayer
 Each archive also ships an SBOM (`<archive>.sbom.json`) listing what went into
 that build.
 
+## Code signing
+
+Free code signing for Windows is provided by [SignPath.io](https://about.signpath.io/),
+certificate by [SignPath Foundation](https://signpath.org/). Once the project's
+signing is in place, the Windows desktop installer
+(`relayer-desktop_<version>_windows_amd64_setup.exe`) and the executable it
+installs are signed in the release workflow, from the tag's own build on GitHub
+Actions; until then they are published unsigned, and Windows SmartScreen may
+ask to confirm them.
+
+- Committers and reviewers: [Hocsman](https://github.com/Hocsman)
+- Approvers: [Hocsman](https://github.com/Hocsman), who approves every signing
+  request by hand
+
+Only artifacts built by this repository's release workflow from an authorized
+tag are submitted for signing. Linux and macOS archives are verified with the
+keyless cosign signature and the build provenance described under
+[Releases](#releases).
+
+## Privacy
+
+Relayer does not collect, send or share any data on its own. It has no
+analytics and no update check, and it contacts no server run by the project.
+Configuration, transcripts and the audit log stay on the machine that runs it.
+
+It sends data over the network only where the user configures it to:
+
+- **Webhooks** in the `notifications` block post each notification to the URLs
+  the user lists.
+- **OTLP export** of telemetry, off by default, sends metrics to the endpoint
+  the user sets.
+- **`relayer serve`** and the Prometheus endpoint listen for connections; they
+  answer whoever the user lets reach them and send nothing unprompted.
+
+The agents Relayer supervises are separate programs, with their own network
+access and privacy policies.
+
 ## Quick start with safe mocks
 
 On first launch, Relayer creates `config.yaml` without overwriting an existing
