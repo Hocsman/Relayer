@@ -80,14 +80,18 @@ jobs:
     env:
       CGO_ENABLED: ${{ matrix.cgo }}
       GOFLAGS: ${{ matrix.go_flags }}
-      # Sentinel for the per-user configuration root: a GUI test that resolves
-      # the default config or audit path must land here, never in the runner's
-      # real home. Only Linux reads XDG_CONFIG_HOME, so only Linux asserts it.
-      XDG_CONFIG_HOME: ${{ runner.temp }}/relayer-gui-xdg-sentinel
 
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+
+      # Sentinel for the per-user configuration root: a GUI test that resolves
+      # the default config or audit path must land here, never in the runner's
+      # real home. Only Linux reads XDG_CONFIG_HOME, so only Linux asserts it.
+      # runner.temp is not a valid context in a job's env block, so the value
+      # travels through the step environment instead.
+      - name: Point the user configuration root at a sentinel
+        run: echo "XDG_CONFIG_HOME=$RUNNER_TEMP/relayer-gui-xdg-sentinel" >> "$GITHUB_ENV"
 
       - name: Set up Go
         uses: actions/setup-go@v5
