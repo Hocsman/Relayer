@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+### Fixed
+
+- **A Stop was reported as unconfirmed when the agent's shell had started a child**, wherever orphans are reaped late or not at all: in a container where Relayer is PID 1 without an init, the Kubernetes default, and under an init that reaps on a timer, as some sandboxes do. The shell dies without waiting for its child, which is killed with the group and stays in it as a zombie until whoever adopted it reaps it; Relayer probed the group by number, found the zombie, and reported every such Stop as unconfirmed, which blocks the agent's next run. A zombie runs nothing and holds no descriptor, the terminal included, so on Linux the check that follows the forced kill now reads the group's members in `/proc` and confirms a group left only with zombies. It counts the group as running whenever `/proc` might not show all of it: mounted from another PID namespace, or with `hidepid`. Other systems check as before. `TestStopIsConfirmedWhenAnOrphanIsLeftAsAZombie` fails against v0.8.13. `docs/web-gateway.md` still asks for `docker run --init`: Relayer does not reap the zombies, it only no longer counts them.
+
 ## [0.8.13] - 2026-09-27
 
 Patch release that gives Windows an installer. `relayer-desktop_0.8.13_windows_amd64_setup.exe` installs Relayer for the current user, without administrator rights, with a shortcut on the desktop and in the Start menu; the zip remains for those who prefer it. The Windows executable now carries the release's version.
