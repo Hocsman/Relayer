@@ -85,6 +85,7 @@ type processSession struct {
 	terminateGroup func(*exec.Cmd)
 	killGroup      func(*exec.Cmd)
 	groupExists    func(*exec.Cmd) bool
+	groupLive      func(*exec.Cmd) bool
 
 	// recordInput and recordResize are nil unless a transcript is being
 	// written. They are set once, before the session is published, so no lock
@@ -362,16 +363,20 @@ func (s *processSession) settleDescendants() {
 		time.Sleep(descendantGraceTime)
 		if s.processGroupExists() {
 			s.killProcessGroup()
-			leftover = !s.waitGroupGone(forcedStopTimeout)
+			leftover = !s.waitGroupDead(forcedStopTimeout)
 		}
 	}
 	s.settleGroup(leftover)
 }
 
-// waitGroupGone polls until the group disappears or the timeout passes.
-func (s *processSession) waitGroupGone(timeout time.Duration) bool {
+// waitGroupDead polls, once the group was sent SIGKILL, until no member of it
+// can run or the timeout passes. A member left as a zombie does not count: it
+// holds nothing, and whoever adopted it may reap it late or never. Relayer
+// running as PID 1 without an init, or under an init that reaps on a timer,
+// made every stop of an agent whose shell had started a child uncertain.
+func (s *processSession) waitGroupDead(timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
-	for s.processGroupExists() {
+	for s.processGroupLive() {
 		if time.Now().After(deadline) {
 			return false
 		}
@@ -394,6 +399,16 @@ func (s *processSession) killProcessGroup() {
 		return
 	}
 	platform.KillProcessGroup(s.cmd)
+}
+
+func (s *processSession) processGroupLive() bool {
+	if s.groupLive != nil {
+		return s.groupLive(s.cmd)
+	}
+	if s.groupExists != nil {
+		return s.groupExists(s.cmd)
+	}
+	return platform.ProcessGroupHasLiveMember(s.cmd)
 }
 
 func (s *processSession) processGroupExists() bool {

@@ -141,6 +141,25 @@ func TestSettleDescendantsKillsAndReportsASurvivingGroup(t *testing.T) {
 	}
 }
 
+// TestSettleDescendantsConfirmsAGroupLeftOnlyWithZombies: after SIGKILL the
+// group can still exist because its only members are zombies that whoever
+// adopted them has not reaped yet. They hold nothing, so the stop is confirmed.
+func TestSettleDescendantsConfirmsAGroupLeftOnlyWithZombies(t *testing.T) {
+	kills := 0
+	session := &processSession{
+		killGroup:   func(*exec.Cmd) { kills++ },
+		groupExists: func(*exec.Cmd) bool { return true },
+		groupLive:   func(*exec.Cmd) bool { return kills == 0 },
+	}
+	session.settleDescendants()
+	if kills != 1 {
+		t.Fatalf("kills of a surviving group = %d, want 1", kills)
+	}
+	if settled, leftover := session.groupOutcome(); !settled || leftover {
+		t.Fatalf("outcome = settled %v, leftover %v; want settled and clean", settled, leftover)
+	}
+}
+
 // TestRequestStopSendsNothingToAReapedLeader: once the leader is reaped its
 // number is free, and a stop request that arrives afterwards — an operator's
 // Stop, a cancelled context, a shutdown — must leave the group to waitSession.
