@@ -85,7 +85,19 @@ jobs:
           }
           trap cleanup_tmux EXIT
 
+          # A test that resolves the per-user paths (default audit journal,
+          # default configuration) must land in this sentinel, never in the
+          # runner's real home; a "relayer" entry here means a test escaped.
+          config_sentinel="$(mktemp -d "$RUNNER_TEMP/relayer-config-sentinel.XXXXXX")"
+          export XDG_CONFIG_HOME="$config_sentinel"
+
           go test -count=1 -timeout=5m -covermode=atomic -coverprofile=coverage.out ./...
+
+          if [[ -e "$config_sentinel/relayer" ]]; then
+            printf 'a test wrote into the user configuration directory:\n' >&2
+            find "$config_sentinel/relayer" >&2
+            exit 1
+          fi
 
       - name: Report coverage
         run: go tool cover -func=coverage.out

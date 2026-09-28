@@ -80,6 +80,10 @@ jobs:
     env:
       CGO_ENABLED: ${{ matrix.cgo }}
       GOFLAGS: ${{ matrix.go_flags }}
+      # Sentinel for the per-user configuration root: a GUI test that resolves
+      # the default config or audit path must land here, never in the runner's
+      # real home. Only Linux reads XDG_CONFIG_HOME, so only Linux asserts it.
+      XDG_CONFIG_HOME: ${{ runner.temp }}/relayer-gui-xdg-sentinel
 
     steps:
       - name: Check out code
@@ -157,6 +161,15 @@ jobs:
       - name: Test GUI module with race detector
         if: matrix.race
         run: go test -race -count=1 -timeout=5m ./...
+
+      - name: Verify tests left the user configuration directory untouched
+        if: runner.os == 'Linux'
+        run: |
+          if [[ -e "$XDG_CONFIG_HOME/relayer" ]]; then
+            printf 'a GUI test wrote into the user configuration directory:\n' >&2
+            find "$XDG_CONFIG_HOME/relayer" >&2
+            exit 1
+          fi
 
       - name: Install pinned Wails CLI
         run: |

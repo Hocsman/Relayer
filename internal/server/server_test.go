@@ -27,7 +27,26 @@ func TestMain(m *testing.M) {
 	if handled, exitCode := tmuxbackend.HelperMain(os.Args[1:], io.Discard); handled {
 		os.Exit(exitCode)
 	}
-	os.Exit(m.Run())
+	// Several tests boot a real run from the generated configuration, whose
+	// audit path is empty and therefore resolves to the per-user location:
+	// without this redirect the suite writes a real journal into the
+	// developer's ~/.config/relayer (or %APPDATA%\relayer). The whole package
+	// runs with every configuration root pointed at a throwaway directory;
+	// a test that needs a specific root still sets its own with t.Setenv.
+	configRoot, err := os.MkdirTemp("", "relayer-server-tests-config-*")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "isolate the user configuration directory:", err)
+		os.Exit(1)
+	}
+	for _, name := range []string{"APPDATA", "LOCALAPPDATA", "HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
+		if err := os.Setenv(name, configRoot); err != nil {
+			fmt.Fprintln(os.Stderr, "isolate the user configuration directory:", err)
+			os.Exit(1)
+		}
+	}
+	code := m.Run()
+	_ = os.RemoveAll(configRoot)
+	os.Exit(code)
 }
 
 // startServeForTest runs the gateway until the test ends, and waits for it to
