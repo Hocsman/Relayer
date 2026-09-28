@@ -87,7 +87,8 @@ jobs:
 
       # Sentinel for the per-user configuration root: a GUI test that resolves
       # the default config or audit path must land here, never in the runner's
-      # real home. Only Linux reads XDG_CONFIG_HOME, so only Linux asserts it.
+      # real home. Linux reads XDG_CONFIG_HOME and Windows reads APPDATA, which
+      # the test steps set below; macOS reads neither, so it asserts nothing.
       # runner.temp is not a valid context in a job's env block, so the value
       # travels through the step environment instead.
       - name: Point the user configuration root at a sentinel
@@ -160,18 +161,27 @@ jobs:
         run: $RUNNER_TEMP/relayer-gui-tools/govulncheck ./...
 
       - name: Test GUI module
+        env:
+          APPDATA: ${{ runner.temp }}/relayer-gui-appdata-sentinel
         run: go test -count=1 -timeout=5m ./...
 
       - name: Test GUI module with race detector
         if: matrix.race
+        env:
+          APPDATA: ${{ runner.temp }}/relayer-gui-appdata-sentinel
         run: go test -race -count=1 -timeout=5m ./...
 
       - name: Verify tests left the user configuration directory untouched
-        if: runner.os == 'Linux'
+        if: runner.os != 'macOS'
         run: |
-          if [[ -e "$XDG_CONFIG_HOME/relayer" ]]; then
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            root="$(cygpath -u "$RUNNER_TEMP")/relayer-gui-appdata-sentinel"
+          else
+            root="$XDG_CONFIG_HOME"
+          fi
+          if [[ -e "$root/relayer" ]]; then
             printf 'a GUI test wrote into the user configuration directory:\n' >&2
-            find "$XDG_CONFIG_HOME/relayer" >&2
+            find "$root/relayer" >&2
             exit 1
           fi
 
