@@ -579,6 +579,17 @@ export interface SaveFullSettingsRequest {
   notifications?: NotificationSettings;
 }
 
+// UpdateInfo is what the desktop's update check found. The web gateway has no
+// check, so its bridge leaves checkForUpdate out.
+export interface UpdateInfo {
+  current: string;
+  latest?: string;
+  available: boolean;
+  // Set when an administrator turned the check off (RELAYER_NO_UPDATE_CHECK)
+  // or the build has no release version to compare.
+  disabled: boolean;
+}
+
 export interface RelayerBridge {
   getState(): Promise<AppState>;
   runPreflight(): Promise<PreflightReport>;
@@ -607,6 +618,10 @@ export interface RelayerBridge {
   getTelemetrySnapshot(): Promise<TelemetrySnapshotView>;
   testNotification?(): Promise<{ ok: boolean }>;
   getUserInfo?(): Promise<UserInfo>;
+  // Update check. Desktop only; opening leads to the download the check
+  // validated, never to a URL the page supplies.
+  checkForUpdate?(): Promise<UpdateInfo>;
+  openUpdate?(): Promise<void>;
   sendTerminalInput?(runID: string, sessionID: string, data: string | Uint8Array): Promise<void>;
   setInteractiveSession?(runID: string, sessionID: string, active: boolean): Promise<void>;
   // Session sharing. Optional throughout: the desktop bridge has a single local

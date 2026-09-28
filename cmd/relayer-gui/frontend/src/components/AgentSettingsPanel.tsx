@@ -36,6 +36,8 @@ interface AgentSettingsPanelProps {
   onRequestBrowserPermission?: () => void;
   soundEnabled?: boolean;
   onSoundEnabledChange?: (enabled: boolean) => void;
+  updateCheckEnabled?: boolean;
+  onUpdateCheckEnabledChange?: (enabled: boolean) => void;
 }
 
 type Notice = { tone: "success" | "warning"; text: string };
@@ -54,6 +56,8 @@ export function AgentSettingsPanel({
   onRequestBrowserPermission,
   soundEnabled,
   onSoundEnabledChange,
+  updateCheckEnabled,
+  onUpdateCheckEnabledChange,
 }: AgentSettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>("agents");
   const [view, setView] = useState<AgentProfilesView>();
@@ -520,6 +524,8 @@ export function AgentSettingsPanel({
                 onRequestBrowserPermission={onRequestBrowserPermission}
                 soundEnabled={soundEnabled}
                 onSoundEnabledChange={onSoundEnabledChange}
+                updateCheckEnabled={updateCheckEnabled}
+                onUpdateCheckEnabledChange={onUpdateCheckEnabledChange}
                 onTestNotification={handleTestNotification}
                 testStatus={testFeedback}
               />
@@ -1143,6 +1149,8 @@ function NotificationSettingsTab({
   onRequestBrowserPermission,
   soundEnabled,
   onSoundEnabledChange,
+  updateCheckEnabled,
+  onUpdateCheckEnabledChange,
   onTestNotification,
   testStatus,
 }: {
@@ -1153,6 +1161,8 @@ function NotificationSettingsTab({
   onRequestBrowserPermission?: () => void;
   soundEnabled?: boolean;
   onSoundEnabledChange?: (enabled: boolean) => void;
+  updateCheckEnabled?: boolean;
+  onUpdateCheckEnabledChange?: (enabled: boolean) => void;
   onTestNotification?: () => void;
   testStatus?: string;
 }) {
@@ -1219,6 +1229,19 @@ function NotificationSettingsTab({
                 disabled={disabled}
               />
               <span>Son d'alerte audio (synthétiseur Web Audio en cas d'arbitrage ou d'incident)</span>
+            </label>
+          </div>
+        )}
+
+        {onUpdateCheckEnabledChange !== undefined && (
+          <div className="settings-row">
+            <label className="settings-toggle">
+              <input
+                type="checkbox"
+                checked={updateCheckEnabled ?? true}
+                onChange={(e) => onUpdateCheckEnabledChange(e.target.checked)}
+              />
+              <span>Check for a new version at launch (asks GitHub; sends nothing else)</span>
             </label>
           </div>
         )}

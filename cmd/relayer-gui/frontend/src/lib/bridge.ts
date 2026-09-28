@@ -15,6 +15,7 @@ import type {
   TelemetrySnapshotView,
   FullSettingsView,
   SaveFullSettingsRequest,
+  UpdateInfo,
 } from "../types/relayer";
 
 type NativeMethod<TArgs extends unknown[], TResult> = (...args: TArgs) => Promise<TResult>;
@@ -43,6 +44,8 @@ interface NativeBindings {
   GetTelemetrySnapshot: NativeMethod<[], TelemetrySnapshotView>;
   GetFullSettings: NativeMethod<[], FullSettingsView>;
   SaveFullSettings: NativeMethod<[string, SaveFullSettingsRequest], FullSettingsView>;
+  CheckForUpdate?: NativeMethod<[], UpdateInfo>;
+  OpenUpdate?: NativeMethod<[], void>;
 }
 
 interface WailsRuntime {
@@ -129,6 +132,9 @@ export function createWailsBridge(): RelayerBridge {
     getTelemetrySnapshot: () => bindings.GetTelemetrySnapshot(),
     getFullSettings: () => bindings.GetFullSettings(),
     saveFullSettings: (runID, request) => bindings.SaveFullSettings(runID, request),
+    // Absent from a build older than the check, which then simply shows none.
+    checkForUpdate: bindings.CheckForUpdate ? () => bindings.CheckForUpdate!() : undefined,
+    openUpdate: bindings.OpenUpdate ? () => bindings.OpenUpdate!() : undefined,
     getUserInfo: async () => ({
       identity: "local-operator",
       // The desktop application is a single local operator with no gateway

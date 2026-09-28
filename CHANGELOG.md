@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+### Added
+
+- **The desktop application tells you when a new version is out.** At launch it asks GitHub for the repository's latest release and, when it is newer than the running one, shows a banner with a **Download** button: on Windows it downloads the new installer, elsewhere it opens the release page. **Not now** sets that release aside until the next. The request carries nothing but the running version; the check is turned off in **Settings → Notifications**, or for every user of a machine with `RELAYER_NO_UPDATE_CHECK=1`. A link only ever leads to a release of this repository, whatever the response names, and Relayer installs nothing by itself. Until now a user had to watch the Releases page. The desktop binaries of a release now carry its version, which the check compares; they said `dev`. The README's privacy section says so.
+
 ### Fixed
 
 - **Relayer running as PID 1 left every stopped agent's orphans in the process table.** In a container started without an init, Relayer adopts every orphan, and nothing but Relayer can reap them. v0.8.14 stopped counting those zombies when it confirmed a stop, but left them behind, so each Stop of an agent whose shell had started a child added one for good. When a stop leaves an agent's process group with nothing but zombies, Relayer now waits for those that are its own children. It waits only for members of that group and never blocks, so it cannot take the exit status of a process it waits for elsewhere; a process that left the group, or anything else in the container, is still left to an init, which `docs/web-gateway.md` still asks for. `TestStopIsConfirmedWhenAnOrphanIsLeftAsAZombie` now also fails against v0.8.14.

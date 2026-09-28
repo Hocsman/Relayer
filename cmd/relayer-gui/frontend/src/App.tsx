@@ -11,8 +11,10 @@ import { PreflightPanel } from "./components/PreflightPanel";
 import { RecordingsPanel } from "./components/RecordingsPanel";
 import { SupervisorPanel } from "./components/SupervisorPanel";
 import { TopBar } from "./components/TopBar";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { useNotifications } from "./hooks/useNotifications";
 import { useRelayer } from "./hooks/useRelayer";
+import { useUpdateCheck } from "./hooks/useUpdateCheck";
 import { supervisionEventKey } from "./lib/eventKey";
 import { nextPromptSelection } from "./lib/promptQueue";
 import type { AppState, RelayerBridge, RunStatus, UserInfo } from "./types/relayer";
@@ -45,6 +47,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
     soundEnabled,
     setSoundEnabled,
   } = useNotifications(bridge);
+  const updates = useUpdateCheck(bridge);
   const [userInfo, setUserInfo] = useState<UserInfo>();
 
   useEffect(() => {
@@ -217,6 +220,18 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
         }}
         onRequestStop={() => setStopConfirmation(true)}
       />
+      {updates.update && (
+        <UpdateBanner
+          update={updates.update}
+          onDownload={() => {
+            updates.open().catch(() => {
+              // The browser could not be opened; the banner stays so the
+              // user can try again.
+            });
+          }}
+          onDismiss={updates.dismiss}
+        />
+      )}
       {hasDashboard ? (
         <main className="workspace">
           <AgentGrid
@@ -275,6 +290,8 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
           onRequestBrowserPermission={requestPermission}
           soundEnabled={soundEnabled}
           onSoundEnabledChange={setSoundEnabled}
+          updateCheckEnabled={updates.supported ? updates.enabled : undefined}
+          onUpdateCheckEnabledChange={updates.supported ? updates.setEnabled : undefined}
         />
       )}
       {preflightOpen && (
