@@ -148,17 +148,20 @@ func drainPTYCollector(collector *boundedCollector, collected *collectorResult) 
 	}
 }
 
+// After SIGKILL the waits below count only members that can still run: a
+// member left as a zombie holds nothing, and whoever adopted it may reap it
+// late or, as Relayer running as PID 1 does, never.
 func terminatePTYCommand(command *exec.Cmd, waited <-chan error) error {
 	platform.TerminateProcessGroup(command)
 	leaderExited := false
-	if waitForPTYShutdown(command, waited, &leaderExited, 250*time.Millisecond) {
+	if waitForPTYShutdown(command, waited, &leaderExited, platform.ProcessGroupExists, 250*time.Millisecond) {
 		return nil
 	}
 	platform.KillProcessGroup(command)
-	if waitForPTYShutdown(command, waited, &leaderExited, 2*time.Second) {
+	if waitForPTYShutdown(command, waited, &leaderExited, platform.ProcessGroupHasLiveMember, 2*time.Second) {
 		return nil
 	}
-	if platform.ProcessGroupExists(command) {
+	if platform.ProcessGroupHasLiveMember(command) {
 		return errors.New("PTY capture process group disappearance was not confirmed")
 	}
 	return errors.New("PTY capture leader did not exit after SIGKILL")
@@ -169,17 +172,17 @@ func terminatePTYDescendantsAfterLeaderExit(command *exec.Cmd) error {
 		return nil
 	}
 	platform.TerminateProcessGroup(command)
-	if waitForPTYProcessGroupExit(command, 250*time.Millisecond) {
+	if waitForPTYProcessGroupExit(command, platform.ProcessGroupExists, 250*time.Millisecond) {
 		return nil
 	}
 	platform.KillProcessGroup(command)
-	if waitForPTYProcessGroupExit(command, 2*time.Second) {
+	if waitForPTYProcessGroupExit(command, platform.ProcessGroupHasLiveMember, 2*time.Second) {
 		return nil
 	}
 	return errors.New("PTY capture descendant process group disappearance was not confirmed")
 }
 
-func waitForPTYShutdown(command *exec.Cmd, waited <-chan error, leaderExited *bool, timeout time.Duration) bool {
+func waitForPTYShutdown(command *exec.Cmd, waited <-chan error, leaderExited *bool, groupRemains func(*exec.Cmd) bool, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for {
 		if !*leaderExited {
@@ -189,7 +192,7 @@ func waitForPTYShutdown(command *exec.Cmd, waited <-chan error, leaderExited *bo
 			default:
 			}
 		}
-		if *leaderExited && !platform.ProcessGroupExists(command) {
+		if *leaderExited && !groupRemains(command) {
 			return true
 		}
 		if !time.Now().Before(deadline) {
@@ -199,9 +202,9 @@ func waitForPTYShutdown(command *exec.Cmd, waited <-chan error, leaderExited *bo
 	}
 }
 
-func waitForPTYProcessGroupExit(command *exec.Cmd, timeout time.Duration) bool {
+func waitForPTYProcessGroupExit(command *exec.Cmd, groupRemains func(*exec.Cmd) bool, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
-	for platform.ProcessGroupExists(command) {
+	for groupRemains(command) {
 		if !time.Now().Before(deadline) {
 			return false
 		}

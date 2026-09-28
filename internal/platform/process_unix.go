@@ -49,6 +49,36 @@ func ProcessGroupExists(command *exec.Cmd) bool {
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
+// ProcessGroupHasLiveMember reports whether the command's process group still
+// has a member that can run. Unlike ProcessGroupExists it does not count a
+// member left as a zombie: it runs no code and has closed every descriptor,
+// the PTY slave included. It only keeps the group's number reserved until
+// whoever adopted it reaps it, which an init that reaps on a timer takes a
+// second or two to do, and Relayer itself running as PID 1 never does.
+//
+// It is only meaningful once the group was sent SIGKILL: the kernel then lets
+// no member start a new one, so a group seen with nothing but zombies stays
+// that way. Only Linux can tell a zombie apart here; elsewhere, and wherever
+// /proc may not show every member, it is ProcessGroupExists.
+func ProcessGroupHasLiveMember(command *exec.Cmd) bool {
+	if command == nil || command.Process == nil || command.Process.Pid <= 0 {
+		return false
+	}
+	return ProcessGroupIDHasLiveMember(command.Process.Pid)
+}
+
+// ProcessGroupIDHasLiveMember is ProcessGroupHasLiveMember for a group known
+// only by its number.
+func ProcessGroupIDHasLiveMember(pgid int) bool {
+	if pgid <= 0 {
+		return false
+	}
+	if err := signalProcessGroup(pgid, syscall.Signal(0)); err != nil && !errors.Is(err, syscall.EPERM) {
+		return false
+	}
+	return !groupHoldsOnlyZombies(pgid)
+}
+
 // SetGracefulCancel makes cancelling the command's context call stop — the
 // caller's graceful stop request — instead of os/exec's default of killing the
 // leader outright. A leader still running after grace is then killed by
