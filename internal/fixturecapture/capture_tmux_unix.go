@@ -370,7 +370,9 @@ func stopPrivateTmux(ctx context.Context, path, socket string, identity tmuxIden
 	}
 	_ = os.Remove(socket)
 	if terminateTree && identity.panePID > 1 {
-		for tmuxProcessGroupExists(identity.panePID) {
+		// The group was killed above or was already gone, so a member left as a
+		// zombie for a slow or absent reaper no longer counts.
+		for platform.ProcessGroupIDHasLiveMember(identity.panePID) {
 			select {
 			case <-ctx.Done():
 				return errors.Join(errors.New("private tmux pane process group disappearance was not confirmed"), ctx.Err())

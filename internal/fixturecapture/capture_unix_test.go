@@ -3,6 +3,7 @@
 package fixturecapture
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -323,10 +324,10 @@ func TestPTYCaptureBoundsTimeoutAndKillsProcessGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for processExists(pid) && time.Now().Before(deadline) {
+	for processRuns(pid) && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
-	if processExists(pid) {
+	if processRuns(pid) {
 		t.Fatalf("descendant process %d survived capture timeout", pid)
 	}
 }
@@ -395,10 +396,10 @@ func TestPTYCaptureLeaderExitKillsLingeringDescendant(t *testing.T) {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for processExists(pid) && time.Now().Before(deadline) {
+	for processRuns(pid) && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
-	if processExists(pid) {
+	if processRuns(pid) {
 		t.Fatalf("descendant process %d survived its PTY leader", pid)
 	}
 }
@@ -621,10 +622,10 @@ func TestTmuxCaptureUsesPrivateServerAndLeavesForeignServerAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	childDeadline := time.Now().Add(2 * time.Second)
-	for processExists(tmuxChildPID) && time.Now().Before(childDeadline) {
+	for processRuns(tmuxChildPID) && time.Now().Before(childDeadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
-	if processExists(tmuxChildPID) {
+	if processRuns(tmuxChildPID) {
 		t.Fatalf("tmux descendant process %d survived capture timeout", tmuxChildPID)
 	}
 	boundedOptions := captureOptions(t, BackendTmux, "flood", "12000")
@@ -681,9 +682,20 @@ func tmuxTestHelper(t *testing.T) (string, string) {
 	return path, diagnosticPath
 }
 
-func processExists(pid int) bool {
+// processRuns reports whether pid names a process that can still run. A
+// process that was killed but that whoever adopted it has not reaped yet is a
+// zombie, which Linux's /proc tells apart; elsewhere it still counts.
+func processRuns(pid int) bool {
 	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
+	if err != nil && !errors.Is(err, syscall.EPERM) {
+		return false
+	}
+	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return true
+	}
+	fields := strings.Fields(string(stat[bytes.LastIndexByte(stat, ')')+1:]))
+	return len(fields) == 0 || fields[0] != "Z"
 }
 
 func assertSabotagedRuntimeWasRemoved(t *testing.T, recordPath string, fixture Fixture, captureErr error) {

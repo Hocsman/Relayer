@@ -46,6 +46,12 @@ func KillProcessGroup(command *exec.Cmd) {
 	_ = command.Process.Kill()
 }
 
+// ProcessGroupHasLiveMember is ProcessGroupExists: a Windows process that has
+// exited is not left behind for a parent to reap.
+func ProcessGroupHasLiveMember(command *exec.Cmd) bool {
+	return ProcessGroupExists(command)
+}
+
 // ProcessGroupExists reports whether the command process is still active.
 func ProcessGroupExists(command *exec.Cmd) bool {
 	if command == nil || command.Process == nil || command.ProcessState != nil {

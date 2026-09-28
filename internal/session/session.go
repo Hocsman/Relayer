@@ -17,7 +17,8 @@ import (
 var (
 	ErrClosed = errors.New("PTY session closed")
 	// ErrStopUncertain means Relayer requested termination but could not confirm
-	// that both the command leader and its PTY process group disappeared. A
+	// that the command leader was reaped and that no member of its PTY process
+	// group can still run; on Linux a member left as a zombie does not count. A
 	// caller must not start a replacement process while this error is present.
 	ErrStopUncertain = errors.New("PTY session stop not confirmed")
 )
@@ -65,8 +66,9 @@ type processSession struct {
 	// group: the leader was reaped and its descendants were terminated. From
 	// then on nothing signals, probes or kills by the leader's number, which
 	// may belong to an unrelated process. groupLeftover records that the
-	// cleanup could not confirm the group gone, so a Stop still reports
-	// ErrStopUncertain instead of retrying against that number.
+	// cleanup could not confirm that nothing in the group can still run, so a
+	// Stop still reports ErrStopUncertain instead of retrying against that
+	// number.
 	groupSettled  bool
 	groupLeftover bool
 
@@ -79,7 +81,8 @@ type processSession struct {
 	closePTYOnce sync.Once
 	stopOnce     sync.Once
 
-	// These hooks default to the platform process-group primitives. Keeping
+	// These hooks default to the platform process-group primitives, except that
+	// an unset groupLive falls back to a groupExists a test has set. Keeping
 	// them per session makes the negative confirmation paths deterministic in
 	// tests without mutating package globals used by concurrent sessions.
 	terminateGroup func(*exec.Cmd)
@@ -301,7 +304,8 @@ func (s *processSession) waitForStopWithin(gracefulTimeout, forcedTimeout time.D
 	return s.confirmProcessGroupStopped(forcedTimeout)
 }
 
-// confirmProcessGroupStopped reports whether the leader and its group are gone.
+// confirmProcessGroupStopped reports whether the leader is gone and nothing in
+// its group can still run.
 // In a Manager, done only closes after waitSession has settled the group, so
 // the answer is the latch. Probing and killing by number remains only for a
 // leader that was never reaped, which a Manager-owned session never is here.
@@ -401,6 +405,8 @@ func (s *processSession) killProcessGroup() {
 	platform.KillProcessGroup(s.cmd)
 }
 
+// processGroupLive reports whether a member of the group can still run. A
+// test that fakes only the group's existence gets the same answer from it.
 func (s *processSession) processGroupLive() bool {
 	if s.groupLive != nil {
 		return s.groupLive(s.cmd)

@@ -6,12 +6,14 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
 	"github.com/Hocsman/Relayer/internal/agent"
+	"github.com/Hocsman/Relayer/internal/platform"
+	"golang.org/x/sys/unix"
 )
 
 const nonReapingSubreaperEnv = "RELAYER_TEST_NON_REAPING_SUBREAPER"
@@ -24,21 +26,26 @@ const nonReapingSubreaperEnv = "RELAYER_TEST_NON_REAPING_SUBREAPER"
 // no descriptor, so the stop must be confirmed.
 func TestStopIsConfirmedWhenAnOrphanIsLeftAsAZombie(t *testing.T) {
 	if os.Getenv(nonReapingSubreaperEnv) == "" {
-		child := exec.Command(os.Args[0], "-test.run=^TestStopIsConfirmedWhenAnOrphanIsLeftAsAZombie$", "-test.count=1", "-test.v", "-test.timeout=1m")
+		child := exec.Command(os.Args[0], "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.count=1", "-test.v", "-test.timeout=1m")
 		child.Env = append(os.Environ(), nonReapingSubreaperEnv+"=1")
 		output, err := child.CombinedOutput()
 		if err != nil {
 			t.Fatalf("the non-reaping subreaper failed: %v\n%s", err, output)
 		}
-		if strings.Contains(string(output), "--- SKIP") {
+		if strings.Contains(string(output), "--- SKIP: "+t.Name()) {
 			t.Skipf("the non-reaping subreaper skipped:\n%s", output)
+		}
+		if !strings.Contains(string(output), "--- PASS: "+t.Name()) {
+			t.Fatalf("the non-reaping subreaper did not run %s:\n%s", t.Name(), output)
 		}
 		return
 	}
 
-	const prSetChildSubreaper = 36
-	if _, _, errno := syscall.RawSyscall(syscall.SYS_PRCTL, prSetChildSubreaper, 1, 0); errno != 0 {
-		t.Skipf("PR_SET_CHILD_SUBREAPER: %v", errno)
+	if !platform.ProcessGroupLivenessIsExact() {
+		t.Skip("/proc does not show every process here, so a zombie counts as live")
+	}
+	if err := unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0); err != nil {
+		t.Skipf("PR_SET_CHILD_SUBREAPER: %v", err)
 	}
 
 	events := make(chan Event, 64)

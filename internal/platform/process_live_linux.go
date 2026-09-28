@@ -6,89 +6,62 @@ import (
 	"bytes"
 	"errors"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
 )
 
-// ProcessGroupHasLiveMember reports whether the command's process group still
-// has a member that can run. Unlike ProcessGroupExists it does not count a
-// member whose every thread is a zombie: such a member runs no code and has
-// closed every descriptor, the PTY slave included. It only keeps the group's
-// number reserved until whoever adopted it reaps it, which an init that reaps
-// lazily, or Relayer itself running as PID 1, may take seconds to do or never
-// do at all.
-//
-// It is only meaningful after the group was sent SIGKILL: the kernel then lets
-// no member fork a new one, so a scan that sees nothing but zombies is final.
-// It errs towards live whenever /proc cannot show every member of the group.
-func ProcessGroupHasLiveMember(command *exec.Cmd) bool {
-	if !ProcessGroupExists(command) {
-		return false
-	}
+// groupHoldsOnlyZombies reports whether /proc shows the group's members and
+// every one of them is a zombie. Any doubt answers false, which callers read
+// as a live member.
+func groupHoldsOnlyZombies(pgid int) bool {
 	if !procShowsEveryProcess() {
-		return true
+		return false
 	}
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
-		return true
+		return false
 	}
-	pgid := command.Process.Pid
 	members := 0
 	for _, entry := range entries {
 		if pid, err := strconv.Atoi(entry.Name()); err != nil || pid <= 0 {
 			continue
 		}
-		dir := "/proc/" + entry.Name()
-		state, group, err := readStat(dir + "/stat")
+		state, group, threads, err := readStat("/proc/" + entry.Name() + "/stat")
 		if err != nil {
 			if reapedMeanwhile(err) {
 				continue
 			}
-			return true
+			return false
 		}
 		if group != pgid {
 			continue
 		}
 		members++
-		if !isZombie(state) || threadAlive(dir) {
-			return true
+		// A leader thread that exited shows Z while the process's other threads
+		// still run. The kernel counts a thread until it is released, whereas
+		// listing the threads can skip a live one while others exit.
+		if !isZombie(state) || threads != 1 {
+			return false
 		}
 	}
-	// kill found the group, so a scan that found none of it missed something.
-	return members == 0
+	// The caller found the group, so a scan that found none of it missed it.
+	return members > 0
 }
 
-// threadAlive reports whether any thread of the process is not a zombie. A
-// leader thread that called pthread_exit shows Z in the process's own stat
-// while its other threads still run, so the threads are what count.
-func threadAlive(dir string) bool {
-	tasks, err := os.ReadDir(dir + "/task")
-	if err != nil {
-		return !reapedMeanwhile(err)
-	}
-	for _, task := range tasks {
-		state, _, err := readStat(dir + "/task/" + task.Name() + "/stat")
-		if err != nil {
-			if reapedMeanwhile(err) {
-				continue
-			}
-			return true
-		}
-		if !isZombie(state) {
-			return true
-		}
-	}
-	return false
+// ProcessGroupLivenessIsExact reports whether ProcessGroupHasLiveMember can
+// tell a group left only with zombies from a live one here, rather than count
+// every group that exists as live.
+func ProcessGroupLivenessIsExact() bool {
+	return procShowsEveryProcess()
 }
 
 func isZombie(state byte) bool {
 	return state == 'Z' || state == 'X'
 }
 
-// reapedMeanwhile reports whether a /proc read failed because the process or
-// thread was reaped after the directory was listed.
+// reapedMeanwhile reports whether a /proc read failed because the process was
+// reaped after the directory was listed.
 func reapedMeanwhile(err error) bool {
 	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH)
 }
@@ -119,61 +92,89 @@ func procHidesProcesses() bool {
 	return mountinfoHidesProcesses(string(data))
 }
 
-// mountinfoHidesProcesses reads a mountinfo table. The last mount on /proc is
-// the one in use; a table with none, or one that is not proc, is not trusted.
+// mountinfoHidesProcesses reads a mountinfo table. The mount in use on /proc
+// is the one no other mount on /proc covers, found from the parent IDs: the
+// table's order says nothing of it, as a mount moved onto /proc keeps its
+// place. A table without exactly one such mount, or whose mount is not proc,
+// is not trusted.
 func mountinfoHidesProcesses(mountinfo string) bool {
-	hides := true
+	type procMount struct {
+		id    string
+		hides bool
+	}
+	var mounts []procMount
+	covered := map[string]bool{}
 	for _, line := range strings.Split(mountinfo, "\n") {
 		mount, super, found := strings.Cut(line, " - ")
 		if !found {
 			continue
 		}
-		if fields := strings.Fields(mount); len(fields) < 5 || fields[4] != "/proc" {
+		fields := strings.Fields(mount)
+		if len(fields) < 5 || fields[4] != "/proc" {
 			continue
 		}
-		fields := strings.Fields(super)
-		hides = len(fields) < 3 || fields[0] != "proc"
-		if hides {
-			continue
-		}
-		for _, option := range strings.Split(fields[2], ",") {
-			if value, ok := strings.CutPrefix(option, "hidepid="); ok && value != "0" && value != "off" {
-				hides = true
-			}
+		covered[fields[1]] = true
+		mounts = append(mounts, procMount{id: fields[0], hides: superblockHidesProcesses(super)})
+	}
+	hides, top := true, 0
+	for _, mount := range mounts {
+		if !covered[mount.id] {
+			hides, top = mount.hides, top+1
 		}
 	}
-	return hides
+	return top != 1 || hides
 }
 
-// readStat returns the state and process-group fields of a stat file.
-func readStat(path string) (state byte, pgrp int, err error) {
+// superblockHidesProcesses reads the part of a mountinfo line after " - ":
+// the filesystem type, the source and the superblock options.
+func superblockHidesProcesses(super string) bool {
+	fields := strings.Fields(super)
+	if len(fields) < 3 || fields[0] != "proc" {
+		return true
+	}
+	for _, option := range strings.Split(fields[2], ",") {
+		if value, ok := strings.CutPrefix(option, "hidepid="); ok && value != "0" && value != "off" {
+			return true
+		}
+	}
+	return false
+}
+
+// readStat returns the state, process-group and thread-count fields of a
+// process's stat file.
+func readStat(path string) (state byte, pgrp, threads int, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
-	state, pgrp, ok := parseStat(data)
+	state, pgrp, threads, ok := parseStat(data)
 	if !ok {
-		return 0, 0, errors.New("malformed " + path)
+		return 0, 0, 0, errors.New("malformed " + path)
 	}
-	return state, pgrp, nil
+	return state, pgrp, threads, nil
 }
 
-// parseStat reads the state and process-group fields of a stat line. The
-// command name is parenthesised and may itself contain spaces or parentheses,
-// so the fields are counted from the last closing parenthesis.
-func parseStat(data []byte) (state byte, pgrp int, ok bool) {
+// parseStat reads the state, process-group and thread-count fields of a stat
+// line. The command name is parenthesised and may itself contain spaces or
+// parentheses, so the fields are counted from the last closing parenthesis.
+func parseStat(data []byte) (state byte, pgrp, threads int, ok bool) {
 	name := bytes.LastIndexByte(data, ')')
 	if name < 0 {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
-	// state ppid pgrp ...
+	// state ppid pgrp session tty_nr tpgid flags minflt cminflt majflt cmajflt
+	// utime stime cutime cstime priority nice num_threads ...
 	fields := bytes.Fields(data[name+1:])
-	if len(fields) < 3 || len(fields[0]) != 1 {
-		return 0, 0, false
+	if len(fields) < 18 || len(fields[0]) != 1 {
+		return 0, 0, 0, false
 	}
 	pgrp, err := strconv.Atoi(string(fields[2]))
 	if err != nil {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
-	return fields[0][0], pgrp, true
+	threads, err = strconv.Atoi(string(fields[17]))
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	return fields[0][0], pgrp, threads, true
 }
