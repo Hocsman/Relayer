@@ -63,6 +63,8 @@ func TestMountinfoHidesProcessesOnlyWithoutHidepid(t *testing.T) {
 		{"moved on top with hidepid", root + "23 22 0:22 / /proc rw - proc proc rw\n21 23 0:40 / /proc rw - proc proc rw,hidepid=invisible\n", true},
 		{"moved on top without hidepid", root + "23 22 0:22 / /proc rw - proc proc rw,hidepid=2\n21 23 0:40 / /proc rw - proc proc rw\n", false},
 		{"two mounts on top", root + "23 22 0:22 / /proc rw - proc proc rw\n24 22 0:40 / /proc rw - proc proc rw\n", true},
+		{"empty source", root + "23 22 0:22 / /proc rw - proc  rw\n", false},
+		{"empty source with hidepid", root + "23 22 0:22 / /proc rw - proc  rw,hidepid=invisible\n", true},
 		{"not proc", root + "23 22 0:22 / /proc rw - tmpfs tmpfs rw\n", true},
 		{"no proc", root, true},
 		{"only a path under proc", root + "25 23 0:5 /null /proc/kcore rw - tmpfs tmpfs rw\n", true},
@@ -138,5 +140,50 @@ func TestAGroupWhoseLeaderIsGoneIsLiveWhileAMemberRuns(t *testing.T) {
 	}
 	if !ProcessGroupHasLiveMember(command) || !ProcessGroupIDHasLiveMember(pgid) {
 		t.Fatal("a group whose leader was reaped but whose member still runs was reported without a live member")
+	}
+}
+
+// TestAZombieLeaderWithARunningThreadIsLive: a leader thread that exited shows
+// Z while the process's other threads still run and hold its descriptors.
+func TestAZombieLeaderWithARunningThreadIsLive(t *testing.T) {
+	if !ProcessGroupLivenessIsExact() {
+		t.Skip("/proc does not show every process here")
+	}
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not installed")
+	}
+	command := exec.Command(python, "-c", "import ctypes, threading, time; threading.Thread(target=time.sleep, args=(30,)).start(); ctypes.CDLL(None).pthread_exit(None)")
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := command.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	pgid := command.Process.Pid
+	defer func() {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		_ = command.Wait()
+	}()
+
+	stat := "/proc/" + strconv.Itoa(pgid) + "/stat"
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		data, err := os.ReadFile(stat)
+		if err != nil {
+			t.Fatalf("the process vanished: %v", err)
+		}
+		if state, _, threads, ok := parseStat(data); ok && state == 'Z' {
+			if threads < 2 {
+				t.Fatalf("the leader showed Z with %d thread; the test no longer reproduces a running thread", threads)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the leader thread never exited: %s", strings.TrimSpace(string(data)))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if !ProcessGroupHasLiveMember(command) {
+		t.Fatal("a process whose leader thread exited while another thread runs was reported without a live member")
 	}
 }

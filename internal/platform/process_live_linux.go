@@ -126,13 +126,15 @@ func mountinfoHidesProcesses(mountinfo string) bool {
 }
 
 // superblockHidesProcesses reads the part of a mountinfo line after " - ":
-// the filesystem type, the source and the superblock options.
+// the filesystem type, the source and the superblock options. The source may
+// be empty, so the options are the last field; the kernel escapes the spaces
+// a source contains, and options have none.
 func superblockHidesProcesses(super string) bool {
 	fields := strings.Fields(super)
-	if len(fields) < 3 || fields[0] != "proc" {
+	if len(fields) < 2 || fields[0] != "proc" {
 		return true
 	}
-	for _, option := range strings.Split(fields[2], ",") {
+	for _, option := range strings.Split(fields[len(fields)-1], ",") {
 		if value, ok := strings.CutPrefix(option, "hidepid="); ok && value != "0" && value != "off" {
 			return true
 		}
