@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+### Fixed
+
+- **Relayer running as PID 1 left every stopped agent's orphans in the process table.** In a container started without an init, Relayer adopts every orphan, and nothing but Relayer can reap them. v0.8.14 stopped counting those zombies when it confirmed a stop, but left them behind, so each Stop of an agent whose shell had started a child added one for good. When a stop leaves an agent's process group with nothing but zombies, Relayer now waits for those that are its own children. It waits only for members of that group and never blocks, so it cannot take the exit status of a process it waits for elsewhere; a process that left the group, or anything else in the container, is still left to an init, which `docs/web-gateway.md` still asks for. `TestStopIsConfirmedWhenAnOrphanIsLeftAsAZombie` now also fails against v0.8.14.
+
 ## [0.8.14] - 2026-09-28
 
 Patch release that stops a zombie from blocking an agent. Where orphans are reaped late or not at all (Relayer as PID 1 in a container without an init, the Kubernetes default, or an init that reaps on a timer), stopping an agent whose shell had started a child was reported as unconfirmed, which blocked its next run. On Linux, Relayer now confirms a stop whose process group is left only with zombies; `relayer-capture` had the same fault and is fixed too.

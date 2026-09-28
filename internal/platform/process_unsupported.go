@@ -29,6 +29,8 @@ func ProcessGroupExists(*exec.Cmd) bool { return false }
 
 func ProcessGroupHasLiveMember(*exec.Cmd) bool { return false }
 
+func ReapProcessGroupZombies(*exec.Cmd) int { return 0 }
+
 // SetGracefulCancel is a no-op where process groups cannot be addressed.
 func SetGracefulCancel(*exec.Cmd, time.Duration, func()) {}
 

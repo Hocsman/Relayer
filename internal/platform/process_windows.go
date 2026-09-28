@@ -46,6 +46,10 @@ func KillProcessGroup(command *exec.Cmd) {
 	_ = command.Process.Kill()
 }
 
+// ReapProcessGroupZombies has nothing to do on Windows, where a process that
+// exits is not left behind for its parent to wait for.
+func ReapProcessGroupZombies(*exec.Cmd) int { return 0 }
+
 // ProcessGroupHasLiveMember is ProcessGroupExists: a Windows process that has
 // exited is not left behind for a parent to reap.
 func ProcessGroupHasLiveMember(command *exec.Cmd) bool {

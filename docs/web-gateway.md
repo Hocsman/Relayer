@@ -4,12 +4,14 @@
 over HTTP and WebSocket. It serves the same interface the Desktop GUI uses, so
 agents running on a cloud devbox, an EC2 or GCP instance, or inside a container
 can be supervised from a browser. In a container, start it with an init process
-(`docker run --init`, or tini): without one, nothing reaps an agent's orphaned
-children, and their zombies stay in the process table until the container
-stops. On Linux, Relayer does not count a zombie when it confirms that an agent
-stopped, unless `/proc` is mounted with `hidepid` or from another PID
-namespace, where such a Stop is still reported as unconfirmed. It does not reap
-a zombie either.
+(`docker run --init`, or tini). Without one, Relayer is PID 1 and adopts every
+orphan in the container. When it stops an agent it reaps the orphans left in
+that agent's process group, but not a process that left the group, such as a
+daemon an agent started, nor anything else in the container: their zombies
+stay in the process table until the container stops. On Linux, Relayer does not
+count a zombie when it confirms that an agent stopped, unless `/proc` is mounted
+with `hidepid` or from another PID namespace, where such a Stop is still
+reported as unconfirmed.
 
 ```bash
 relayer serve --bind 0.0.0.0 --port 8080 \

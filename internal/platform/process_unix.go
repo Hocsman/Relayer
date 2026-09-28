@@ -79,6 +79,36 @@ func ProcessGroupIDHasLiveMember(pgid int) bool {
 	return !groupHoldsOnlyZombies(pgid)
 }
 
+// ReapProcessGroupZombies waits for every member of the command's process
+// group that has exited and is Relayer's child, and returns how many it
+// reaped. Only the leader starts as Relayer's child, and it is reaped by
+// os/exec; the other members become Relayer's children only when they are
+// orphaned and Relayer adopts them, which it does as PID 1 in a container
+// started without an init. Nothing else would ever reap those, so each Stop
+// would leave its agent's orphans in the process table for good.
+//
+// It never blocks and never waits for a process outside the group, so it
+// cannot take the exit status of a child os/exec is waiting for elsewhere.
+// Call it only once the leader has been reaped, as its own Wait would
+// otherwise lose the leader's status.
+func ReapProcessGroupZombies(command *exec.Cmd) int {
+	if command == nil || command.Process == nil || command.Process.Pid <= 1 {
+		return 0
+	}
+	reaped := 0
+	for {
+		var status syscall.WaitStatus
+		pid, err := syscall.Wait4(-command.Process.Pid, &status, syscall.WNOHANG, nil)
+		if errors.Is(err, syscall.EINTR) {
+			continue
+		}
+		if err != nil || pid <= 0 {
+			return reaped
+		}
+		reaped++
+	}
+}
+
 // SetGracefulCancel makes cancelling the command's context call stop — the
 // caller's graceful stop request — instead of os/exec's default of killing the
 // leader outright. A leader still running after grace is then killed by
