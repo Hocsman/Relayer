@@ -132,6 +132,9 @@ type App struct {
 	shutdownOnce sync.Once
 	shutdownDone chan struct{}
 	shutdownErr  error
+
+	updates *updateChecker
+	openURL func(context.Context, string)
 }
 
 func NewApp() *App {
@@ -156,6 +159,8 @@ func NewApp() *App {
 		},
 		runIDGenerator: newOpaqueProfileToken,
 		runPreflight:   appcore.RunPreflight,
+		updates:        newUpdateChecker(),
+		openURL:        wailsruntime.BrowserOpenURL,
 	}
 }
 

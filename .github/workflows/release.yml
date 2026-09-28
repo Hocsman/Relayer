@@ -266,12 +266,15 @@ jobs:
         run: |
           wails_bin="$RUNNER_TEMP/relayer-wails-bin/wails"
           [[ -f "$wails_bin.exe" ]] && wails_bin="$wails_bin.exe"
+          # The update check compares this version with the latest release;
+          # a build without it is "dev" and never checks.
+          ldflags="-X github.com/Hocsman/Relayer/internal/version.Version=${{ needs.verify.outputs.version }} -X github.com/Hocsman/Relayer/internal/version.Commit=$GITHUB_SHA"
           if [[ "$RUNNER_OS" == "Linux" ]]; then
-            "$wails_bin" build -clean -tags webkit2_41 -o Relayer
+            "$wails_bin" build -clean -tags webkit2_41 -ldflags "$ldflags" -o Relayer
           elif [[ "$RUNNER_OS" == "Windows" ]]; then
-            "$wails_bin" build -clean -nsis -o Relayer.exe
+            "$wails_bin" build -clean -nsis -ldflags "$ldflags" -o Relayer.exe
           else
-            "$wails_bin" build -clean -platform darwin/universal
+            "$wails_bin" build -clean -platform darwin/universal -ldflags "$ldflags"
           fi
 
       - name: Package desktop distribution archive

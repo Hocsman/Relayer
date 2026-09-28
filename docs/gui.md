@@ -20,6 +20,19 @@ info**, then **Run anyway**.
 `relayer-desktop_<version>_windows_amd64.zip` holds the same `Relayer.exe`
 without an installer: extract it anywhere and double-click it.
 
+### Updates
+
+At launch, the desktop application asks GitHub for the latest release. When a
+newer one is out, a banner names it with a **Download** button: on Windows it
+downloads the new installer, which installs over the old version and keeps the
+configuration; elsewhere it opens the release page. **Not now** sets that
+release aside until the next one. The check is turned off in **Settings →
+Notifications** (**Check for a new version at launch**), or for every user of a
+machine with the environment variable `RELAYER_NO_UPDATE_CHECK=1`. It sends
+nothing but a request with the running version in its `User-Agent`, and a
+development build, which has no version to compare, never checks. Relayer
+installs nothing by itself.
+
 ## Platform status
  
 | Platform | GUI status | Terminal backend |

@@ -70,6 +70,30 @@ select:focus-visible {
   height: 100%;
 }
 
+.update-banner {
+  position: fixed;
+  top: 78px;
+  left: 50%;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: calc(100% - 32px);
+  padding: 10px 12px 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(9, 12, 20, 0.94);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  transform: translateX(-50%);
+  font-size: 13px;
+}
+
+.update-banner__actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
 .topbar {
   position: relative;
   z-index: 10;

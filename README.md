@@ -308,11 +308,18 @@ keyless cosign signature and the build provenance described under
 
 ## Privacy
 
-Relayer does not collect, send or share any data on its own. It has no
-analytics and no update check, and it contacts no server run by the project.
-Configuration, transcripts and the audit log stay on the machine that runs it.
+Relayer does not collect or share any data. It has no analytics and contacts
+no server run by the project. Configuration, transcripts and the audit log stay
+on the machine that runs it.
 
-It sends data over the network only where the user configures it to:
+The desktop application checks for a new version once per launch: it asks
+GitHub's public API for the repository's latest release, with a request that
+carries nothing but the running version in its `User-Agent`; GitHub sees the
+request's network address, as it does any visitor's. It can be turned
+off in **Settings → Notifications**, or for every user of a machine with
+`RELAYER_NO_UPDATE_CHECK=1`. `relayer serve` and the command line never check.
+
+Otherwise it sends data over the network only where the user configures it to:
 
 - **Webhooks** in the `notifications` block post each notification to the URLs
   the user lists.
