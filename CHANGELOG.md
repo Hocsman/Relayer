@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.14] - 2026-09-28
+
+Patch release that stops a zombie from blocking an agent. Where orphans are reaped late or not at all (Relayer as PID 1 in a container without an init, the Kubernetes default, or an init that reaps on a timer), stopping an agent whose shell had started a child was reported as unconfirmed, which blocked its next run. On Linux, Relayer now confirms a stop whose process group is left only with zombies; `relayer-capture` had the same fault and is fixed too.
+
 ### Fixed
 
 - **A Stop was reported as unconfirmed when the agent's shell had started a child**, wherever orphans are reaped late or not at all: in a container where Relayer is PID 1 without an init, the Kubernetes default, and under an init that reaps on a timer, as some sandboxes do. The shell dies without waiting for its child, which is killed with the group and stays in it as a zombie until whoever adopted it reaps it; Relayer probed the group by number, found the zombie, and reported every such Stop as unconfirmed, which blocks the agent's next run. A zombie runs nothing and holds no descriptor, the terminal included, so on Linux the check that follows the forced kill now reads the group's members in `/proc` and confirms a group left only with zombies. A process counts as a zombie only once it is down to its last thread. The group counts as running whenever `/proc` might not show all of it: mounted from another PID namespace, or with `hidepid`. Other systems check as before. `relayer-capture` waited for the same zombies after killing a capture's process group, and failed the capture when that wait ran out, after about two seconds, or six with tmux, which waited twice; it now counts them as the session does. `TestStopIsConfirmedWhenAnOrphanIsLeftAsAZombie`, and `TestACaptureEndsWhenAnOrphanIsLeftAsAZombie` with its timed-out and tmux counterparts, fail against v0.8.13. `docs/web-gateway.md` still asks for `docker run --init`: Relayer does not reap the zombies, it only no longer counts them.
@@ -1054,7 +1058,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.13...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.14...main
+[0.8.14]: https://github.com/Hocsman/Relayer/compare/v0.8.13...v0.8.14
 [0.8.13]: https://github.com/Hocsman/Relayer/compare/v0.8.12...v0.8.13
 [0.8.12]: https://github.com/Hocsman/Relayer/compare/v0.8.11...v0.8.12
 [0.8.11]: https://github.com/Hocsman/Relayer/compare/v0.8.10...v0.8.11
