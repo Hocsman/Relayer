@@ -1,0 +1,5 @@
+# The bridge contract is a byte-exact comparison against Go's
+# json.MarshalIndent output, which always ends lines with LF. A checkout
+# that converts to CRLF (Windows with core.autocrlf) would make the test
+# fail on line-ending noise with no visible difference in the diff.
+*.golden.json text eol=lf
