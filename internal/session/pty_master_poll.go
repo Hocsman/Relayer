@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || darwin || dragonfly || freebsd || netbsd || openbsd
 
 package session
 
@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -26,6 +27,11 @@ import (
 // progress. The descriptor is duplicated so that the new file owns one no
 // other file will switch back to blocking mode; the non-blocking flag belongs
 // to the open file, which both share until the original is closed here.
+//
+// The BSDs' and macOS's kqueue take a pseudo-terminal as Linux's epoll does:
+// the runtime already polls one it opens itself. Should the poller refuse the
+// descriptor, the master is left as creack/pty opened it, in blocking mode,
+// rather than as a non-blocking file nothing waits on.
 func pollableMaster(file *os.File) (*os.File, error) {
 	raw, err := file.SyscallConn()
 	if err != nil {
@@ -49,6 +55,12 @@ func pollableMaster(file *os.File) (*os.File, error) {
 	if master == nil {
 		_ = unix.Close(duplicate)
 		return nil, errors.New("the pseudo-terminal master could not be wrapped")
+	}
+	// A file the runtime does not poll takes no deadline.
+	if err := master.SetWriteDeadline(time.Time{}); err != nil {
+		_ = syscall.SetNonblock(duplicate, false)
+		_ = master.Close()
+		return nil, err
 	}
 	_ = file.Close()
 	return master, nil

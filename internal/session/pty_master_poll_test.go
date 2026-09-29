@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || darwin || dragonfly || freebsd || netbsd || openbsd
 
 package session
 
@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -83,6 +84,9 @@ func TestAKeystrokeWriteToAnAgentThatReadsNothingEndsWithItsContext(t *testing.T
 // has exited, and the close ends the write. A master in blocking mode kept the
 // write in the kernel until the last process holding the terminal exited.
 func TestAKeystrokeWriteBlockedOnAnAgentThatReadsNothingEndsWhenItStops(t *testing.T) {
+	if _, err := exec.LookPath("setsid"); err != nil {
+		t.Skip("setsid is not installed (macOS has none by default)")
+	}
 	manager, info := startDeafSession(t, "setsid sleep 20 & exec sleep 60")
 	paste := deafPaste()
 	written := make(chan error, 1)

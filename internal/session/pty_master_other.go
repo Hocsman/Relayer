@@ -1,4 +1,4 @@
-//go:build !windows && !linux
+//go:build !windows && !linux && !darwin && !dragonfly && !freebsd && !netbsd && !openbsd
 
 package session
 
@@ -9,9 +9,9 @@ import (
 )
 
 // pollableMaster leaves the master as creack/pty opened it: in blocking mode.
-// The runtime's poller is not relied on for pseudo-terminals outside Linux, so
-// a write to an agent that reads nothing may still block until it reads again
-// or exits; the run's end bounds its wait for one.
+// The runtime's poller is not relied on for pseudo-terminals on these systems,
+// so a write to an agent that reads nothing may still block until it reads
+// again or exits; the run's end bounds its wait for one.
 func pollableMaster(file *os.File) (*os.File, error) {
 	return file, nil
 }
