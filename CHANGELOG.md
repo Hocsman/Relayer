@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.15] - 2026-09-29
+
+Patch release whose desktop application says when a new version is out. At launch it asks GitHub for the latest release and offers its download in a banner; the check is on by default and turned off in the settings. The desktop binaries now carry their version, so this release is the first that can tell a newer one apart: the banner appears from the next release on. As PID 1 in a container without an init, Relayer also reaps the orphans a stopped agent leaves behind.
+
 ### Added
 
 - **The desktop application tells you when a new version is out.** At launch it asks GitHub for the repository's latest release and, when it is newer than the running one, shows a banner with a **Download** button: on Windows it downloads the new installer, elsewhere it opens the release page. **Not now** sets that release aside until the next. The request carries nothing but the running version; the check is turned off in **Settings → Notifications**, or for every user of a machine with `RELAYER_NO_UPDATE_CHECK=1`. A link only ever leads to a release of this repository, whatever the response names, and Relayer installs nothing by itself. Until now a user had to watch the Releases page. The desktop binaries of a release now carry its version, which the check compares; they said `dev`. The README's privacy section says so.
@@ -1066,7 +1070,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.14...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.15...main
+[0.8.15]: https://github.com/Hocsman/Relayer/compare/v0.8.14...v0.8.15
 [0.8.14]: https://github.com/Hocsman/Relayer/compare/v0.8.13...v0.8.14
 [0.8.13]: https://github.com/Hocsman/Relayer/compare/v0.8.12...v0.8.13
 [0.8.12]: https://github.com/Hocsman/Relayer/compare/v0.8.11...v0.8.12
