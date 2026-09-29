@@ -17,7 +17,6 @@ var conptyFirstWrites = []string{
 
 const (
 	aiderNewFilePrompt    = "Create new file? (Y)es/(N)o [Yes]: "
-	gooseToolPrompt       = "Approve tool execution? (y/n) "
 	interpreterCodePrompt = "Would you like to run this code? (y/n) "
 	overwritePrompt       = "Overwrite file notes.txt? [y/n] "
 	codexCommandPrompt    = "Would you like to run the following command?\r\n  $ ls\r\n  Yes, proceed (y)\r\n  No, and tell Codex what to do differently (esc)\r\nPress enter to confirm or esc to cancel"
@@ -101,7 +100,6 @@ func TestTheEchoOfAnAnswerIsNotAskedAgain(t *testing.T) {
 		answer  string
 	}{
 		{adapter: AiderID, prompt: aiderNewFilePrompt, answer: "y"},
-		{adapter: GooseID, prompt: gooseToolPrompt, answer: "y"},
 		{adapter: OpenInterpreterID, prompt: interpreterCodePrompt, answer: "y"},
 		{adapter: GenericID, prompt: overwritePrompt, answer: "yes"},
 		{adapter: ClaudeID, prompt: overwritePrompt, answer: "yes"},
@@ -197,12 +195,6 @@ func TestAQuestionAskedAgainOnANewRowIsAsked(t *testing.T) {
 			steps:   []guardStep{{"q\r\n", 1}, {aiderNewFilePrompt, 2}},
 		},
 		{
-			name:    "goose asks the same question after its output",
-			adapter: GooseID,
-			prompt:  gooseToolPrompt,
-			steps:   []guardStep{{"y\r\n", 1}, {agentNextOutput, 1}, {gooseToolPrompt, 2}},
-		},
-		{
 			name:    "open interpreter asks the same question after its output",
 			adapter: OpenInterpreterID,
 			prompt:  interpreterCodePrompt,
@@ -277,7 +269,6 @@ func TestAVendorQuestionWhoseLabelIsNotPaintedStaysAnswered(t *testing.T) {
 		prompt  string
 	}{
 		{adapter: AiderID, prompt: "Run shell commands? (Y)es/(N)o/(D)on't ask again [Yes]: "},
-		{adapter: GooseID, prompt: "Allow Goose to run: 'ls -la' (y/n) "},
 	} {
 		for _, after := range []struct {
 			name   string
@@ -363,7 +354,6 @@ func TestAQuestionIsRememberedOnItsOwnRowWhenItsLabelIsPaintedAbove(t *testing.T
 		unlabeled string
 	}{
 		{adapter: AiderID, first: aiderShellCommandPrompt, unlabeled: "Run shell commands? (Y)es/(N)o/(D)on't ask again [Yes]: "},
-		{adapter: GooseID, first: gooseToolPrompt, unlabeled: "Allow Goose to run: 'ls -la' (y/n) "},
 	} {
 		t.Run(testCase.adapter, func(t *testing.T) {
 			processor := replayAfterTheAnswer(t, testCase.adapter, testCase.first, []guardStep{

@@ -85,10 +85,10 @@ go run github.com/Hocsman/Relayer/cmd/relayer@latest
   the effective backend it also proves tmux can run a session, inside its own
   private socket.
 - A stable, product-neutral `generic` regex adapter.
-- Experimental Claude Code and Codex CLI adapters backed by captured fixtures
-  in `internal/adapters/testdata/`, plus experimental Aider, Goose and Open
-  Interpreter adapters whose patterns are hand-written and backed by no
-  captured output. All of them retain the stable generic detector as fallback.
+- Experimental Claude Code, Codex CLI, Aider, Open Interpreter and Goose
+  adapters backed by captured fixtures in `internal/adapters/testdata/`; the
+  answers of the last three were each typed into the real CLI and their effect
+  checked. All of them retain the stable generic detector as fallback.
 - Structured MCP tool-call badges beside an arbitration prompt, naming the
   server, the tool, its risk and the bounded arguments an agent printed, so an
   operator can see what a tool is about to be given before answering. Detection
@@ -566,10 +566,10 @@ Six adapters are implemented: stable `generic`, plus experimental `aider`,
 `claude`, `codex`, `goose` and `interpreter`. Claude Code coverage is limited
 to the workspace-trust and detected-environment-key prompts observed with
 2.1.59; Codex coverage is limited to directory trust and command approval
-observed with `codex-cli 0.148.0-alpha.21`. The Aider, Goose and Open
-Interpreter patterns were written by hand and were never checked against a
-recorded session, so a version that words its prompts differently is not
-detected by them. Every other prompt still uses the configured
+observed with `codex-cli 0.148.0-alpha.21`; Aider coverage to six questions
+of Aider 0.86.2, Open Interpreter coverage to the run and scan questions of
+0.4.3, and Goose coverage to the two tool-call approval menus of Goose 1.52.0.
+A version that words its questions differently is not detected by them. Every other prompt still uses the configured
 `intercept_patterns` fallback. See [adapters](docs/adapters.md) for the exact
 decision bytes and non-claims.
 
@@ -623,9 +623,8 @@ sensitive repositories.
 - Prompt-like output can spoof the supervisor; a real prompt can evade regexes.
 - Generic and Claude cannot automate allow/deny delivery; Codex automation is
   limited to the exact fixture-backed interactions documented above. Aider,
-  Goose and Open Interpreter do encode allow and deny, but on unverified
-  patterns, so what an automatic decision is answering there is less certain
-  than for Codex.
+  Goose and Open Interpreter encode allow and deny with bytes observed to do
+  what they say, on the questions captured from the versions named above.
 - An MCP tool-call reading is a guess about agent output, not an interception
   point: a call can run with nothing printed for it to read, and text shaped
   like a tool name is read as a call whether or not one is being made.

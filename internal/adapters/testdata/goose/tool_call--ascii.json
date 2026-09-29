@@ -1,0 +1,18 @@
+{
+  "cli_version": "goose 1.52.0 (goose-cli, built from the v1.52.0 tag)",
+  "interaction": "tool_call",
+  "capture_mode": "interactive `goose session`, 100x30 PTY, LANG unset, so cliclack draws ASCII, GOOSE_MODE=approve, provider openai against a local stand-in model (OPENAI_HOST=http://127.0.0.1:<port>) that replied with a shell tool call, `printf verified-content > verified.txt`",
+  "stripped": "  ────────────────────────────────────────\n  ▸ shell\n    command: printf verified-content > verified.txt\n\n\n  Tool approval request\n    {\n      \"tool_name\": \"shell\",\n      \"arguments\": {\n        \"command\": \"printf verified-content > verified.txt\"\n      }\n    }\n\n*  Goose would like to call the above tool, do you allow?\n|  > Allow (Allow the tool call once)\n|    Always Allow \n|    Deny \n|    Cancel \n—  \n",
+  "ansi_chunks": [
+    "  \u001b[2m────────────────────────────────────────\u001b[0m\r\n  \u001b[2m▸\u001b[0m \u001b[2mshell\u001b[0m\r\n    \u001b[2mcommand\u001b[0m: \u001b[32mprintf verified-content > verified.txt\u001b[",
+    "0m\r\n\r\n\r\n  \u001b[1mTool approval request\u001b[0m\r\n    \u001b[2m{\u001b[0m\r\n    \u001b[2m  \"tool_name\": \"shell\",\u001b[0m\r\n    \u001b[2m  \"arguments\": {\u001b[0m\r\n    \u001b[2m    \"command\": \"printf verified-content > verified.txt\"\u001b[0m\r\n    \u001b[2m  }\u001b[0m\r\n    \u001b[2m}\u001b[0m\r\n\r\n\u001b[",
+    "?25l\u001b[36m*\u001b[0m  Goose would like to call the above tool, do you allow?\r\n\u001b[36m|\u001b[0m  \u001b[32m>\u001b[0m Allow \u001b[2m(Allow the tool call once)\u001b[0m\r\n\u001b[36m|\u001b[0m  \u001b[2m \u001b[0m \u001b[2mAlways Allow\u001b[0m \r\n\u001b[36m|\u001b[0m  \u001b[2m \u001b[0m \u001b[2mDeny\u001b[0m \r\n\u001b[36m|\u001b[0m  \u001b[2m \u001b[0m \u001b[2mCancel\u001b[0m \r\n\u001b[36m—  \u001b[0m\r\n"
+  ],
+  "answered_chunks": [
+    "\u001b[6A\r\u001b[2K\u001b[1B\r\u001b[2K\u001b[1B\r\u001b[2K\u001b[1B\r\u001b[2K\u001b[1B\r\u001b[2K\u001b[1B\r\u001b[2K\u001b[1B\u001b[6A\u001b[32mo\u001b[0m  Goose would like to call the above tool, do you allow?\r\n\u001b[38;5;8m|\u001b[0m  \u001b[2mAllow\u001b[0m \r\n\u001b[38;5;8m|\u001b[0m\r\n\u001b[?25h    \u001b[2m(no output)\u001b[0m\r\n\u001b[37mDone.\u001b[0m\r\n\u001b[2m  ⏱ 3.21s\u001b[0m\r\n  \u001b[32m\u001b[2m╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\u001b[0m \u001b[2m0%\u001b[0m \u001b[2m0/128k\u001b[0m\r\n\u001b[?2004h\u001b[?2026h\r\u001b[K> \u001b[2mEnter to send · Ctrl+J newline\u001b[0m\r\u001b[2C\u001b[?2026l"
+  ],
+  "allow_input_hex": "6b6b6b0d",
+  "deny_input_hex": "6b6b6b6a6a0d",
+  "observed_allow": "the command ran: verified.txt was created",
+  "observed_deny": "Goose answered the model \"The user has declined to run this tool\"; verified.txt stayed absent"
+}

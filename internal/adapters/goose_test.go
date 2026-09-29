@@ -1,10 +1,53 @@
 package adapters
 
 import (
-	"bytes"
-	"reflect"
+	"strings"
 	"testing"
 )
+
+// The menus as Goose 1.52.0 draws them, with the escapes removed, in a
+// terminal that takes Unicode and in one that does not.
+const (
+	gooseToolMenu = "  Tool approval request\n" +
+		"    {\n      \"tool_name\": \"shell\",\n    }\n\n" +
+		"◆  Goose would like to call the above tool, do you allow?\n" +
+		"│  ● Allow (Allow the tool call once)\n" +
+		"│  ○ Always Allow \n" +
+		"│  ○ Deny \n" +
+		"│  ○ Cancel \n" +
+		"└  \n"
+	gooseToolMenuASCII = "*  Goose would like to call the above tool, do you allow?\n" +
+		"|  > Allow (Allow the tool call once)\n" +
+		"|    Always Allow \n" +
+		"|    Deny \n" +
+		"|    Cancel \n" +
+		"—  \n"
+	gooseNoticeMenu = "  Provider-provided approval notice\n" +
+		"    Extension management requires approval for security\n\n" +
+		"◆  Do you allow this tool call?\n" +
+		"│  ● Allow (Allow the tool call once)\n" +
+		"│  ○ Deny \n" +
+		"│  ○ Cancel \n" +
+		"└  \n"
+	gooseNoticeMenuASCII = "*  Do you allow this tool call?\n" +
+		"|  > Allow (Allow the tool call once)\n" +
+		"|    Deny \n" +
+		"|    Cancel \n" +
+		"—  \n"
+)
+
+func detectGoose(t *testing.T, input string) []Event {
+	t.Helper()
+	adapter, err := NewGooseAdapter(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := adapter.Detect(NewDetectionState("session-goose", "agent-goose", GooseID), []byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return events
+}
 
 func TestGooseAdapterID(t *testing.T) {
 	adapter, err := NewGooseAdapter(nil)
@@ -16,306 +59,145 @@ func TestGooseAdapterID(t *testing.T) {
 	}
 }
 
-func TestGoosePromptsDetection(t *testing.T) {
-	tests := []struct {
-		name        string
-		input       string
-		interaction string
-		eventType   EventType
-		risk        RiskLevel
-		summary     string
-	}{
-		{
-			name:        "approve tool execution",
-			input:       "Approve tool execution? [y/n] ",
-			interaction: gooseExecuteTool,
-			eventType:   EventPermission,
-			risk:        RiskHigh,
-			summary:     "Goose asks to execute tool (y=allow, n=deny)",
-		},
-		{
-			name:        "allow goose to run",
-			input:       "Allow Goose to run: `ls -la` (y/n) ",
-			interaction: gooseExecuteTool,
-			eventType:   EventPermission,
-			risk:        RiskHigh,
-			summary:     "Goose asks to execute tool (y=allow, n=deny)",
-		},
-		{
-			name:        "run shell command",
-			input:       "Run shell command? (y/n) ",
-			interaction: gooseRunCommand,
-			eventType:   EventPermission,
-			risk:        RiskHigh,
-			summary:     "Goose asks to run command (y=allow, n=deny)",
-		},
-		{
-			name:        "confirm command execution",
-			input:       "Confirm command execution? [y/n]: ",
-			interaction: gooseRunCommand,
-			eventType:   EventPermission,
-			risk:        RiskHigh,
-			summary:     "Goose asks to run command (y=allow, n=deny)",
-		},
-		{
-			name:        "approve file modification",
-			input:       "Approve file modification? (y/n) ",
-			interaction: gooseModifyFile,
-			eventType:   EventConfirmation,
-			risk:        RiskLow,
-			summary:     "Goose asks to modify file (y=allow, n=deny)",
-		},
-		{
-			name:        "allow goose to write",
-			input:       "Allow Goose to write: src/config.go [y/n] ",
-			interaction: gooseModifyFile,
-			eventType:   EventConfirmation,
-			risk:        RiskLow,
-			summary:     "Goose asks to modify file (y=allow, n=deny)",
-		},
-		{
-			name:        "approve extension access",
-			input:       "Approve extension access? (y/n) ",
-			interaction: gooseExtension,
-			eventType:   EventPermission,
-			risk:        RiskHigh,
-			summary:     "Goose asks to approve extension (y=allow, n=deny)",
-		},
-		{
-			name:        "enable extension",
-			input:       "Enable extension? [y/n] ",
-			interaction: gooseExtension,
-			eventType:   EventPermission,
-			risk:        RiskHigh,
-			summary:     "Goose asks to approve extension (y=allow, n=deny)",
-		},
-	}
-
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			adapter, err := NewGooseAdapter(nil)
-			if err != nil {
-				t.Fatalf("NewGooseAdapter: %v", err)
-			}
-			state := NewDetectionState("session-goose", "agent-goose", GooseID)
-
-			events, err := adapter.Detect(state, []byte(tc.input))
-			if err != nil {
-				t.Fatalf("Detect error: %v", err)
-			}
-			if len(events) != 1 {
-				t.Fatalf("events count = %d, want 1", len(events))
-			}
-
-			event := events[0]
-			if event.Adapter != GooseID {
-				t.Errorf("event.Adapter = %q, want %q", event.Adapter, GooseID)
-			}
-			if event.Type != tc.eventType {
-				t.Errorf("event.Type = %q, want %q", event.Type, tc.eventType)
-			}
-			if event.Risk != tc.risk {
-				t.Errorf("event.Risk = %q, want %q", event.Risk, tc.risk)
-			}
-			if event.Summary != tc.summary {
-				t.Errorf("event.Summary = %q, want %q", event.Summary, tc.summary)
-			}
-			if event.Metadata[gooseInteractionMetadata] != tc.interaction {
-				t.Errorf("interaction metadata = %q, want %q", event.Metadata[gooseInteractionMetadata], tc.interaction)
-			}
-			if !event.Actionable() {
-				t.Errorf("event should be actionable")
-			}
-		})
+func TestGooseMenusAreRead(t *testing.T) {
+	for input, interaction := range map[string]string{
+		gooseToolMenu:        gooseToolCall,
+		gooseToolMenuASCII:   gooseToolCall,
+		gooseNoticeMenu:      gooseToolCallWithNotice,
+		gooseNoticeMenuASCII: gooseToolCallWithNotice,
+	} {
+		events := detectGoose(t, input)
+		if len(events) != 1 {
+			t.Fatalf("%q: %d events, want 1", input, len(events))
+		}
+		event := events[0]
+		if event.Metadata[gooseInteractionMetadata] != interaction || event.Type != EventPermission ||
+			event.Risk != RiskHigh || !event.Actionable() {
+			t.Fatalf("%q read as %#v", input, event)
+		}
 	}
 }
 
-func TestGooseMultiLinePrompt(t *testing.T) {
-	adapter, err := NewGooseAdapter(nil)
-	if err != nil {
-		t.Fatalf("NewGooseAdapter: %v", err)
-	}
-	state := NewDetectionState("session-goose-multiline", "agent-goose", GooseID)
-
-	input := "Goose will run the following tool:\nApprove tool execution?\n[y/n] "
-	events, err := adapter.Detect(state, []byte(input))
-	if err != nil {
-		t.Fatalf("Detect error: %v", err)
-	}
-	if len(events) != 1 {
-		t.Fatalf("events count = %d, want 1", len(events))
-	}
-	if events[0].Type != EventPermission || events[0].Risk != RiskHigh {
-		t.Fatalf("unexpected event: %#v", events[0])
-	}
-	if events[0].Metadata[gooseInteractionMetadata] != gooseExecuteTool {
-		t.Fatalf("unexpected interaction: %q", events[0].Metadata[gooseInteractionMetadata])
+// Whatever option is highlighted, the question is the same one.
+func TestGooseMenuIsReadWhateverIsHighlighted(t *testing.T) {
+	moved := strings.NewReplacer("│  ● Allow", "│  ○ Allow", "│  ○ Deny", "│  ● Deny").Replace(gooseToolMenu)
+	if events := detectGoose(t, moved); len(events) != 1 {
+		t.Fatalf("highlight on Deny: %d events, want 1", len(events))
 	}
 }
 
-func TestGoosePromptsStreamingChunks(t *testing.T) {
-	chunks := []string{
-		"Tool request: developer__shell\n",
-		"Command: npm test\n",
-		"Approve tool ",
-		"execution? ",
-		"[y/n] ",
+func TestGooseMenusThatAreNotAskingAreNotRead(t *testing.T) {
+	for name, input := range map[string]string{
+		// Answered: cliclack redraws the question after the submitted symbol
+		// and the chosen option alone.
+		"answered":          "◇  Goose would like to call the above tool, do you allow?\n│  Allow \n│\n",
+		"answered in ASCII": "o  Do you allow this tool call?\n|  Deny \n|\n",
+		// Not all drawn yet.
+		"no bar end":        strings.TrimSuffix(gooseToolMenu, "└  \n"),
+		"an option missing": strings.Replace(gooseToolMenu, "│  ○ Deny \n", "", 1),
+		"options of the other menu": strings.Replace(gooseNoticeMenu, "Do you allow this tool call?",
+			"Goose would like to call the above tool, do you allow?", 1),
+		"output after the menu": gooseToolMenu + "Running the tool...\n",
+		"a question alone":      "Goose would like to call the above tool, do you allow?\n",
+		"quoted question":       "> Goose would like to call the above tool, do you allow?\n",
+		"in a code fence":       "```\n" + gooseToolMenu,
+	} {
+		if events := detectGoose(t, input); len(events) != 0 {
+			t.Errorf("%s: raised %#v", name, events)
+		}
 	}
+}
 
+// Nothing is raised until the bar's end is drawn, however the menu arrives.
+func TestGooseMenuStreamedIsReadOnceComplete(t *testing.T) {
 	adapter, err := NewGooseAdapter(nil)
 	if err != nil {
-		t.Fatalf("NewGooseAdapter: %v", err)
+		t.Fatal(err)
 	}
-	state := NewDetectionState("session-stream", "agent-goose", GooseID)
-
-	var allEvents []Event
-	for i, chunk := range chunks {
-		events, err := adapter.Detect(state, []byte(chunk))
+	state := NewDetectionState("session-goose-stream", "agent-goose", GooseID)
+	lines := strings.SplitAfter(gooseToolMenu, "\n")
+	var raised []Event
+	for index, line := range lines {
+		events, err := adapter.Detect(state, []byte(line))
 		if err != nil {
-			t.Fatalf("chunk %d Detect error: %v", i, err)
+			t.Fatal(err)
 		}
-		if i < len(chunks)-1 && len(events) != 0 {
-			t.Fatalf("unexpected events before final chunk: %#v", events)
+		if len(events) > 0 && index < len(lines)-2 {
+			t.Fatalf("raised after line %d of %d: %q", index, len(lines), line)
 		}
-		allEvents = append(allEvents, events...)
+		raised = append(raised, events...)
 	}
-
-	if len(allEvents) != 1 {
-		t.Fatalf("total events = %d, want 1", len(allEvents))
-	}
-	if allEvents[0].Type != EventPermission || allEvents[0].Risk != RiskHigh {
-		t.Fatalf("unexpected event: %#v", allEvents[0])
+	if len(raised) != 1 {
+		t.Fatalf("raised %d events, want 1", len(raised))
 	}
 }
 
-func TestGooseSuppression(t *testing.T) {
-	cases := []struct {
-		name  string
-		input string
-	}{
-		{
-			name:  "code fence block",
-			input: "```\nApprove tool execution? [y/n] \n```\n",
-		},
-		{
-			name:  "quoted prompt in backticks",
-			input: "Run `Approve tool execution? [y/n]` check\n",
-		},
-		{
-			name:  "quoted prompt in single quotes",
-			input: "Goose logged 'Approve tool execution? [y/n]' earlier\n",
-		},
-		{
-			name:  "log prefix",
-			input: "log: Approve tool execution? [y/n] \n",
-		},
-		{
-			name:  "quote block prefix",
-			input: "> Approve tool execution? [y/n] \n",
-		},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			adapter, err := NewGooseAdapter(nil)
-			if err != nil {
-				t.Fatalf("NewGooseAdapter: %v", err)
-			}
-			state := NewDetectionState("session-suppress", "agent-goose", GooseID)
-
-			events, err := adapter.Detect(state, []byte(tc.input))
-			if err != nil {
-				t.Fatalf("Detect error: %v", err)
-			}
-			if len(events) != 0 {
-				t.Fatalf("expected no events, got: %#v", events)
-			}
-		})
-	}
-}
-
+// Allow and Deny are the keys that pick them wherever the highlight is: k to
+// the top, where cliclack stops it, j down, Enter. y and n pick nothing.
 func TestGooseEncodeDecision(t *testing.T) {
 	adapter, err := NewGooseAdapter(nil)
 	if err != nil {
-		t.Fatalf("NewGooseAdapter: %v", err)
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		interaction string
+		decision    Decision
+		manual      string
+		want        string
+	}{
+		{gooseToolCall, DecisionAllow, "", "kkk\r"},
+		{gooseToolCall, DecisionDeny, "", "kkkjj\r"},
+		{gooseToolCall, DecisionManual, "allow", "kkk\r"},
+		{gooseToolCall, DecisionManual, "Deny", "kkkjj\r"},
+		{gooseToolCall, DecisionManual, "cancel", "kkkjjj\r"},
+		{gooseToolCallWithNotice, DecisionAllow, "", "kk\r"},
+		{gooseToolCallWithNotice, DecisionDeny, "", "kkj\r"},
+		{gooseToolCallWithNotice, DecisionManual, "cancel", "kkjj\r"},
+	} {
+		event := Event{Type: EventPermission, Metadata: map[string]string{gooseInteractionMetadata: tc.interaction}}
+		got, err := adapter.EncodeDecision(event, tc.decision, tc.manual)
+		if err != nil {
+			t.Fatalf("%s %s %q: %v", tc.interaction, tc.decision, tc.manual, err)
+		}
+		if string(got) != tc.want {
+			t.Errorf("%s %s %q = %q, want %q", tc.interaction, tc.decision, tc.manual, got, tc.want)
+		}
 	}
 
-	event := Event{
-		Type: EventPermission,
-		Metadata: map[string]string{
-			gooseInteractionMetadata: gooseExecuteTool,
+	event := Event{Type: EventPermission, Metadata: map[string]string{gooseInteractionMetadata: gooseToolCall}}
+	for name, call := range map[string]func() ([]byte, error){
+		"automatic decision with manual input": func() ([]byte, error) { return adapter.EncodeDecision(event, DecisionAllow, "extra") },
+		"NUL byte":                             func() ([]byte, error) { return adapter.EncodeDecision(event, DecisionManual, "bad\x00input") },
+		// Typed into the menu, text moves the highlight and Enter picks
+		// whatever it lands on.
+		"free text":    func() ([]byte, error) { return adapter.EncodeDecision(event, DecisionManual, "deny tool") },
+		"always allow": func() ([]byte, error) { return adapter.EncodeDecision(event, DecisionManual, "always allow") },
+		"non-actionable": func() ([]byte, error) {
+			return adapter.EncodeDecision(Event{Type: EventProcessExit}, DecisionAllow, "")
 		},
-	}
-
-	// DecisionAllow -> "y\r"
-	allowEncoded, err := adapter.EncodeDecision(event, DecisionAllow, "")
-	if err != nil {
-		t.Fatalf("EncodeDecision(DecisionAllow) error: %v", err)
-	}
-	if !reflect.DeepEqual(allowEncoded, []byte("y\r")) {
-		t.Errorf("allowEncoded = %q, want %q", allowEncoded, "y\r")
-	}
-
-	// DecisionDeny -> "n\r"
-	denyEncoded, err := adapter.EncodeDecision(event, DecisionDeny, "")
-	if err != nil {
-		t.Fatalf("EncodeDecision(DecisionDeny) error: %v", err)
-	}
-	if !reflect.DeepEqual(denyEncoded, []byte("n\r")) {
-		t.Errorf("denyEncoded = %q, want %q", denyEncoded, "n\r")
-	}
-
-	// DecisionManual -> "<input>\r"
-	manualEncoded, err := adapter.EncodeDecision(event, DecisionManual, "deny tool")
-	if err != nil {
-		t.Fatalf("EncodeDecision(DecisionManual) error: %v", err)
-	}
-	if !reflect.DeepEqual(manualEncoded, []byte("deny tool\r")) {
-		t.Errorf("manualEncoded = %q, want %q", manualEncoded, "deny tool\r")
-	}
-
-	// Automatic decision with manualInput must error
-	if _, err := adapter.EncodeDecision(event, DecisionAllow, "extra"); err == nil {
-		t.Errorf("expected error for automatic decision with non-empty manual input")
-	}
-
-	// Manual input with NUL byte must error
-	if _, err := adapter.EncodeDecision(event, DecisionManual, "bad\x00input"); err == nil {
-		t.Errorf("expected error for NUL byte in manual input")
-	}
-
-	// Non-actionable event must error
-	nonActionable := Event{Type: EventProcessExit}
-	if _, err := adapter.EncodeDecision(nonActionable, DecisionAllow, ""); err == nil {
-		t.Errorf("expected error for non-actionable event")
+	} {
+		if got, err := call(); err == nil {
+			t.Errorf("%s: encoded %q, want an error", name, got)
+		}
 	}
 }
 
 func TestGooseSnapshotFingerprintSource(t *testing.T) {
 	adapter, err := NewGooseAdapter(nil)
 	if err != nil {
-		t.Fatalf("NewGooseAdapter: %v", err)
+		t.Fatal(err)
 	}
-
-	prompt := "Approve tool execution? [y/n] "
-	source := adapter.snapshotFingerprintSource(prompt, prompt, false)
-	if !bytes.Contains([]byte(source), []byte(gooseExecuteTool)) {
-		t.Errorf("fingerprint source = %q, want to contain %q", source, gooseExecuteTool)
+	source := adapter.snapshotFingerprintSource(gooseToolMenu, "└", false)
+	if !strings.HasPrefix(source, gooseToolCall+"\x00") {
+		t.Errorf("fingerprint source = %q, want the tool_call menu", source)
 	}
-
-	// Inside code fence, should return activeLine unchanged
-	fenceSource := adapter.snapshotFingerprintSource(prompt, prompt, true)
-	if fenceSource != prompt {
-		t.Errorf("fenceSource = %q, want %q", fenceSource, prompt)
+	if source := adapter.snapshotFingerprintSource(gooseToolMenu, "└", true); source != "└" {
+		t.Errorf("in a code fence, fingerprint source = %q, want the active line", source)
 	}
-
-	// Occurrence aware
-	if !adapter.snapshotOccurrenceAware(Event{Metadata: map[string]string{gooseInteractionMetadata: gooseExecuteTool}}) {
-		t.Errorf("expected snapshotOccurrenceAware to be true for vendor interaction")
+	if !adapter.snapshotOccurrenceAware(Event{Metadata: map[string]string{gooseInteractionMetadata: gooseToolCall}}) {
+		t.Errorf("a menu occurrence is not occurrence aware")
 	}
 	if adapter.snapshotOccurrenceAware(Event{}) {
-		t.Errorf("expected snapshotOccurrenceAware to be false for empty metadata")
+		t.Errorf("an event without interaction is occurrence aware")
 	}
 }
