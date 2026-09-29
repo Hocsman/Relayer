@@ -25,7 +25,7 @@ import (
 const answeredThenProgramHelperEnv = "RELAYER_TEST_ANSWERED_THEN_PROGRAM"
 
 var answeredThenProgramPrompts = map[string]string{
-	"aider":   "Apply changes? (Y)es/(N)o/(D)escribe [Yes]: ",
+	"aider":   "Create new file? (Y)es/(N)o [Yes]: ",
 	"generic": "Overwrite file probe.txt? [y/n] ",
 }
 

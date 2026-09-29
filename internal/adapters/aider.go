@@ -10,13 +10,11 @@ const (
 	AiderID = "aider"
 
 	aiderInteractionMetadata = "interaction"
-	aiderApplyChanges        = "apply_changes"
 	aiderRunCommand          = "run_command"
+	aiderAddCommandOutput    = "add_command_output"
+	aiderAllowEdits          = "allow_edits"
 	aiderAddToChat           = "add_to_chat"
 	aiderCreateFile          = "create_file"
-	aiderGitCommit           = "git_commit"
-	aiderGitPush             = "git_push"
-	aiderGitAdd              = "git_add"
 	aiderGitIgnore           = "git_ignore"
 )
 
@@ -32,143 +30,94 @@ type aiderPrompt struct {
 	footers     []string
 }
 
-// aiderPrompts is ordered, and detection takes the first entry whose block is
-// complete. A line that satisfies two entries therefore resolves to the earlier
-// one, so the broad markers sit at the end: "Create " matches "Create branch and
-// Push to remote?", and reading that as a low-risk file creation would hide the
-// push behind a confirmation.
+// Every Aider question goes through one function, io.confirm_ask, which
+// appends its options and default to the question: " (Y)es/(N)o", then
+// "/(A)ll", "/(S)kip all" or "/(D)on't ask again" when they apply, then
+// " [Yes]: " or " [No]: ". It reads a line, so an answer is its letter and
+// Enter.
+var (
+	aiderAllows  = []string{"(Y)es"}
+	aiderDenies  = []string{"(N)o"}
+	aiderFooters = []string{"[Yes]:", "[No]:"}
+)
+
+// aiderPrompts holds the questions observed from Aider 0.86.2 against a
+// disposable repository, each answered both ways with the side effect checked:
+// see testdata/aider. It is ordered, and detection takes the first entry whose
+// block is complete, so an entry whose question contains another's comes
+// first: "Add command output to the chat?" and "Allow edits to file that has
+// not been added to the chat?" before "Add file to the chat?".
+//
+// A question Aider asks that is not here, a lint or test fix or a pip install,
+// falls back to the configured intercept_patterns and is answered by hand.
 var aiderPrompts = []aiderPrompt{
-	{
-		interaction: aiderApplyChanges,
-		summary:     "Aider asks to apply changes (y=allow, n=deny)",
-		match:       "Apply changes?",
-		eventType:   EventConfirmation,
-		risk:        RiskLow,
-		markers: []string{
-			"Apply changes?",
-			"Apply these changes?",
-			"Apply change?",
-			"Apply edit to",
-		},
-		allows:  []string{"(Y)es", "[Yes]"},
-		denies:  []string{"(N)o"},
-		footers: []string{"[Yes]:", "(y/n)", "(Y/n)"},
-	},
 	{
 		interaction: aiderRunCommand,
 		summary:     "Aider asks to run shell command (y=allow, n=deny)",
 		match:       "Run shell command?",
 		eventType:   EventPermission,
 		risk:        RiskHigh,
-		markers: []string{
-			"Run shell command?",
-			"Run tests?",
-			"Run command?",
-		},
-		allows:  []string{"(Y)es", "[Yes]"},
-		denies:  []string{"(N)o"},
-		footers: []string{"[Yes]:", "(y/n)", "(Y/n)"},
+		markers:     []string{"Run shell command?", "Run shell commands?"},
+		allows:      aiderAllows,
+		denies:      aiderDenies,
+		footers:     aiderFooters,
 	},
-	// The git entries below are heuristic and unverified. Aider is not installed
-	// on the development machine, no fixture in testdata backs them, and none of
-	// the wordings has been checked against a real Aider build. They are guesses
-	// chosen to be narrow: every marker carries a git verb and a question mark.
-	// That narrowness bounds nothing on its own, though: like every entry here,
-	// they fire on any line that ends in one of the footers, so a diff, a log
-	// line or a commit message quoting a whole Aider prompt is read as one.
-	// Confirm or correct the wording with a capture, see docs/fixture-capture.md.
 	{
-		interaction: aiderGitPush,
-		summary:     "Aider asks to push commits to the remote (y=allow, n=deny)",
-		match:       "Push to remote?",
+		interaction: aiderAddCommandOutput,
+		summary:     "Aider asks to add command output to the chat (y=allow, n=deny)",
+		match:       "Add command output to the chat?",
+		eventType:   EventConfirmation,
+		risk:        RiskLow,
+		markers:     []string{"Add command output to the chat?"},
+		allows:      aiderAllows,
+		denies:      aiderDenies,
+		footers:     aiderFooters,
+	},
+	{
+		interaction: aiderAllowEdits,
+		summary:     "Aider asks to edit a file not added to the chat (y=allow, n=deny)",
+		match:       "Allow edits to file that has not been added to the chat?",
 		eventType:   EventPermission,
 		risk:        RiskHigh,
-		markers: []string{
-			"Push to remote?",
-			"Push to the remote?",
-			"Push commits to remote?",
-			"Push changes to origin?",
-		},
-		allows:  []string{"(Y)es", "[Yes]"},
-		denies:  []string{"(N)o"},
-		footers: []string{"[Yes]:", "(y/n)", "(Y/n)"},
-	},
-	{
-		interaction: aiderGitCommit,
-		summary:     "Aider asks to commit changes (y=allow, n=deny)",
-		match:       "Commit changes?",
-		eventType:   EventConfirmation,
-		risk:        RiskLow,
-		markers: []string{
-			"Commit changes?",
-			"Commit changes to git?",
-			"Commit before the chat proceeds?",
-			"Commit edits to the repo?",
-		},
-		allows:  []string{"(Y)es", "[Yes]"},
-		denies:  []string{"(N)o"},
-		footers: []string{"[Yes]:", "(y/n)", "(Y/n)"},
-	},
-	{
-		interaction: aiderGitAdd,
-		summary:     "Aider asks to track files in git (y=allow, n=deny)",
-		match:       "Add files to git?",
-		eventType:   EventConfirmation,
-		risk:        RiskLow,
-		markers: []string{
-			"Add files to git?",
-			"Add file to git?",
-			"Add to git?",
-		},
-		allows:  []string{"(Y)es", "[Yes]"},
-		denies:  []string{"(N)o"},
-		footers: []string{"[Yes]:", "(y/n)", "(Y/n)"},
-	},
-	// Ignoring a path is the opposite of tracking it, so it carries its own
-	// summary rather than sharing the one above. An operator reading "track
-	// files in git" and answering yes to a .gitignore question would be
-	// answering a question they were not shown.
-	{
-		interaction: aiderGitIgnore,
-		summary:     "Aider asks to add a path to .gitignore (y=allow, n=deny)",
-		match:       "Add to .gitignore?",
-		eventType:   EventConfirmation,
-		risk:        RiskLow,
-		markers: []string{
-			"Add to .gitignore?",
-		},
-		allows:  []string{"(Y)es", "[Yes]"},
-		denies:  []string{"(N)o"},
-		footers: []string{"[Yes]:", "(y/n)", "(Y/n)"},
+		markers:     []string{"Allow edits to file that has not been added to the chat?"},
+		allows:      aiderAllows,
+		denies:      aiderDenies,
+		footers:     aiderFooters,
 	},
 	{
 		interaction: aiderAddToChat,
 		summary:     "Aider asks to add file to chat (y=allow, n=deny)",
-		match:       "Add to the chat?",
+		match:       "Add file to the chat?",
 		eventType:   EventPermission,
 		risk:        RiskLow,
-		markers: []string{
-			" to the chat?",
-			"Add file to the chat?",
-			"Add to the chat?",
-		},
-		allows:  []string{"(Y)es", "[Yes]"},
-		denies:  []string{"(N)o"},
-		footers: []string{"[Yes]:", "(y/n)", "(Y/n)"},
+		markers:     []string{"Add file to the chat?"},
+		allows:      aiderAllows,
+		denies:      aiderDenies,
+		footers:     aiderFooters,
 	},
 	{
 		interaction: aiderCreateFile,
 		summary:     "Aider asks to create file (y=allow, n=deny)",
-		match:       "Create file?",
+		match:       "Create new file?",
 		eventType:   EventConfirmation,
 		risk:        RiskLow,
-		markers: []string{
-			"Create file?",
-			"Create ",
-		},
-		allows:  []string{"(Y)es", "[Yes]"},
-		denies:  []string{"(N)o"},
-		footers: []string{"[Yes]:", "(y/n)", "(Y/n)"},
+		markers:     []string{"Create new file?"},
+		allows:      aiderAllows,
+		denies:      aiderDenies,
+		footers:     aiderFooters,
+	},
+	// Ignoring a path is not tracking it: the summary is what the operator
+	// answers, so it names .gitignore.
+	{
+		interaction: aiderGitIgnore,
+		summary:     "Aider asks to add a path to .gitignore (y=allow, n=deny)",
+		match:       "to .gitignore (recommended)?",
+		eventType:   EventConfirmation,
+		risk:        RiskLow,
+		markers:     []string{"to .gitignore (recommended)?"},
+		allows:      aiderAllows,
+		denies:      aiderDenies,
+		footers:     aiderFooters,
 	},
 }
 
@@ -405,7 +354,9 @@ func lastAiderVariant(value string, variants []string) (int, string) {
 }
 
 // EncodeDecision encodes automated or manual responses for Aider prompts.
-// Aider prompts expect Enter ('\r') to confirm input.
+// Aider reads a line: y and Enter ran the captured command, created the
+// file, applied the edit or added the output, and n and Enter did none of it
+// (testdata/aider).
 func (a *AiderAdapter) EncodeDecision(event Event, decision Decision, manualInput string) ([]byte, error) {
 	if !event.Actionable() {
 		return nil, fmt.Errorf("%w for type %q", ErrDecisionUnsupported, event.Type)

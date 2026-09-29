@@ -59,7 +59,7 @@ const (
 	webAgentNoAnswer = "WEB-AGENT-NO-ANSWER"
 	webAgentWithdrew = "the agent changed its mind"
 
-	webAgentAiderQuestion   = "Apply changes? (Y)es/(N)o/(D)escribe [Yes]: "
+	webAgentAiderQuestion   = "Create new file? (Y)es/(N)o [Yes]: "
 	webAgentGenericQuestion = "Overwrite file probe.txt? [y/n] "
 	// webAgentToken is a credential the tool-call agent hands to its tool.
 	webAgentToken = "ghp_abcdefghijklmnop1234"

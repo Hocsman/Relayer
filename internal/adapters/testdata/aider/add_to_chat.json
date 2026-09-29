@@ -1,0 +1,15 @@
+{
+  "cli_version": "aider 0.86.2",
+  "interaction": "add_to_chat",
+  "capture_mode": "interactive, 100x30 PTY, --edit-format diff --no-auto-commits --no-show-release-notes, against a local stand-in model; the model replied with an edit to README.md, which was not in the chat",
+  "stripped": "Tokens: 2.5k sent, 25 received.\n\nREADME.md\nAdd file to the chat? (Y)es/(N)o/(D)on't ask again [Yes]:                                           Add file to the chat? (Y)es/(N)o/(D)on't ask again [Yes]:",
+  "ansi_chunks": [
+    "Tokens: 2.5k sent, 25 received.\r\n\r\n\u001b[7mREADME.md\u001b[0m\r\n\u001b[6n\u001b[?2004h\u001b[?1l\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0;38;5;40mAdd file to the chat? (Y)es/(N)o/(D)on't ask again [Yes]:                                          \r\u001b",
+    "[99C \r\u001b[58C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[58D\u001b[0;38;5;40mAdd file to the chat? (Y)es/(N)o/(D)on't ask again [Yes]:  \u001b[0m\u001b[K\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r",
+    "\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0;38;5;40m                                                                                                   \r\u001b[99C \r\u001b[29A\u001b[58C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h"
+  ],
+  "allow_input_hex": "790d",
+  "deny_input_hex": "6e0d",
+  "observed_allow": "README.md was added to the chat and the edit applied",
+  "observed_deny": "Aider asked the allow_edits question instead"
+}

@@ -9,7 +9,7 @@ during alpha; it is not a runtime plugin protocol.
 | ID | Registry status | Implemented | Behavior |
 | --- | --- | --- | --- |
 | `generic` | Stable relative to the built-ins | Yes | Ordered regex prompt detection; manual input encoding. |
-| `aider` | Experimental | Yes | Aider prompts (file changes, shell command execution, chat context addition, file creation, git commit, push, add and ignore); allow (`y`), deny (`n`), and manual input. Hand-written patterns, no captured fixture. |
+| `aider` | Experimental | Yes | Aider 0.86.2 questions: running a shell command, creating a file, editing a file not in the chat, adding a file or a command's output to the chat, adding to `.gitignore`; allow (`y` Enter), deny (`n` Enter) and manual input, each observed against a disposable repository. |
 | `claude` | Experimental | Yes | Claude Code 2.1.59 workspace trust and environment-key prompts; generic fallback; manual input only. |
 | `codex` | Experimental | Yes | Codex CLI 0.148.0-alpha.21 directory trust and command approval; generic fallback; command allow/deny and directory deny bytes verified. |
 | `goose` | Experimental | Yes | Goose prompts (tool execution, shell command execution, file modification, extension approval); allow (`y`), deny (`n`), and manual input. Hand-written patterns, no captured fixture. |
@@ -24,11 +24,13 @@ hints and then falls back to `generic`. A basename of `aider`, `claude`,
 experimental adapter. Every experimental adapter retains each configured
 `intercept_pattern` as a generic compatibility fallback.
 
-Only `claude` and `codex` are backed by captured output. The `aider`, `goose`
-and `interpreter` patterns were written by hand from published documentation
-and never checked against a recorded session, so an installed version that
-words its prompts differently is simply not detected by them and falls back to
-`generic`.
+`claude`, `codex` and `aider` are backed by captured output
+(`internal/adapters/testdata`). The `goose` and `interpreter` patterns were
+written by hand from published documentation and never checked against a
+recorded session, so an installed version that words its prompts differently
+is simply not detected by them and falls back to `generic`. Aider's were too
+until the capture, which found that half of them were questions Aider 0.86.2
+never asks.
 
 The desktop catalogue also contains generic launch profiles for MiMo Code, a
 combined Ollama / DeepSeek entry, and a custom CLI. A launch profile is not an
@@ -317,7 +319,7 @@ An entry with no row — a question raised on the byte window before the agent
 first repainted, or restored from a snapshot — adopts one the first time exactly
 one visible row shows it. It is looked for by the line it was asked on first,
 and by its match only when that line is not painted: a vendor match is the label
-of a kind of prompt, "Apply changes?" for "Apply edit to notes.py?", which may
+of a kind of prompt, "Run shell command?" for "Run shell commands?", which may
 never be painted, and an entry looked for by it was dropped on the first repaint.
 
 The tmux resync compares whole lines, and so does the Codex adapter, whose footer

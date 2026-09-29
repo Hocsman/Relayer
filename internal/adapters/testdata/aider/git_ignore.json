@@ -1,0 +1,15 @@
+{
+  "cli_version": "aider 0.86.2",
+  "interaction": "git_ignore",
+  "capture_mode": "interactive, 100x30 PTY, --edit-format diff --no-auto-commits --no-show-release-notes, against a local stand-in model; first start in a repository without .gitignore",
+  "stripped": "You can skip this check with --no-gitignore\nAdd .aider* to .gitignore (recommended)? (Y)es/(N)o [Yes]:                                          Add .aider* to .gitignore (recommended)? (Y)es/(N)o [Yes]:",
+  "ansi_chunks": [
+    "You can skip this check with --no-gitignore\r\n\u001b[6n\u001b[?2004h\u001b[?1l\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0;38;5;40mAdd .aider* to .gitignore (recommended)? (Y)es/(N)o [Yes]:                                         \r\u001b",
+    "[99C \r\u001b[59C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[59D\u001b[0;38;5;40mAdd .aider* to .gitignore (recommended)? (Y)es/(N)o [Yes]:  \u001b[0m\u001b[K\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b",
+    "[0;38;5;40m                                                                                                   \r\u001b[99C \r\u001b[29A\u001b[59C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h"
+  ],
+  "allow_input_hex": "790d",
+  "deny_input_hex": "6e0d",
+  "observed_allow": ".gitignore was created with .aider*",
+  "observed_deny": ".gitignore stayed absent"
+}

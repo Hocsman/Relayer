@@ -16,7 +16,7 @@ var conptyFirstWrites = []string{
 }
 
 const (
-	aiderApplyPrompt      = "Apply changes? (Y)es/(N)o/(D)escribe [Yes]: "
+	aiderNewFilePrompt    = "Create new file? (Y)es/(N)o [Yes]: "
 	gooseToolPrompt       = "Approve tool execution? (y/n) "
 	interpreterCodePrompt = "Would you like to run this code? (y/n) "
 	overwritePrompt       = "Overwrite file notes.txt? [y/n] "
@@ -100,7 +100,7 @@ func TestTheEchoOfAnAnswerIsNotAskedAgain(t *testing.T) {
 		prompt  string
 		answer  string
 	}{
-		{adapter: AiderID, prompt: aiderApplyPrompt, answer: "y"},
+		{adapter: AiderID, prompt: aiderNewFilePrompt, answer: "y"},
 		{adapter: GooseID, prompt: gooseToolPrompt, answer: "y"},
 		{adapter: OpenInterpreterID, prompt: interpreterCodePrompt, answer: "y"},
 		{adapter: GenericID, prompt: overwritePrompt, answer: "yes"},
@@ -187,14 +187,14 @@ func TestAQuestionAskedAgainOnANewRowIsAsked(t *testing.T) {
 		{
 			name:    "aider asks the same question after its output",
 			adapter: AiderID,
-			prompt:  aiderApplyPrompt,
-			steps:   []guardStep{{"y\r\n", 1}, {agentNextOutput, 1}, {aiderApplyPrompt, 2}},
+			prompt:  aiderNewFilePrompt,
+			steps:   []guardStep{{"y\r\n", 1}, {agentNextOutput, 1}, {aiderNewFilePrompt, 2}},
 		},
 		{
 			name:    "aider rejects the answer and asks again on the next row",
 			adapter: AiderID,
-			prompt:  aiderApplyPrompt,
-			steps:   []guardStep{{"q\r\n", 1}, {aiderApplyPrompt, 2}},
+			prompt:  aiderNewFilePrompt,
+			steps:   []guardStep{{"q\r\n", 1}, {aiderNewFilePrompt, 2}},
 		},
 		{
 			name:    "goose asks the same question after its output",
@@ -255,7 +255,7 @@ func TestAnotherQuestionOnTheAnsweredRowIsAsked(t *testing.T) {
 		{
 			name:    "aider",
 			adapter: AiderID,
-			prompt:  aiderApplyPrompt,
+			prompt:  aiderNewFilePrompt,
 			steps:   []guardStep{{"y", 1}, {"\r\x1b[KRun shell command? (Y)es/(N)o [Yes]: ", 2}},
 		},
 	} {
@@ -266,8 +266,8 @@ func TestAnotherQuestionOnTheAnsweredRowIsAsked(t *testing.T) {
 }
 
 // A vendor occurrence's Match is the label of a kind of prompt, not the text
-// on the screen: Aider's "Apply edit to notes.py?" is reported as "Apply
-// changes?". The answered memory is released when its row stops showing the
+// on the screen: Aider's "Run shell commands?" is reported as "Run shell
+// command?". The answered memory is released when its row stops showing the
 // question, and it looked for the label, which was never painted, so the entry
 // went on the next write and the question came straight back. The row is
 // checked for the question line as well.
@@ -276,7 +276,7 @@ func TestAVendorQuestionWhoseLabelIsNotPaintedStaysAnswered(t *testing.T) {
 		adapter string
 		prompt  string
 	}{
-		{adapter: AiderID, prompt: "Apply edit to notes.py? (Y)es/(N)o [Yes]: "},
+		{adapter: AiderID, prompt: "Run shell commands? (Y)es/(N)o/(D)on't ask again [Yes]: "},
 		{adapter: GooseID, prompt: "Allow Goose to run: 'ls -la' (y/n) "},
 		{adapter: OpenInterpreterID, prompt: "Execute this Python code? (y/n) "},
 	} {
@@ -335,7 +335,7 @@ func TestARepaintThatMovesTheAnsweredQuestionOffItsBlankRowDoesNotAskItAgain(t *
 		wantRaised int
 	}{
 		{name: "generic does not ask it again", adapter: GenericID, prompt: overwritePrompt, wantRaised: 1},
-		{name: "aider asks it again", adapter: AiderID, prompt: aiderApplyPrompt, wantRaised: 2},
+		{name: "aider asks it again", adapter: AiderID, prompt: aiderNewFilePrompt, wantRaised: 2},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			processor := replayAfterTheAnswer(t, testCase.adapter, testCase.prompt, []guardStep{
@@ -363,7 +363,7 @@ func TestAQuestionIsRememberedOnItsOwnRowWhenItsLabelIsPaintedAbove(t *testing.T
 		first     string
 		unlabeled string
 	}{
-		{adapter: AiderID, first: aiderApplyPrompt, unlabeled: "Apply edit to bar.py? (Y)es/(N)o [Yes]: "},
+		{adapter: AiderID, first: aiderShellCommandPrompt, unlabeled: "Run shell commands? (Y)es/(N)o/(D)on't ask again [Yes]: "},
 		{adapter: GooseID, first: gooseToolPrompt, unlabeled: "Allow Goose to run: 'ls -la' (y/n) "},
 	} {
 		t.Run(testCase.adapter, func(t *testing.T) {
