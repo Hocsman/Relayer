@@ -153,7 +153,10 @@ func desktopAnswersOnce(t *testing.T, after string) {
 	}
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
 	const agentID = "ask-once"
-	environment := "      " + askOnceHelperEnv + ": '1'\n"
+	// The agent is this test binary, which links Bubble Tea: its init asks the
+	// terminal for its background colour and waits five seconds for the answer
+	// the agent's PTY never gives. termenv asks nothing under a screen TERM.
+	environment := "      " + askOnceHelperEnv + ": '1'\n      TERM: screen\n"
 	if after != "" {
 		environment += "      " + askOnceAfterEnv + ": " + quote(after) + "\n"
 	}

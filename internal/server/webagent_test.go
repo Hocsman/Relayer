@@ -352,6 +352,15 @@ func writeWebRunConfig(t *testing.T, run webRun) (configPath, auditPath, recordi
 		b.WriteString("    command: [" + webYAMLQuote(executable) + ", " + webYAMLQuote("-test.run=^TestHelperProcessWebAgent$") + "]\n")
 		b.WriteString("    cwd: " + webYAMLQuote(dir) + "\n")
 		b.WriteString("    env:\n      " + webAgentModeEnv + ": " + agent.mode + "\n")
+		if _, set := agent.env["TERM"]; !set {
+			// The agent is this test binary, which links Bubble Tea through
+			// the TUI. Bubble Tea's init asks the terminal for its background
+			// colour and waits five seconds for an answer; the agent's PTY has
+			// no terminal emulator behind it to give one, so every agent
+			// started five seconds late and the package took five minutes.
+			// termenv asks nothing under a screen or tmux TERM.
+			b.WriteString("      TERM: screen\n")
+		}
 		keys := make([]string, 0, len(agent.env))
 		for key := range agent.env {
 			keys = append(keys, key)
