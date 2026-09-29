@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.16] - 2026-09-29
+
+Patch release whose Aider, Open Interpreter and Goose adapters read the questions those agents actually ask, captured from real sessions, and answer with bytes observed to do what they say. Goose's deny, `n` and Enter, would have allowed the tool call on Goose's real menu; it now picks Deny. A web gateway can keep the agents' terminals from its viewers with `--viewer-terminals hidden`, and a keystroke to an agent that reads nothing now gives up after five seconds on macOS, the BSDs and Windows as it did on Linux.
+
 ### Fixed
 
 - **The Aider adapter read the questions Aider asks, not questions it was guessed to ask.** Its patterns were written by hand from documentation and never checked against Aider. Captured from Aider 0.86.2 in a PTY, against a stand-in model and a disposable repository, half of them turned out to be questions Aider never asks ("Apply changes?", "Commit changes?", "Push to remote?", "Add files to git?"), while "Add .aider* to .gitignore (recommended)?" went undetected and "Add command output to the chat?" and "Allow edits to file that has not been added to the chat?" were both reported as adding a file to the chat, the second one a file edit shown as a low-risk question. The adapter now reads the six questions captured, each answered with `y` and Enter and with `n` and Enter and its side effect checked, and nothing else: an Aider question not among them falls back to the configured `intercept_patterns`. The fixtures are in `internal/adapters/testdata/aider`.
@@ -1082,7 +1086,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.15...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.16...main
+[0.8.16]: https://github.com/Hocsman/Relayer/compare/v0.8.15...v0.8.16
 [0.8.15]: https://github.com/Hocsman/Relayer/compare/v0.8.14...v0.8.15
 [0.8.14]: https://github.com/Hocsman/Relayer/compare/v0.8.13...v0.8.14
 [0.8.13]: https://github.com/Hocsman/Relayer/compare/v0.8.12...v0.8.13
