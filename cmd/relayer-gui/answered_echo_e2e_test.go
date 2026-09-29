@@ -52,7 +52,7 @@ func TestHelperProcessAskOnceAgent(t *testing.T) {
 	}
 	fmt.Print("\x1b[?25l\x1b[2J\x1b[m\x1b[Hagent ready\r\n\x1b[?25h")
 	time.Sleep(300 * time.Millisecond)
-	fmt.Print("Apply changes? (Y)es/(N)o/(D)escribe [Yes]: ")
+	fmt.Print("Create new file? (Y)es/(N)o [Yes]: ")
 
 	lines := make(chan string, 8)
 	go func() {

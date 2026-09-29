@@ -40,7 +40,7 @@ func TestAFullScreenProgramAfterTheAnswerDoesNotAskItAgain(t *testing.T) {
 		answer  string
 	}{
 		{adapter: GenericID, prompt: overwritePrompt, answer: "yes"},
-		{adapter: AiderID, prompt: aiderApplyPrompt, answer: "y"},
+		{adapter: AiderID, prompt: aiderNewFilePrompt, answer: "y"},
 	} {
 		t.Run(question.adapter+"/in a terminal that passes the alternate screen through", func(t *testing.T) {
 			processor := playSession(t, question.adapter, true, []sessionStep{
@@ -108,7 +108,7 @@ func TestATerminalThatLosesHeightAfterTheAnswerDoesNotAskItAgain(t *testing.T) {
 		prompt  string
 		answer  string
 	}{
-		{adapter: AiderID, prompt: aiderApplyPrompt, answer: "y"},
+		{adapter: AiderID, prompt: aiderNewFilePrompt, answer: "y"},
 		{adapter: GenericID, prompt: overwritePrompt, answer: "yes"},
 	} {
 		t.Run(question.adapter, func(t *testing.T) {
@@ -139,7 +139,7 @@ func TestATerminalThatLosesHeightAfterTheAnswerDoesNotAskItAgain(t *testing.T) {
 // before it has repainted anything, so the answer is remembered with no row. It
 // gets one on the first repaint, from the row that shows it, and it was looked
 // for by its match alone. A vendor match is the label of a kind of prompt,
-// "Apply changes?" for "Apply edit to notes.py?", which may never be painted:
+// "Run shell command?" for "Run shell commands?", which may never be painted:
 // found nowhere, the entry went, and the question still on screen was asked
 // again. It is looked for by the line it was asked on first.
 func TestAQuestionAnsweredBeforeTheFirstRepaintIsFoundByItsLine(t *testing.T) {
@@ -147,7 +147,7 @@ func TestAQuestionAnsweredBeforeTheFirstRepaintIsFoundByItsLine(t *testing.T) {
 		adapter string
 		prompt  string
 	}{
-		{adapter: AiderID, prompt: "Apply edit to notes.py? (Y)es/(N)o [Yes]: "},
+		{adapter: AiderID, prompt: "Run shell commands? (Y)es/(N)o/(D)on't ask again [Yes]: "},
 		{adapter: GooseID, prompt: "Allow Goose to run: 'ls -la' (y/n) "},
 		{adapter: OpenInterpreterID, prompt: "Execute this Python code? (y/n) "},
 	} {
@@ -188,7 +188,7 @@ func TestAWindowResizedWhileAProgramRunsAfterTheAnswerDoesNotAskItAgain(t *testi
 		prompt  string
 		answer  string
 	}{
-		{adapter: AiderID, prompt: aiderApplyPrompt, answer: "y"},
+		{adapter: AiderID, prompt: aiderNewFilePrompt, answer: "y"},
 		{adapter: GenericID, prompt: overwritePrompt, answer: "nope"},
 	} {
 		// The primary screen as ConPTY repaints it when the program exits: the
@@ -333,7 +333,7 @@ func TestAQuestionOnAProgramsScreenIsAskedWhateverWasAnsweredUnderneath(t *testi
 		prompt  string
 	}{
 		{adapter: GenericID, prompt: overwritePrompt},
-		{adapter: AiderID, prompt: aiderApplyPrompt},
+		{adapter: AiderID, prompt: aiderNewFilePrompt},
 	} {
 		t.Run(question.adapter+"/answered before the agent ever repainted", func(t *testing.T) {
 			processor := playSession(t, question.adapter, false, []sessionStep{
@@ -377,7 +377,7 @@ func TestAQuestionFromASnapshotOfAProgramsScreenIsNotAskedAgainOnceAnswered(t *t
 		prompt  string
 	}{
 		{adapter: GenericID, prompt: overwritePrompt},
-		{adapter: AiderID, prompt: aiderApplyPrompt},
+		{adapter: AiderID, prompt: aiderNewFilePrompt},
 	} {
 		t.Run(question.adapter, func(t *testing.T) {
 			processor := playSession(t, question.adapter, false, []sessionStep{
@@ -407,7 +407,7 @@ func TestAQuestionFromASnapshotOfAProgramsScreenIsAskedWhenTheAgentAsksItAgain(t
 	}{
 		{adapter: GenericID, prompt: overwritePrompt},
 		{adapter: ClaudeID, prompt: overwritePrompt},
-		{adapter: AiderID, prompt: aiderApplyPrompt},
+		{adapter: AiderID, prompt: aiderNewFilePrompt},
 	} {
 		for _, again := range []struct {
 			name  string
@@ -455,7 +455,7 @@ func TestAnAnswerOnAProgramsScreenLeavesThePrimaryScreensAnswerAlone(t *testing.
 	}{
 		{adapter: GenericID, prompt: overwritePrompt, program: overwritePrompt},
 		{adapter: GenericID, prompt: overwritePrompt, program: "Delete the backup too? [y/n] "},
-		{adapter: AiderID, prompt: aiderApplyPrompt, program: aiderApplyPrompt},
+		{adapter: AiderID, prompt: aiderNewFilePrompt, program: aiderNewFilePrompt},
 	} {
 		for _, onConPTY := range []bool{true, false} {
 			name := fmt.Sprintf("%s/%s/conpty=%t", question.adapter, strings.TrimSpace(question.program), onConPTY)

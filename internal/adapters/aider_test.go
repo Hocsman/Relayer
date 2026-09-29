@@ -17,6 +17,7 @@ func TestAiderAdapterID(t *testing.T) {
 }
 
 func TestAiderPromptsDetection(t *testing.T) {
+	// The questions and their options as Aider 0.86.2 prints them.
 	tests := []struct {
 		name        string
 		input       string
@@ -26,129 +27,70 @@ func TestAiderPromptsDetection(t *testing.T) {
 		summary     string
 	}{
 		{
-			name:        "apply changes basic",
-			input:       "Apply changes? (Y)es/(N)o/(D)escribe [Yes]: ",
-			interaction: aiderApplyChanges,
-			eventType:   EventConfirmation,
-			risk:        RiskLow,
-			summary:     "Aider asks to apply changes (y=allow, n=deny)",
-		},
-		{
-			name:        "apply changes with chat option",
-			input:       "Apply changes? (Y)es/(N)o/(D)escribe/(C)hat [Yes]: ",
-			interaction: aiderApplyChanges,
-			eventType:   EventConfirmation,
-			risk:        RiskLow,
-			summary:     "Aider asks to apply changes (y=allow, n=deny)",
-		},
-		{
-			name:        "apply these changes",
-			input:       "Apply these changes? (Y)es/(N)o [Yes]: ",
-			interaction: aiderApplyChanges,
-			eventType:   EventConfirmation,
-			risk:        RiskLow,
-			summary:     "Aider asks to apply changes (y=allow, n=deny)",
-		},
-		{
 			name:        "run shell command",
-			input:       "Run shell command? (Y)es/(N)o [Yes]: ",
+			input:       "Run shell command? (Y)es/(N)o/(D)on't ask again [Yes]: ",
 			interaction: aiderRunCommand,
 			eventType:   EventPermission,
 			risk:        RiskHigh,
 			summary:     "Aider asks to run shell command (y=allow, n=deny)",
 		},
 		{
-			name:        "run tests",
-			input:       "Run tests? (Y)es/(N)o [Yes]: ",
+			name:        "run shell commands",
+			input:       "Run shell commands? (Y)es/(N)o/(D)on't ask again [Yes]: ",
 			interaction: aiderRunCommand,
 			eventType:   EventPermission,
 			risk:        RiskHigh,
 			summary:     "Aider asks to run shell command (y=allow, n=deny)",
 		},
 		{
-			name:        "add file to chat",
-			input:       "Add src/main.py to the chat? (Y)es/(N)o [Yes]: ",
+			name:        "add command output to the chat",
+			input:       "Add command output to the chat? (Y)es/(N)o/(D)on't ask again [Yes]: ",
+			interaction: aiderAddCommandOutput,
+			eventType:   EventConfirmation,
+			risk:        RiskLow,
+			summary:     "Aider asks to add command output to the chat (y=allow, n=deny)",
+		},
+		// It contains " to the chat?", like the next entry: it must not be
+		// read as adding a file, since it edits one.
+		{
+			name:        "allow edits to a file not in the chat",
+			input:       "Allow edits to file that has not been added to the chat? (Y)es/(N)o [Yes]: ",
+			interaction: aiderAllowEdits,
+			eventType:   EventPermission,
+			risk:        RiskHigh,
+			summary:     "Aider asks to edit a file not added to the chat (y=allow, n=deny)",
+		},
+		{
+			name:        "add file to the chat",
+			input:       "Add file to the chat? (Y)es/(N)o/(D)on't ask again [Yes]: ",
 			interaction: aiderAddToChat,
 			eventType:   EventPermission,
 			risk:        RiskLow,
 			summary:     "Aider asks to add file to chat (y=allow, n=deny)",
 		},
 		{
-			name:        "create file",
-			input:       "Create tests/test_new.py? (Y)es/(N)o [Yes]: ",
+			name:        "create new file",
+			input:       "Create new file? (Y)es/(N)o [Yes]: ",
 			interaction: aiderCreateFile,
 			eventType:   EventConfirmation,
 			risk:        RiskLow,
 			summary:     "Aider asks to create file (y=allow, n=deny)",
 		},
 		{
-			name:        "commit changes",
-			input:       "Commit changes? (Y)es/(N)o [Yes]: ",
-			interaction: aiderGitCommit,
-			eventType:   EventConfirmation,
-			risk:        RiskLow,
-			summary:     "Aider asks to commit changes (y=allow, n=deny)",
-		},
-		{
-			name:        "commit before the chat proceeds",
-			input:       "Commit before the chat proceeds? (Y)es/(N)o [Yes]: ",
-			interaction: aiderGitCommit,
-			eventType:   EventConfirmation,
-			risk:        RiskLow,
-			summary:     "Aider asks to commit changes (y=allow, n=deny)",
-		},
-		{
-			name:        "push to remote",
-			input:       "Push to remote? (Y)es/(N)o [Yes]: ",
-			interaction: aiderGitPush,
-			eventType:   EventPermission,
-			risk:        RiskHigh,
-			summary:     "Aider asks to push commits to the remote (y=allow, n=deny)",
-		},
-		{
-			name:        "push commits to remote",
-			input:       "Push commits to remote? (Y)es/(N)o [Yes]: ",
-			interaction: aiderGitPush,
-			eventType:   EventPermission,
-			risk:        RiskHigh,
-			summary:     "Aider asks to push commits to the remote (y=allow, n=deny)",
-		},
-		{
-			name:        "add files to git",
-			input:       "Add files to git? (Y)es/(N)o [Yes]: ",
-			interaction: aiderGitAdd,
-			eventType:   EventConfirmation,
-			risk:        RiskLow,
-			summary:     "Aider asks to track files in git (y=allow, n=deny)",
-		},
-		// Ignoring a path is not tracking it, so it must not borrow the
-		// tracking summary: the summary is what the operator answers.
-		{
 			name:        "add to gitignore",
-			input:       "Add to .gitignore? (Y)es/(N)o [Yes]: ",
+			input:       "Add .aider* to .gitignore (recommended)? (Y)es/(N)o [Yes]: ",
 			interaction: aiderGitIgnore,
 			eventType:   EventConfirmation,
 			risk:        RiskLow,
 			summary:     "Aider asks to add a path to .gitignore (y=allow, n=deny)",
 		},
-		// A line that satisfies both the broad create marker and a git marker
-		// resolves to the git reading, so a push is never hidden behind a
-		// low-risk file confirmation.
 		{
-			name:        "create and push resolves to the push",
-			input:       "Create branch and Push to remote? (Y)es/(N)o [Yes]: ",
-			interaction: aiderGitPush,
-			eventType:   EventPermission,
-			risk:        RiskHigh,
-			summary:     "Aider asks to push commits to the remote (y=allow, n=deny)",
-		},
-		{
-			name:        "create and add to git resolves to the git add",
-			input:       "Create file and Add to git? (Y)es/(N)o [Yes]: ",
-			interaction: aiderGitAdd,
+			name:        "a default of no",
+			input:       "Create new file? (Y)es/(N)o [No]: ",
+			interaction: aiderCreateFile,
 			eventType:   EventConfirmation,
 			risk:        RiskLow,
-			summary:     "Aider asks to track files in git (y=allow, n=deny)",
+			summary:     "Aider asks to create file (y=allow, n=deny)",
 		},
 	}
 
@@ -197,8 +139,8 @@ func TestAiderPromptsStreamingChunks(t *testing.T) {
 		"Tokens: 2.3k sent, 412 received.\n",
 		"Applying edits...\n",
 		"Run shell ",
-		"command? (Y)es/(N)o ",
-		"[Yes]: ",
+		"command? (Y)es/(N)o/(D)on't ",
+		"ask again [Yes]: ",
 	}
 
 	adapter, err := NewAiderAdapter(nil)
@@ -234,7 +176,7 @@ func TestAiderSuppression(t *testing.T) {
 	}{
 		{
 			name:  "code fence block",
-			input: "```\nApply changes? (Y)es/(N)o/(D)escribe [Yes]: \n```\n",
+			input: "```\nRun shell command? (Y)es/(N)o/(D)on't ask again [Yes]: \n```\n",
 		},
 		{
 			name:  "quoted prompt in backticks",
@@ -242,15 +184,15 @@ func TestAiderSuppression(t *testing.T) {
 		},
 		{
 			name:  "quoted prompt in single quotes",
-			input: "Aider asked 'Add foo.py to the chat? (Y)es/(N)o [Yes]:' earlier\n",
+			input: "Aider asked 'Add file to the chat? (Y)es/(N)o [Yes]:' earlier\n",
 		},
 		{
 			name:  "log prefix",
-			input: "log: Apply changes? (Y)es/(N)o/(D)escribe [Yes]: \n",
+			input: "log: Create new file? (Y)es/(N)o [Yes]: \n",
 		},
 		{
 			name:  "quote block prefix",
-			input: "> Apply changes? (Y)es/(N)o/(D)escribe [Yes]: \n",
+			input: "> Create new file? (Y)es/(N)o [Yes]: \n",
 		},
 	}
 
@@ -274,60 +216,29 @@ func TestAiderSuppression(t *testing.T) {
 	}
 }
 
-// TestAiderGitSuppression guards the git markers, which are heuristic and have
-// no fixture behind them, against firing on text that only talks about git.
-func TestAiderGitSuppression(t *testing.T) {
-	cases := []struct {
-		name  string
-		input string
-	}{
-		{
-			name:  "diff line mentioning commit",
-			input: "@@ -8,7 +8,7 @@\n-  # Commit changes? is handled by the git layer\n",
-		},
-		{
-			name:  "diff line with prompt shape but no options",
-			input: "+  label = Commit changes? (y/n)\n",
-		},
-		{
-			name:  "push prompt inside code fence",
-			input: "```\nPush to remote? (Y)es/(N)o [Yes]: \n```\n",
-		},
-		{
-			name:  "quoted push prompt in backticks",
-			input: "Answer `Push to remote? (Y)es/(N)o [Yes]:` when the tests pass\n",
-		},
-		{
-			name:  "prose about committing without prompt footer",
-			input: "Aider will commit changes to git and push to remote once the edits apply.\n",
-		},
-		{
-			name:  "log prefix commit prompt",
-			input: "log: Commit changes? (Y)es/(N)o [Yes]: \n",
-		},
-		{
-			name:  "quote block prefix push prompt",
-			input: "> Push to remote? (Y)es/(N)o [Yes]: \n",
-		},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			adapter, err := NewAiderAdapter(nil)
-			if err != nil {
-				t.Fatalf("NewAiderAdapter: %v", err)
-			}
-			state := NewDetectionState("session-git-suppress", "agent-aider", AiderID)
-
-			events, err := adapter.Detect(state, []byte(tc.input))
-			if err != nil {
-				t.Fatalf("Detect error: %v", err)
-			}
-			if len(events) != 0 {
-				t.Fatalf("expected no events, got: %#v", events)
-			}
-		})
+// TestAiderClaimsNoQuestionItWasNeverSeenToAsk: the adapter used to read
+// questions written by hand from documentation, which Aider 0.86.2 never
+// asks. They are not Aider's to read any more: with no configured pattern,
+// nothing is raised for them.
+func TestAiderClaimsNoQuestionItWasNeverSeenToAsk(t *testing.T) {
+	for _, input := range []string{
+		"Apply changes? (Y)es/(N)o/(D)escribe [Yes]: ",
+		"Commit changes? (Y)es/(N)o [Yes]: ",
+		"Push to remote? (Y)es/(N)o [Yes]: ",
+		"Add files to git? (Y)es/(N)o [Yes]: ",
+		"Run tests? (Y)es/(N)o [Yes]: ",
+	} {
+		adapter, err := NewAiderAdapter(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		events, err := adapter.Detect(NewDetectionState("session-unseen", "agent-aider", AiderID), []byte(input))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(events) != 0 {
+			t.Fatalf("%q raised %#v", input, events)
+		}
 	}
 }
 
@@ -340,7 +251,7 @@ func TestAiderEncodeDecision(t *testing.T) {
 	event := Event{
 		Type: EventConfirmation,
 		Metadata: map[string]string{
-			aiderInteractionMetadata: aiderApplyChanges,
+			aiderInteractionMetadata: aiderCreateFile,
 		},
 	}
 
@@ -394,10 +305,10 @@ func TestAiderSnapshotFingerprintSource(t *testing.T) {
 		t.Fatalf("NewAiderAdapter: %v", err)
 	}
 
-	prompt := "Apply changes? (Y)es/(N)o/(D)escribe [Yes]: "
+	prompt := "Create new file? (Y)es/(N)o [Yes]: "
 	source := adapter.snapshotFingerprintSource(prompt, prompt, false)
-	if !bytes.Contains([]byte(source), []byte(aiderApplyChanges)) {
-		t.Errorf("fingerprint source = %q, want to contain %q", source, aiderApplyChanges)
+	if !bytes.Contains([]byte(source), []byte(aiderCreateFile)) {
+		t.Errorf("fingerprint source = %q, want to contain %q", source, aiderCreateFile)
 	}
 
 	// Inside code fence, should return activeLine unchanged

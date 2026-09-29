@@ -227,8 +227,8 @@ func (p *Processor) Consume(chunk []byte) error {
 				entry.parked = false
 				if entry.anchor != 0 {
 					// The match, or the line it was asked on. A vendor match is
-					// the label of a kind of prompt — "Apply changes?" for
-					// "Apply edit to foo.py?" — and may never be painted at all;
+					// the label of a kind of prompt — "Run shell command?" for
+					// "Run shell commands?" — and may never be painted at all;
 					// the line is what the row actually carries. Checked by the
 					// match alone, such an entry was dropped on the next write
 					// and the question it remembered was asked again.
@@ -318,8 +318,8 @@ func (p *Processor) Consume(chunk []byte) error {
 				// By the line the question was asked on first, and by the match
 				// only when that line is not painted, as refreshPendingAnchor
 				// does for the same reason. A vendor match is the label of a
-				// kind of prompt, "Apply changes?" for "Apply edit to
-				// notes.py?", and may never be painted at all: looked for by
+				// kind of prompt, "Run shell command?" for "Run shell
+				// commands?", and may never be painted at all: looked for by
 				// its label alone, the entry of a question raised before the
 				// agent's first repaint went on that repaint, and the question
 				// was asked again. A line painted twice is ambiguous, and is not
@@ -931,8 +931,8 @@ func (p *Processor) refreshPendingAnchor() {
 	// Located by the line the question was asked on while that line is painted,
 	// and by the match only when it is not. A vendor match is the label of a
 	// kind of prompt, which this question may never show while another row
-	// does: "Apply edit to bar.py?" is reported as "Apply changes?", and an
-	// earlier "Apply changes?", answered, can still be painted above it. Found
+	// does: "Run shell commands?" is reported as "Run shell command?", and an
+	// earlier "Run shell command?", answered, can still be painted above it. Found
 	// by the label, the pending question moved onto that row, the answer was
 	// remembered there, and its echo on the real row asked the question again.
 	// The match remains for an occurrence that carries no line, such as a
