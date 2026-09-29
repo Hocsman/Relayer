@@ -17,6 +17,9 @@ func TestOpenInterpreterAdapterID(t *testing.T) {
 }
 
 func TestOpenInterpreterPromptsDetection(t *testing.T) {
+	// The questions as Open Interpreter 0.4.3 prints them, indented two
+	// spaces. It then reads the answer two lines below; the capture test
+	// plays that full layout through the processor.
 	tests := []struct {
 		name        string
 		input       string
@@ -26,76 +29,28 @@ func TestOpenInterpreterPromptsDetection(t *testing.T) {
 		summary     string
 	}{
 		{
-			name:        "run code basic",
-			input:       "Would you like to run this code? (y/n) ",
+			name:        "run code",
+			input:       "  Would you like to run this code? (y/n)",
 			interaction: openinterpreterRunCode,
 			eventType:   EventPermission,
 			risk:        RiskHigh,
 			summary:     "Open Interpreter asks to run code (y=allow, n=deny)",
 		},
 		{
-			name:        "run code bracketed with colon",
-			input:       "Would you like to run this code? [y/n]: ",
+			name:        "run code in plain text display",
+			input:       "Would you like to run this code? (y/n)",
 			interaction: openinterpreterRunCode,
 			eventType:   EventPermission,
 			risk:        RiskHigh,
 			summary:     "Open Interpreter asks to run code (y=allow, n=deny)",
 		},
 		{
-			name:        "execute python code",
-			input:       "Execute this Python code? (y/n) ",
-			interaction: openinterpreterRunCode,
-			eventType:   EventPermission,
-			risk:        RiskHigh,
-			summary:     "Open Interpreter asks to run code (y=allow, n=deny)",
-		},
-		{
-			name:        "run shell command",
-			input:       "Run shell command? (y/n) ",
-			interaction: openinterpreterRunCommand,
-			eventType:   EventPermission,
-			risk:        RiskHigh,
-			summary:     "Open Interpreter asks to run shell command (y=allow, n=deny)",
-		},
-		{
-			name:        "run this command",
-			input:       "Would you like to run this command? [y/n] ",
-			interaction: openinterpreterRunCommand,
-			eventType:   EventPermission,
-			risk:        RiskHigh,
-			summary:     "Open Interpreter asks to run shell command (y=allow, n=deny)",
-		},
-		{
-			name:        "install package",
-			input:       "Would you like to install this package? (y/n) ",
-			interaction: openinterpreterInstallPackage,
-			eventType:   EventPermission,
-			risk:        RiskHigh,
-			summary:     "Open Interpreter asks to install package (y=allow, n=deny)",
-		},
-		{
-			name:        "install dependencies",
-			input:       "Install dependencies? [y/n] ",
-			interaction: openinterpreterInstallPackage,
-			eventType:   EventPermission,
-			risk:        RiskHigh,
-			summary:     "Open Interpreter asks to install package (y=allow, n=deny)",
-		},
-		{
-			name:        "save file changes",
-			input:       "Would you like to save these changes? (y/n) ",
-			interaction: openinterpreterSaveFile,
+			name:        "scan code",
+			input:       "  Would you like to scan this code? (y/n)",
+			interaction: openinterpreterScanCode,
 			eventType:   EventConfirmation,
 			risk:        RiskLow,
-			summary:     "Open Interpreter asks to save file changes (y=allow, n=deny)",
-		},
-		{
-			name:        "save changes short",
-			input:       "Save changes? [y/n] ",
-			interaction: openinterpreterSaveFile,
-			eventType:   EventConfirmation,
-			risk:        RiskLow,
-			summary:     "Open Interpreter asks to save file changes (y=allow, n=deny)",
+			summary:     "Open Interpreter asks to scan code before running it (y=allow, n=deny)",
 		},
 	}
 
@@ -146,7 +101,7 @@ func TestOpenInterpreterMultiLinePrompt(t *testing.T) {
 	}
 	state := NewDetectionState("session-interpreter-multiline", "agent-interpreter", OpenInterpreterID)
 
-	input := "```python\nimport os\nos.listdir('.')\n```\nWould you like to run the following code?\n(y/n) "
+	input := "```python\nimport os\nos.listdir('.')\n```\n\n  Would you like to run this code? (y/n)"
 	events, err := adapter.Detect(state, []byte(input))
 	if err != nil {
 		t.Fatalf("Detect error: %v", err)
@@ -168,7 +123,7 @@ func TestOpenInterpreterPromptsStreamingChunks(t *testing.T) {
 		"Generated code block:\n",
 		"Would you like to ",
 		"run this code? ",
-		"(y/n) ",
+		"(y/n)",
 	}
 
 	adapter, err := NewOpenInterpreterAdapter(nil)
@@ -212,7 +167,7 @@ func TestOpenInterpreterSuppression(t *testing.T) {
 		},
 		{
 			name:  "quoted prompt in single quotes",
-			input: "The system asked 'Would you like to run this command? (y/n)' earlier\n",
+			input: "The system asked 'Would you like to run this code? (y/n)' earlier\n",
 		},
 		{
 			name:  "log prefix",
@@ -325,5 +280,32 @@ func TestOpenInterpreterSnapshotFingerprintSource(t *testing.T) {
 	}
 	if adapter.snapshotOccurrenceAware(Event{}) {
 		t.Errorf("expected snapshotOccurrenceAware to be false for empty metadata")
+	}
+}
+
+// Open Interpreter prints the question, then "\n\n  ", and reads the answer
+// there. Written in one piece, the question is two lines above the active
+// line, and it is still the one asked; with the answer or anything else
+// printed after it, or further up, it is not.
+func TestOpenInterpreterQuestionAboveItsAnswerLine(t *testing.T) {
+	for input, want := range map[string]int{
+		"  Would you like to run this code? (y/n)\n\n  ":               1,
+		"  Would you like to scan this code? (y/n)\n\n  ":              1,
+		"  Would you like to run this code? (y/n)\n\n  y\n\n":          0,
+		"  Would you like to run this code? (y/n)\n\n  n\n\n> ":        0,
+		"  Would you like to run this code? (y/n)\n\n\n\n  ":           0,
+		"  Would you like to run this code? (y/n)\n\nRunning...\n\n  ": 0,
+	} {
+		adapter, err := NewOpenInterpreterAdapter(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		events, err := adapter.Detect(NewDetectionState("session-answer-line", "agent-interpreter", OpenInterpreterID), []byte(input))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(events) != want {
+			t.Errorf("%q: %d events, want %d", input, len(events), want)
+		}
 	}
 }

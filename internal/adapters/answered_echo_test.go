@@ -278,7 +278,6 @@ func TestAVendorQuestionWhoseLabelIsNotPaintedStaysAnswered(t *testing.T) {
 	}{
 		{adapter: AiderID, prompt: "Run shell commands? (Y)es/(N)o/(D)on't ask again [Yes]: "},
 		{adapter: GooseID, prompt: "Allow Goose to run: 'ls -la' (y/n) "},
-		{adapter: OpenInterpreterID, prompt: "Execute this Python code? (y/n) "},
 	} {
 		for _, after := range []struct {
 			name   string

@@ -13,7 +13,7 @@ during alpha; it is not a runtime plugin protocol.
 | `claude` | Experimental | Yes | Claude Code 2.1.59 workspace trust and environment-key prompts; generic fallback; manual input only. |
 | `codex` | Experimental | Yes | Codex CLI 0.148.0-alpha.21 directory trust and command approval; generic fallback; command allow/deny and directory deny bytes verified. |
 | `goose` | Experimental | Yes | Goose prompts (tool execution, shell command execution, file modification, extension approval); allow (`y`), deny (`n`), and manual input. Hand-written patterns, no captured fixture. |
-| `interpreter` | Experimental | Yes | Open Interpreter prompts (running code, shell command execution, package installation, saving files); allow (`y`), deny (`n`), and manual input. Hand-written patterns, no captured fixture. `open-interpreter` is accepted as an alias. |
+| `interpreter` | Experimental | Yes | Open Interpreter 0.4.3 questions: running a code block, and scanning it first under `--safe_mode ask`; allow (`y` Enter), deny (`n` Enter) and manual input, each observed. `open-interpreter` is accepted as an alias. |
 
 “Stable” here is a registry maturity label, not a promise that the alpha API
 will remain source-compatible.
@@ -24,13 +24,16 @@ hints and then falls back to `generic`. A basename of `aider`, `claude`,
 experimental adapter. Every experimental adapter retains each configured
 `intercept_pattern` as a generic compatibility fallback.
 
-`claude`, `codex` and `aider` are backed by captured output
-(`internal/adapters/testdata`). The `goose` and `interpreter` patterns were
-written by hand from published documentation and never checked against a
-recorded session, so an installed version that words its prompts differently
-is simply not detected by them and falls back to `generic`. Aider's were too
-until the capture, which found that half of them were questions Aider 0.86.2
-never asks.
+`claude`, `codex`, `aider` and `interpreter` are backed by captured output
+(`internal/adapters/testdata`). The `goose` patterns were written by hand from
+published documentation and never checked against a recorded session, so an
+installed version that words its prompts differently is simply not detected by
+them and falls back to `generic`. Aider's and Open Interpreter's were too until
+the capture, which found that half of Aider's were questions Aider 0.86.2 never
+asks, and that Open Interpreter 0.4.3 asks only two questions, neither worded
+as the hand-written patterns had it: it asks nothing before installing a
+package or saving a file, and runs a shell command through the same question
+as any code block.
 
 The desktop catalogue also contains generic launch profiles for MiMo Code, a
 combined Ollama / DeepSeek entry, and a custom CLI. A launch profile is not an
