@@ -289,22 +289,21 @@ that build.
 
 ## Code signing
 
-Free code signing for Windows is provided by [SignPath.io](https://about.signpath.io/),
-certificate by [SignPath Foundation](https://signpath.org/). Once the project's
-signing is in place, the Windows desktop installer
+The Windows desktop installer
 (`relayer-desktop_<version>_windows_amd64_setup.exe`) and the executable it
-installs are signed in the release workflow, from the tag's own build on GitHub
-Actions; until then they are published unsigned, and Windows SmartScreen may
-ask to confirm them.
+installs are not code-signed yet, so Windows SmartScreen may ask to confirm
+them: **More info**, then **Run anyway**. Every release is still verifiable.
+The installer is listed in `relayer-desktop_<version>_checksums.txt`, whose
+keyless cosign signature and build provenance are checked as described under
+[Releases](#releases). On Windows, compare the installer's hash with its line
+in that file:
 
-- Committers and reviewers: [Hocsman](https://github.com/Hocsman)
-- Approvers: [Hocsman](https://github.com/Hocsman), who approves every signing
-  request by hand
+```powershell
+(Get-FileHash .\relayer-desktop_<version>_windows_amd64_setup.exe -Algorithm SHA256).Hash.ToLower()
+```
 
-Only artifacts built by this repository's release workflow from an authorized
-tag are submitted for signing. Linux and macOS archives are verified with the
-keyless cosign signature and the build provenance described under
-[Releases](#releases).
+Only this repository's release workflow, from an authorized tag, builds and
+publishes release artifacts.
 
 ## Privacy
 
