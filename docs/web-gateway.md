@@ -51,6 +51,7 @@ accepts, which includes such a proxy's requests that carry no `Origin`.
 | `--token` | — | Operator (read-write) token or tokens. |
 | `--operator-token` | — | Alias for `--token`; both may be given and are merged. |
 | `--viewer-token` | — | Viewer (read-only) token or tokens. |
+| `--viewer-terminals` | `shown` | `hidden` sends viewers no terminal output: see below. |
 | `--config` | platform default | Configuration file to load. |
 | `--static-dir` | — | Serve the interface from a directory instead of the embedded bundle. |
 
@@ -271,6 +272,13 @@ every viewer. Only the prompt cards are redacted: a prompt's summary, its
 tool-call badge and every notification carry bounded, redacted text, and a
 prompt whose text must not be shown carries none. A viewer token is therefore
 a token to read the terminals, and should be given only to people who may.
+
+A gateway started with `--viewer-terminals hidden` sends its viewers no
+terminal at all. Their state and snapshots carry each agent's status, exit code
+and prompt card but no output, a recording's contents are refused to them, and
+their interface says so where the terminal would be. Operators see the
+terminals as before. What a viewer still receives is what the prompt cards and
+notifications carry, redacted as above.
 
 The full trust boundary is described in
 [security-model.md](security-model.md#web-gateway-and-remote-operators).

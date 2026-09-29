@@ -14,6 +14,8 @@ interface AgentCardProps {
   agent: AgentState;
   event?: SupervisionEvent;
   readOnly?: boolean;
+  // The gateway sends this viewer no terminal output.
+  terminalHidden?: boolean;
   selfConnID?: string;
   presence?: PresenceView;
   hand?: HandView;
@@ -33,6 +35,7 @@ export function AgentCard({
   agent,
   event,
   readOnly,
+  terminalHidden,
   selfConnID,
   presence,
   hand,
@@ -166,16 +169,23 @@ export function AgentCard({
         </div>
       )}
 
-      <TerminalSnapshotView
-        runID={runID}
-        sessionID={agent.sessionID}
-        label={`Output from ${agent.name}`}
-        output={agent.output}
-        revision={agent.revision}
-        onResize={onResize}
-        interactive={isInteractive}
-        onTerminalInput={(data) => onTerminalInput?.(runID, agent.sessionID, data)}
-      />
+      {terminalHidden ? (
+        <div className="terminal-hidden" role="note">
+          This gateway does not share terminals with viewers. The agent's state and its
+          requests stay visible.
+        </div>
+      ) : (
+        <TerminalSnapshotView
+          runID={runID}
+          sessionID={agent.sessionID}
+          label={`Output from ${agent.name}`}
+          output={agent.output}
+          revision={agent.revision}
+          onResize={onResize}
+          interactive={isInteractive}
+          onTerminalInput={(data) => onTerminalInput?.(runID, agent.sessionID, data)}
+        />
+      )}
 
       <form className="agent-card__line-input" onSubmit={(event) => void submitLine(event)}>
         <label className="sr-only" htmlFor={`line-${runID}-${agent.sessionID}`}>

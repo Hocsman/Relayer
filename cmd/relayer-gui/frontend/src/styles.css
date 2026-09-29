@@ -70,6 +70,18 @@ select:focus-visible {
   height: 100%;
 }
 
+.terminal-hidden {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+  padding: 16px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
 .update-banner {
   position: fixed;
   top: 78px;

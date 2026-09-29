@@ -389,6 +389,9 @@ export interface UserInfo {
   connID: string;
   role: "operator" | "viewer";
   readOnly: boolean;
+  // Set for a viewer of a gateway started with --viewer-terminals hidden,
+  // which sends it no terminal output.
+  terminalsHidden?: boolean;
 }
 
 export interface PresenceMember {
