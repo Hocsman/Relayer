@@ -13,15 +13,18 @@ import (
 // bytes it wrote while it waited for the answer, and the answers that were
 // observed to do what they say. See testdata/<vendor>/README.md.
 type captureFixture struct {
-	CLIVersion    string   `json:"cli_version"`
-	Interaction   string   `json:"interaction"`
-	CaptureMode   string   `json:"capture_mode"`
-	Stripped      string   `json:"stripped"`
-	ANSIChunks    []string `json:"ansi_chunks"`
-	AllowInputHex string   `json:"allow_input_hex"`
-	DenyInputHex  string   `json:"deny_input_hex"`
-	ObservedAllow string   `json:"observed_allow"`
-	ObservedDeny  string   `json:"observed_deny"`
+	CLIVersion  string   `json:"cli_version"`
+	Interaction string   `json:"interaction"`
+	CaptureMode string   `json:"capture_mode"`
+	Stripped    string   `json:"stripped"`
+	ANSIChunks  []string `json:"ansi_chunks"`
+	// AnsweredChunks, when present, are the bytes the CLI wrote after the
+	// allow answer, up to its next input prompt.
+	AnsweredChunks []string `json:"answered_chunks,omitempty"`
+	AllowInputHex  string   `json:"allow_input_hex"`
+	DenyInputHex   string   `json:"deny_input_hex"`
+	ObservedAllow  string   `json:"observed_allow"`
+	ObservedDeny   string   `json:"observed_deny"`
 }
 
 // capturedVendor is an adapter whose questions were captured from its CLI.
@@ -43,6 +46,10 @@ var capturedVendors = []capturedVendor{
 		id: OpenInterpreterID, dir: "interpreter", questionEnd: "(y/n)",
 		newAdapter: func(patterns []Pattern) (Adapter, error) { return NewOpenInterpreterAdapter(patterns) },
 	},
+	{
+		id: GooseID, dir: "goose", questionEnd: "?",
+		newAdapter: func(patterns []Pattern) (Adapter, error) { return NewGooseAdapter(patterns) },
+	},
 }
 
 func loadCaptureFixtures(t *testing.T, vendor capturedVendor) []captureFixture {
@@ -63,7 +70,10 @@ func loadCaptureFixtures(t *testing.T, vendor capturedVendor) []captureFixture {
 		if err := decoder.Decode(&fixture); err != nil {
 			t.Fatalf("%s: %v", path, err)
 		}
-		if fixture.Interaction+".json" != filepath.Base(path) {
+		// A second capture of the same question is named
+		// <interaction>--<variant>.json.
+		name, _, _ := strings.Cut(strings.TrimSuffix(filepath.Base(path), ".json"), "--")
+		if fixture.Interaction != name {
 			t.Fatalf("%s names interaction %q", path, fixture.Interaction)
 		}
 		fixtures = append(fixtures, fixture)
@@ -185,6 +195,52 @@ func TestCapturedQuestionsQuotedAreNotAsked(t *testing.T) {
 				if len(events) != 0 {
 					t.Fatalf("%s %s quoted as %q raised %#v", vendor.id, fixture.Interaction, quoted, events)
 				}
+			}
+		}
+	}
+}
+
+// Once answered, the question the CLI redraws as answered is not asked again,
+// and the same question asked after it is.
+func TestCapturedAnswerRedrawIsNotAskedAgain(t *testing.T) {
+	for _, vendor := range capturedVendors {
+		for _, fixture := range loadCaptureFixtures(t, vendor) {
+			if len(fixture.AnsweredChunks) == 0 {
+				continue
+			}
+			adapter, err := vendor.newAdapter(DefaultPatterns())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var raised []Event
+			processor, err := NewProcessor(adapter, NewDetectionState("session-"+vendor.id, "agent-"+vendor.id, vendor.id), 64*1024,
+				Hooks{OnEvent: func(event Event) { raised = append(raised, event) }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			processor.Resize(100, 30)
+			consume := func(chunks []string) {
+				for _, chunk := range chunks {
+					if err := processor.Consume([]byte(chunk)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				processor.WaitSemanticEvents()
+			}
+			consume(fixture.ANSIChunks)
+			if len(raised) != 1 {
+				t.Fatalf("%s %s: %d events, want 1", vendor.id, fixture.Interaction, len(raised))
+			}
+			if err := processor.Resolve(raised[0].ID, func() error { return nil }); err != nil {
+				t.Fatal(err)
+			}
+			consume(fixture.AnsweredChunks)
+			if len(raised) != 1 {
+				t.Fatalf("%s %s: the answered redraw raised %s", vendor.id, fixture.Interaction, describeRaised(raised[1:]))
+			}
+			consume(fixture.ANSIChunks)
+			if len(raised) != 2 {
+				t.Fatalf("%s %s asked again: %d events, want 2", vendor.id, fixture.Interaction, len(raised))
 			}
 		}
 	}

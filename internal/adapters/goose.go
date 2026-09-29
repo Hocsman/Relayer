@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -10,92 +11,62 @@ const (
 	GooseID = "goose"
 
 	gooseInteractionMetadata = "interaction"
-	gooseExecuteTool         = "execute_tool"
-	gooseRunCommand          = "run_command"
-	gooseModifyFile          = "modify_file"
-	gooseExtension           = "extension_approval"
+	gooseToolCall            = "tool_call"
+	gooseToolCallWithNotice  = "tool_call_with_notice"
 )
 
+// goosePrompt is one of the menus Goose draws with cliclack's select to ask
+// whether a tool call may run. The highlight starts on the first option,
+// moves with j and k, stops at either end, and Enter picks the highlighted
+// option; y and n do nothing, so Enter after either picks Allow.
 type goosePrompt struct {
 	interaction string
 	summary     string
-	match       string
+	question    string
 	eventType   EventType
 	risk        RiskLevel
-	markers     []string
-	allows      []string
-	denies      []string
-	footers     []string
+	// options are the menu's labels, top to bottom.
+	options []string
 }
 
+// goosePrompts holds the two menus Goose 1.52.0's CLI draws before a tool
+// call in approve mode, observed in a PTY against a stand-in model and
+// answered both ways with the side effect checked: see testdata/goose.
+//
+// The entries written earlier from documentation expected "(y/n)" questions
+// Goose never asks, and answered them with y or n and Enter: on the real
+// menu, both of those allow the call. Anything else falls back to the
+// configured intercept_patterns.
 var goosePrompts = []goosePrompt{
 	{
-		interaction: gooseExecuteTool,
-		summary:     "Goose asks to execute tool (y=allow, n=deny)",
-		match:       "Approve tool execution?",
+		interaction: gooseToolCall,
+		summary:     "Goose asks to call a tool (Allow or Deny)",
+		question:    "Goose would like to call the above tool, do you allow?",
 		eventType:   EventPermission,
 		risk:        RiskHigh,
-		markers: []string{
-			"Approve tool execution?",
-			"Allow Goose to run:",
-			"Allow Goose to execute:",
-			"Approve execution?",
-			"Allow tool call:",
-		},
-		allows:  []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(y)es", "[y]es", "(Y)es", "[Yes]"},
-		denies:  []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(n)o", "[n]o", "(N)o", "[No]"},
-		footers: []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(y/n):", "[y/n]:", "(y/N)", "[y/N]"},
+		options:     []string{"Allow", "Always Allow", "Deny", "Cancel"},
 	},
+	// Asked instead when a check attached a notice to the call, printed above
+	// the menu: extension management always carries one, and a prompt
+	// injection finding does. There is no Always Allow.
 	{
-		interaction: gooseRunCommand,
-		summary:     "Goose asks to run command (y=allow, n=deny)",
-		match:       "Run shell command?",
+		interaction: gooseToolCallWithNotice,
+		summary:     "Goose asks to call a tool it attached a notice to (Allow or Deny)",
+		question:    "Do you allow this tool call?",
 		eventType:   EventPermission,
 		risk:        RiskHigh,
-		markers: []string{
-			"Run shell command?",
-			"Confirm command execution?",
-			"Do you want to run this command?",
-			"Approve running command:",
-			"Execute command?",
-		},
-		allows:  []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(y)es", "[y]es", "(Y)es", "[Yes]"},
-		denies:  []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(n)o", "[n]o", "(N)o", "[No]"},
-		footers: []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(y/n):", "[y/n]:", "(y/N)", "[y/N]"},
-	},
-	{
-		interaction: gooseModifyFile,
-		summary:     "Goose asks to modify file (y=allow, n=deny)",
-		match:       "Approve file modification?",
-		eventType:   EventConfirmation,
-		risk:        RiskLow,
-		markers: []string{
-			"Approve file modification?",
-			"Allow Goose to write:",
-			"Allow Goose to edit:",
-			"Confirm file changes?",
-			"Modify file?",
-		},
-		allows:  []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(y)es", "[y]es", "(Y)es", "[Yes]"},
-		denies:  []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(n)o", "[n]o", "(N)o", "[No]"},
-		footers: []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(y/n):", "[y/n]:", "(y/N)", "[y/N]"},
-	},
-	{
-		interaction: gooseExtension,
-		summary:     "Goose asks to approve extension (y=allow, n=deny)",
-		match:       "Approve extension access?",
-		eventType:   EventPermission,
-		risk:        RiskHigh,
-		markers: []string{
-			"Approve extension access?",
-			"Enable extension?",
-			"Allow extension:",
-		},
-		allows:  []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(y)es", "[y]es", "(Y)es", "[Yes]"},
-		denies:  []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(n)o", "[n]o", "(N)o", "[No]"},
-		footers: []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(y/n):", "[y/n]:", "(y/N)", "[y/N]"},
+		options:     []string{"Allow", "Deny", "Cancel"},
 	},
 }
+
+// cliclack draws its menus with these symbols, or with the ASCII ones when
+// the terminal does not take Unicode.
+var (
+	gooseActiveStep = []string{"◆", "*"}
+	gooseBar        = []string{"│", "|"}
+	gooseBarEnd     = []string{"└", "—"}
+	gooseRadio      = []string{"●", "○", ">"}
+)
 
 // GooseAdapter recognizes prompts generated by the Goose CLI agent.
 // Configured intercept_patterns retain configured priority and serve as fallback.
@@ -115,14 +86,11 @@ func NewGooseAdapter(patterns []Pattern) (*GooseAdapter, error) {
 func (*GooseAdapter) ID() string { return GooseID }
 
 func (*GooseAdapter) snapshotFingerprintSource(normalized, active string, inCodeFence bool) string {
-	prompt, found := detectGoosePrompt(normalized, active, inCodeFence)
+	prompt, start, _, found := gooseMenuAtEnd(normalized, inCodeFence)
 	if !found {
 		return active
 	}
-	if block, complete := goosePromptBlock(normalized, active, prompt); complete {
-		return prompt.interaction + "\x00" + compactFingerprintSource(block)
-	}
-	return active
+	return prompt.interaction + "\x00" + compactFingerprintSource(normalized[start:])
 }
 
 func (*GooseAdapter) snapshotOccurrenceAware(event Event) bool {
@@ -154,48 +122,37 @@ func (a *GooseAdapter) Detect(state *DetectionState, chunk []byte) ([]Event, err
 	}
 
 	vendorProbe := *state
-	start, end, ok := vendorProbe.appendDetectionText(chunk)
-	if ok {
-		activeLine := vendorProbe.detectionText[start:end]
-		if prompt, found := detectGoosePrompt(vendorProbe.detectionText, activeLine, vendorProbe.inCodeFence); found {
-			lineAnchor := state.anchorAt(start)
-			// The footer is found anywhere on the line, so the answer echoed
-			// after "(y/n)" still matches, and on a rendered screen the
-			// answered question stays painted. Only the memory of it, on its
-			// row, keeps the next write from asking it again. On its row only:
-			// the same question drawn elsewhere after a clear is asked again,
-			// see answeredOnItsRow.
-			if state.hasRendered && state.answeredOnItsRow(activeLine, lineAnchor) {
-				state.appendDetectionText(chunk)
-				return nil, nil
-			}
+	vendorProbe.appendDetectionText(chunk)
+	if prompt, start, end, found := gooseMenuAtEnd(vendorProbe.detectionText, vendorProbe.inCodeFence); found {
+		questionLine := vendorProbe.detectionText[start:end]
+		lineAnchor := state.anchorAt(start)
+		if state.hasRendered && state.answeredOnItsRow(questionLine, lineAnchor) {
 			state.appendDetectionText(chunk)
-			candidate := Event{
-				questionLine: activeLine,
-				anchor:       lineAnchor,
-				SessionID:    state.SessionID,
-				AgentID:      state.AgentID,
-				Adapter:      GooseID,
-				Type:         prompt.eventType,
-				Summary:      prompt.summary,
-				Match:        prompt.match,
-				Risk:         prompt.risk,
-				Metadata: map[string]string{
-					gooseInteractionMetadata: prompt.interaction,
-				},
-			}
-			if cmd := extractQuotedCommand(activeLine); cmd != "" {
-				candidate.Command = cmd
-			}
-			candidate.Signature = stableSignature(
-				state.SessionID,
-				GooseID,
-				prompt.eventType,
-				prompt.interaction,
-				prompt.match,
-			)
-			return []Event{state.replacePending(candidate)}, nil
+			return nil, nil
 		}
+		state.appendDetectionText(chunk)
+		candidate := Event{
+			questionLine: questionLine,
+			anchor:       lineAnchor,
+			SessionID:    state.SessionID,
+			AgentID:      state.AgentID,
+			Adapter:      GooseID,
+			Type:         prompt.eventType,
+			Summary:      prompt.summary,
+			Match:        prompt.question,
+			Risk:         prompt.risk,
+			Metadata: map[string]string{
+				gooseInteractionMetadata: prompt.interaction,
+			},
+		}
+		candidate.Signature = stableSignature(
+			state.SessionID,
+			GooseID,
+			prompt.eventType,
+			prompt.interaction,
+			prompt.question,
+		)
+		return []Event{state.replacePending(candidate)}, nil
 	}
 
 	events, err := a.generic.Detect(state, chunk)
@@ -235,104 +192,89 @@ func (a *GooseAdapter) rewriteGenericEvents(state *DetectionState, events []Even
 	return result
 }
 
-func detectGoosePrompt(window, activeLine string, inCodeFence bool) (goosePrompt, bool) {
-	if ignoredContext(activeLine, inCodeFence) {
-		return goosePrompt{}, false
+// gooseMenuAtEnd finds a Goose approval menu that is the last thing in the
+// window and still waits for its answer: the question after the active step
+// symbol, then exactly the options of that question, then the bar's end. Once
+// answered, cliclack redraws the question after the submitted symbol and
+// without the options, which is not read as asked. It returns the offsets of
+// the question's line in the window.
+func gooseMenuAtEnd(window string, inCodeFence bool) (goosePrompt, int, int, bool) {
+	end := len(strings.TrimRight(window, " \t\r\n"))
+	if end == 0 || inCodeFence {
+		return goosePrompt{}, 0, 0, false
 	}
-	trimmedActive := strings.TrimSpace(activeLine)
-	for _, prompt := range goosePrompts {
-		footerOffset, footer := lastGooseVariant(trimmedActive, prompt.footers)
-		if footerOffset < 0 || quotedMatch(trimmedActive, footerOffset, footerOffset+len(footer)) {
+	lineStart := strings.LastIndexByte(window[:end], '\n') + 1
+	if !gooseOneOf(strings.TrimSpace(window[lineStart:end]), gooseBarEnd) {
+		return goosePrompt{}, 0, 0, false
+	}
+	var labels []string
+	for lineEnd := lineStart - 1; lineEnd > 0; {
+		start := strings.LastIndexByte(window[:lineEnd], '\n') + 1
+		line := strings.TrimSpace(window[start:lineEnd])
+		if label, ok := gooseOptionLabel(line); ok {
+			labels = append([]string{label}, labels...)
+			lineEnd = start - 1
 			continue
 		}
-		if _, complete := goosePromptBlock(window, activeLine, prompt); complete {
-			return prompt, true
+		question, ok := gooseTrimPrefix(line, gooseActiveStep)
+		if !ok || ignoredContext(window[start:lineEnd], false) {
+			return goosePrompt{}, 0, 0, false
 		}
+		for _, prompt := range goosePrompts {
+			if strings.TrimSpace(question) == prompt.question && slices.Equal(labels, prompt.options) {
+				return prompt, start, lineEnd, true
+			}
+		}
+		return goosePrompt{}, 0, 0, false
 	}
-	return goosePrompt{}, false
+	return goosePrompt{}, 0, 0, false
 }
 
-func goosePromptBlock(window, activeLine string, prompt goosePrompt) (string, bool) {
-	trimmedActive := strings.TrimSpace(activeLine)
-	activeOffset := strings.LastIndex(window, activeLine)
-	if activeOffset < 0 {
+// gooseOptionLabel reads "│  ● Allow (Allow the tool call once)" as "Allow".
+func gooseOptionLabel(line string) (string, bool) {
+	rest, ok := gooseTrimPrefix(line, gooseBar)
+	if !ok {
 		return "", false
 	}
-
-	footerOffset, footer := lastGooseVariant(trimmedActive, prompt.footers)
-	if footerOffset < 0 || quotedMatch(trimmedActive, footerOffset, footerOffset+len(footer)) {
-		return "", false
+	rest = strings.TrimSpace(rest)
+	if radio, ok := gooseTrimPrefix(rest, gooseRadio); ok {
+		rest = strings.TrimSpace(radio)
 	}
-
-	// 1. Check if activeLine itself contains marker, allow and deny options
-	allowOffset := firstGooseVariant(trimmedActive, prompt.allows)
-	denyOffset := firstGooseVariant(trimmedActive, prompt.denies)
-	markerOffsetInActive := firstGooseVariant(trimmedActive, prompt.markers)
-
-	if markerOffsetInActive >= 0 && allowOffset >= 0 && denyOffset >= 0 && markerOffsetInActive <= allowOffset {
-		return trimmedActive, true
+	if hint := strings.Index(rest, " ("); hint >= 0 {
+		rest = rest[:hint]
 	}
+	rest = strings.TrimSpace(rest)
+	return rest, rest != ""
+}
 
-	// 2. Multi-line prompt: search backwards from activeLine
-	footerStart := activeOffset + strings.Index(activeLine, footer)
-	footerEnd := footerStart + len(footer)
-	blockStart := latestGooseFooterEnd(window[:activeOffset])
-
-	for _, marker := range prompt.markers {
-		for searchEnd := footerStart; searchEnd > blockStart; {
-			markerOffset := strings.LastIndex(window[blockStart:searchEnd], marker)
-			if markerOffset < 0 {
-				break
-			}
-			markerOffset += blockStart
-			body := window[markerOffset:footerEnd]
-			allowPos := firstGooseVariant(body, prompt.allows)
-			denyPos := firstGooseVariant(body, prompt.denies)
-			if allowPos >= 0 && denyPos >= 0 {
-				return window[markerOffset:footerEnd], true
-			}
-			searchEnd = markerOffset
+func gooseTrimPrefix(value string, prefixes []string) (string, bool) {
+	for _, prefix := range prefixes {
+		if rest, ok := strings.CutPrefix(value, prefix); ok {
+			return rest, true
 		}
 	}
 	return "", false
 }
 
-func latestGooseFooterEnd(value string) int {
-	latest := 0
-	for _, candidate := range goosePrompts {
-		for _, footer := range candidate.footers {
-			if offset := strings.LastIndex(value, footer); offset >= 0 && offset+len(footer) > latest {
-				latest = offset + len(footer)
-			}
-		}
-	}
-	return latest
+func gooseOneOf(value string, candidates []string) bool {
+	return slices.Contains(candidates, value)
 }
 
-func firstGooseVariant(value string, variants []string) int {
-	first := -1
-	for _, variant := range variants {
-		if offset := strings.Index(value, variant); offset >= 0 && (first < 0 || offset < first) {
-			first = offset
-		}
+// gooseSelect is the keys that pick the option at index whatever the
+// highlight: k to the top, where it stops, j down to the option, Enter.
+func gooseSelect(prompt goosePrompt, label string) ([]byte, bool) {
+	index := slices.Index(prompt.options, label)
+	if index < 0 {
+		return nil, false
 	}
-	return first
+	keys := strings.Repeat("k", len(prompt.options)-1) + strings.Repeat("j", index) + "\r"
+	return []byte(keys), true
 }
 
-func lastGooseVariant(value string, variants []string) (int, string) {
-	last := -1
-	matched := ""
-	for _, variant := range variants {
-		if offset := strings.LastIndex(value, variant); offset > last {
-			last = offset
-			matched = variant
-		}
-	}
-	return last, matched
-}
-
-// EncodeDecision encodes automated or manual responses for Goose prompts.
-// Goose prompts expect Enter ('\r') to confirm input.
+// EncodeDecision picks Allow or Deny on Goose's menu, whatever option is
+// highlighted when the keys arrive. Manual input names an option: "allow",
+// "deny" or "cancel"; Always Allow, which changes Goose's permissions for
+// every later call, is left to the terminal.
 func (a *GooseAdapter) EncodeDecision(event Event, decision Decision, manualInput string) ([]byte, error) {
 	if !event.Actionable() {
 		return nil, fmt.Errorf("%w for type %q", ErrDecisionUnsupported, event.Type)
@@ -347,15 +289,30 @@ func (a *GooseAdapter) EncodeDecision(event Event, decision Decision, manualInpu
 	if decision != DecisionManual && manualInput != "" {
 		return nil, fmt.Errorf("an automatic Goose decision cannot carry manual input")
 	}
+	index := slices.IndexFunc(goosePrompts, func(prompt goosePrompt) bool { return prompt.interaction == interaction })
+	if index < 0 {
+		return nil, fmt.Errorf("%w: Goose interaction %q", ErrDecisionUnsupported, interaction)
+	}
+	prompt := goosePrompts[index]
 
+	label := ""
 	switch decision {
 	case DecisionAllow:
-		return []byte("y\r"), nil
+		label = "Allow"
 	case DecisionDeny:
-		return []byte("n\r"), nil
+		label = "Deny"
 	case DecisionManual:
-		return []byte(manualInput + "\r"), nil
-	default:
-		return nil, fmt.Errorf("%w: %s", ErrDecisionUnsupported, decision)
+		switch strings.ToLower(strings.TrimSpace(manualInput)) {
+		case "allow":
+			label = "Allow"
+		case "deny":
+			label = "Deny"
+		case "cancel":
+			label = "Cancel"
+		}
 	}
+	if keys, ok := gooseSelect(prompt, label); ok {
+		return keys, nil
+	}
+	return nil, fmt.Errorf("%w: %q for Goose interaction %q", ErrDecisionUnsupported, decision, interaction)
 }

@@ -171,7 +171,6 @@ func TestAVendorQuestionAskedAgainAfterAClearIsAsked(t *testing.T) {
 		prompt  string
 	}{
 		{adapter: AiderID, prompt: aiderShellCommandPrompt},
-		{adapter: GooseID, prompt: gooseToolPrompt},
 		{adapter: OpenInterpreterID, prompt: interpreterCodePrompt},
 	} {
 		for _, scenario := range scenarios(question.prompt) {
@@ -219,7 +218,6 @@ func TestASnapshotDoesNotTakeThePendingQuestionForTheAnsweredOne(t *testing.T) {
 		prompt  string
 	}{
 		{adapter: AiderID, prompt: aiderShellCommandPrompt},
-		{adapter: GooseID, prompt: gooseToolPrompt},
 		{adapter: OpenInterpreterID, prompt: interpreterCodePrompt},
 		{adapter: GenericID, prompt: overwritePrompt},
 	} {

@@ -12,7 +12,7 @@ during alpha; it is not a runtime plugin protocol.
 | `aider` | Experimental | Yes | Aider 0.86.2 questions: running a shell command, creating a file, editing a file not in the chat, adding a file or a command's output to the chat, adding to `.gitignore`; allow (`y` Enter), deny (`n` Enter) and manual input, each observed against a disposable repository. |
 | `claude` | Experimental | Yes | Claude Code 2.1.59 workspace trust and environment-key prompts; generic fallback; manual input only. |
 | `codex` | Experimental | Yes | Codex CLI 0.148.0-alpha.21 directory trust and command approval; generic fallback; command allow/deny and directory deny bytes verified. |
-| `goose` | Experimental | Yes | Goose prompts (tool execution, shell command execution, file modification, extension approval); allow (`y`), deny (`n`), and manual input. Hand-written patterns, no captured fixture. |
+| `goose` | Experimental | Yes | Goose 1.52.0 tool-call approval menus, with and without an approval notice, in Unicode and ASCII; allow and deny picked by menu keys (`k`… `j`… Enter), and manual `allow`, `deny` or `cancel`, each observed. |
 | `interpreter` | Experimental | Yes | Open Interpreter 0.4.3 questions: running a code block, and scanning it first under `--safe_mode ask`; allow (`y` Enter), deny (`n` Enter) and manual input, each observed. `open-interpreter` is accepted as an alias. |
 
 “Stable” here is a registry maturity label, not a promise that the alpha API
@@ -24,16 +24,18 @@ hints and then falls back to `generic`. A basename of `aider`, `claude`,
 experimental adapter. Every experimental adapter retains each configured
 `intercept_pattern` as a generic compatibility fallback.
 
-`claude`, `codex`, `aider` and `interpreter` are backed by captured output
-(`internal/adapters/testdata`). The `goose` patterns were written by hand from
-published documentation and never checked against a recorded session, so an
-installed version that words its prompts differently is simply not detected by
-them and falls back to `generic`. Aider's and Open Interpreter's were too until
-the capture, which found that half of Aider's were questions Aider 0.86.2 never
-asks, and that Open Interpreter 0.4.3 asks only two questions, neither worded
-as the hand-written patterns had it: it asks nothing before installing a
-package or saving a file, and runs a shell command through the same question
-as any code block.
+Every vendor adapter is backed by captured output
+(`internal/adapters/testdata`); an installed version that words its questions
+differently is not detected by it and falls back to `generic`. Aider's, Open
+Interpreter's and Goose's patterns were written by hand from documentation
+until the capture, which found that half of Aider's were questions Aider 0.86.2
+never asks; that Open Interpreter 0.4.3 asks only two questions, neither worded
+as the patterns had it, nothing before installing a package or saving a file,
+and a shell command through the same question as any code block; and that
+Goose 1.52.0 asks no `(y/n)` question at all. It asks with a menu, where `y`
+and `n` do nothing and Enter picks the highlighted option, Allow: the `n` and
+Enter the adapter sent for a deny would have allowed the call, had any of its
+patterns ever matched Goose's output.
 
 The desktop catalogue also contains generic launch profiles for MiMo Code, a
 combined Ollama / DeepSeek entry, and a custom CLI. A launch profile is not an
@@ -474,6 +476,11 @@ escape beginning in one read and ending in another is removed as one sequence.
 Control bytes are bounded so malformed escape input cannot grow state without
 limit.
 
+A read can also end between the `\r` and the `\n` of a line break, or inside
+a UTF-8 character; the detection window holds either back for the next read,
+so a line drawn with `└` and ended by `\r\n` reads the same a byte at a time
+as in one write. A lone carriage return is applied when the next read comes.
+
 Carriage return is modeled as an active-line rewrite. For example, a progress
 line overwritten by a prompt can become actionable, while text overwritten by
 a later progress line should not survive as a current prompt. Full cursor
@@ -545,6 +552,26 @@ or command. Command approval carries unknown risk and directory trust high
 risk, so the policy engine still refuses automatic allow; a verified,
 non-sensitive deny may be automatic. No file-write, network, credential, MCP,
 review, or other Codex prompt is claimed.
+
+### Goose 1.52.0 (experimental)
+
+Goose asks before a tool call, in approve mode, with a cliclack menu:
+"Goose would like to call the above tool, do you allow?" offers Allow, Always
+Allow, Deny and Cancel; "Do you allow this tool call?", drawn when a check
+attached a notice to the call (extension management always does, a prompt
+injection finding does), offers Allow, Deny and Cancel. Both are a high-risk
+`permission`. The highlight starts on Allow, moves with `j` and `k`, stops at
+either end, and Enter picks it; `y` and `n` do nothing. So an answer first
+moves to the top, whatever the highlight: allow is `k` once per option below
+the first, then Enter (`6b6b6b0d` and `6b6b0d`), deny the same then `j` down to
+Deny (`6b6b6b6a6a0d` and `6b6b6a0d`). Manual input names `allow`, `deny` or
+`cancel`; Always Allow, which changes Goose's permissions for every later call,
+and free text, whose letters would move the highlight, are refused. The menu is
+read only complete, from the question after the active symbol (`◆`, or `*` in
+ASCII) through each option to the bar's end, as the last thing on the screen;
+answered, Goose redraws the question after the submitted symbol, which is not
+read as asked. No other Goose question, such as those of `goose configure`, is
+claimed.
 
 ## MCP tool calls
 
@@ -642,8 +669,12 @@ and snapshot cases. Useful cases cover:
 - bounded detection and output state;
 - decision bytes and unsupported decisions.
 
-The `claude` and `codex` fixture directories contain minimal anonymized
-observations plus provenance notes. They intentionally exclude account data,
+The `claude`, `codex`, `aider`, `interpreter` and `goose` fixture directories
+contain minimal anonymized observations plus provenance notes. `relayer-capture`
+records output only, so the Aider, Open Interpreter and Goose questions were
+captured by a PTY harness that also typed each answer, against a local
+stand-in model, and the effect of every answer was checked; each directory's
+README says how. They intentionally exclude account data,
 personal paths, repository content, commands from real projects, credentials,
 hostnames, and unrelated output.
 
