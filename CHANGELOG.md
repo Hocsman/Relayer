@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+### Fixed
+
+- **A web keystroke to an agent that reads nothing could block for good on macOS, the BSDs and Windows.** Once such an agent's terminal input buffer is full, a write waits for room. On Linux the gateway's keystrokes gave up after five seconds; elsewhere the write blocked until the agent read again or exited, and held the session's write slot, and the run's end, with it. On macOS and the BSDs the terminal is now written through the runtime's poller, as on Linux, which the five-second bound and a Stop both end; on Windows a timer cancels a console write still blocked at its deadline. `TestAKeystrokeWriteToAnAgentThatReadsNothingEndsWithItsContext` now runs on macOS, and `TestAKeystrokeWriteToAWindowsAgentThatReadsNothingEndsWithItsContext` on Windows.
+
 ### Added
 
 - **`relayer serve --viewer-terminals hidden` keeps the agents' terminals from viewers.** A viewer token was a token to read every terminal: the snapshots carry each screen verbatim, so a secret an agent echoed reached every viewer, and the only choice was not to hand viewer tokens out. With the option, a viewer's state and snapshots carry each agent's status, exit code and prompt card but no output, a recording's contents are refused to it, and its interface says why in place of each terminal. Operators are unaffected, and the default, `shown`, keeps the behaviour as it was.

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -129,6 +130,69 @@ type windowsConPTYDevice struct {
 	c      *conpty.ConPty
 	output *ownedHandle
 	input  *ownedHandle
+
+	// A Write to the input pipe is synchronous: once conhost stops draining
+	// it, WriteFile blocks and no Go deadline reaches it. The write deadline
+	// is kept here instead, and a timer cancels the blocked WriteFile on the
+	// writing thread when it passes. writeMu guards the fields below.
+	writeMu       sync.Mutex
+	writeDeadline time.Time
+	writeSeq      uint64
+	writeThread   windows.Handle
+	writeTimer    *time.Timer
+	writeTimedOut bool
+}
+
+var (
+	conptyKernel32          = windows.NewLazySystemDLL("kernel32.dll")
+	procCancelSynchronousIo = conptyKernel32.NewProc("CancelSynchronousIo")
+)
+
+// SetWriteDeadline bounds the device's writes as the Unix master's are: a
+// Write still blocked when the deadline passes returns
+// os.ErrDeadlineExceeded, having written part of its input or none of it. A
+// zero time removes the bound.
+func (w *windowsConPTYDevice) SetWriteDeadline(deadline time.Time) error {
+	w.writeMu.Lock()
+	defer w.writeMu.Unlock()
+	w.writeDeadline = deadline
+	w.armWriteTimerLocked()
+	return nil
+}
+
+// armWriteTimerLocked sets the timer for the write in progress, if any, from
+// the current deadline.
+func (w *windowsConPTYDevice) armWriteTimerLocked() {
+	if w.writeTimer != nil {
+		w.writeTimer.Stop()
+		w.writeTimer = nil
+	}
+	if w.writeThread == 0 || w.writeDeadline.IsZero() {
+		return
+	}
+	seq := w.writeSeq
+	w.writeTimer = time.AfterFunc(time.Until(w.writeDeadline), func() { w.cancelWrite(seq) })
+}
+
+// cancelWrite cancels the write numbered seq if it is still in progress. The
+// timer can fire between the write's registration and its call to WriteFile,
+// when there is nothing yet to cancel, so it tries until the cancel lands or
+// the write ends.
+func (w *windowsConPTYDevice) cancelWrite(seq uint64) {
+	for {
+		w.writeMu.Lock()
+		if w.writeThread == 0 || w.writeSeq != seq {
+			w.writeMu.Unlock()
+			return
+		}
+		w.writeTimedOut = true
+		cancelled, _, _ := procCancelSynchronousIo.Call(uintptr(w.writeThread))
+		w.writeMu.Unlock()
+		if cancelled != 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func newWindowsConPTYDevice(c *conpty.ConPty) (*windowsConPTYDevice, error) {
@@ -161,8 +225,41 @@ func (w *windowsConPTYDevice) Write(p []byte) (int, error) {
 		return 0, ErrClosed
 	}
 	defer w.input.done()
+
+	// CancelSynchronousIo addresses a thread, so the write stays on one.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	w.writeMu.Lock()
+	if !w.writeDeadline.IsZero() && !time.Now().Before(w.writeDeadline) {
+		w.writeMu.Unlock()
+		return 0, os.ErrDeadlineExceeded
+	}
+	thread, threadErr := windows.OpenThread(windows.THREAD_TERMINATE, false, windows.GetCurrentThreadId())
+	if threadErr == nil {
+		w.writeSeq++
+		w.writeThread = thread
+		w.writeTimedOut = false
+		w.armWriteTimerLocked()
+	}
+	w.writeMu.Unlock()
+
 	var written uint32
 	err := windows.WriteFile(handle, p, &written, nil)
+
+	if threadErr == nil {
+		w.writeMu.Lock()
+		timedOut := w.writeTimedOut
+		w.writeThread = 0
+		if w.writeTimer != nil {
+			w.writeTimer.Stop()
+			w.writeTimer = nil
+		}
+		w.writeMu.Unlock()
+		_ = windows.CloseHandle(thread)
+		if timedOut && errors.Is(err, windows.ERROR_OPERATION_ABORTED) {
+			return int(written), os.ErrDeadlineExceeded
+		}
+	}
 	if isClosedPipe(err) {
 		// The console closed under the write: report it the way callers
 		// recognise a closed session, rather than as a raw Windows error.

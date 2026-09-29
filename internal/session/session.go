@@ -163,8 +163,9 @@ func (s *processSession) write(input []byte) error {
 	return err
 }
 
-// writeDeadliner is a device whose writes a deadline can end: the Unix
-// master, where the runtime polls it.
+// writeDeadliner is a device whose writes a deadline can end: the Unix master,
+// where the runtime polls it, and the Windows console's input pipe, whose
+// blocked write a timer cancels.
 type writeDeadliner interface {
 	SetWriteDeadline(time.Time) error
 }

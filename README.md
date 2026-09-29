@@ -634,9 +634,10 @@ sensitive repositories.
   exits; inspect them with `tmux list-sessions`.
 - A write to an agent that reads nothing waits for room in its terminal's
   input buffer, and its request context cannot interrupt it, except for the web
-  terminal's keystrokes on Linux, which give up after five seconds. On Linux,
-  stopping the agent ends such a write; on other Unix systems it waits until
-  the agent reads again or every process holding the terminal has exited.
+  terminal's keystrokes, which give up after five seconds on Linux, macOS, the
+  BSDs and Windows. Stopping the agent ends such a write there; on illumos and
+  AIX it waits until the agent reads again or every process holding the
+  terminal has exited.
 - Terminal output reaches every web client verbatim, viewers included, unless
   the gateway runs with `--viewer-terminals hidden`; only prompt cards and
   notifications are redacted.

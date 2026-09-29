@@ -317,7 +317,7 @@ actions the agent already performed and does not make the log tamper-evident.
 | Secret exposure to local authority | Same-user inspection, root, backups, memory, and tmux are outside protection. |
 | Shell injection | Explicit `shell` deliberately delegates parsing to `/bin/sh`. |
 | Persistent work after exit | tmux persistence intentionally permits owned processes to outlive supervision. |
-| PTY write cancellation | A write to an agent that reads nothing waits for room in its terminal's input buffer, and its request context does not end it, except for the web gateway's keystrokes on Linux, which give up after five seconds. On Linux, stopping the agent ends such a write; on other Unix systems it waits until the agent reads again or every process holding the terminal has exited. |
+| PTY write cancellation | A write to an agent that reads nothing waits for room in its terminal's input buffer, and its request context does not end it, except for the web gateway's keystrokes, which give up after five seconds on Linux, macOS, the BSDs and Windows. Stopping the agent ends such a write there; on illumos and AIX it waits until the agent reads again or every process holding the terminal has exited. |
 | Web terminal bypass | The holder of a web terminal types into the agent directly, unjournaled; the policy stands aside while the terminal is held. At most one write already admitted can land after the terminal changes hands. |
 | Viewer sees the terminals | Terminal output reaches every client verbatim, viewers included, unless `relayer serve --viewer-terminals hidden`; only prompt cards and notifications are redacted. |
 | Audit disclosure or tampering | Redaction is heuristic and the local file is unsigned and unencrypted. |

@@ -79,9 +79,10 @@ session frozen after a write whose outcome is unknown, on a session that is
 stopped, stopping or starting, and while the run is stopping.
 
 An agent that reads nothing lets its terminal's input buffer fill, and a
-keystroke write then waits for room. On Linux it gives up after five seconds,
-having written part of what was typed or none of it, and a Stop or the run's
-end cuts it short. A Stop of the agent is taken while keystrokes are being
+keystroke write then waits for room. It gives up after five seconds, having
+written part of what was typed or none of it, and a Stop or the run's end cuts
+it short, on Linux, macOS, the BSDs and Windows; on illumos and AIX it waits
+until the agent reads again or exits. A Stop of the agent is taken while keystrokes are being
 written: it writes nothing, and it is what ends such an agent. A Start or a
 Restart waits for the keystrokes to return, since they could otherwise reach
 the replacement.
