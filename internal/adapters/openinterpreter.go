@@ -11,9 +11,7 @@ const (
 
 	openinterpreterInteractionMetadata = "interaction"
 	openinterpreterRunCode             = "run_code"
-	openinterpreterRunCommand          = "run_command"
-	openinterpreterInstallPackage      = "install_package"
-	openinterpreterSaveFile            = "save_file"
+	openinterpreterScanCode            = "scan_code"
 )
 
 type openinterpreterPrompt struct {
@@ -28,6 +26,16 @@ type openinterpreterPrompt struct {
 	footers     []string
 }
 
+// openinterpreterPrompts holds the two questions Open Interpreter 0.4.3's
+// terminal interface asks before it runs code, observed in a PTY against a
+// stand-in model and answered both ways with the side effect checked: see
+// testdata/interpreter. The options are "(y/n)" alone, on the question's
+// line, and the answer is read as a line on the next.
+//
+// The entries written earlier from documentation, for installing a package,
+// saving a file or running a command, named questions this version never
+// asks; they are gone, and anything like them falls back to the configured
+// intercept_patterns.
 var openinterpreterPrompts = []openinterpreterPrompt{
 	{
 		interaction: openinterpreterRunCode,
@@ -35,69 +43,23 @@ var openinterpreterPrompts = []openinterpreterPrompt{
 		match:       "Would you like to run this code?",
 		eventType:   EventPermission,
 		risk:        RiskHigh,
-		markers: []string{
-			"Would you like to run this code?",
-			"Would you like to run the following code?",
-			"Execute this code?",
-			"Execute this Python code?",
-			"Execute this bash code?",
-			"Execute this shell code?",
-			"Run this code?",
-			"Run the following code?",
-		},
-		allows:  []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(y)es", "[y]es", "(Y)es", "[Yes]"},
-		denies:  []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(n)o", "[n]o", "(N)o", "[No]"},
-		footers: []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(y/n):", "[y/n]:", "(y/N)", "[y/N]"},
+		markers:     []string{"Would you like to run this code?"},
+		allows:      []string{"(y/n)"},
+		denies:      []string{"(y/n)"},
+		footers:     []string{"(y/n)"},
 	},
+	// Asked first in --safe_mode ask: y runs semgrep over the code, n skips
+	// the scan, and the run question follows either way.
 	{
-		interaction: openinterpreterRunCommand,
-		summary:     "Open Interpreter asks to run shell command (y=allow, n=deny)",
-		match:       "Would you like to run this command?",
-		eventType:   EventPermission,
-		risk:        RiskHigh,
-		markers: []string{
-			"Would you like to run this command?",
-			"Would you like to run the following command?",
-			"Execute this command?",
-			"Execute this shell command?",
-			"Run shell command?",
-			"Run this command?",
-		},
-		allows:  []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(y)es", "[y]es", "(Y)es", "[Yes]"},
-		denies:  []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(n)o", "[n]o", "(N)o", "[No]"},
-		footers: []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(y/n):", "[y/n]:", "(y/N)", "[y/N]"},
-	},
-	{
-		interaction: openinterpreterInstallPackage,
-		summary:     "Open Interpreter asks to install package (y=allow, n=deny)",
-		match:       "Would you like to install this package?",
-		eventType:   EventPermission,
-		risk:        RiskHigh,
-		markers: []string{
-			"Would you like to install this package?",
-			"Install this package?",
-			"Install dependencies?",
-			"Install the following package?",
-		},
-		allows:  []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(y)es", "[y]es", "(Y)es", "[Yes]"},
-		denies:  []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(n)o", "[n]o", "(N)o", "[No]"},
-		footers: []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(y/n):", "[y/n]:", "(y/N)", "[y/N]"},
-	},
-	{
-		interaction: openinterpreterSaveFile,
-		summary:     "Open Interpreter asks to save file changes (y=allow, n=deny)",
-		match:       "Would you like to save these changes?",
+		interaction: openinterpreterScanCode,
+		summary:     "Open Interpreter asks to scan code before running it (y=allow, n=deny)",
+		match:       "Would you like to scan this code?",
 		eventType:   EventConfirmation,
 		risk:        RiskLow,
-		markers: []string{
-			"Would you like to save these changes?",
-			"Save these changes?",
-			"Save changes?",
-			"Save this file?",
-		},
-		allows:  []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(y)es", "[y]es", "(Y)es", "[Yes]"},
-		denies:  []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(n)o", "[n]o", "(N)o", "[No]"},
-		footers: []string{"(y/n)", "(Y/n)", "[y/n]", "[Y/n]", "(y/n):", "[y/n]:", "(y/N)", "[y/N]"},
+		markers:     []string{"Would you like to scan this code?"},
+		allows:      []string{"(y/n)"},
+		denies:      []string{"(y/n)"},
+		footers:     []string{"(y/n)"},
 	},
 }
 
@@ -159,6 +121,9 @@ func (a *OpenInterpreterAdapter) Detect(state *DetectionState, chunk []byte) ([]
 
 	vendorProbe := *state
 	start, end, ok := vendorProbe.appendDetectionText(chunk)
+	if !ok {
+		start, end, ok = openinterpreterQuestionAboveAnswer(vendorProbe.detectionText)
+	}
 	if ok {
 		activeLine := vendorProbe.detectionText[start:end]
 		if prompt, found := detectOpenInterpreterPrompt(vendorProbe.detectionText, activeLine, vendorProbe.inCodeFence); found {
@@ -237,6 +202,22 @@ func (a *OpenInterpreterAdapter) rewriteGenericEvents(state *DetectionState, eve
 		state.pending = &pending
 	}
 	return result
+}
+
+// openinterpreterQuestionAboveAnswer finds the question line when the active
+// line is the blank one Open Interpreter reads the answer on. It prints the
+// question, then "\n\n  ", and waits: written in one piece, as it is unless a
+// repaint came first, the question is two lines above a line holding only the
+// indentation. Only blank lines may follow the question, no more than two
+// line breaks' worth, so a question with anything printed after it is not
+// read here.
+func openinterpreterQuestionAboveAnswer(text string) (start, end int, ok bool) {
+	end = len(strings.TrimRight(text, " \t\r\n"))
+	if end == 0 || strings.Count(text[end:], "\n") > 2 {
+		return 0, 0, false
+	}
+	start = strings.LastIndexByte(text[:end], '\n') + 1
+	return start, end, true
 }
 
 func detectOpenInterpreterPrompt(window, activeLine string, inCodeFence bool) (openinterpreterPrompt, bool) {

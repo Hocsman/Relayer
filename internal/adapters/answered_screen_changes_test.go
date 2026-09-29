@@ -149,7 +149,6 @@ func TestAQuestionAnsweredBeforeTheFirstRepaintIsFoundByItsLine(t *testing.T) {
 	}{
 		{adapter: AiderID, prompt: "Run shell commands? (Y)es/(N)o/(D)on't ask again [Yes]: "},
 		{adapter: GooseID, prompt: "Allow Goose to run: 'ls -la' (y/n) "},
-		{adapter: OpenInterpreterID, prompt: "Execute this Python code? (y/n) "},
 	} {
 		t.Run(question.adapter, func(t *testing.T) {
 			processor := playSession(t, question.adapter, false, []sessionStep{
