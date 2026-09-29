@@ -639,7 +639,7 @@ func (g *webGateway) serve() string {
 		"opAlice":  {Identity: "alice", Role: RoleOperator},
 		"opCarol":  {Identity: "carol", Role: RoleOperator},
 		"viewDave": {Identity: "dave", Role: RoleViewer},
-	}, false, 0, "", io.Discard)
+	}, false, 0, "", io.Discard, false)
 	server := httptest.NewServer(handler)
 	g.t.Cleanup(func() {
 		handler.closeClients()

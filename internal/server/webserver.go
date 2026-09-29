@@ -350,8 +350,7 @@ func Serve(ctx context.Context, opts Options) error {
 		opts.Port = tcpAddr.Port
 	}
 
-	handler := newGatewayHandler(ctrl, tokens, allowAnonymousLocal, opts.Port, opts.StaticDir, opts.Diagnostics)
-	handler.hideViewerTerminals = hideViewerTerminals
+	handler := newGatewayHandler(ctrl, tokens, allowAnonymousLocal, opts.Port, opts.StaticDir, opts.Diagnostics, hideViewerTerminals)
 	httpServer := &http.Server{
 		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
@@ -428,9 +427,12 @@ type gatewayHandler struct {
 	clients   map[*clientConnection]struct{}
 }
 
-func newGatewayHandler(ctrl *Controller, tokens map[string]AuthIdentity, allowAnonymousLocal bool, port int, staticDir string, diagnostics io.Writer) *gatewayHandler {
+func newGatewayHandler(ctrl *Controller, tokens map[string]AuthIdentity, allowAnonymousLocal bool, port int, staticDir string, diagnostics io.Writer, hideViewerTerminals bool) *gatewayHandler {
+	// Every field is set before the subscription below starts reading them
+	// from the controller's event loop.
 	gh := &gatewayHandler{
 		ctrl:                ctrl,
+		hideViewerTerminals: hideViewerTerminals,
 		tokens:              tokens,
 		allowAnonymousLocal: allowAnonymousLocal,
 		staticDir:           staticDir,
