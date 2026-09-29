@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Hocsman/Relayer/internal/buffer"
 	"github.com/acarl005/stripansi"
@@ -87,9 +88,12 @@ type Processor struct {
 	// whose question was on the program's grid. See Consume.
 	alternateShown bool
 
-	mu                         sync.Mutex
-	semanticHooks              sync.WaitGroup
-	ansiCarry                  string
+	mu            sync.Mutex
+	semanticHooks sync.WaitGroup
+	ansiCarry     string
+	// detectionCarry holds what ended the last write's text and is read with
+	// the next: a carriage return, an incomplete UTF-8 character. See Consume.
+	detectionCarry             string
 	lastSnapshotFingerprint    string
 	pendingSnapshotFingerprint string
 	terminated                 bool
@@ -353,7 +357,25 @@ func (p *Processor) Consume(chunk []byte) error {
 		_, _ = p.ansiOutput.Write([]byte(complete))
 	}
 	ansiFree := stripansi.Strip(expandCursorForward(complete))
-	detection := normalizeDetectionText(ansiFree)
+	// What ends a write and may be completed by the next is held back for it.
+	// A carriage return: the line break it may start can arrive in the next
+	// read, and alone the return would erase the line it ends, so a menu drawn
+	// line by line and read a byte at a time left nothing of itself in the
+	// detection window. Held back, "\r\n" is read as the line break it is,
+	// and a lone return is applied when the next write comes, as it would have
+	// been. An incomplete UTF-8 character: read alone, its bytes are replaced,
+	// and a line drawn with "└" was not the line the agent drew.
+	detectionSource := p.detectionCarry + ansiFree
+	p.detectionCarry = ""
+	if tail := incompleteUTF8Suffix(detectionSource); tail > 0 {
+		p.detectionCarry = detectionSource[len(detectionSource)-tail:]
+		detectionSource = detectionSource[:len(detectionSource)-tail]
+	}
+	if trimmed, found := strings.CutSuffix(detectionSource, "\r"); found {
+		p.detectionCarry = "\r" + p.detectionCarry
+		detectionSource = trimmed
+	}
+	detection := normalizeDetectionText(detectionSource)
 	rendered := normalizeRenderedText(ansiFree)
 	if rendered != "" {
 		_, _ = p.output.Write([]byte(rendered))
@@ -764,6 +786,21 @@ func (p *Processor) NewProcessExitEvent(exitCode *int, failed bool) Event {
 	// remain outside p.mu, so they may inspect Processor state safely.
 	p.WaitSemanticEvents()
 	return event
+}
+
+// incompleteUTF8Suffix is the length of the UTF-8 character input ends in the
+// middle of, or 0.
+func incompleteUTF8Suffix(input string) int {
+	for size := 1; size < utf8.UTFMax && size <= len(input); size++ {
+		start := len(input) - size
+		if utf8.RuneStart(input[start]) {
+			if utf8.FullRuneInString(input[start:]) {
+				return 0
+			}
+			return size
+		}
+	}
+	return 0
 }
 
 func normalizeDetectionText(input string) string {
