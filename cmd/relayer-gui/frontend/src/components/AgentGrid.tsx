@@ -11,6 +11,7 @@ interface AgentGridProps {
   agents: AgentState[];
   events: SupervisionEvent[];
   readOnly?: boolean;
+  terminalsHidden?: boolean;
   selfConnID?: string;
   // Both maps are keyed by lowercase sessionID, as the reducer stores them.
   presence?: Record<string, PresenceView>;
@@ -31,6 +32,7 @@ export function AgentGrid({
   agents,
   events,
   readOnly,
+  terminalsHidden,
   selfConnID,
   presence,
   hand,
@@ -64,6 +66,7 @@ export function AgentGrid({
             (event) => event.runID === runID && event.sessionID === agent.sessionID,
           )}
           readOnly={readOnly}
+          terminalHidden={terminalsHidden}
           selfConnID={selfConnID}
           presence={presence?.[agent.sessionID.toLocaleLowerCase()]}
           hand={hand?.[agent.sessionID.toLocaleLowerCase()]}

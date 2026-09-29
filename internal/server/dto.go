@@ -373,6 +373,9 @@ type UserInfo struct {
 	ConnID   string `json:"connID"`
 	Role     string `json:"role"`
 	ReadOnly bool   `json:"readOnly"`
+	// TerminalsHidden tells a viewer's interface that the gateway sends it no
+	// terminal output, so it shows why rather than an empty terminal.
+	TerminalsHidden bool `json:"terminalsHidden,omitempty"`
 }
 
 type AuditFilterInput struct {

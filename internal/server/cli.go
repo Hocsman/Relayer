@@ -24,7 +24,7 @@ func RunServe(arguments []string, _ io.Writer, diagnostics io.Writer) error {
 	flags := flag.NewFlagSet("relayer serve", flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
 	flags.Usage = func() {
-		_, _ = fmt.Fprintln(diagnostics, "Usage: relayer serve [--bind address] [--port port] [--token secret] [--viewer-token secret] [--config path] [--static-dir dir]")
+		_, _ = fmt.Fprintln(diagnostics, "Usage: relayer serve [--bind address] [--port port] [--token secret] [--viewer-token secret] [--viewer-terminals shown|hidden] [--config path] [--static-dir dir]")
 		flags.PrintDefaults()
 	}
 
@@ -33,6 +33,7 @@ func RunServe(arguments []string, _ io.Writer, diagnostics io.Writer) error {
 	token := flags.String("token", "", "Operator authentication token secret (auto-generated if empty when binding outside localhost)")
 	operatorToken := flags.String("operator-token", "", "Operator authentication token (alias for --token)")
 	viewerToken := flags.String("viewer-token", "", "Viewer (read-only) authentication token secret")
+	viewerTerminals := flags.String("viewer-terminals", "shown", "Whether viewers see the agents' terminals: shown, or hidden to send them only prompts and state")
 	configPath := flags.String("config", config.DefaultPath, "Path to YAML configuration file")
 	staticDir := flags.String("static-dir", "", "Custom filesystem directory for static web UI assets (default uses embedded assets)")
 
@@ -54,13 +55,14 @@ func RunServe(arguments []string, _ io.Writer, diagnostics io.Writer) error {
 	}
 
 	opts := Options{
-		Bind:        strings.TrimSpace(*bind),
-		Port:        *port,
-		Token:       finalOperatorToken,
-		ViewerToken: strings.TrimSpace(*viewerToken),
-		ConfigPath:  strings.TrimSpace(*configPath),
-		StaticDir:   strings.TrimSpace(*staticDir),
-		Diagnostics: diagnostics,
+		Bind:            strings.TrimSpace(*bind),
+		Port:            *port,
+		Token:           finalOperatorToken,
+		ViewerToken:     strings.TrimSpace(*viewerToken),
+		ViewerTerminals: strings.TrimSpace(*viewerTerminals),
+		ConfigPath:      strings.TrimSpace(*configPath),
+		StaticDir:       strings.TrimSpace(*staticDir),
+		Diagnostics:     diagnostics,
 	}
 
 	return Serve(ctx, opts)

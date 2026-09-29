@@ -239,6 +239,7 @@ export function App({ bridge }: { bridge: RelayerBridge }) {
             agents={state.app.agents}
             events={state.app.pendingEvents}
             readOnly={userInfo?.readOnly}
+            terminalsHidden={userInfo?.terminalsHidden}
             onResize={resizeSession}
             onStop={stopSession}
             onStart={startSession}

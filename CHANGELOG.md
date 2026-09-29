@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+### Added
+
+- **`relayer serve --viewer-terminals hidden` keeps the agents' terminals from viewers.** A viewer token was a token to read every terminal: the snapshots carry each screen verbatim, so a secret an agent echoed reached every viewer, and the only choice was not to hand viewer tokens out. With the option, a viewer's state and snapshots carry each agent's status, exit code and prompt card but no output, a recording's contents are refused to it, and its interface says why in place of each terminal. Operators are unaffected, and the default, `shown`, keeps the behaviour as it was.
+
 ## [0.8.15] - 2026-09-29
 
 Patch release whose desktop application says when a new version is out. At launch it asks GitHub for the latest release and offers its download in a banner; the check is on by default and turned off in the settings. The desktop binaries now carry their version, so this release is the first that can tell a newer one apart: the banner appears from the next release on. As PID 1 in a container without an init, Relayer also reaps the orphans a stopped agent leaves behind.

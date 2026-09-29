@@ -234,3 +234,24 @@ describe("AgentCard simulated agents", () => {
   });
 });
 
+
+describe("AgentCard for a viewer from whom terminals are hidden", () => {
+  it("shows why there is no terminal instead of an empty one", () => {
+    const markup = renderToStaticMarkup(
+      <AgentCard
+        runID="run-1"
+        agent={{ ...agent(), output: "" }}
+        readOnly
+        terminalHidden
+        onResize={async () => {}}
+        onStop={async () => {}}
+        onStart={async () => {}}
+        onRestart={async () => {}}
+        onOpenEvent={() => {}}
+        onSubmitLine={async () => {}}
+      />,
+    );
+    expect(markup).toContain("does not share terminals with viewers");
+    expect(markup).not.toContain("Output from Agent A");
+  });
+});

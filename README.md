@@ -637,8 +637,9 @@ sensitive repositories.
   terminal's keystrokes on Linux, which give up after five seconds. On Linux,
   stopping the agent ends such a write; on other Unix systems it waits until
   the agent reads again or every process holding the terminal has exited.
-- Terminal output reaches every web client verbatim, viewers included; only
-  prompt cards and notifications are redacted.
+- Terminal output reaches every web client verbatim, viewers included, unless
+  the gateway runs with `--viewer-terminals hidden`; only prompt cards and
+  notifications are redacted.
 - Separate Relayer processes do not coordinate rotation of one shared audit
   path.
 - Configuration files and command-line arguments are not secret stores.

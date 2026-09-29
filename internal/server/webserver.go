@@ -76,10 +76,13 @@ type Options struct {
 	Port        int
 	Token       string
 	ViewerToken string
-	ConfigPath  string
-	StaticDir   string
-	Diagnostics io.Writer
-	OnReady     func(serverURL string, token string)
+	// ViewerTerminals is "shown", the default, or "hidden": then a viewer
+	// receives no terminal output, only prompt cards and notifications.
+	ViewerTerminals string
+	ConfigPath      string
+	StaticDir       string
+	Diagnostics     io.Writer
+	OnReady         func(serverURL string, token string)
 }
 
 type wsRequest struct {
@@ -262,6 +265,10 @@ func Serve(ctx context.Context, opts Options) error {
 	if opts.Diagnostics == nil {
 		opts.Diagnostics = os.Stderr
 	}
+	hideViewerTerminals, err := parseViewerTerminals(opts.ViewerTerminals)
+	if err != nil {
+		return err
+	}
 
 	opTokens := parseTokens(opts.Token, RoleOperator)
 	viewTokens := parseTokens(opts.ViewerToken, RoleViewer)
@@ -344,6 +351,7 @@ func Serve(ctx context.Context, opts Options) error {
 	}
 
 	handler := newGatewayHandler(ctrl, tokens, allowAnonymousLocal, opts.Port, opts.StaticDir, opts.Diagnostics)
+	handler.hideViewerTerminals = hideViewerTerminals
 	httpServer := &http.Server{
 		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
@@ -411,6 +419,10 @@ type gatewayHandler struct {
 	localHosts  map[string]struct{}
 	staticDir   string
 	diagnostics io.Writer
+	// hideViewerTerminals keeps every agent's terminal from viewers: they
+	// receive no output in the state or the snapshots, and no recording's
+	// contents. It is set before the handler serves anything.
+	hideViewerTerminals bool
 
 	clientsMu sync.RWMutex
 	clients   map[*clientConnection]struct{}
@@ -438,11 +450,23 @@ func newGatewayHandler(ctrl *Controller, tokens map[string]AuthIdentity, allowAn
 		if err != nil {
 			return
 		}
+		viewerBytes := msgBytes
+		if snapshot, ok := payload.(SnapshotEvent); ok && gh.hideViewerTerminals {
+			snapshot.Output = ""
+			viewerBytes, err = json.Marshal(wsEventMessage{Event: event, Payload: snapshot})
+			if err != nil {
+				return
+			}
+		}
 
 		gh.clientsMu.RLock()
 		defer gh.clientsMu.RUnlock()
 		for client := range gh.clients {
-			client.safeSend(msgBytes)
+			if client.role == RoleViewer {
+				client.safeSend(viewerBytes)
+			} else {
+				client.safeSend(msgBytes)
+			}
 		}
 	})
 
@@ -497,7 +521,7 @@ func (gh *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(stateForRole(gh.ctrl.GetState(), identity.Role))
+		_ = json.NewEncoder(w).Encode(gh.stateFor(identity.Role))
 		return
 	}
 
@@ -684,14 +708,15 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 	switch method {
 	case "getUserInfo":
 		return UserInfo{
-			Identity: client.identity,
-			ConnID:   client.connID,
-			Role:     string(client.role),
-			ReadOnly: client.role == RoleViewer,
+			Identity:        client.identity,
+			ConnID:          client.connID,
+			Role:            string(client.role),
+			ReadOnly:        client.role == RoleViewer,
+			TerminalsHidden: gh.terminalsHiddenFrom(client.role),
 		}, nil
 
 	case "getState":
-		return stateForRole(gh.ctrl.GetState(), client.role), nil
+		return gh.stateFor(client.role), nil
 
 	case "runPreflight":
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -995,6 +1020,9 @@ func (gh *gatewayHandler) executeMethod(client *clientConnection, method string,
 		}
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
+		}
+		if gh.terminalsHiddenFrom(client.role) {
+			return nil, errViewerTerminals
 		}
 		chunk, err := gh.ctrl.ReadRecordingChunk(p.ID, p.Offset, p.Limit)
 		if err != nil {
