@@ -16,8 +16,7 @@ func servedWithHiddenTerminals(g *webGateway) string {
 	handler := newGatewayHandler(g.ctrl, map[string]AuthIdentity{
 		"opAlice":  {Identity: "alice", Role: RoleOperator},
 		"viewDave": {Identity: "dave", Role: RoleViewer},
-	}, false, 0, "", io.Discard)
-	handler.hideViewerTerminals = true
+	}, false, 0, "", io.Discard, true)
 	server := httptest.NewServer(handler)
 	g.t.Cleanup(func() {
 		handler.closeClients()
