@@ -239,15 +239,18 @@ func (a *App) activateRun(run *runGeneration) error {
 		// Status, Running and the other supervision fields are the core's,
 		// which starts every agent running.
 		agents = append(agents, AgentState{
-			SessionID:      item.ID,
-			AgentID:        item.ID,
-			Name:           item.Name,
-			DisplayCommand: item.Command,
-			Backend:        item.Backend,
-			Adapter:        item.Adapter,
-			Output:         output,
-			Revision:       1,
-			Simulated:      item.Simulated,
+			SessionID:         item.ID,
+			AgentID:           item.ID,
+			Name:              item.Name,
+			DisplayCommand:    item.Command,
+			Backend:           item.Backend,
+			Adapter:           item.Adapter,
+			Output:            output,
+			Revision:          1,
+			Simulated:         item.Simulated,
+			InstalledVersion:  item.InstalledVersion,
+			UnverifiedVersion: item.UnverifiedVersion,
+			UnverifiedReason:  item.UnverifiedReason,
 		})
 		specs = append(specs, supervise.AgentSpec{
 			SessionID: item.ID,

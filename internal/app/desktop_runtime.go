@@ -38,24 +38,26 @@ var ErrCleanupUncertain = errors.New("desktop runtime cleanup not confirmed")
 // DesktopOptions configures the headless runtime used by desktop frontends.
 // It deliberately does not inherit the deprecated pane flags from the CLI.
 type DesktopOptions struct {
-	ConfigPath  string
-	InitialSize terminal.Size
-	Diagnostics io.Writer
+	ConfigPath       string
+	InitialSize      terminal.Size
+	Diagnostics      io.Writer
+	VersionInspector VersionInspector
 }
 
 // DesktopPlan is an immutable, Go-only preflight result. Preparing a plan may
 // read configuration and resolve executables, but it never opens audit files,
 // terminal backends or child processes.
 type DesktopPlan struct {
-	configuration config.Result
-	configPath    string
-	resolution    agentResolution
-	selection     backendResolution
-	policyEngine  *policy.Engine
-	registry      *adapters.Registry
-	dependencies  backendDependencies
-	initialSize   terminal.Size
-	diagnostics   io.Writer
+	configuration    config.Result
+	configPath       string
+	resolution       agentResolution
+	selection        backendResolution
+	policyEngine     *policy.Engine
+	registry         *adapters.Registry
+	dependencies     backendDependencies
+	initialSize      terminal.Size
+	diagnostics      io.Writer
+	versionInspector VersionInspector
 }
 
 // DesktopSession is display-safe startup metadata. Shell bodies, environment
@@ -73,6 +75,10 @@ type DesktopSession struct {
 	// in a supervision tool means an operator can believe they are watching a
 	// coding agent while watching a scripted mock.
 	Simulated bool `json:"simulated"`
+
+	InstalledVersion  string `json:"installedVersion,omitempty"`
+	UnverifiedVersion bool   `json:"unverifiedVersion,omitempty"`
+	UnverifiedReason  string `json:"unverifiedReason,omitempty"`
 }
 
 // DesktopMetadata contains non-sensitive run settings suitable for a GUI.
@@ -186,15 +192,16 @@ func PrepareDesktopRuntime(options DesktopOptions) (*DesktopPlan, error) {
 		size.Rows = defaultDesktopRows
 	}
 	return &DesktopPlan{
-		configuration: configuration,
-		configPath:    configPath,
-		resolution:    resolution,
-		selection:     backendSelection,
-		policyEngine:  policyEngine,
-		registry:      registry,
-		dependencies:  dependencies,
-		initialSize:   size,
-		diagnostics:   diagnostics,
+		configuration:    configuration,
+		configPath:       configPath,
+		resolution:       resolution,
+		selection:        backendSelection,
+		policyEngine:     policyEngine,
+		registry:         registry,
+		dependencies:     dependencies,
+		initialSize:      size,
+		diagnostics:      diagnostics,
+		versionInspector: options.VersionInspector,
 	}, nil
 }
 
@@ -306,14 +313,18 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 			return nil, fmt.Errorf("starting agent %q: %w", spec.ID, startErr)
 		}
 		runtime.infos = append(runtime.infos, info)
+		versionInfo := CheckAgentVersion(ctx, spec, plan.resolution.Simulated[index], plan.versionInspector)
 		runtime.sessions = append(runtime.sessions, DesktopSession{
-			ID:        info.ID,
-			Name:      info.Name,
-			Command:   desktopCommandLabel(spec.Command, spec.Shell),
-			Backend:   info.Backend,
-			Adapter:   info.Adapter,
-			Shell:     info.Shell,
-			Simulated: plan.resolution.Simulated[index],
+			ID:                info.ID,
+			Name:              info.Name,
+			Command:           desktopCommandLabel(spec.Command, spec.Shell),
+			Backend:           info.Backend,
+			Adapter:           info.Adapter,
+			Shell:             info.Shell,
+			Simulated:         plan.resolution.Simulated[index],
+			InstalledVersion:  versionInfo.InstalledVersion,
+			UnverifiedVersion: versionInfo.Unverified,
+			UnverifiedReason:  versionInfo.Reason,
 		})
 		if err := auditor.Record(audit.Entry{
 			Kind:       audit.KindSessionStarted,
@@ -329,6 +340,11 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 	}
 
 	runtime.startupLogs = buildStartupLogs(plan.configuration, plan.resolution, runtime.infos, plan.configPath)
+	for _, s := range runtime.sessions {
+		if s.UnverifiedVersion && s.UnverifiedReason != "" {
+			runtime.startupLogs = append(runtime.startupLogs, fmt.Sprintf("Avertissement [%s] : %s", s.Name, s.UnverifiedReason))
+		}
+	}
 	if auditor.Enabled() {
 		runtime.startupLogs = append(runtime.startupLogs, fmt.Sprintf(
 			"Local audit: mode=%s, file=%s",

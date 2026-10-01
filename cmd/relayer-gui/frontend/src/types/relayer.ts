@@ -76,6 +76,9 @@ export interface AgentState {
   // watching a mock.
   simulated?: boolean;
   exitCode?: number;
+  installedVersion?: string;
+  unverifiedVersion?: boolean;
+  unverifiedReason?: string;
 }
 
 export interface PolicyEvaluation {

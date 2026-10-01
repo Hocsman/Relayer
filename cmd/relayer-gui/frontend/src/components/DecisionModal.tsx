@@ -186,6 +186,14 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
                 Simulated
               </em>
             )}
+            {agent?.unverifiedVersion && (
+              <em
+                className="unverified-version-tag"
+                title={agent.unverifiedReason || "Version non vérifiée"}
+              >
+                version non vérifiée
+              </em>
+            )}
           </div>
           <div><span>Adapter</span><strong>{event.adapter}</strong></div>
           <div><span>Risk</span><strong className={`risk-text risk-text--${event.risk}`}>{event.risk}</strong></div>

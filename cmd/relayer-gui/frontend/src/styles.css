@@ -489,6 +489,22 @@ select:focus-visible {
   vertical-align: middle;
 }
 
+.unverified-version-tag {
+  display: inline-block;
+  margin-left: 7px;
+  font-style: normal;
+  padding: 2px 6px;
+  border: 1px solid rgba(255, 159, 82, 0.4);
+  border-radius: 999px;
+  color: var(--orange);
+  background: rgba(255, 159, 82, 0.12);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
 .agent-card--simulated .agent-card__footer > span:first-child {
   color: var(--orange);
 }
@@ -1400,6 +1416,10 @@ select:focus-visible {
 /* The context cells force block display and an uppercase label style on their
    own spans, so the tag is an <em> here and keeps its own metrics. */
 .decision-context .simulated-tag {
+  margin: 5px 0 0;
+}
+
+.decision-context .unverified-version-tag {
   margin: 5px 0 0;
 }
 

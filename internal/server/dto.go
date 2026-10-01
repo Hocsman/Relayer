@@ -16,22 +16,25 @@ type AuditState struct {
 }
 
 type AgentState struct {
-	SessionID      string `json:"sessionID"`
-	AgentID        string `json:"agentID"`
-	Name           string `json:"name"`
-	DisplayCommand string `json:"displayCommand"`
-	Backend        string `json:"backend"`
-	Adapter        string `json:"adapter"`
-	Status         string `json:"status"`
-	Output         string `json:"output"`
-	Revision       uint64 `json:"revision"`
-	Running        bool   `json:"running"`
-	Attached       bool   `json:"attached"`
-	ObserverCount  int    `json:"observerCount"`
-	HolderIdentity string `json:"holderIdentity,omitempty"`
-	InputFrozen    bool   `json:"inputFrozen"`
-	Simulated      bool   `json:"simulated"`
-	ExitCode       *int   `json:"exitCode,omitempty"`
+	SessionID         string `json:"sessionID"`
+	AgentID           string `json:"agentID"`
+	Name              string `json:"name"`
+	DisplayCommand    string `json:"displayCommand"`
+	Backend           string `json:"backend"`
+	Adapter           string `json:"adapter"`
+	Status            string `json:"status"`
+	Output            string `json:"output"`
+	Revision          uint64 `json:"revision"`
+	Running           bool   `json:"running"`
+	Attached          bool   `json:"attached"`
+	ObserverCount     int    `json:"observerCount"`
+	HolderIdentity    string `json:"holderIdentity,omitempty"`
+	InputFrozen       bool   `json:"inputFrozen"`
+	Simulated         bool   `json:"simulated"`
+	ExitCode          *int   `json:"exitCode,omitempty"`
+	InstalledVersion  string `json:"installedVersion,omitempty"`
+	UnverifiedVersion bool   `json:"unverifiedVersion,omitempty"`
+	UnverifiedReason  string `json:"unverifiedReason,omitempty"`
 }
 
 type PolicyEvaluation struct {

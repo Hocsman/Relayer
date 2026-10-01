@@ -50,8 +50,19 @@ func TestClaudeAdapterObservedFixtures(t *testing.T) {
 				t.Fatalf("event semantics = %#v", event)
 			}
 			if event.Metadata["fixture"] != fixture.FixtureID ||
-				event.Metadata["observed_cli_version"] != "2.1.59" {
+				(event.Metadata["observed_cli_version"] != "2.1.59" &&
+					event.Metadata["observed_cli_version"] != "2.1.285") {
 				t.Fatalf("event provenance = %#v", event.Metadata)
+			}
+			if fixture.FixtureID == "claude-2.1.285-bash-command" {
+				if event.Command != "rm -f some_file.txt" {
+					t.Fatalf("expected command 'rm -f some_file.txt', got %q", event.Command)
+				}
+			}
+			if fixture.FixtureID == "claude-2.1.285-write-file" || fixture.FixtureID == "claude-2.1.285-edit-file" {
+				if event.Metadata["target_file"] != "test_claude_probe.txt" {
+					t.Fatalf("expected target_file 'test_claude_probe.txt', got %q", event.Metadata["target_file"])
+				}
 			}
 			if event.ID == "" || event.Signature == "" || event.Sequence != 1 || event.Timestamp.IsZero() {
 				t.Fatalf("event identity = %#v", event)
@@ -396,6 +407,91 @@ func TestClaudeAdapterEncodeDecisionIsConservative(t *testing.T) {
 	}
 }
 
+func TestClaudeAdapterEncodeDecisionVerifiedRules(t *testing.T) {
+	adapter := newClaudeAdapterForTest(t, nil)
+	cases := []struct {
+		pattern string
+		isBash  bool
+	}{
+		{pattern: claudeBashCommandPattern, isBash: true},
+		{pattern: claudeWriteFilePattern, isBash: false},
+		{pattern: claudeEditFilePattern, isBash: false},
+	}
+
+	for _, c := range cases {
+		event := Event{
+			Adapter: ClaudeID,
+			Type:    EventPermission,
+			Metadata: map[string]string{
+				"pattern": c.pattern,
+			},
+		}
+
+		// Allow -> \r
+		allow, err := adapter.EncodeDecision(event, DecisionAllow, "")
+		if err != nil || string(allow) != "\r" {
+			t.Fatalf("pattern %s allow = %q, %v", c.pattern, allow, err)
+		}
+
+		// Deny -> \x1b (Esc)
+		deny, err := adapter.EncodeDecision(event, DecisionDeny, "")
+		if err != nil || len(deny) != 1 || deny[0] != 0x1b {
+			t.Fatalf("pattern %s deny = %v, %v", c.pattern, deny, err)
+		}
+
+		// Manual allow shortcuts: "y", "yes", "1" -> "1\r"
+		for _, input := range []string{"y", "Y", "yes", "YES", "1"} {
+			man, err := adapter.EncodeDecision(event, DecisionManual, input)
+			if err != nil || string(man) != "1\r" {
+				t.Fatalf("pattern %s manual %q = %q, %v", c.pattern, input, man, err)
+			}
+		}
+
+		// Manual cancel shortcuts: "esc", "cancel" -> \x1b
+		for _, input := range []string{"esc", "ESC", "cancel"} {
+			man, err := adapter.EncodeDecision(event, DecisionManual, input)
+			if err != nil || len(man) != 1 || man[0] != 0x1b {
+				t.Fatalf("pattern %s manual %q = %v, %v", c.pattern, input, man, err)
+			}
+		}
+
+		// Manual deny shortcuts: "n", "no"
+		wantNo := "3\r"
+		if c.isBash {
+			wantNo = "4\r"
+		}
+		for _, input := range []string{"n", "N", "no", "NO"} {
+			man, err := adapter.EncodeDecision(event, DecisionManual, input)
+			if err != nil || string(man) != wantNo {
+				t.Fatalf("pattern %s manual %q = %q, %v, want %q", c.pattern, input, man, err, wantNo)
+			}
+		}
+
+		// Fallback manual input
+		man, err := adapter.EncodeDecision(event, DecisionManual, "2")
+		if err != nil || string(man) != "2\r" {
+			t.Fatalf("pattern %s manual '2' = %q, %v", c.pattern, man, err)
+		}
+
+		// NUL byte error
+		if _, err := adapter.EncodeDecision(event, DecisionManual, "bad\x00input"); err == nil {
+			t.Fatalf("pattern %s expected NUL error", c.pattern)
+		}
+
+		// Unsupported decision
+		if _, err := adapter.EncodeDecision(event, Decision("other"), ""); !errors.Is(err, ErrDecisionUnsupported) {
+			t.Fatalf("pattern %s expected unsupported decision error, got %v", c.pattern, err)
+		}
+
+		// Non-actionable event error
+		nonActionable := event.Clone()
+		nonActionable.Type = EventProcessExit
+		if _, err := adapter.EncodeDecision(nonActionable, DecisionAllow, ""); !errors.Is(err, ErrDecisionUnsupported) {
+			t.Fatalf("pattern %s expected unsupported non-actionable error, got %v", c.pattern, err)
+		}
+	}
+}
+
 func TestClaudeAdapterEmptyInvalidAndBoundedInput(t *testing.T) {
 	adapter := newClaudeAdapterForTest(t, nil)
 	if events, err := adapter.Detect(nil, []byte("prompt")); err == nil || len(events) != 0 {
@@ -467,11 +563,12 @@ func loadClaudeStreamFixtures(t *testing.T) []claudeStreamFixture {
 	if err := json.Unmarshal(payload, &fixtures); err != nil {
 		t.Fatal(err)
 	}
-	if len(fixtures) != 2 {
-		t.Fatalf("Claude fixture count = %d, want 2", len(fixtures))
+	if len(fixtures) != 5 {
+		t.Fatalf("Claude fixture count = %d, want 5", len(fixtures))
 	}
 	for _, fixture := range fixtures {
-		if fixture.Source != "anonymized PTY observation from Claude Code 2.1.59" ||
+		if (fixture.Source != "anonymized PTY observation from Claude Code 2.1.59" &&
+			fixture.Source != "anonymized PTY observation from Claude Code 2.1.285") ||
 			fixture.FixtureID == "" || len(fixture.Chunks) == 0 {
 			t.Fatalf("fixture provenance is incomplete: %#v", fixture)
 		}

@@ -24,5 +24,44 @@
     "event_type": "credential",
     "sensitive": true,
     "risk": "high"
+  },
+  {
+    "name": "bash command execution from Claude Code 2.1.285",
+    "source": "anonymized PTY observation from Claude Code 2.1.285",
+    "fixture_id": "claude-2.1.285-bash-command",
+    "chunks": [
+      "Bash\u001b[1Ccommand\nTip:\u001b[1Cauto\u001b[1Cmode\u001b[1Chandles\u001b[1Cthese\u001b[1Cprompts\u001b[1Cfor\u001b[1Cyou\u001b[1C\u2014\u001b[1Cchoose\u001b[1C\"switch\u001b[1Cto\u001b[1Cauto\u001b[1Cmode\"\u001b[1Cbelow\n\n\u001b[38;5;246mrm\u001b[1C-f\u001b[1Csome_file.txt\u001b[39m\nRun\u001b[1Cshell\u001b[1Ccommand\n\n",
+      "Do\u001b[1Cyou\u001b[1Cwant\u001b[1Cto\u001b[1Cproceed?\n\u276f\u001b[1C1.\u001b[1CYes\n2.\u001b[1CYes,\u001b[1Cand\u001b[1Calways\u001b[1Callow\u001b[1Caccess\u001b[1Cto\u001b[1C<WORKSPACE>\u001b[1Cfrom\u001b[1Cthis\u001b[1Cproject\n3.\u001b[1CYes,\u001b[1Cand\u001b[1Cswitch\u001b[1Cto\u001b[1Cauto\u001b[1Cmode\u001b[1C\u00b7\u001b[1Cauto\u001b[1Cmode\u001b[1Chandles\u001b[1Cthese\u001b[1Cprompts\u001b[1Cfor\u001b[1Cyou\n4.\u001b[1CNo\n",
+      "\u001b[38;5;246mEsc\u001b[1Cto\u001b[1Ccancel\u001b[1C\u00b7\u001b[1CTab\u001b[1Cto\u001b[1Camend\u001b[39m"
+    ],
+    "event_type": "permission",
+    "sensitive": false,
+    "risk": "high"
+  },
+  {
+    "name": "write file from Claude Code 2.1.285",
+    "source": "anonymized PTY observation from Claude Code 2.1.285",
+    "fixture_id": "claude-2.1.285-write-file",
+    "chunks": [
+      "Create\u001b[1Cfile\ntest_claude_probe.txt\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n1\u001b[1Cprobe\u001b[1Ccontent\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n",
+      "Do\u001b[1Cyou\u001b[1Cwant\u001b[1Cto\u001b[1Ccreate\u001b[1Ctest_claude_probe.txt?\n\u276f\u001b[1C1.\u001b[1CYes\n2.\u001b[1CYes,\u001b[1Cand\u001b[1Cswitch\u001b[1Cto\u001b[1Caccept\u001b[1Cedits\u001b[1C(auto-approve\u001b[1Cfile\u001b[1Cedits\u001b[1Cand\u001b[1Ccommon\u001b[1Cfile\u001b[1Ccommands)\u001b[1Cfor\u001b[1Cthis\u001b[1Csession\u001b[1C(shift+tab)\n3.\u001b[1CNo\n",
+      "\u001b[38;5;246mEsc\u001b[1Cto\u001b[1Ccancel\u001b[1C\u00b7\u001b[1CTab\u001b[1Cto\u001b[1Camend\u001b[39m"
+    ],
+    "event_type": "confirmation",
+    "sensitive": false,
+    "risk": "low"
+  },
+  {
+    "name": "edit file from Claude Code 2.1.285",
+    "source": "anonymized PTY observation from Claude Code 2.1.285",
+    "fixture_id": "claude-2.1.285-edit-file",
+    "chunks": [
+      "Edit\u001b[1Cfile\ntest_claude_probe.txt\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n-1\u001b[1Cold\u001b[1Ccontent\n+1\u001b[1Cnew\u001b[1Ccontent\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n",
+      "Do\u001b[1Cyou\u001b[1Cwant\u001b[1Cto\u001b[1Cmake\u001b[1Cthis\u001b[1Cedit\u001b[1Cto\u001b[1Ctest_claude_probe.txt?\n\u276f\u001b[1C1.\u001b[1CYes\n2.\u001b[1CYes,\u001b[1Cand\u001b[1Cswitch\u001b[1Cto\u001b[1Caccept\u001b[1Cedits\u001b[1C(auto-approve\u001b[1Cfile\u001b[1Cedits\u001b[1Cand\u001b[1Ccommon\u001b[1Cfile\u001b[1Ccommands)\u001b[1Cfor\u001b[1Cthis\u001b[1Csession\u001b[1C(shift+tab)\n3.\u001b[1CNo\n",
+      "\u001b[38;5;246mEsc\u001b[1Cto\u001b[1Ccancel\u001b[1C\u00b7\u001b[1CTab\u001b[1Cto\u001b[1Camend\u001b[39m"
+    ],
+    "event_type": "confirmation",
+    "sensitive": false,
+    "risk": "low"
   }
 ]

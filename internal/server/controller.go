@@ -259,17 +259,20 @@ func (c *Controller) startLocked(ctx context.Context, runID string) error {
 		// Status, Running and the other supervision fields are the core's,
 		// which starts every agent running.
 		agents = append(agents, AgentState{
-			SessionID:      s.ID,
-			AgentID:        s.ID,
-			Name:           s.Name,
-			DisplayCommand: s.Command,
-			Backend:        s.Backend,
-			Adapter:        s.Adapter,
-			Status:         "running",
-			Output:         out,
-			Revision:       1,
-			Running:        true,
-			Simulated:      s.Simulated,
+			SessionID:         s.ID,
+			AgentID:           s.ID,
+			Name:              s.Name,
+			DisplayCommand:    s.Command,
+			Backend:           s.Backend,
+			Adapter:           s.Adapter,
+			Status:            "running",
+			Output:            out,
+			Revision:          1,
+			Running:           true,
+			Simulated:         s.Simulated,
+			InstalledVersion:  s.InstalledVersion,
+			UnverifiedVersion: s.UnverifiedVersion,
+			UnverifiedReason:  s.UnverifiedReason,
 		})
 	}
 

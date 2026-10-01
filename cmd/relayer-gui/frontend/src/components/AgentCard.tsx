@@ -136,6 +136,14 @@ export function AgentCard({
                   Simulated
                 </span>
               )}
+              {agent.unverifiedVersion && (
+                <span
+                  className="unverified-version-tag"
+                  title={agent.unverifiedReason || "Version non vérifiée"}
+                >
+                  version non vérifiée
+                </span>
+              )}
             </h2>
             <p title={agent.displayCommand}>{agent.displayCommand || agent.agentID}</p>
           </div>
@@ -146,6 +154,11 @@ export function AgentCard({
       <div className="agent-card__meta" aria-label="Session information">
         <span>{agent.backend.toUpperCase()}</span>
         <span>{agent.adapter}</span>
+        {agent.installedVersion && (
+          <span title={`Version installée : ${agent.installedVersion}`}>
+            v{agent.installedVersion}
+          </span>
+        )}
         <span className="agent-card__session" title={agent.sessionID}>{agent.sessionID}</span>
         {typeof agent.exitCode === "number" && <span>exit {agent.exitCode}</span>}
       </div>

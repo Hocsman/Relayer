@@ -234,7 +234,6 @@ describe("AgentCard simulated agents", () => {
   });
 });
 
-
 describe("AgentCard for a viewer from whom terminals are hidden", () => {
   it("shows why there is no terminal instead of an empty one", () => {
     const markup = renderToStaticMarkup(
@@ -255,3 +254,44 @@ describe("AgentCard for a viewer from whom terminals are hidden", () => {
     expect(markup).not.toContain("Output from Agent A");
   });
 });
+
+describe("AgentCard version verification", () => {
+  const render = (value: AgentState) =>
+    renderToStaticMarkup(
+      <AgentCard
+        runID="run-1"
+        agent={value}
+        onResize={async () => {}}
+        onStop={async () => {}}
+        onStart={async () => {}}
+        onRestart={async () => {}}
+        onOpenEvent={() => {}}
+        onSubmitLine={async () => {}}
+      />,
+    );
+
+  it("renders 'version non vérifiée' tag when unverifiedVersion is true", () => {
+    const markup = render({
+      ...agent(),
+      unverifiedVersion: true,
+      unverifiedReason: "Version 3.0.0 non vérifiée pour l'adaptateur claude",
+      installedVersion: "3.0.0",
+    });
+    expect(markup).toContain("unverified-version-tag");
+    expect(markup).toContain("version non vérifiée");
+    expect(markup).toContain("Version 3.0.0 non vérifiée");
+    expect(markup).toContain("v3.0.0");
+  });
+
+  it("does not render unverified tag when agent version is verified", () => {
+    const markup = render({
+      ...agent(),
+      unverifiedVersion: false,
+      installedVersion: "2.1.285",
+    });
+    expect(markup).not.toContain("unverified-version-tag");
+    expect(markup).not.toContain("version non vérifiée");
+    expect(markup).toContain("v2.1.285");
+  });
+});
+
