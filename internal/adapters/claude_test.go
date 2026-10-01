@@ -596,3 +596,86 @@ func consumeClaudeFixture(t *testing.T, processor *Processor, fixture claudeStre
 		}
 	}
 }
+
+func TestClaudeAdapterReal21286Prompts(t *testing.T) {
+	adapter := newClaudeAdapterForTest(t, nil)
+
+	t.Run("workspace trust with unnumbered Ink menu", func(t *testing.T) {
+		input := "Accessing workspace:\nC:\\Temp\\project\n" +
+			"Quick safety check: Is this a project you created or one you trust? (Like your own code).\n" +
+			"Claude Code'll be able to read, edit, and execute files here.\n" +
+			"❯ No, exit\n  Yes, I trust this folder\n" +
+			"Enter to confirm · Esc to cancel"
+		state := NewDetectionState("s1", "a1", ClaudeID)
+		events, err := adapter.Detect(state, []byte(input))
+		if err != nil {
+			t.Fatalf("Detect: %v", err)
+		}
+		if len(events) != 1 || events[0].Type != EventPermission {
+			t.Fatalf("expected 1 permission event, got: %#v", events)
+		}
+	})
+
+	t.Run("environment API key unnumbered Ink menu", func(t *testing.T) {
+		input := "Detected a custom API key in your environment\n" +
+			"ANTHROPIC_API_KEY: sk-ant-...\n" +
+			"Do you want to use this API key?\n" +
+			"  Yes\n❯ No (recommended)\n" +
+			"Enter to confirm · Esc to cancel"
+		state := NewDetectionState("s2", "a2", ClaudeID)
+		events, err := adapter.Detect(state, []byte(input))
+		if err != nil {
+			t.Fatalf("Detect: %v", err)
+		}
+		if len(events) != 1 || events[0].Type != EventCredential {
+			t.Fatalf("expected 1 credential event, got: %#v", events)
+		}
+	})
+
+	t.Run("bash command 2.1.286 layout with 3 options", func(t *testing.T) {
+		input := "Bash command\n" +
+			"Run shell command ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+			"echo PROBE_BASH_OK > bash_probe.txt\n" +
+			"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+			"│ Claude requested permissions to write to bash_probe.txt\n\n" +
+			"Do you want to proceed?\n" +
+			"❯ 1. Yes\n" +
+			"  2. Yes, and always allow access to folder\n" +
+			"  3. No\n\n" +
+			"Esc to cancel · Tab to amend"
+		state := NewDetectionState("s3", "a3", ClaudeID)
+		events, err := adapter.Detect(state, []byte(input))
+		if err != nil {
+			t.Fatalf("Detect: %v", err)
+		}
+		if len(events) != 1 || events[0].Type != EventPermission {
+			t.Fatalf("expected 1 permission event, got: %#v", events)
+		}
+		if events[0].Command != "echo PROBE_BASH_OK > bash_probe.txt" {
+			t.Fatalf("expected extracted command 'echo PROBE_BASH_OK > bash_probe.txt', got %q", events[0].Command)
+		}
+	})
+
+	t.Run("write file with 2 options", func(t *testing.T) {
+		input := "Create file\nnew_file.txt\n" +
+			"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+			"  1 hello world\n" +
+			"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+			"Do you want to create new_file.txt?\n" +
+			"❯ 1. Yes\n" +
+			"  2. No\n\n" +
+			"Esc to cancel · Tab to amend"
+		state := NewDetectionState("s4", "a4", ClaudeID)
+		events, err := adapter.Detect(state, []byte(input))
+		if err != nil {
+			t.Fatalf("Detect: %v", err)
+		}
+		if len(events) != 1 || events[0].Type != EventConfirmation {
+			t.Fatalf("expected 1 confirmation event, got: %#v", events)
+		}
+		if events[0].Metadata["target_file"] != "new_file.txt" {
+			t.Fatalf("expected target_file 'new_file.txt', got %q", events[0].Metadata["target_file"])
+		}
+	})
+}
+

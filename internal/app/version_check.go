@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -47,10 +48,21 @@ func DefaultVersionInspector(ctx context.Context, spec agent.Spec) (string, erro
 		return "", errors.New("no executable found for agent")
 	}
 
+	var cmd *exec.Cmd
 	timeoutCtx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
 	defer cancel()
 
-	cmd := exec.CommandContext(timeoutCtx, executable, "--version")
+	// Check for shell wrapper like `cmd.exe /c <tool>` or `sh -c <tool>`
+	baseName := strings.ToLower(filepath.Base(executable))
+	if len(spec.Command) >= 3 && (baseName == "cmd.exe" || baseName == "cmd") && strings.EqualFold(spec.Command[1], "/c") {
+		subCmd := strings.Join(spec.Command[2:], " ") + " --version"
+		cmd = exec.CommandContext(timeoutCtx, spec.Command[0], spec.Command[1], subCmd)
+	} else if len(spec.Command) >= 3 && (baseName == "sh" || baseName == "bash") && spec.Command[1] == "-c" {
+		subCmd := strings.Join(spec.Command[2:], " ") + " --version"
+		cmd = exec.CommandContext(timeoutCtx, spec.Command[0], spec.Command[1], subCmd)
+	} else {
+		cmd = exec.CommandContext(timeoutCtx, executable, "--version")
+	}
 	if spec.Cwd != "" {
 		cmd.Dir = spec.Cwd
 	}

@@ -10,7 +10,7 @@ import (
 // Running another version might lead to unhandled prompts or changed interaction patterns.
 var VerifiedVersions = map[string][]string{
 	AiderID:           {"0.86.2"},
-	ClaudeID:          {"2.1.285", "2.1.59"},
+	ClaudeID:          {"2.1.286", "2.1.285", "2.1.59"},
 	GooseID:           {"1.52.0"},
 	OpenInterpreterID: {"0.4.3"},
 	CodexID:           {"0.148.0", "0.148.0-alpha.21"},

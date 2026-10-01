@@ -38,6 +38,29 @@ func extractClaudeBashCommand(match string) string {
 	if runIdx < 0 {
 		runIdx = strings.Index(lower, "run\x1b[1cshell\x1b[1ccommand")
 	}
+
+	// In real Claude Code (2.1.286+), the command is displayed AFTER "Run shell command",
+	// bounded by separator lines or the prompt question.
+	if runIdx >= 0 {
+		after := match[runIdx+len("run shell command"):]
+		if proceedIdx := strings.Index(strings.ToLower(after), "do you want to proceed?"); proceedIdx >= 0 {
+			after = after[:proceedIdx]
+		}
+		var candidateLines []string
+		for _, rawLine := range strings.Split(after, "\n") {
+			trimmed := strings.TrimSpace(rawLine)
+			if trimmed == "" || strings.HasPrefix(trimmed, "╌") || strings.HasPrefix(trimmed, "-") ||
+				strings.HasPrefix(trimmed, "═") || strings.HasPrefix(trimmed, "│") {
+				continue
+			}
+			candidateLines = append(candidateLines, trimmed)
+		}
+		if len(candidateLines) > 0 {
+			return strings.Join(candidateLines, "\n")
+		}
+	}
+
+	// Fallback for earlier synthetic fixtures where the command was printed before "Run shell command":
 	section := match
 	if runIdx >= 0 {
 		section = match[:runIdx]
@@ -76,7 +99,8 @@ var claudeObservedRules = []claudeObservedRule{
 			// Claude Code renders spaces partly with cursor-forward ANSI
 			// sequences. Processor removes those sequences, so every boundary
 			// deliberately accepts either whitespace or no byte at all.
-			Expression: `(?is)Quick\s*safety\s*check:\s*Is\s*this\s*a\s*project\s*you\s*created\s*or\s*one\s*you\s*trust\?.*?1\.\s*Yes,\s*I\s*trust\s*this\s*folder\s*2\.\s*No,\s*exit\s*Enter\s*to\s*confirm\s*Esc\s*to\s*cancel`,
+			// Matches both numbered ("1. Yes... 2. No...") and unnumbered Ink menu ("❯ No, exit   Yes...").
+			Expression: `(?is)Quick\s*safety\s*check:\s*Is\s*this\s*a\s*project\s*you\s*created\s*or\s*one\s*you\s*trust\?.*?(?:Yes,\s*I\s*trust\s*this\s*folder.*?No,\s*exit|No,\s*exit.*?Yes,\s*I\s*trust\s*this\s*folder).*?Enter\s*to\s*confirm.*?Esc\s*to\s*cancel`,
 		},
 		eventType: EventPermission,
 		risk:      RiskHigh,
@@ -89,7 +113,8 @@ var claudeObservedRules = []claudeObservedRule{
 			Description: "Claude Code asks whether to use an environment key",
 			// The expression begins after the displayed environment value. As a
 			// result Event.Match cannot contain the key, including in memory.
-			Expression: `(?is)Do\s*you\s*want\s*to\s*use\s*this\s*API\s*key\?\s*1\.\s*Yes\s*2\.\s*No\s*\(\s*recommended\s*\)\s*Enter\s*to\s*confirm\s*Esc\s*to\s*cancel`,
+			// Matches both numbered ("1. Yes 2. No") and unnumbered Ink selection ("Yes ❯ No").
+			Expression: `(?is)Do\s*you\s*want\s*to\s*use\s*this\s*API\s*key\?.*?Yes.*?No\s*\(\s*recommended\s*\).*?Enter\s*to\s*confirm.*?Esc\s*to\s*cancel`,
 			Sensitive:  true,
 		},
 		eventType: EventCredential,
@@ -101,7 +126,7 @@ var claudeObservedRules = []claudeObservedRule{
 		pattern: Pattern{
 			Name:        claudeBashCommandPattern,
 			Description: "Claude Code asks to run a shell command",
-			Expression:  `(?is)Bash\s*command.*?Run\s*shell\s*command.*?Do\s*you\s*want\s*to\s*proceed\?.*?1\.\s*Yes.*?4\.\s*No.*?Esc\s*to\s*cancel.*?Tab\s*to\s*amend`,
+			Expression:  `(?is)Bash\s*command.*?Run\s*shell\s*command.*?Do\s*you\s*want\s*to\s*proceed\?.*?1\.\s*Yes.*?[0-9]\.\s*No.*?Esc\s*to\s*cancel.*?Tab\s*to\s*amend`,
 		},
 		eventType: EventPermission,
 		risk:      RiskHigh,
@@ -112,7 +137,7 @@ var claudeObservedRules = []claudeObservedRule{
 		pattern: Pattern{
 			Name:        claudeWriteFilePattern,
 			Description: "Claude Code asks to create a file",
-			Expression:  `(?is)Create\s*file.*?Do\s*you\s*want\s*to\s*create\s*([^\s?][^\r\n?]*?)\?.*?1\.\s*Yes.*?3\.\s*No.*?Esc\s*to\s*cancel.*?Tab\s*to\s*amend`,
+			Expression:  `(?is)Create\s*file.*?Do\s*you\s*want\s*to\s*create\s*([^\s?][^\r\n?]*?)\?.*?1\.\s*Yes.*?[0-9]\.\s*No.*?Esc\s*to\s*cancel.*?Tab\s*to\s*amend`,
 		},
 		eventType: EventConfirmation,
 		risk:      RiskLow,
@@ -123,7 +148,7 @@ var claudeObservedRules = []claudeObservedRule{
 		pattern: Pattern{
 			Name:        claudeEditFilePattern,
 			Description: "Claude Code asks to edit a file",
-			Expression:  `(?is)Edit\s*file.*?Do\s*you\s*want\s*to\s*make\s*this\s*edit\s*to\s*([^\s?][^\r\n?]*?)\?.*?1\.\s*Yes.*?3\.\s*No.*?Esc\s*to\s*cancel.*?Tab\s*to\s*amend`,
+			Expression:  `(?is)Edit\s*file.*?Do\s*you\s*want\s*to\s*make\s*this\s*edit\s*to\s*([^\s?][^\r\n?]*?)\?.*?1\.\s*Yes.*?[0-9]\.\s*No.*?Esc\s*to\s*cancel.*?Tab\s*to\s*amend`,
 		},
 		eventType: EventConfirmation,
 		risk:      RiskLow,
