@@ -677,5 +677,146 @@ func TestClaudeAdapterReal21286Prompts(t *testing.T) {
 			t.Fatalf("expected target_file 'new_file.txt', got %q", events[0].Metadata["target_file"])
 		}
 	})
+
+	t.Run("bash command real ConPTY artifacts with missing dot and trailing ink footer", func(t *testing.T) {
+		input := "Bash command\nTip: auto mode handles these prompts for you — choose \"switch to auto mode\" below\n" +
+			"Run shell command\n" +
+			"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+			"echo BASH_ONCE_OK>test_bash_once.txt\n" +
+			"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+			"Do you want to proeed?\n" +
+			"❯1Yes\n" +
+			"2. Yes,andalwaysallowaccesstoC:\\Temp fromthisproject\n" +
+			"3. Yes, and switch to automode · auto mode handles these prompts for you\n" +
+			"4. No\n" +
+			"Esc to cancel · Tab to amend ● ● ● ● ● ●  ❯ 1. Yes ❯ 1. Yes ❯ 1. Yes"
+		state := NewDetectionState("s5", "a5", ClaudeID)
+		events, err := adapter.Detect(state, []byte(input))
+		if err != nil {
+			t.Fatalf("Detect: %v", err)
+		}
+		if len(events) != 1 || events[0].Type != EventPermission {
+			t.Fatalf("expected 1 permission event, got: %#v", events)
+		}
+		if events[0].Command != "echo BASH_ONCE_OK>test_bash_once.txt" {
+			t.Fatalf("expected command 'echo BASH_ONCE_OK>test_bash_once.txt', got %q", events[0].Command)
+		}
+	})
 }
+
+func TestClaudeSuccessiveApiKeyThenBashProcessor(t *testing.T) {
+	adapter := newClaudeAdapterForTest(t, nil)
+	state := NewDetectionState("session-seq", "agent-claude", ClaudeID)
+	var events []Event
+	processor, err := NewProcessor(adapter, state, 16384, Hooks{
+		OnEvent: func(e Event) { events = append(events, e) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chunk1 := "Detected a custom API key in your environment\n" +
+		"ANTHROPIC_API_KEY: sk-ant-...\n" +
+		"Do you want to use this API key?\n" +
+		"  Yes\n❯ No (recommended)\n" +
+		"Enter to confirm · Esc to cancel"
+	if err := processor.Consume([]byte(chunk1)); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Type != EventCredential {
+		t.Fatalf("chunk 1 expected 1 credential event, got: %#v", events)
+	}
+
+	// Resolve the credential prompt
+	pending := processor.Pending()
+	if pending == nil {
+		t.Fatal("expected pending credential event")
+	}
+	if err := processor.Resolve(pending.ID, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+
+	chunk2 := "\n\nBash command\nTip: auto mode handles these prompts for you — choose \"switch to auto mode\" below\n" +
+		"Run shell command\n" +
+		"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+		"echo BASH_ONCE_OK>test_bash_once.txt\n" +
+		"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+		"Do you want to proeed?\n" +
+		"❯1Yes\n" +
+		"2. Yes,andalwaysallowaccesstoC:\\Temp fromthisproject\n" +
+		"3. Yes, and switch to automode · auto mode handles these prompts for you\n" +
+		"4. No\n" +
+		"Esc to cancel · Tab to amend ● ● ● ● ● ●  ❯ 1. Yes ❯ 1. Yes ❯ 1. Yes"
+	if err := processor.Consume([]byte(chunk2)); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("chunk 2 expected 2 total events, got: %#v", events)
+	}
+	if events[1].Type != EventPermission {
+		t.Fatalf("expected second event to be EventPermission, got: %#v", events[1])
+	}
+}
+
+func TestClaudeSuccessiveBashPrompts(t *testing.T) {
+	adapter := newClaudeAdapterForTest(t, nil)
+	state := NewDetectionState("session-seq2", "agent-claude", ClaudeID)
+	var events []Event
+	processor, err := NewProcessor(adapter, state, 16384, Hooks{
+		OnEvent: func(e Event) { events = append(events, e) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chunk1 := "\n\nBash command\nTip: auto mode handles these prompts for you — choose \"switch to auto mode\" below\n" +
+		"Run shell command\n" +
+		"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+		"echo BASH_ONCE_OK>test_bash_once.txt\n" +
+		"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+		"Do you want to proeed?\n" +
+		"❯1Yes\n" +
+		"2. Yes,andalwaysallowaccesstoC:\\Temp fromthisproject\n" +
+		"3. Yes, and switch to automode · auto mode handles these prompts for you\n" +
+		"4. No\n" +
+		"Esc to cancel · Tab to amend ● ● ● ● ● ●  ❯ 1. Yes"
+	if err := processor.Consume([]byte(chunk1)); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got: %#v", events)
+	}
+
+	// Resolve the first bash command
+	pending := processor.Pending()
+	if pending == nil {
+		t.Fatal("expected pending event")
+	}
+	if err := processor.Resolve(pending.ID, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+
+	// Chunk 2: output of first bash, then second bash command
+	chunk2 := "\n● Running echo BASH_ONCE_OK > test_bash_once.txt\n" +
+		"⎿  $ echo BASH_ONCE_OK > test_bash_once.txt\n\n" +
+		"Bash command\nTip: auto mode handles these prompts for you — choose \"switch to auto mode\" below\n" +
+		"Run shell command\n" +
+		"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+		"echo BASH_ALWAYS_OK>test_bash_always.txt\n" +
+		"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+		"Do you want to proeed?\n" +
+		"❯1Yes\n" +
+		"2. Yes,andalwaysallowaccesstoC:\\Temp fromthisproject\n" +
+		"3. Yes, and switch to automode · auto mode handles these prompts for you\n" +
+		"4. No\n" +
+		"Esc to cancel · Tab to amend ● ● ● ● ● ●  ❯ 1. Yes"
+	if err := processor.Consume([]byte(chunk2)); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 total events, got: %#v", events)
+	}
+}
+
+
 

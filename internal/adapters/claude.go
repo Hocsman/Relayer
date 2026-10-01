@@ -43,7 +43,8 @@ func extractClaudeBashCommand(match string) string {
 	// bounded by separator lines or the prompt question.
 	if runIdx >= 0 {
 		after := match[runIdx+len("run shell command"):]
-		if proceedIdx := strings.Index(strings.ToLower(after), "do you want to proceed?"); proceedIdx >= 0 {
+		proceedIdx := strings.Index(strings.ToLower(after), "do you want to pro")
+		if proceedIdx >= 0 {
 			after = after[:proceedIdx]
 		}
 		var candidateLines []string
@@ -126,7 +127,7 @@ var claudeObservedRules = []claudeObservedRule{
 		pattern: Pattern{
 			Name:        claudeBashCommandPattern,
 			Description: "Claude Code asks to run a shell command",
-			Expression:  `(?is)Bash\s*command.*?Run\s*shell\s*command.*?Do\s*you\s*want\s*to\s*proceed\?.*?1\.\s*Yes.*?[0-9]\.\s*No.*?Esc\s*to\s*cancel.*?Tab\s*to\s*amend`,
+			Expression:  `(?is)(?:Bash\s*command.*?)?Run\s*shell\s*command.*?Do\s*you\s*want\s*to\s*proc?eed\?.*?1\.?\s*Yes.*?[0-9]\.?\s*No.*?Esc\s*to\s*cancel.*?Tab\s*to\s*amend(?:\s*·?[^a-zA-Z0-9\r\n]*|.*?[0-9]\.?\s*Yes)*`,
 		},
 		eventType: EventPermission,
 		risk:      RiskHigh,
@@ -137,7 +138,7 @@ var claudeObservedRules = []claudeObservedRule{
 		pattern: Pattern{
 			Name:        claudeWriteFilePattern,
 			Description: "Claude Code asks to create a file",
-			Expression:  `(?is)Create\s*file.*?Do\s*you\s*want\s*to\s*create\s*([^\s?][^\r\n?]*?)\?.*?1\.\s*Yes.*?[0-9]\.\s*No.*?Esc\s*to\s*cancel.*?Tab\s*to\s*amend`,
+			Expression:  `(?is)Create\s*file.*?Do\s*you\s*want\s*to\s*create\s*([^\s?][^\r\n?]*?)\?.*?1\.?\s*Yes.*?[0-9]\.?\s*No.*?Esc\s*to\s*cancel.*?Tab\s*to\s*amend(?:\s*·?[^a-zA-Z0-9\r\n]*|.*?[0-9]\.?\s*Yes)*`,
 		},
 		eventType: EventConfirmation,
 		risk:      RiskLow,
@@ -148,7 +149,7 @@ var claudeObservedRules = []claudeObservedRule{
 		pattern: Pattern{
 			Name:        claudeEditFilePattern,
 			Description: "Claude Code asks to edit a file",
-			Expression:  `(?is)Edit\s*file.*?Do\s*you\s*want\s*to\s*make\s*this\s*edit\s*to\s*([^\s?][^\r\n?]*?)\?.*?1\.\s*Yes.*?[0-9]\.\s*No.*?Esc\s*to\s*cancel.*?Tab\s*to\s*amend`,
+			Expression:  `(?is)Edit\s*file.*?Do\s*you\s*want\s*to\s*make\s*this\s*edit\s*to\s*([^\s?][^\r\n?]*?)\?.*?1\.?\s*Yes.*?[0-9]\.?\s*No.*?Esc\s*to\s*cancel.*?Tab\s*to\s*amend(?:\s*·?[^a-zA-Z0-9\r\n]*|.*?[0-9]\.?\s*Yes)*`,
 		},
 		eventType: EventConfirmation,
 		risk:      RiskLow,
@@ -216,7 +217,8 @@ func (a *ClaudeAdapter) snapshotFingerprintSource(normalized, active string, inC
 		// reaches the active end of the pane can describe the current prompt.
 		// Otherwise returning the historical block would keep a stale pending
 		// occurrence alive without giving Detect a chance to clear it.
-		if strings.TrimSpace(normalized[match[1]:]) != "" {
+		tail := normalized[match[1]:]
+		if strings.TrimSpace(tail) != "" && !tailIsFurniture(nil, tail) {
 			continue
 		}
 		if match[1] > latestEnd {

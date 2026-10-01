@@ -114,8 +114,8 @@ export function TerminalSnapshotView({
           const columns = termRef.current.cols;
           const rows = termRef.current.rows;
           if (
-            columns > 0 &&
-            rows > 0 &&
+            columns >= 20 &&
+            rows >= 8 &&
             (columns !== lastSizeRef.current.columns || rows !== lastSizeRef.current.rows)
           ) {
             lastSizeRef.current = { columns, rows };

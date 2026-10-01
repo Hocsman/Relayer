@@ -1037,6 +1037,13 @@ func (c *Controller) ResizeSession(runID, sessionID string, columns, rows int, c
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	if columns < 40 {
+		columns = 40
+	}
+	if rows < 15 {
+		rows = 15
+	}
+
 	return rt.Resize(ctx, sessionID, terminal.Size{Columns: columns, Rows: rows})
 }
 

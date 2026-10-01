@@ -560,7 +560,7 @@ select:focus-visible {
 .terminal-shell {
   position: relative;
   min-width: 0;
-  min-height: 0;
+  min-height: 250px;
   margin: 0 9px;
   overflow: hidden;
   border: 1px solid rgba(104, 126, 165, 0.12);
