@@ -817,6 +817,3 @@ func TestClaudeSuccessiveBashPrompts(t *testing.T) {
 		t.Fatalf("expected 2 total events, got: %#v", events)
 	}
 }
-
-
-
