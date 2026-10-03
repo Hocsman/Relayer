@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hocsman/Relayer/internal/app"
 	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/session"
 	"github.com/Hocsman/Relayer/internal/supervise"
@@ -218,10 +219,13 @@ func webAgentGate(t *testing.T) (map[string]string, func()) {
 }
 
 // webAgent is one agent of a test run: its session ID, its name, what it does
-// and the adapter that reads it.
+// and the adapter that reads it. executable replaces the test binary as the
+// agent's argv[0] when a test needs one — a copy named after a vendor tool, so
+// the version probe finds the executable it accepts.
 type webAgent struct {
 	id, name, mode, adapter string
 	env                     map[string]string
+	executable              string
 }
 
 // webRun configures one gateway run of helper agents. policy is the default
@@ -239,6 +243,9 @@ type webRun struct {
 	agents    []webAgent
 	// engineWrap is the Controller's seam, set before the run starts.
 	engineWrap func(supervise.Engine) supervise.Engine
+	// versionInspector is the Controller's seam for the probe that reads each
+	// vendor agent's version, set before the run starts.
+	versionInspector app.VersionInspector
 }
 
 // webFrame is one frame the gateway broadcast to its clients.
@@ -281,6 +288,7 @@ func startWebRun(t *testing.T, run webRun) *webGateway {
 		t.Fatalf("NewController: %v", err)
 	}
 	ctrl.engineWrap = run.engineWrap
+	ctrl.versionInspector = run.versionInspector
 	gateway := &webGateway{t: t, ctrl: ctrl, auditPath: auditPath, recordingDir: recordingDir, screens: map[string]string{}}
 	ctrl.Subscribe(func(event string, payload any) {
 		gateway.mu.Lock()
@@ -347,9 +355,13 @@ func writeWebRunConfig(t *testing.T, run webRun) (configPath, auditPath, recordi
 		if name == "" {
 			name = agent.id
 		}
+		agentExecutable := executable
+		if agent.executable != "" {
+			agentExecutable = agent.executable
+		}
 		b.WriteString("  - id: " + agent.id + "\n")
 		b.WriteString("    name: " + webYAMLQuote(name) + "\n")
-		b.WriteString("    command: [" + webYAMLQuote(executable) + ", " + webYAMLQuote("-test.run=^TestHelperProcessWebAgent$") + "]\n")
+		b.WriteString("    command: [" + webYAMLQuote(agentExecutable) + ", " + webYAMLQuote("-test.run=^TestHelperProcessWebAgent$") + "]\n")
 		b.WriteString("    cwd: " + webYAMLQuote(dir) + "\n")
 		b.WriteString("    env:\n      " + webAgentModeEnv + ": " + agent.mode + "\n")
 		if _, set := agent.env["TERM"]; !set {

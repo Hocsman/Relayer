@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
@@ -33,6 +34,10 @@ type VersionInspector func(ctx context.Context, spec agent.Spec) (string, error)
 const (
 	versionProbeTimeout   = 2500 * time.Millisecond
 	versionProbeWaitDelay = 500 * time.Millisecond
+	// versionProbeGlobalBudget bounds all of a run's probes together. They
+	// run in parallel, so the budget is what one slow tool can delay a run's
+	// start by, not the sum of the tools.
+	versionProbeGlobalBudget = 4 * time.Second
 	// versionProbeOutputBound caps what one probe reads. --version prints a
 	// line; a binary that floods stdout must not fill memory before the
 	// deadline arrives.
@@ -195,4 +200,61 @@ func CheckAgentVersion(ctx context.Context, spec agent.Spec, resolvedAdapter str
 		Unverified:       unverified,
 		Reason:           reason,
 	}
+}
+
+// versionProbeRequest is one agent to inspect: its spec, the adapter the run
+// resolved for it, whether the resolver substituted a mock, and the inspector
+// to use.
+type versionProbeRequest struct {
+	spec            agent.Spec
+	resolvedAdapter string
+	simulated       bool
+	inspector       VersionInspector
+}
+
+// probeAgentVersions inspects every requested agent in parallel, within one
+// global budget. The budget is enforced on the join rather than left to the
+// inspectors: one that ignores its context keeps running, and the run's start
+// returns without it. A result that arrives too late is dropped, which reads
+// as no information — the honest state for a version nobody observed.
+func probeAgentVersions(ctx context.Context, requests []versionProbeRequest) []AgentVersionInfo {
+	results := make([]AgentVersionInfo, len(requests))
+	if len(requests) == 0 {
+		return results
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, versionProbeGlobalBudget)
+	defer cancel()
+
+	type probeResult struct {
+		index int
+		info  AgentVersionInfo
+	}
+	// Buffered to the number of requests, so a late result never blocks its
+	// goroutine and never touches results after this function returned.
+	found := make(chan probeResult, len(requests))
+	var wg sync.WaitGroup
+	for index, request := range requests {
+		wg.Add(1)
+		go func(index int, request versionProbeRequest) {
+			defer wg.Done()
+			info := CheckAgentVersion(probeCtx, request.spec, request.resolvedAdapter, request.simulated, request.inspector)
+			select {
+			case found <- probeResult{index: index, info: info}:
+			case <-probeCtx.Done():
+			}
+		}(index, request)
+	}
+
+	for remaining := len(requests); remaining > 0; {
+		select {
+		case result := <-found:
+			results[result.index] = result.info
+			remaining--
+		case <-probeCtx.Done():
+			return results
+		}
+	}
+	wg.Wait()
+	return results
 }

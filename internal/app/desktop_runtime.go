@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
+	"github.com/Hocsman/Relayer/internal/agent"
 	"github.com/Hocsman/Relayer/internal/audit"
 	"github.com/Hocsman/Relayer/internal/config"
 	"github.com/Hocsman/Relayer/internal/notify"
@@ -298,6 +299,17 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 	// The resolver marks the agents it substituted with the built-in mock. The
 	// session carries that through so the interface can say so per agent
 	// instead of leaving it in a startup log nobody reads.
+	//
+	// Every session starts first, and the version probes run afterwards, in
+	// parallel: a probe executes an agent's own binary, and doing that one
+	// agent at a time made a run's start — and, on the gateway, its state
+	// lock — wait for the sum of the tools instead of the slowest one.
+	type startedAgent struct {
+		spec      agent.Spec
+		info      terminal.Info
+		simulated bool
+	}
+	started := make([]startedAgent, 0, len(plan.resolution.Specs))
 	for index, spec := range plan.resolution.Specs {
 		info, startErr := router.Start(ctx, spec, plan.initialSize)
 		if startErr != nil {
@@ -313,22 +325,7 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 			return nil, fmt.Errorf("starting agent %q: %w", spec.ID, startErr)
 		}
 		runtime.infos = append(runtime.infos, info)
-		// info.Adapter is the adapter the run resolved, which "command:
-		// [claude]" with no configured adapter still names; spec.Adapter is
-		// what the file said.
-		versionInfo := CheckAgentVersion(ctx, spec, info.Adapter, plan.resolution.Simulated[index], plan.versionInspector)
-		runtime.sessions = append(runtime.sessions, DesktopSession{
-			ID:                info.ID,
-			Name:              info.Name,
-			Command:           desktopCommandLabel(spec.Command, spec.Shell),
-			Backend:           info.Backend,
-			Adapter:           info.Adapter,
-			Shell:             info.Shell,
-			Simulated:         plan.resolution.Simulated[index],
-			InstalledVersion:  versionInfo.InstalledVersion,
-			UnverifiedVersion: versionInfo.Unverified,
-			UnverifiedReason:  versionInfo.Reason,
-		})
+		started = append(started, startedAgent{spec: spec, info: info, simulated: plan.resolution.Simulated[index]})
 		if err := auditor.Record(audit.Entry{
 			Kind:       audit.KindSessionStarted,
 			SessionID:  info.ID,
@@ -340,6 +337,36 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 		}); err != nil {
 			return nil, fmt.Errorf("auditing the startup of agent %q: %w", spec.ID, err)
 		}
+	}
+
+	// info.Adapter is the adapter the run resolved, which "command: [claude]"
+	// with no configured adapter still names; spec.Adapter is what the file
+	// said.
+	requests := make([]versionProbeRequest, 0, len(started))
+	for _, item := range started {
+		requests = append(requests, versionProbeRequest{
+			spec:            item.spec,
+			resolvedAdapter: item.info.Adapter,
+			simulated:       item.simulated,
+			inspector:       plan.versionInspector,
+		})
+	}
+	versions := probeAgentVersions(ctx, requests)
+
+	for index, item := range started {
+		versionInfo := versions[index]
+		runtime.sessions = append(runtime.sessions, DesktopSession{
+			ID:                item.info.ID,
+			Name:              item.info.Name,
+			Command:           desktopCommandLabel(item.spec.Command, item.spec.Shell),
+			Backend:           item.info.Backend,
+			Adapter:           item.info.Adapter,
+			Shell:             item.info.Shell,
+			Simulated:         item.simulated,
+			InstalledVersion:  versionInfo.InstalledVersion,
+			UnverifiedVersion: versionInfo.Unverified,
+			UnverifiedReason:  versionInfo.Reason,
+		})
 	}
 
 	runtime.startupLogs = buildStartupLogs(plan.configuration, plan.resolution, runtime.infos, plan.configPath)
