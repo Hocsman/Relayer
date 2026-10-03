@@ -126,6 +126,13 @@ func extractClaudeTargetFile(match string) string {
 	return ""
 }
 
+// claudeObservedRules lists the prompts Relayer recognizes. The create-file and
+// edit-file rules are RiskUnknown, not RiskLow, on purpose: a policy only ever
+// answers a RiskLow prompt on its own, and what Claude Code is asked to write
+// decides what runs next (.claude/settings.json, .vscode/tasks.json,
+// .github/workflows, .husky hooks, package.json scripts, shell start-up files),
+// which the guardrails only partly cover and Relayer has no path allowlist for.
+// Until one exists these prompts are for a person to answer.
 var claudeObservedRules = []claudeObservedRule{
 	{
 		pattern: Pattern{
@@ -175,7 +182,7 @@ var claudeObservedRules = []claudeObservedRule{
 			Expression:  `(?is)Create\s*file.*?Do\s*you\s*want\s*to\s*create\s*([^\s?][^\r\n?]*?)\?.*?1\.?\s*Yes.*?[0-9]\.?\s*No.*?Esc\s*to\s*cancel.*?Tab\s*to\s*amend(?:\s*·?[^a-zA-Z0-9\r\n]*|.*?[0-9]\.?\s*Yes)*`,
 		},
 		eventType: EventConfirmation,
-		risk:      RiskLow,
+		risk:      RiskUnknown,
 		fixture:   "claude-2.1.285-write-file",
 		version:   "2.1.285",
 	},
@@ -186,7 +193,7 @@ var claudeObservedRules = []claudeObservedRule{
 			Expression:  `(?is)Edit\s*file.*?Do\s*you\s*want\s*to\s*make\s*this\s*edit\s*to\s*([^\s?][^\r\n?]*?)\?.*?1\.?\s*Yes.*?[0-9]\.?\s*No.*?Esc\s*to\s*cancel.*?Tab\s*to\s*amend(?:\s*·?[^a-zA-Z0-9\r\n]*|.*?[0-9]\.?\s*Yes)*`,
 		},
 		eventType: EventConfirmation,
-		risk:      RiskLow,
+		risk:      RiskUnknown,
 		fixture:   "claude-2.1.285-edit-file",
 		version:   "2.1.285",
 	},
