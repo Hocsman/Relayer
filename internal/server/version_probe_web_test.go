@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -136,5 +137,63 @@ func TestAStateReadAnswersWhileARunIsStarting(t *testing.T) {
 	state := ctrl.GetState()
 	if len(state.Agents) != 1 || state.Agents[0].InstalledVersion != "3.0.0" || !state.Agents[0].UnverifiedVersion {
 		t.Fatalf("the started run reports %+v, want the probed 3.0.0 as unverified", state.Agents)
+	}
+}
+
+// What each role receives for a probed agent, through the gateway a browser
+// talks to. The operator gets the version and the reason; the viewer gets the
+// flag alone. The version names the host's tooling, and the reason quotes the
+// version, so one without the other would leak it — and the startup notices
+// carry the same reason. The flag stays: a viewer watching a prompt should see
+// that the agent's version is not one this build was verified against.
+func TestAViewerGetsTheVersionWarningWithoutTheHostsVersion(t *testing.T) {
+	gateway := startWebRun(t, webRun{
+		agents: []webAgent{{
+			id:         "vendor",
+			mode:       webAgentListen,
+			adapter:    "claude",
+			executable: copyAsVendorExecutable(t, "claude"),
+		}},
+		versionInspector: func(context.Context, agent.Spec) (string, error) {
+			return "3.0.0", nil
+		},
+	})
+
+	if agents := gateway.ctrl.GetState().Agents; len(agents) != 1 ||
+		agents[0].InstalledVersion != "3.0.0" || !agents[0].UnverifiedVersion || agents[0].UnverifiedReason == "" {
+		t.Fatalf("the run does not carry the probe's answer: %+v", agents)
+	}
+
+	baseURL := gateway.serve()
+	operator := dialSharedGateway(t, baseURL, "opAlice")
+	viewer := dialSharedGateway(t, baseURL, "viewDave")
+
+	var operatorState, viewerState AppState
+	operator.mustCall("getState", map[string]any{}, &operatorState)
+	viewer.mustCall("getState", map[string]any{}, &viewerState)
+
+	if len(operatorState.Agents) != 1 {
+		t.Fatalf("the operator's agents = %+v", operatorState.Agents)
+	}
+	operatorAgent := operatorState.Agents[0]
+	if operatorAgent.InstalledVersion != "3.0.0" || !operatorAgent.UnverifiedVersion || operatorAgent.UnverifiedReason == "" {
+		t.Errorf("the operator lost the probe's answer: %+v", operatorAgent)
+	}
+
+	if len(viewerState.Agents) != 1 {
+		t.Fatalf("the viewer's agents = %+v", viewerState.Agents)
+	}
+	viewerAgent := viewerState.Agents[0]
+	if !viewerAgent.UnverifiedVersion {
+		t.Error("the viewer lost the warning that the version is not verified")
+	}
+	if viewerAgent.InstalledVersion != "" {
+		t.Errorf("the viewer received the host's version %q", viewerAgent.InstalledVersion)
+	}
+	if viewerAgent.UnverifiedReason != "" {
+		t.Errorf("the viewer received the reason, which quotes the version: %q", viewerAgent.UnverifiedReason)
+	}
+	if text := stateText(t, viewerState); strings.Contains(text, "3.0.0") {
+		t.Errorf("the viewer's state names the version somewhere: %s", text)
 	}
 }

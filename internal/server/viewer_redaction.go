@@ -44,6 +44,14 @@ func profilesForRole(view AgentProfilesView, role UserRole) AgentProfilesView {
 // the startup notices and the audit journal's path: the notices are operator
 // diagnostics and name the configuration and journal files. Each agent's
 // display command is already only its executable's name.
+//
+// A viewer also gets no installed version and no reason text. The version
+// names the host's tooling — which build of a tool a machine runs — and the
+// reason quotes the version, so masking one without the other would leak it
+// through the other; the notices carry the same reason and are already gone.
+// The flag itself stays: that an agent's version is not one this build was
+// verified against is supervision information, and a viewer watching a prompt
+// should see that the answer may not be what the adapter expects.
 func stateForRole(state AppState, role UserRole) AppState {
 	if role == RoleOperator {
 		return state
@@ -51,6 +59,13 @@ func stateForRole(state AppState, role UserRole) AppState {
 	masked := state
 	masked.Notices = nil
 	masked.Audit.Path = ""
+	agents := make([]AgentState, len(state.Agents))
+	for index, agent := range state.Agents {
+		agent.InstalledVersion = ""
+		agent.UnverifiedReason = ""
+		agents[index] = agent
+	}
+	masked.Agents = agents
 	return masked
 }
 
