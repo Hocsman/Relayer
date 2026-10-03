@@ -32,18 +32,52 @@ var (
 	claudeEditTargetRegex  = regexp.MustCompile(`(?is)Do\s*you\s*want\s*to\s*make\s*this\s*edit\s*to\s*([^\s?][^\r\n?]*?)\?`)
 )
 
+// indexFoldASCII returns the byte offset in s of the first occurrence of needle,
+// ignoring ASCII case, or -1. needle must be lower-case ASCII.
+//
+// The offset is always an offset in s itself. That is why this is not
+// strings.Index(strings.ToLower(s), needle): ToLower can change the byte length
+// of a rune (U+023A is two bytes, its lower case three), so an index taken from
+// the lowered copy points somewhere else in the original, past its end once
+// enough such runes precede the needle. The match comes from the agent's own
+// output, so that was a way for an agent to make slicing it panic.
+func indexFoldASCII(s, needle string) int {
+	if needle == "" {
+		return 0
+	}
+	for start := 0; start+len(needle) <= len(s); start++ {
+		matched := true
+		for offset := 0; offset < len(needle); offset++ {
+			c := s[start+offset]
+			if 'A' <= c && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			if c != needle[offset] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return start
+		}
+	}
+	return -1
+}
+
 func extractClaudeBashCommand(match string) string {
-	lower := strings.ToLower(match)
-	runIdx := strings.Index(lower, "run shell command")
-	if runIdx < 0 {
-		runIdx = strings.Index(lower, "run\x1b[1cshell\x1b[1ccommand")
+	runIdx, runEnd := -1, -1
+	for _, header := range []string{"run shell command", "run\x1b[1cshell\x1b[1ccommand"} {
+		if idx := indexFoldASCII(match, header); idx >= 0 {
+			runIdx, runEnd = idx, idx+len(header)
+			break
+		}
 	}
 
 	// In real Claude Code (2.1.286+), the command is displayed AFTER "Run shell command",
 	// bounded by separator lines or the prompt question.
 	if runIdx >= 0 {
-		after := match[runIdx+len("run shell command"):]
-		proceedIdx := strings.Index(strings.ToLower(after), "do you want to pro")
+		after := match[runEnd:]
+		proceedIdx := indexFoldASCII(after, "do you want to pro")
 		if proceedIdx >= 0 {
 			after = after[:proceedIdx]
 		}
@@ -158,9 +192,11 @@ var claudeObservedRules = []claudeObservedRule{
 	},
 }
 
-// ClaudeAdapter recognizes only prompts backed by the anonymized Claude Code
-// 2.1.59 fixtures. Configured intercept_patterns retain their configured order
-// and take priority, preserving the semantics of existing configurations.
+// ClaudeAdapter recognizes only prompts backed by anonymized Claude Code
+// observations: the 2.1.59 workspace-trust and environment-key prompts, and the
+// 2.1.285 and 2.1.286 Bash, create-file and edit-file prompts. Configured
+// intercept_patterns retain their configured order and take priority,
+// preserving the semantics of existing configurations.
 //
 // The adapter remains experimental: no automatic allow or deny byte sequence
 // is claimed because the highlighted TUI selection can change independently
@@ -293,47 +329,16 @@ func (a *ClaudeAdapter) Detect(state *DetectionState, chunk []byte) ([]Event, er
 	return events, nil
 }
 
-// EncodeDecision encodes decisions for verified Claude Code prompts.
-// Prompts backed by empirical 2.1.285 observations support verified automatic
-// allow (Enter), deny (Esc), and menu-aware manual inputs. Other prompts remain
-// conservative: automatic decisions are unsupported to prevent wrong menu selection.
+// EncodeDecision preserves exact manual input compatibility. Automatic allow
+// and deny remain unsupported for every Claude Code prompt, the Bash, create
+// and edit prompts included: no answer to them has been typed into a real
+// Claude Code with its effect checked, and an Enter takes whichever option the
+// menu has highlighted, which the prompt text Relayer reads does not show.
+// The unsupported decisions make a policy decision on these prompts a question
+// for a person instead of a byte written into the agent.
 func (a *ClaudeAdapter) EncodeDecision(event Event, decision Decision, manualInput string) ([]byte, error) {
 	if a == nil || a.detector == nil {
 		return nil, fmt.Errorf("adapter for Claude Code is not initialized")
 	}
-	patternName := event.Metadata["pattern"]
-	switch patternName {
-	case claudeBashCommandPattern, claudeWriteFilePattern, claudeEditFilePattern:
-		if !event.Actionable() {
-			return nil, fmt.Errorf("%w for type %q", ErrDecisionUnsupported, event.Type)
-		}
-		switch decision {
-		case DecisionAllow:
-			return []byte("\r"), nil
-		case DecisionDeny:
-			return []byte{0x1b}, nil
-		case DecisionManual:
-			if strings.IndexByte(manualInput, 0) >= 0 {
-				return nil, fmt.Errorf("invalid manual input: NUL byte")
-			}
-			lower := strings.ToLower(strings.TrimSpace(manualInput))
-			switch lower {
-			case "y", "yes", "1":
-				return []byte("1\r"), nil
-			case "esc", "cancel":
-				return []byte{0x1b}, nil
-			case "n", "no":
-				if patternName == claudeBashCommandPattern {
-					return []byte("4\r"), nil
-				}
-				return []byte("3\r"), nil
-			default:
-				return []byte(manualInput + "\r"), nil
-			}
-		default:
-			return nil, fmt.Errorf("%w: %q", ErrDecisionUnsupported, decision)
-		}
-	default:
-		return a.detector.EncodeDecision(event, decision, manualInput)
-	}
+	return a.detector.EncodeDecision(event, decision, manualInput)
 }
