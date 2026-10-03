@@ -407,87 +407,68 @@ func TestClaudeAdapterEncodeDecisionIsConservative(t *testing.T) {
 	}
 }
 
-func TestClaudeAdapterEncodeDecisionVerifiedRules(t *testing.T) {
+// No answer to a Claude Code Bash, create or edit prompt has been typed into a
+// real Claude Code with its effect checked, so none is claimed: a policy
+// decision on these prompts is a question for a person, and what a person types
+// is sent exactly as typed, followed by Enter, never mapped to a menu option.
+func TestClaudeAdapterAutomaticDecisionsAreUnsupportedOnVendorPrompts(t *testing.T) {
 	adapter := newClaudeAdapterForTest(t, nil)
-	cases := []struct {
-		pattern string
-		isBash  bool
-	}{
-		{pattern: claudeBashCommandPattern, isBash: true},
-		{pattern: claudeWriteFilePattern, isBash: false},
-		{pattern: claudeEditFilePattern, isBash: false},
+
+	detected := map[string]string{
+		claudeBashCommandPattern: "Bash command\n" +
+			"Run shell command ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+			"echo PROBE_BASH_OK > bash_probe.txt\n" +
+			"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+			"Do you want to proceed?\n" +
+			"❯ 1. Yes\n  2. Yes, and always allow access to folder\n  3. No\n\n" +
+			"Esc to cancel · Tab to amend",
+		claudeWriteFilePattern: "Create file\nnew_file.txt\n" +
+			"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n  1 hello world\n" +
+			"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+			"Do you want to create new_file.txt?\n❯ 1. Yes\n  2. No\n\n" +
+			"Esc to cancel · Tab to amend",
+		claudeEditFilePattern: "Edit file\nmain.go\n" +
+			"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n- old\n+ new\n" +
+			"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+			"Do you want to make this edit to main.go?\n❯ 1. Yes\n  2. No\n\n" +
+			"Esc to cancel · Tab to amend",
+	}
+	for pattern, prompt := range detected {
+		// An event the adapter itself raised, not one assembled by hand.
+		state := NewDetectionState("session-"+pattern, "agent-claude", ClaudeID)
+		events, err := adapter.Detect(state, []byte(prompt))
+		if err != nil || len(events) != 1 || events[0].Metadata["pattern"] != pattern {
+			t.Fatalf("pattern %s detected = %#v, %v", pattern, events, err)
+		}
+		for _, decision := range []Decision{DecisionAllow, DecisionDeny, Decision("other")} {
+			encoded, err := adapter.EncodeDecision(events[0], decision, "")
+			if encoded != nil || !errors.Is(err, ErrDecisionUnsupported) {
+				t.Fatalf("pattern %s detected event, decision %q = %q, %v", pattern, decision, encoded, err)
+			}
+		}
 	}
 
-	for _, c := range cases {
-		event := Event{
-			Adapter: ClaudeID,
-			Type:    EventPermission,
-			Metadata: map[string]string{
-				"pattern": c.pattern,
-			},
-		}
-
-		// Allow -> \r
-		allow, err := adapter.EncodeDecision(event, DecisionAllow, "")
-		if err != nil || string(allow) != "\r" {
-			t.Fatalf("pattern %s allow = %q, %v", c.pattern, allow, err)
-		}
-
-		// Deny -> \x1b (Esc)
-		deny, err := adapter.EncodeDecision(event, DecisionDeny, "")
-		if err != nil || len(deny) != 1 || deny[0] != 0x1b {
-			t.Fatalf("pattern %s deny = %v, %v", c.pattern, deny, err)
-		}
-
-		// Manual allow shortcuts: "y", "yes", "1" -> "1\r"
-		for _, input := range []string{"y", "Y", "yes", "YES", "1"} {
-			man, err := adapter.EncodeDecision(event, DecisionManual, input)
-			if err != nil || string(man) != "1\r" {
-				t.Fatalf("pattern %s manual %q = %q, %v", c.pattern, input, man, err)
+	for pattern := range detected {
+		event := Event{Adapter: ClaudeID, Type: EventPermission, Metadata: map[string]string{"pattern": pattern}}
+		for _, decision := range []Decision{DecisionAllow, DecisionDeny, Decision("other")} {
+			encoded, err := adapter.EncodeDecision(event, decision, "")
+			if encoded != nil || !errors.Is(err, ErrDecisionUnsupported) {
+				t.Fatalf("pattern %s decision %q = %q, %v", pattern, decision, encoded, err)
 			}
 		}
-
-		// Manual cancel shortcuts: "esc", "cancel" -> \x1b
-		for _, input := range []string{"esc", "ESC", "cancel"} {
-			man, err := adapter.EncodeDecision(event, DecisionManual, input)
-			if err != nil || len(man) != 1 || man[0] != 0x1b {
-				t.Fatalf("pattern %s manual %q = %v, %v", c.pattern, input, man, err)
+		for _, input := range []string{"y", "yes", "1", "n", "no", "3", "4", "esc", "cancel", "2", "\x1b"} {
+			encoded, err := adapter.EncodeDecision(event, DecisionManual, input)
+			if err != nil || string(encoded) != input+"\r" {
+				t.Fatalf("pattern %s manual %q = %q, %v, want it unchanged plus Enter", pattern, input, encoded, err)
 			}
 		}
-
-		// Manual deny shortcuts: "n", "no"
-		wantNo := "3\r"
-		if c.isBash {
-			wantNo = "4\r"
+		if encoded, err := adapter.EncodeDecision(event, DecisionManual, "bad\x00input"); encoded != nil || err == nil {
+			t.Fatalf("pattern %s manual NUL = %q, %v", pattern, encoded, err)
 		}
-		for _, input := range []string{"n", "N", "no", "NO"} {
-			man, err := adapter.EncodeDecision(event, DecisionManual, input)
-			if err != nil || string(man) != wantNo {
-				t.Fatalf("pattern %s manual %q = %q, %v, want %q", c.pattern, input, man, err, wantNo)
-			}
-		}
-
-		// Fallback manual input
-		man, err := adapter.EncodeDecision(event, DecisionManual, "2")
-		if err != nil || string(man) != "2\r" {
-			t.Fatalf("pattern %s manual '2' = %q, %v", c.pattern, man, err)
-		}
-
-		// NUL byte error
-		if _, err := adapter.EncodeDecision(event, DecisionManual, "bad\x00input"); err == nil {
-			t.Fatalf("pattern %s expected NUL error", c.pattern)
-		}
-
-		// Unsupported decision
-		if _, err := adapter.EncodeDecision(event, Decision("other"), ""); !errors.Is(err, ErrDecisionUnsupported) {
-			t.Fatalf("pattern %s expected unsupported decision error, got %v", c.pattern, err)
-		}
-
-		// Non-actionable event error
 		nonActionable := event.Clone()
 		nonActionable.Type = EventProcessExit
-		if _, err := adapter.EncodeDecision(nonActionable, DecisionAllow, ""); !errors.Is(err, ErrDecisionUnsupported) {
-			t.Fatalf("pattern %s expected unsupported non-actionable error, got %v", c.pattern, err)
+		if encoded, err := adapter.EncodeDecision(nonActionable, DecisionManual, "x"); encoded != nil || !errors.Is(err, ErrDecisionUnsupported) {
+			t.Fatalf("pattern %s non-actionable = %q, %v", pattern, encoded, err)
 		}
 	}
 }
