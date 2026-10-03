@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -153,7 +155,20 @@ func NewProcessor(adapter Adapter, state *DetectionState, capacity int, hooks Ho
 	}, nil
 }
 
-func (p *Processor) Run(ctx context.Context, reader io.Reader) error {
+// Run reads the agent's output until the reader ends, the context is cancelled
+// or processing fails. A panic while processing one chunk, from the adapter
+// reading text the agent chose, is returned as the error that ends this
+// session's reader, like any other processing failure. Nothing in the Go
+// runtime would otherwise stop it before it ended the whole process, and with
+// it the supervision of every other agent.
+func (p *Processor) Run(ctx context.Context, reader io.Reader) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			// Taken first, while the frames of the panic are still on the stack.
+			err = fmt.Errorf("processing the terminal output failed: %s", describePanic(recovered))
+			p.abandonPendingAfterPanic()
+		}
+	}()
 	readBuffer := make([]byte, 4096)
 	for {
 		select {
@@ -161,7 +176,7 @@ func (p *Processor) Run(ctx context.Context, reader io.Reader) error {
 			return nil
 		default:
 		}
-		count, err := reader.Read(readBuffer)
+		count, readErr := reader.Read(readBuffer)
 		select {
 		case <-ctx.Done():
 			return nil
@@ -172,15 +187,15 @@ func (p *Processor) Run(ctx context.Context, reader io.Reader) error {
 				return consumeErr
 			}
 		}
-		if err != nil {
-			if errors.Is(err, io.EOF) {
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
 				return nil
 			}
 			select {
 			case <-ctx.Done():
 				return nil
 			default:
-				return err
+				return readErr
 			}
 		}
 	}
@@ -196,6 +211,15 @@ func (p *Processor) Consume(chunk []byte) error {
 	// arrived rather than how long this call waited for the mutex.
 	arrivedAt := time.Now()
 	p.mu.Lock()
+	// Released by the unlock below on every ordinary path. This only fires when
+	// something between the two panics, so that Pending, Output and Resolve do
+	// not block for good on a session whose reader has just stopped.
+	locked := true
+	defer func() {
+		if locked {
+			p.mu.Unlock()
+		}
+	}()
 	var (
 		withdrawn *Event
 		onGrid    bool
@@ -408,6 +432,20 @@ func (p *Processor) Consume(chunk []byte) error {
 		p.semanticHooks.Add(len(events))
 	}
 	p.mu.Unlock()
+	locked = false
+	// Each event reserved by the Add above is owed one Done, paid by the loop
+	// at the end. A hook that panics before or inside that loop would leave the
+	// rest owed for good, and WaitSemanticEvents, which holds back process_exit
+	// and the closing of the whole backend, would never return.
+	owed := 0
+	if err == nil {
+		owed = len(events)
+	}
+	defer func() {
+		for ; owed > 0; owed-- {
+			p.semanticHooks.Done()
+		}
+	}()
 	// Fired outside p.mu and before the error check: a transcript records what
 	// the terminal actually emitted, including the bytes that preceded a
 	// detection failure. `complete` is a fresh string built above from
@@ -425,12 +463,55 @@ func (p *Processor) Consume(chunk []byte) error {
 		p.hooks.OnEventWithdrawn(withdrawn.Clone())
 	}
 	for _, event := range events {
+		owed--
 		func() {
 			defer p.semanticHooks.Done()
 			p.hooks.OnEvent(event.Clone())
 		}()
 	}
 	return nil
+}
+
+// abandonPendingAfterPanic drops the occurrence a read that panicked left
+// behind. The adapter stores a candidate before it enriches it, so a panic in
+// between leaves one that no hook was ever told about, and that the Processor
+// would go on reporting as pending to whoever asks. Nothing reads this stream
+// any more, so nothing could ever withdraw it. An occurrence a hook was told
+// about is dropped too: a decision on it is then refused as unknown instead of
+// being written into a session whose reader is gone.
+func (p *Processor) abandonPendingAfterPanic() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.state.discard()
+}
+
+// describePanic names a recovered panic by its message and the first frame
+// outside the runtime that raised it. Only the message of a runtime error is
+// kept, and only the type of any other value: a panic value can carry whatever
+// its raiser formatted into it, and this text reaches the operator and the
+// journal.
+func describePanic(recovered any) string {
+	text := fmt.Sprintf("panic of type %T", recovered)
+	if runtimeErr, ok := recovered.(runtime.Error); ok {
+		text = runtimeErr.Error()
+	}
+	pcs := make([]uintptr, 24)
+	// Skip runtime.Callers and describePanic; the deferred recover and
+	// runtime.gopanic follow, then the frame that panicked.
+	frames := runtime.CallersFrames(pcs[:runtime.Callers(2, pcs)])
+	for {
+		frame, more := frames.Next()
+		if frame.Function != "" && !strings.HasPrefix(frame.Function, "runtime.") && !strings.Contains(frame.Function, ".Run.func") {
+			name := frame.Function
+			if slash := strings.LastIndex(name, "/"); slash >= 0 {
+				name = name[slash+1:]
+			}
+			return fmt.Sprintf("%s (in %s, %s:%d)", text, name, filepath.Base(frame.File), frame.Line)
+		}
+		if !more {
+			return text
+		}
+	}
 }
 
 // ReconcileSnapshot uses the last active logical line for generic detection.
