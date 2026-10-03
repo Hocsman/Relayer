@@ -127,8 +127,8 @@ func extractClaudeTargetFile(match string) string {
 }
 
 // claudeObservedRules lists the prompts Relayer recognizes. The create-file and
-// edit-file rules are RiskUnknown, not RiskLow, on purpose: a policy only ever
-// answers a RiskLow prompt on its own, and what Claude Code is asked to write
+// edit-file rules are RiskUnknown, not RiskLow, on purpose: a policy allows only
+// a RiskLow prompt on its own, and what Claude Code is asked to write
 // decides what runs next (.claude/settings.json, .vscode/tasks.json,
 // .github/workflows, .husky hooks, package.json scripts, shell start-up files),
 // which the guardrails only partly cover and Relayer has no path allowlist for.
@@ -200,8 +200,9 @@ var claudeObservedRules = []claudeObservedRule{
 }
 
 // ClaudeAdapter recognizes only prompts backed by anonymized Claude Code
-// observations: the 2.1.59 workspace-trust and environment-key prompts, and the
-// 2.1.285 and 2.1.286 Bash, create-file and edit-file prompts. Configured
+// observations: the 2.1.59 workspace-trust and environment-key prompts, the
+// 2.1.285 Bash, create-file and edit-file prompts, and the Bash and create-file
+// layouts of 2.1.286, which rest on test strings. Configured
 // intercept_patterns retain their configured order and take priority,
 // preserving the semantics of existing configurations.
 //
