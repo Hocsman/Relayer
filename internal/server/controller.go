@@ -100,6 +100,9 @@ type Controller struct {
 	// where the supervision core meets it: the gateway tests' seam for a
 	// journal, a write or a stop that fails.
 	engineWrap func(supervise.Engine) supervise.Engine
+	// versionInspector, when a test sets it before Start, replaces the probe
+	// that reads each vendor agent's version from its own binary.
+	versionInspector app.VersionInspector
 	// drainBudget, when a test sets it, replaces runEndBudget for the phase
 	// of a run's end that waits for what its core admitted.
 	drainBudget time.Duration
@@ -176,10 +179,18 @@ func (c *Controller) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	// Prepared and started without c.mu: starting a run probes each vendor
+	// agent's own binary, and no client read — every GetState takes c.mu —
+	// may wait on a tool's answer time.
+	started, err := c.prepareAndStartRun(context.WithoutCancel(ctx), runID)
+	if err != nil {
+		return err
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	return c.startLocked(context.WithoutCancel(ctx), runID)
+	return c.installRunLocked(started, runID)
 }
 
 // newRunID draws the ID of a run about to start.
@@ -191,25 +202,48 @@ func newRunID() (string, error) {
 	return hex.EncodeToString(runIDBytes), nil
 }
 
-// startLocked starts the run runID, with a supervision core of its own and no
-// hand held: the caller holds c.mu, and has ended any previous run.
-func (c *Controller) startLocked(ctx context.Context, runID string) error {
+// startedRun is a run whose processes are up but whose supervision core is
+// not installed: it was started outside c.mu, and installRunLocked makes it
+// the state every client reads.
+type startedRun struct {
+	plan    *app.DesktopPlan
+	runtime *app.DesktopRuntime
+	ctx     context.Context
+	cancel  context.CancelFunc
+}
+
+// prepareAndStartRun starts the run runID's processes without holding c.mu.
+// Starting a run executes each vendor agent's own binary to read its version,
+// so the state lock — which every client read takes — must not be held across
+// it: one slow tool would otherwise stall GetState for every operator and
+// viewer connected.
+func (c *Controller) prepareAndStartRun(ctx context.Context, runID string) (startedRun, error) {
 	opts := app.DesktopOptions{
-		ConfigPath:  c.configPath,
-		Diagnostics: c.diagnostics,
+		ConfigPath:       c.configPath,
+		Diagnostics:      c.diagnostics,
+		VersionInspector: c.versionInspector,
 	}
 
 	plan, err := app.PrepareDesktopRuntime(opts)
 	if err != nil {
-		return fmt.Errorf("preparing desktop runtime: %w", err)
+		return startedRun{}, fmt.Errorf("preparing desktop runtime: %w", err)
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
 	rt, err := app.StartDesktopRuntime(runCtx, plan, runID)
 	if err != nil {
 		cancel()
-		return fmt.Errorf("starting desktop runtime: %w", err)
+		return startedRun{}, fmt.Errorf("starting desktop runtime: %w", err)
 	}
+	return startedRun{plan: plan, runtime: rt, ctx: runCtx, cancel: cancel}, nil
+}
+
+// installRunLocked gives an already started run its supervision core and makes
+// it the state every client reads. The caller holds c.mu, and has ended any
+// previous run. On failure it closes what it was handed, and the caller keeps
+// only the error.
+func (c *Controller) installRunLocked(started startedRun, runID string) error {
+	rt := started.runtime
 
 	sessions := rt.Sessions()
 	specs := make([]supervise.AgentSpec, 0, len(sessions))
@@ -228,17 +262,17 @@ func (c *Controller) startLocked(ctx context.Context, runID string) error {
 		engine = c.engineWrap(engine)
 	}
 	sink := &gatewaySink{c: c, rt: rt}
-	sup, err := supervise.New(runCtx, engine, supervise.Options{RunID: runID, Agents: specs, Sink: sink})
+	sup, err := supervise.New(started.ctx, engine, supervise.Options{RunID: runID, Agents: specs, Sink: sink})
 	if err != nil {
-		cancel()
+		started.cancel()
 		_ = rt.Close(context.Background())
 		return fmt.Errorf("starting the supervision core: %w", err)
 	}
 	sink.sup = sup
 
-	c.ctx = runCtx
-	c.cancel = cancel
-	c.plan = plan
+	c.ctx = started.ctx
+	c.cancel = started.cancel
+	c.plan = started.plan
 	c.runtime = rt
 	c.runID = runID
 	c.sup = sup
@@ -295,7 +329,7 @@ func (c *Controller) startLocked(ctx context.Context, runID string) error {
 		Notices:       rt.StartupLogs(),
 	}
 
-	go c.eventLoop(runCtx, rt, sup, c.loopDone)
+	go c.eventLoop(started.ctx, rt, sup, c.loopDone)
 
 	return nil
 }
@@ -1398,6 +1432,15 @@ func (c *Controller) SaveAgentProfilesAndRestart(req SaveAgentProfilesAndRestart
 
 	stopErr := c.endRun(context.Background(), end, true)
 
+	// Prepared and started before the lock is taken again, for the reason
+	// Start gives: the version probe runs the agents' own binaries, and no
+	// client read may wait on a tool's answer time.
+	var started startedRun
+	var startErr error
+	if stopErr == nil {
+		started, startErr = c.prepareAndStartRun(context.Background(), nextRunID)
+	}
+
 	c.mu.Lock()
 	c.clearRunLocked()
 	if stopErr != nil {
@@ -1407,7 +1450,10 @@ func (c *Controller) SaveAgentProfilesAndRestart(req SaveAgentProfilesAndRestart
 		c.broadcast(eventStatus, StatusEvent{RunID: end.runID, Scope: "run", Status: "failed"})
 		return LifecycleResult{}, errLifecycleBlocked
 	}
-	if startErr := c.startLocked(context.Background(), nextRunID); startErr != nil {
+	if startErr == nil {
+		startErr = c.installRunLocked(started, nextRunID)
+	}
+	if startErr != nil {
 		c.runID = nextRunID
 		c.state.RunID = nextRunID
 		c.state.RunStatus = "failed"

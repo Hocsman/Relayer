@@ -12,10 +12,13 @@ import (
 
 func TestCheckAgentVersion(t *testing.T) {
 	ctx := context.Background()
+	// Every spec carries the vendor executable as its argv[0]: an agent the
+	// probe may not run reports nothing at all, which the probe tests cover.
+	claudeCommand := []string{"claude"}
 
 	// 1. Simulated agent: ignored
-	simSpec := agent.Spec{ID: "mock", Adapter: adapters.ClaudeID}
-	info := CheckAgentVersion(ctx, simSpec, true, func(ctx context.Context, s agent.Spec) (string, error) {
+	simSpec := agent.Spec{ID: "mock", Adapter: adapters.ClaudeID, Command: claudeCommand}
+	info := CheckAgentVersion(ctx, simSpec, adapters.ClaudeID, true, func(ctx context.Context, s agent.Spec) (string, error) {
 		return "3.0.0", nil
 	})
 	if info.Unverified || info.InstalledVersion != "" {
@@ -23,8 +26,8 @@ func TestCheckAgentVersion(t *testing.T) {
 	}
 
 	// 2. Generic adapter: ignored
-	genSpec := agent.Spec{ID: "gen", Adapter: adapters.GenericID}
-	info = CheckAgentVersion(ctx, genSpec, false, func(ctx context.Context, s agent.Spec) (string, error) {
+	genSpec := agent.Spec{ID: "gen", Adapter: adapters.GenericID, Command: []string{"runner"}}
+	info = CheckAgentVersion(ctx, genSpec, adapters.GenericID, false, func(ctx context.Context, s agent.Spec) (string, error) {
 		return "1.0.0", nil
 	})
 	if info.Unverified || info.InstalledVersion != "" {
@@ -32,8 +35,8 @@ func TestCheckAgentVersion(t *testing.T) {
 	}
 
 	// 3. Claude Code with verified version 2.1.285
-	claudeSpec := agent.Spec{ID: "claude", Adapter: adapters.ClaudeID}
-	info = CheckAgentVersion(ctx, claudeSpec, false, func(ctx context.Context, s agent.Spec) (string, error) {
+	claudeSpec := agent.Spec{ID: "claude", Adapter: adapters.ClaudeID, Command: claudeCommand}
+	info = CheckAgentVersion(ctx, claudeSpec, adapters.ClaudeID, false, func(ctx context.Context, s agent.Spec) (string, error) {
 		return "2.1.285", nil
 	})
 	if info.Unverified {
@@ -44,7 +47,7 @@ func TestCheckAgentVersion(t *testing.T) {
 	}
 
 	// 4. Claude Code with unverified version 3.0.0
-	info = CheckAgentVersion(ctx, claudeSpec, false, func(ctx context.Context, s agent.Spec) (string, error) {
+	info = CheckAgentVersion(ctx, claudeSpec, adapters.ClaudeID, false, func(ctx context.Context, s agent.Spec) (string, error) {
 		return "3.0.0", nil
 	})
 	if !info.Unverified {
@@ -55,13 +58,22 @@ func TestCheckAgentVersion(t *testing.T) {
 	}
 
 	// 5. Claude Code with failed version inspection
-	info = CheckAgentVersion(ctx, claudeSpec, false, func(ctx context.Context, s agent.Spec) (string, error) {
+	info = CheckAgentVersion(ctx, claudeSpec, adapters.ClaudeID, false, func(ctx context.Context, s agent.Spec) (string, error) {
 		return "", errors.New("command not found")
 	})
 	if !info.Unverified {
 		t.Errorf("failed version inspection should be marked unverified")
 	}
-	if !strings.Contains(info.Reason, "non détectée") {
-		t.Errorf("expected reason to mention 'non détectée', got %s", info.Reason)
+	if !strings.Contains(info.Reason, "no version detected") {
+		t.Errorf("expected reason to mention 'no version detected', got %s", info.Reason)
+	}
+
+	// 6. An inspector that refuses the agent is not a failed inspection: a
+	// probe that must not run leaves nothing to warn about.
+	info = CheckAgentVersion(ctx, claudeSpec, adapters.ClaudeID, false, func(ctx context.Context, s agent.Spec) (string, error) {
+		return "", ErrVersionProbeNotApplicable
+	})
+	if info != (AgentVersionInfo{}) {
+		t.Errorf("a skipped probe reported %+v, want no information", info)
 	}
 }

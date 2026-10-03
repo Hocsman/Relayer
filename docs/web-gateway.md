@@ -72,11 +72,17 @@ life of that connection.
 | Stop, start, restart an agent | yes | no |
 | Change settings, stop the run | yes | no |
 | Export or delete a recording | yes | no |
+| See an agent's installed version, and the reason it is unverified | yes | no |
 
 Authorization is enforced server-side in the RPC dispatcher and on inbound
 terminal frames, not in the interface. A viewer who replays a mutating call by
 hand, or hand-crafts a binary terminal frame, is rejected. The read-only
 affordances in the interface reflect the server's decision; they do not make it.
+
+A viewer does receive the flag that an agent's version is not one this build
+was verified against — that is supervision information, and a viewer watching a
+prompt should have it — but neither the version nor the reason text, which
+quotes it. See the [version probe](security-model.md#the-version-probe).
 
 A viewer's window resize is accepted and ignored rather than refused, so a
 passive observer never perturbs the terminal geometry of the operator working.
@@ -257,9 +263,18 @@ An operator also receives each agent's working directory and the
 configuration's path. A viewer receives of each agent its identifier, name,
 catalogue entry, adapter, backend, executable label and argument count, and
 whether it is read-only and why (it has environment variables, a shell script
-or fields the form cannot show), never their values; and no host path: not the
+or fields the form cannot show), never their values; the flag that its version
+is unverified, but not the version or the reason; and no host path: not the
 configuration's, the audit journal's, the recordings' or an agent's working
 directory, and not in an error message either.
+
+Starting the gateway's run executes each vendor agent's own binary once, as
+`<argv[0]> --version`, to read the version its adapter's patterns were captured
+against; a wrapped or launched agent is not probed, and no configured command
+line is ever run again. Those probes run before the gateway takes its state
+lock and within a shared budget, so a client's `getState` never waits for a
+tool, and `RELAYER_NO_VERSION_CHECK=1` turns them off for the machine. See the
+[version probe](security-model.md#the-version-probe).
 
 A viewer does receive every agent's terminal, as it is: the output snapshots
 carry the screen verbatim, to viewers as to operators, but for the window

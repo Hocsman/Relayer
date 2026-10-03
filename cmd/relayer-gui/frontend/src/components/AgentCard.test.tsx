@@ -270,16 +270,16 @@ describe("AgentCard version verification", () => {
       />,
     );
 
-  it("renders 'version non vérifiée' tag when unverifiedVersion is true", () => {
+  it("renders the 'unverified version' tag when unverifiedVersion is true", () => {
     const markup = render({
       ...agent(),
       unverifiedVersion: true,
-      unverifiedReason: "Version 3.0.0 non vérifiée pour l'adaptateur claude",
+      unverifiedReason: "version 3.0.0 is not verified for the claude adapter",
       installedVersion: "3.0.0",
     });
     expect(markup).toContain("unverified-version-tag");
-    expect(markup).toContain("version non vérifiée");
-    expect(markup).toContain("Version 3.0.0 non vérifiée");
+    expect(markup).toContain("unverified version");
+    expect(markup).toContain("version 3.0.0 is not verified");
     expect(markup).toContain("v3.0.0");
   });
 
@@ -290,7 +290,7 @@ describe("AgentCard version verification", () => {
       installedVersion: "2.1.285",
     });
     expect(markup).not.toContain("unverified-version-tag");
-    expect(markup).not.toContain("version non vérifiée");
+    expect(markup).not.toContain("unverified version");
     expect(markup).toContain("v2.1.285");
   });
 });

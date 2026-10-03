@@ -215,6 +215,18 @@ provider `--version`, contact a service, validate a login, or certify a binary.
 Warnings do not prevent startup, while a blocker means the configuration is not
 ready on the inspected host. See [doctor](doctor.md) for the shared contract.
 
+**Starting a run is not checking the installation.** When a run starts, each
+agent whose `argv[0]` is its adapter's own executable — `claude`, `codex`,
+`aider`, `goose`, `interpreter` — is run once as `<argv[0]> --version`, and the
+answer is compared with the versions that adapter's patterns were captured
+against. The agent's card shows the version, or an **unverified version** badge
+when it is not one of them. A wrapped or launched agent (`sh -c`, `cmd /c`,
+`npx`, `node`, `python`, `docker`) is not probed at all and shows nothing: no
+configured command line is ever run a second time. The probe never changes a
+policy, its answer is cached until the executable's file changes, and
+`RELAYER_NO_VERSION_CHECK=1` turns it off for the machine. See the
+[security model](security-model.md#the-version-probe).
+
 ## Visual Settings Editor
 
 Open **Settings** in the desktop top bar to access the visual configuration editor.
