@@ -307,7 +307,7 @@ func profileDescription(id toolcatalog.ProfileID) string {
 	case toolcatalog.OpenInterpreter:
 		return "Open Interpreter; local code and command execution with human approval prompts."
 	case toolcatalog.ClaudeCode:
-		return "Claude Code; experimental rules verified on 2.1.59, then generic fallback."
+		return "Claude Code; experimental rules for 2.1.59, 2.1.285 and 2.1.286 behind your intercept_patterns, answered by a person."
 	case toolcatalog.CodexCLI:
 		return "Codex CLI; experimental rules verified on 0.148.0-alpha.21, then generic fallback."
 	case toolcatalog.MimoCode:
