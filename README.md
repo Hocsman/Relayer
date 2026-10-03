@@ -86,9 +86,11 @@ go run github.com/Hocsman/Relayer/cmd/relayer@latest
   private socket.
 - A stable, product-neutral `generic` regex adapter.
 - Experimental Claude Code, Codex CLI, Aider, Open Interpreter and Goose
-  adapters backed by captured fixtures in `internal/adapters/testdata/`; the
-  answers of the last three were each typed into the real CLI and their effect
-  checked. All of them retain the stable generic detector as fallback.
+  adapters backed by fixtures in `internal/adapters/testdata/` (for Claude Code,
+  the 2.1.285 cases have unconfirmed provenance and the 2.1.286 layouts are test
+  strings); the answers of the last three were each typed into the real CLI and
+  their effect checked. All of them retain the stable generic detector as
+  fallback.
 - Structured MCP tool-call badges beside an arbitration prompt, naming the
   server, the tool, its risk and the bounded arguments an agent printed, so an
   operator can see what a tool is about to be given before answering. Detection
@@ -565,7 +567,10 @@ termination.
 Six adapters are implemented: stable `generic`, plus experimental `aider`,
 `claude`, `codex`, `goose` and `interpreter`. Claude Code coverage is limited
 to the workspace-trust and detected-environment-key prompts observed with
-2.1.59; Codex coverage is limited to directory trust and command approval
+2.1.59, the Bash and create-file prompts of 2.1.285 and 2.1.286 and the
+edit-file prompt of 2.1.285, all of them answered by a person, with no allow or
+deny byte claimed for any;
+Codex coverage is limited to directory trust and command approval
 observed with `codex-cli 0.148.0-alpha.21`; Aider coverage to six questions
 of Aider 0.86.2, Open Interpreter coverage to the run and scan questions of
 0.4.3, and Goose coverage to the two tool-call approval menus of Goose 1.52.0.
