@@ -6,8 +6,9 @@ import (
 	"github.com/Hocsman/Relayer/internal/adapters"
 )
 
-// claudePrompts are the prompts the Claude adapter recognizes for a tool the
-// agent wants to run, as the adapter's own fixtures lay them out.
+// claudePrompts are prompts the Claude adapter recognizes for a tool the agent
+// wants to run. The strings follow the layouts in the adapter's tests, not its
+// stored fixtures, and none is recorded as observed.
 var claudePrompts = map[string]string{
 	"bash": "Bash command\n" +
 		"Run shell command ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +

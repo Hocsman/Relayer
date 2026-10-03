@@ -238,7 +238,7 @@ Prepare and manage between one and eight launch profiles:
 
 | Profile | Default executable | Detection and decisions |
 | --- | --- | --- |
-| Claude Code | `claude` | Experimental Claude 2.1.59 rules plus generic fallback; manual decisions only. |
+| Claude Code | `claude` | Experimental Claude rules (2.1.59 trust and API-key prompts; Bash and create-file prompts of 2.1.285 and 2.1.286; edit-file prompt of 2.1.285) plus generic fallback; manual decisions only. |
 | Codex CLI | `codex` | Experimental Codex 0.148.0-alpha.21 rules plus generic fallback; command allow/deny and directory deny bytes verified. |
 | Aider | `aider` | Experimental Aider rules plus generic fallback; file modification and shell command approval allow (`y`), deny (`n`), and manual input verified. |
 | MiMo Code | `mimo` | Generic regex adapter only. |
