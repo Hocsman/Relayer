@@ -313,7 +313,10 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 			return nil, fmt.Errorf("starting agent %q: %w", spec.ID, startErr)
 		}
 		runtime.infos = append(runtime.infos, info)
-		versionInfo := CheckAgentVersion(ctx, spec, plan.resolution.Simulated[index], plan.versionInspector)
+		// info.Adapter is the adapter the run resolved, which "command:
+		// [claude]" with no configured adapter still names; spec.Adapter is
+		// what the file said.
+		versionInfo := CheckAgentVersion(ctx, spec, info.Adapter, plan.resolution.Simulated[index], plan.versionInspector)
 		runtime.sessions = append(runtime.sessions, DesktopSession{
 			ID:                info.ID,
 			Name:              info.Name,
