@@ -24,8 +24,10 @@ hints and then falls back to `generic`. A basename of `aider`, `claude`,
 experimental adapter. Every experimental adapter retains each configured
 `intercept_pattern` as a generic compatibility fallback.
 
-Every vendor adapter is backed by captured output
-(`internal/adapters/testdata`); an installed version that words its questions
+Every vendor adapter is backed by output under `internal/adapters/testdata`,
+except the Claude Code 2.1.286 layouts, which rest on strings in `claude_test.go`
+(and the 2.1.285 cases have unconfirmed provenance); an installed version that
+words its questions
 differently is not detected by it and falls back to `generic`. Aider's, Open
 Interpreter's and Goose's patterns were written by hand from documentation
 until the capture, which found that half of Aider's were questions Aider 0.86.2
@@ -550,8 +552,9 @@ Claude Code is asked to write decides what runs next (`.github/workflows`,
 which the guardrails only partly cover and Relayer has no path allowlist for.
 The shell-command prompt is high risk. So no policy allows any of the five by
 itself: a proposed allow is asked (`risk_not_low`, or `sensitive_event` for the
-API-key prompt and for a prompt whose text contains a sensitive word such as
-`token`, `secret` or `password`). A deny rule can still answer a prompt that is
+API-key prompt and for a prompt whose text contains a string the sensitivity
+check looks for, such as `token`, `secret` or `password`, even inside a longer
+word). A deny rule can still answer a prompt that is
 not sensitive, but the adapter has no verified deny byte for Claude Code, so a
 proposed deny is handed back to a person (`fallback_unsupported`) and nothing is
 written.
@@ -560,10 +563,11 @@ Automatic allow and deny are unsupported for all five. Claude Code's menu is
 expected to act on whichever choice is highlighted, and no answer to any of
 them is backed by a stored capture of its effect. Manual bytes retain generic
 compatibility: what a person types in the decision modal is sent as typed,
-followed by Enter, provided it is one non-blank line without control
-characters. Enter is expected to take the highlighted option and a number to
-pick one, but neither was checked against a real Claude Code, and Relayer does
-not read which option is highlighted. Answer at the terminal: a digit typed from
+followed by Enter, provided it is one non-blank line of valid UTF-8, at most
+4096 bytes, without control characters. Enter is expected to take the
+highlighted option and a number to pick one, but no check of either against a
+real Claude Code is recorded, and Relayer does not read which option is
+highlighted. Answer at the terminal: a digit typed from
 the decision modal is untested, and the Enter sent after it may reach whatever
 Claude Code shows next.
 
@@ -572,17 +576,20 @@ The evidence is uneven. The 2.1.59 prompts and the 2.1.285 cases are in
 labelled anonymized observations, and the repository records no more about how
 they were obtained. The 2.1.286 evidence is strings in `claude_test.go`
 (`TestClaudeAdapterReal21286Prompts`): a Bash prompt with three options, a
-create-file prompt with two, a Bash prompt with four options in a subtest named
-`real ConPTY artifacts` whose characters were dropped (`proeed`, `❯1Yes`), and
+create-file prompt with two, a Bash prompt with four options in a subtest whose
+name contains `real ConPTY artifacts` and whose characters were dropped
+(`proeed`, `❯1Yes`), and
 unnumbered-menu versions of the two 2.1.59 prompts. No fixture holds the bytes
 typed in answer to a prompt, or their effect.
 
 No rule is written for an overwrite of an existing file, a PowerShell command, a
-web fetch or an MCP tool, and none was captured, so such a prompt raises an
-event only if its text happens to match a rule: a PowerShell prompt carrying a
-`Run shell command` line would match the shell-command rule. That rule needs the
-literal line `Run shell command`, and a question whose line break falls inside a
-word or a file name, or whose footer lacks `Tab to amend`, is missed too. Only a
+web fetch or an MCP tool, and no capture of one is stored in the repository, so
+such a prompt raises an event only if its text happens to match a rule: a
+PowerShell prompt carrying a `Run shell command` line would match the
+shell-command rule. That rule needs the words `Run shell command` (any case)
+before the question, then `Do you want to proceed?`, a numbered Yes and No and
+the footer `Esc to cancel` ... `Tab to amend`; a question whose line break falls
+inside a word or a file name is missed too. Only a
 configured `intercept_patterns` entry can catch the rest, and the patterns a new
 configuration file is seeded with matched none of the layouts checked. Without
 one the agent waits for an answer nobody was asked for.
