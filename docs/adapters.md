@@ -10,7 +10,7 @@ during alpha; it is not a runtime plugin protocol.
 | --- | --- | --- | --- |
 | `generic` | Stable relative to the built-ins | Yes | Ordered regex prompt detection; manual input encoding. |
 | `aider` | Experimental | Yes | Aider 0.86.2 questions: running a shell command, creating a file, editing a file not in the chat, adding a file or a command's output to the chat, adding to `.gitignore`; allow (`y` Enter), deny (`n` Enter) and manual input, each observed against a disposable repository. |
-| `claude` | Experimental | Yes | Claude Code 2.1.59 workspace trust and environment-key prompts; generic fallback; manual input only. |
+| `claude` | Experimental | Yes | Claude Code 2.1.59 workspace trust and environment-key prompts, the Bash and create-file prompts of 2.1.285 and 2.1.286 and the edit-file prompt of 2.1.285; generic fallback; manual input only. |
 | `codex` | Experimental | Yes | Codex CLI 0.148.0-alpha.21 directory trust and command approval; generic fallback; command allow/deny and directory deny bytes verified. |
 | `goose` | Experimental | Yes | Goose 1.52.0 tool-call approval menus, with and without an approval notice, in Unicode and ASCII; allow and deny picked by menu keys (`k`… `j`… Enter), and manual `allow`, `deny` or `cancel`, each observed. |
 | `interpreter` | Experimental | Yes | Open Interpreter 0.4.3 questions: running a code block, and scanning it first under `--safe_mode ask`; allow (`y` Enter), deny (`n` Enter) and manual input, each observed. `open-interpreter` is accepted as an alias. |
@@ -24,8 +24,10 @@ hints and then falls back to `generic`. A basename of `aider`, `claude`,
 experimental adapter. Every experimental adapter retains each configured
 `intercept_pattern` as a generic compatibility fallback.
 
-Every vendor adapter is backed by captured output
-(`internal/adapters/testdata`); an installed version that words its questions
+Every vendor adapter is backed by output under `internal/adapters/testdata`,
+except the Claude Code 2.1.286 layouts, which rest on strings in `claude_test.go`
+(and the 2.1.285 cases have unconfirmed provenance); an installed version that
+words its questions
 differently is not detected by it and falls back to `generic`. Aider's, Open
 Interpreter's and Goose's patterns were written by hand from documentation
 until the capture, which found that half of Aider's were questions Aider 0.86.2
@@ -523,18 +525,74 @@ An adapter that supports automatic decisions must define exact semantic allow
 and deny encodings, bind them to a pending occurrence, reject unsupported
 event types, and remain safe across live output and snapshot replay.
 
-### Claude Code 2.1.59 (experimental)
+### Claude Code 2.1.59, 2.1.285 and 2.1.286 (experimental)
 
-The Claude adapter recognizes only two captured prompt structures:
+The Claude adapter recognizes five prompt structures:
 
-- workspace trust, emitted as a high-risk `permission`;
-- whether to use a detected environment API key, emitted as a sensitive,
-  high-risk `credential` whose match starts after the displayed key value.
+- workspace trust (2.1.59), emitted as a high-risk `permission`;
+- whether to use a detected environment API key (2.1.59), emitted as a
+  sensitive, high-risk `credential` whose match starts after the displayed key
+  value;
+- running a shell command (2.1.285 and 2.1.286), emitted as a high-risk
+  `permission`. The event's `command` is a best-effort reading of the command
+  Claude Code displays, for `command_regex` and `read_only` rules. It is cut out
+  of the screen text by rules that fit the layouts seen, so treat it as
+  advisory. No front end shows it;
+- creating a file (2.1.285 and 2.1.286), and editing a file (2.1.285; no 2.1.286
+  edit-file layout is recorded), each emitted as a `confirmation` of unknown
+  risk. A `text_regex` rule matches the displayed block (file name, content,
+  diff); a `path_regex` rule matches only the path-like tokens in it, and misses
+  a bare name such as `Makefile` or `.gitignore`. The event metadata carries a
+  `target_file` that nothing reads, shows or journals.
 
-Automatic allow and deny are unsupported because the observed TUI response
-depends on its current highlighted choice. Manual bytes retain generic
-compatibility. No Bash, file-edit, network, MCP, authentication, or other
-Claude prompt is claimed.
+A person answers all five. Create and edit are unknown risk, not low, on
+purpose: a policy allows a prompt by itself only when it is low risk, and what
+Claude Code is asked to write decides what runs next (`.github/workflows`,
+`.claude/settings.json`, `.vscode/tasks.json`, a hook, a `package.json` script),
+which the guardrails only partly cover and Relayer has no path allowlist for.
+The shell-command prompt is high risk. So no policy allows any of the five by
+itself: a proposed allow is asked (`risk_not_low`, or `sensitive_event` for the
+API-key prompt and for a prompt whose text contains a string the sensitivity
+check looks for, such as `token`, `secret` or `password`, even inside a longer
+word). A deny rule can still answer a prompt that is
+not sensitive, but the adapter has no verified deny byte for Claude Code, so a
+proposed deny is handed back to a person (`fallback_unsupported`) and nothing is
+written.
+
+Automatic allow and deny are unsupported for all five. Claude Code's menu is
+expected to act on whichever choice is highlighted, and no answer to any of
+them is backed by a stored capture of its effect. Manual bytes retain generic
+compatibility: what a person types in the decision modal is sent as typed,
+followed by Enter, provided it is one non-blank line of valid UTF-8, at most
+4096 bytes, without control characters. Enter is expected to take the
+highlighted option and a number to pick one, but no check of either against a
+real Claude Code is recorded, and Relayer does not read which option is
+highlighted. Answer at the terminal: a digit typed from
+the decision modal is untested, and the Enter sent after it may reach whatever
+Claude Code shows next.
+
+The evidence is uneven. The 2.1.59 prompts and the 2.1.285 cases are in
+`internal/adapters/testdata/claude/stream_cases.json`; the 2.1.285 cases are
+labelled anonymized observations, and the repository records no more about how
+they were obtained. The 2.1.286 evidence is strings in `claude_test.go`
+(`TestClaudeAdapterReal21286Prompts`): a Bash prompt with three options, a
+create-file prompt with two, a Bash prompt with four options in a subtest whose
+name contains `real ConPTY artifacts` and whose characters were dropped
+(`proeed`, `❯1Yes`), and
+unnumbered-menu versions of the two 2.1.59 prompts. No fixture holds the bytes
+typed in answer to a prompt, or their effect.
+
+No rule is written for an overwrite of an existing file, a PowerShell command, a
+web fetch or an MCP tool, and no capture of one is stored in the repository, so
+such a prompt raises an event only if its text happens to match a rule: a
+PowerShell prompt carrying a `Run shell command` line would match the
+shell-command rule. That rule needs the words `Run shell command` (any case)
+before the question, then `Do you want to proceed?`, a numbered Yes and No and
+the footer `Esc to cancel` ... `Tab to amend`; a question whose line break falls
+inside a word or a file name is missed too. Only a
+configured `intercept_patterns` entry can catch the rest, and the patterns a new
+configuration file is seeded with matched none of the layouts checked. Without
+one the agent waits for an answer nobody was asked for.
 
 ### Codex CLI 0.148.0-alpha.21 (experimental)
 

@@ -86,9 +86,10 @@ tokens, or other confidential data from a real AI CLI session.
 Vendor-specific fixtures require explicit authorization, aggressive
 anonymization, and a documented provenance review. The current
 `internal/adapters/testdata/claude` and `internal/adapters/testdata/codex`
-directories contain only the minimal reviewed observations and provenance
-notes for the interactions implemented today. Never expand those claims with
-invented “realistic” output.
+directories contain only the minimal observations and provenance notes for the
+interactions implemented today; the Claude directory says which of its cases
+have unconfirmed provenance and which layouts are test strings, not fixtures.
+Never expand those claims with invented “realistic” output.
 
 ### Configuration and audit changes
 
