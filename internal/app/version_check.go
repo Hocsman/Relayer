@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -84,8 +85,14 @@ func DefaultVersionInspector(ctx context.Context, spec agent.Spec) (string, erro
 		cmd.Env = envList
 	}
 
-	out, err := cmd.CombinedOutput()
-	parsed := adapters.ParseVersion(string(out))
+	// Only stdout is parsed, and only stderr is discarded: CombinedOutput let
+	// a banner, a launcher's own version or a shell rc greeting become "the
+	// agent's version", which every client then saw as the installed version.
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = nil
+	err := cmd.Run()
+	parsed := adapters.ParseVersion(stdout.String(), adapters.VendorExecutable(spec.Adapter))
 	if parsed != "" {
 		return parsed, nil
 	}

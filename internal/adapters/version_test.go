@@ -20,25 +20,52 @@ func TestIsVendorAdapter(t *testing.T) {
 
 func TestParseVersion(t *testing.T) {
 	tests := []struct {
-		input string
-		want  string
+		product string
+		input   string
+		want    string
 	}{
-		{"claude 2.1.285 (Claude Code)", "2.1.285"},
-		{"2.1.285 (Claude Code)", "2.1.285"},
-		{"aider 0.86.2", "0.86.2"},
-		{"goose version 1.52.0", "1.52.0"},
-		{"interpreter 0.4.3", "0.4.3"},
-		{"codex-cli 0.148.0-alpha.21", "0.148.0-alpha.21"},
-		{"v2.1.59", "2.1.59"},
-		{"version V0.86.2-rc1", "0.86.2-rc1"},
-		{"no version here", ""},
-		{"", ""},
+		{"claude", "claude 2.1.285 (Claude Code)", "2.1.285"},
+		{"claude", "2.1.285 (Claude Code)", "2.1.285"},
+		{"aider", "aider 0.86.2", "0.86.2"},
+		{"goose", "goose version 1.52.0", "1.52.0"},
+		{"interpreter", "interpreter 0.4.3", "0.4.3"},
+		{"codex", "codex-cli 0.148.0-alpha.21", "0.148.0-alpha.21"},
+		// A line that names no product carries no version, however
+		// version-shaped it is.
+		{"claude", "v2.1.59", ""},
+		{"aider", "version V0.86.2-rc1", ""},
+		{"claude", "no version here", ""},
+		{"claude", "", ""},
+		{"", "claude 2.1.285", ""},
+		// Noisy output: a launcher's own version, a banner, then the
+		// product's line. The first number in the stream is not the
+		// agent's version.
+		{"claude", "npm warn node v99.0.0\nhelper banner 9.9.9\nclaude 2.1.285 (Claude Code)", "2.1.285"},
+		{"codex", "codex-cli 0.148.0\nwarning: telemetry endpoint 10.0.0.1 unreachable", "0.148.0"},
+		// The product's line without a version on it is not a version.
+		{"claude", "claude\n2.1.285", ""},
 	}
 
 	for _, tc := range tests {
-		got := ParseVersion(tc.input)
+		got := ParseVersion(tc.input, tc.product)
 		if got != tc.want {
-			t.Errorf("ParseVersion(%q) = %q, want %q", tc.input, got, tc.want)
+			t.Errorf("ParseVersion(%q, %q) = %q, want %q", tc.input, tc.product, got, tc.want)
+		}
+	}
+}
+
+func TestVendorExecutable(t *testing.T) {
+	for adapterID, want := range map[string]string{
+		AiderID: "aider", ClaudeID: "claude", CodexID: "codex",
+		GooseID: "goose", OpenInterpreterID: "interpreter",
+	} {
+		if got := VendorExecutable(adapterID); got != want {
+			t.Errorf("VendorExecutable(%q) = %q, want %q", adapterID, got, want)
+		}
+	}
+	for _, adapterID := range []string{GenericID, "custom", "", "unknown"} {
+		if got := VendorExecutable(adapterID); got != "" {
+			t.Errorf("VendorExecutable(%q) = %q, want no executable", adapterID, got)
 		}
 	}
 }
