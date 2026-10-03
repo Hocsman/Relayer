@@ -25,6 +25,7 @@ const (
 	versionHelperEnv       = "RELAYER_VERSION_HELPER"
 	versionHelperMarkerEnv = "RELAYER_VERSION_HELPER_MARKER"
 	versionHelperPIDEnv    = "RELAYER_VERSION_HELPER_PID"
+	versionHelperCountEnv  = "RELAYER_VERSION_HELPER_COUNT"
 	// versionHelperHold is how long the grandchild that keeps the probe's
 	// stdout open stays alive. The probe must not wait for it.
 	versionHelperHold = 60 * time.Second
@@ -50,6 +51,18 @@ func runVersionHelper(mode string) int {
 			if err := os.WriteFile(path, []byte("probed\n"), 0o600); err != nil {
 				return 1
 			}
+		}
+		_, _ = os.Stdout.WriteString("claude 2.1.285 (Claude Code)\n")
+	case "count":
+		// Record every execution, so a test can tell an answered probe from a
+		// cached one.
+		if path := os.Getenv(versionHelperCountEnv); path != "" {
+			file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+			if err != nil {
+				return 1
+			}
+			_, _ = file.WriteString("run\n")
+			_ = file.Close()
 		}
 		_, _ = os.Stdout.WriteString("claude 2.1.285 (Claude Code)\n")
 	case "agent":
@@ -437,5 +450,101 @@ func TestVersionProbesReturnWithinTheGlobalBudget(t *testing.T) {
 	}
 	if results[0] != (AgentVersionInfo{}) {
 		t.Fatalf("a probe that never answered reported %+v, want no information", results[0])
+	}
+}
+
+// An administrator who does not want a run's start to execute the agents'
+// binaries — an endpoint agent that flags process spawns, a network home
+// directory — turns the probe off for the machine, the way
+// RELAYER_NO_UPDATE_CHECK turns off the desktop's release check.
+func TestNoVersionCheckRunsNoProbeAndShowsNothing(t *testing.T) {
+	spec := agent.Spec{ID: "claude", Adapter: adapters.ClaudeID, Command: []string{"claude"}}
+
+	for _, value := range []string{"1", "true", "yes"} {
+		t.Setenv(NoVersionProbeEnv, value)
+		called := false
+		info := CheckAgentVersion(context.Background(), spec, adapters.ClaudeID, false,
+			func(context.Context, agent.Spec) (string, error) {
+				called = true
+				return "3.0.0", nil
+			})
+		if called {
+			t.Errorf("%s=%s: the probe ran", NoVersionProbeEnv, value)
+		}
+		if info != (AgentVersionInfo{}) {
+			t.Errorf("%s=%s: a disabled probe reported %+v", NoVersionProbeEnv, value, info)
+		}
+	}
+
+	// "0" and empty leave the probe on, as the update check reads its own
+	// variable: a variable that is set but says no is not a refusal.
+	for _, value := range []string{"0", "  ", ""} {
+		t.Setenv(NoVersionProbeEnv, value)
+		called := false
+		CheckAgentVersion(context.Background(), spec, adapters.ClaudeID, false,
+			func(context.Context, agent.Spec) (string, error) {
+				called = true
+				return "2.1.285", nil
+			})
+		if !called {
+			t.Errorf("%s=%q: the probe did not run", NoVersionProbeEnv, value)
+		}
+	}
+}
+
+// Restarting a run used to run every vendor tool again. The answer is now
+// cached per executable, and the cache belongs to the file: an upgrade
+// changes its modification time, and the next start asks the new binary.
+func TestTheVersionProbeCachesPerExecutableAndModificationTime(t *testing.T) {
+	directory := t.TempDir()
+	executable := versionHelperExecutable(t, directory, "claude")
+	counter := filepath.Join(directory, "runs")
+
+	spec := agent.Spec{
+		ID:      "cached",
+		Adapter: adapters.ClaudeID,
+		Command: []string{executable},
+		Env: map[string]string{
+			versionHelperEnv:      "count",
+			versionHelperCountEnv: counter,
+		},
+	}
+	runs := func() int {
+		raw, err := os.ReadFile(counter)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return 0
+			}
+			t.Fatalf("read the counter: %v", err)
+		}
+		return strings.Count(string(raw), "run\n")
+	}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		version, err := DefaultVersionInspector(context.Background(), spec)
+		if err != nil {
+			t.Fatalf("probe %d: %v", attempt, err)
+		}
+		if version != "2.1.285" {
+			t.Fatalf("probe %d read %q, want 2.1.285", attempt, version)
+		}
+	}
+	if got := runs(); got != 1 {
+		t.Fatalf("the executable ran %d times for two probes, want once: the answer was not cached", got)
+	}
+
+	// An upgrade replaces the file: a new modification time asks it again.
+	stat, err := os.Stat(executable)
+	if err != nil {
+		t.Fatalf("stat the helper: %v", err)
+	}
+	if err := os.Chtimes(executable, stat.ModTime(), stat.ModTime().Add(time.Hour)); err != nil {
+		t.Fatalf("age the helper: %v", err)
+	}
+	if _, err := DefaultVersionInspector(context.Background(), spec); err != nil {
+		t.Fatalf("probe after the upgrade: %v", err)
+	}
+	if got := runs(); got != 2 {
+		t.Fatalf("the executable ran %d times after its file changed, want twice: a stale cache survived an upgrade", got)
 	}
 }
