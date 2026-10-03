@@ -318,6 +318,12 @@ request's network address, as it does any visitor's. It can be turned
 off in **Settings → Notifications**, or for every user of a machine with
 `RELAYER_NO_UPDATE_CHECK=1`. `relayer serve` and the command line never check.
 
+Starting a run also executes each vendor agent's own binary once, as
+`<argv[0]> --version`, to warn about a version its adapter was not captured
+against — locally, with no configured argument and no network, and never for a
+wrapped or launched agent. `RELAYER_NO_VERSION_CHECK=1` turns that off for
+every user of a machine.
+
 Otherwise it sends data over the network only where the user configures it to:
 
 - **Webhooks** in the `notifications` block post each notification to the URLs

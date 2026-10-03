@@ -193,6 +193,44 @@ Deprecated pane flags use a limited tokenizer and do not interpret shell
 operators. They should not be used as a secret channel: command-line arguments
 can be visible to other tools under the same user.
 
+### The version probe
+
+Starting a run executes each vendor agent's own binary a second time — once as
+the agent, once as `<argv[0]> --version` — and compares the answer with the
+versions the adapter's patterns were captured against. It is the only process a
+run starts that supervision does not watch, so it is narrow:
+
+- It runs `argv[0]` and nothing else, and only when `argv[0]`'s base name —
+  without a Windows `.exe` suffix — is exactly the adapter's own executable
+  (`claude`, `codex`, `aider`, `goose`, `interpreter`). No configured argument
+  is passed, and no configured command line is ever rejoined and run again: a
+  shell wrapper (`sh -c`, `cmd /c`) or a launcher (`npx`, `node`, `python`,
+  `docker`) is not probed, and shows no version and no warning.
+- A shell-mode agent (`agents[].shell`) has no `argv[0]` and is never probed;
+  nothing is looked up in `PATH`.
+- The probe is bounded: 2.5s per agent, 500ms more for a grandchild that holds
+  its output open, 64 KiB of stdout read, and 4s for all of a run's probes
+  together, which run in parallel. On the web gateway they run outside the
+  state lock, so a client's read never waits for a tool.
+- Only stdout is read, and only the line that names the product: a launcher's
+  own version or a banner is not the agent's version.
+- The answer is cached per executable path until that file's modification time
+  or size changes, so restarting a run does not run every tool again.
+- `RELAYER_NO_VERSION_CHECK=1` turns the probe off for every user of a machine:
+  nothing is executed and no badge is shown.
+
+The probe is informational and changes no policy: an unverified version never
+blocks a start, never turns an automatic decision into a question, and never
+alters an answer. What it reads is a string the binary printed, so a hostile
+binary can claim any version; the badge reports what the tool said, not what it
+is. It writes nothing to the audit journal, which has no field for a host's
+tool versions. A viewer of the web gateway receives the unverified flag but
+neither the version nor the reason text that quotes it: which build of a tool a
+machine runs is host tooling state, and belongs to the operator, like the
+startup notices and the journal's path.
+
+`relayer doctor` never runs this probe; see [doctor](doctor.md).
+
 ### Bounded untrusted state
 
 Per-session rendered output is retained in a 256 KiB ring. The normalized
