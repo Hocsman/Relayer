@@ -50,6 +50,10 @@ Doctor uses `config.LoadExisting`: an absent file is reported and is never
 created. It never opens an audit sink, creates a PTY or tmux manager, starts an
 agent session, runs a provider command, or invokes `--version`.
 
+Starting a run is different: it does invoke `--version`, on each vendor agent's
+own executable and nothing else. See the
+[version probe](security-model.md#the-version-probe).
+
 ### The tmux probe
 
 One check deliberately executes a program. When tmux is the effective backend,
