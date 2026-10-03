@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -371,5 +372,70 @@ func TestTheVersionProbeDoesNotWaitForAGrandchildThatHoldsThePipe(t *testing.T) 
 		}
 	case <-time.After(budget + 5*time.Second):
 		t.Fatalf("the probe still waits for a grandchild that holds its pipe after %s", budget+5*time.Second)
+	}
+}
+
+// Every agent used to be probed in turn, so a run's start took the sum of the
+// tools' answer times — and on the gateway, its state lock was held for all of
+// it. The probes now run at the same time, within one budget.
+func TestVersionProbesRunInParallelWithinOneBudget(t *testing.T) {
+	const agents = 4
+	const probeCost = 800 * time.Millisecond
+
+	requests := make([]versionProbeRequest, 0, agents)
+	for index := 0; index < agents; index++ {
+		requests = append(requests, versionProbeRequest{
+			spec:            agent.Spec{ID: fmt.Sprintf("agent-%d", index), Command: []string{"claude"}},
+			resolvedAdapter: adapters.ClaudeID,
+			inspector: func(ctx context.Context, _ agent.Spec) (string, error) {
+				select {
+				case <-time.After(probeCost):
+					return "3.0.0", nil
+				case <-ctx.Done():
+					return "", ctx.Err()
+				}
+			},
+		})
+	}
+
+	started := time.Now()
+	results := probeAgentVersions(context.Background(), requests)
+	elapsed := time.Since(started)
+
+	if elapsed >= agents*probeCost {
+		t.Fatalf("%d probes of %s each took %s: they ran one after another", agents, probeCost, elapsed)
+	}
+	for index, info := range results {
+		if info.InstalledVersion != "3.0.0" || !info.Unverified {
+			t.Fatalf("probe %d reported %+v, want an unverified 3.0.0", index, info)
+		}
+	}
+}
+
+// The budget is enforced on the join, not left to the inspectors' goodwill:
+// one that ignores its context keeps running, and the run's start returns
+// without it rather than waiting.
+func TestVersionProbesReturnWithinTheGlobalBudget(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+
+	requests := []versionProbeRequest{{
+		spec:            agent.Spec{ID: "deaf", Command: []string{"claude"}},
+		resolvedAdapter: adapters.ClaudeID,
+		inspector: func(context.Context, agent.Spec) (string, error) {
+			<-release
+			return "3.0.0", nil
+		},
+	}}
+
+	started := time.Now()
+	results := probeAgentVersions(context.Background(), requests)
+	elapsed := time.Since(started)
+
+	if elapsed > versionProbeGlobalBudget+2*time.Second {
+		t.Fatalf("the probes outlived the global budget: %s for a %s budget", elapsed, versionProbeGlobalBudget)
+	}
+	if results[0] != (AgentVersionInfo{}) {
+		t.Fatalf("a probe that never answered reported %+v, want no information", results[0])
 	}
 }
