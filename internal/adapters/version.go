@@ -65,7 +65,7 @@ func CheckVersion(adapterID string, installedVersion string) (unverified bool, r
 
 	installed := strings.TrimSpace(installedVersion)
 	if installed == "" {
-		return true, fmt.Sprintf("Version non détectée pour l'adaptateur %s (versions vérifiées : %s)", adapterID, strings.Join(verifiedList, ", "))
+		return true, fmt.Sprintf("no version detected for the %s adapter (verified versions: %s)", adapterID, strings.Join(verifiedList, ", "))
 	}
 
 	// Normalize
@@ -78,5 +78,5 @@ func CheckVersion(adapterID string, installedVersion string) (unverified bool, r
 		}
 	}
 
-	return true, fmt.Sprintf("Version %s non vérifiée pour l'adaptateur %s (versions vérifiées : %s)", installed, adapterID, strings.Join(verifiedList, ", "))
+	return true, fmt.Sprintf("version %s is not verified for the %s adapter (verified versions: %s)", installed, adapterID, strings.Join(verifiedList, ", "))
 }

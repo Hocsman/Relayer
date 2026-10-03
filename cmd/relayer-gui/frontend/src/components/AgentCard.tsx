@@ -139,9 +139,9 @@ export function AgentCard({
               {agent.unverifiedVersion && (
                 <span
                   className="unverified-version-tag"
-                  title={agent.unverifiedReason || "Version non vérifiée"}
+                  title={agent.unverifiedReason || "Unverified version"}
                 >
-                  version non vérifiée
+                  unverified version
                 </span>
               )}
             </h2>
@@ -155,7 +155,7 @@ export function AgentCard({
         <span>{agent.backend.toUpperCase()}</span>
         <span>{agent.adapter}</span>
         {agent.installedVersion && (
-          <span title={`Version installée : ${agent.installedVersion}`}>
+          <span title={`Installed version: ${agent.installedVersion}`}>
             v{agent.installedVersion}
           </span>
         )}
