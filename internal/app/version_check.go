@@ -49,6 +49,77 @@ const (
 // version nobody looked at.
 var ErrVersionProbeNotApplicable = errors.New("the version probe does not apply to this agent")
 
+// NoVersionProbeEnv turns the probe off for every user of a machine, the way
+// RELAYER_NO_UPDATE_CHECK turns off the desktop's release check. It is an
+// environment variable and not a configuration key on purpose: the probe runs
+// a child process on the host, which is a machine-level concern — an endpoint
+// agent that flags process spawns, a network home directory, an air-gapped
+// host — while config.yaml is per-project, strict-schema, and travels through
+// version control. An administrator sets this once for the machine; nobody
+// has to edit every project's file to get it.
+const NoVersionProbeEnv = "RELAYER_NO_VERSION_CHECK"
+
+// versionProbeDisabled reports whether an administrator turned the probe off.
+// "0" and empty leave it on, as the update check reads its own variable.
+func versionProbeDisabled() bool {
+	value := strings.TrimSpace(os.Getenv(NoVersionProbeEnv))
+	return value != "" && value != "0"
+}
+
+// versionProbeCacheEntry is one probe's answer, valid while the executable's
+// modification time and size are unchanged — which is what an upgrade alters.
+type versionProbeCacheEntry struct {
+	modTime time.Time
+	size    int64
+	version string
+}
+
+// versionProbeCache remembers what an executable answered, so restarting a run
+// does not run every vendor tool again. Only a parsed version is cached: a
+// failure can be transient, and caching it would hide a tool that started
+// answering until its file changed. The map is bounded — a machine with more
+// vendor tools than the bound re-probes them rather than growing without end.
+var versionProbeCache = struct {
+	sync.Mutex
+	entries map[string]versionProbeCacheEntry
+}{entries: make(map[string]versionProbeCacheEntry)}
+
+const versionProbeCacheLimit = 32
+
+// cachedVersionProbe returns the answer an executable already gave, when its
+// file has not changed since.
+func cachedVersionProbe(path string) (string, bool) {
+	stat, err := os.Stat(path)
+	if err != nil {
+		return "", false
+	}
+	versionProbeCache.Lock()
+	defer versionProbeCache.Unlock()
+	entry, found := versionProbeCache.entries[path]
+	if !found || entry.size != stat.Size() || !entry.modTime.Equal(stat.ModTime()) {
+		return "", false
+	}
+	return entry.version, true
+}
+
+// rememberVersionProbe stores one answer under the executable's resolved path.
+func rememberVersionProbe(path, version string) {
+	stat, err := os.Stat(path)
+	if err != nil {
+		return
+	}
+	versionProbeCache.Lock()
+	defer versionProbeCache.Unlock()
+	if len(versionProbeCache.entries) >= versionProbeCacheLimit {
+		versionProbeCache.entries = make(map[string]versionProbeCacheEntry)
+	}
+	versionProbeCache.entries[path] = versionProbeCacheEntry{
+		modTime: stat.ModTime(),
+		size:    stat.Size(),
+		version: version,
+	}
+}
+
 // boundedProbeBuffer keeps the first limit bytes a probe prints and discards
 // the rest. A --version answer is one line; what a binary prints beyond the
 // bound is not read, and cannot fill memory before the deadline arrives.
@@ -111,6 +182,17 @@ func DefaultVersionInspector(ctx context.Context, spec agent.Spec) (string, erro
 		return "", ErrVersionProbeNotApplicable
 	}
 
+	resolved, err := exec.LookPath(executable)
+	if err != nil {
+		return "", err
+	}
+	// A run restart re-probes nothing an unchanged executable already
+	// answered: the cache is keyed by the resolved path and invalidated by
+	// the file's modification time and size.
+	if version, cached := cachedVersionProbe(resolved); cached {
+		return version, nil
+	}
+
 	timeoutCtx, cancel := context.WithTimeout(ctx, versionProbeTimeout)
 	defer cancel()
 
@@ -145,9 +227,10 @@ func DefaultVersionInspector(ctx context.Context, spec agent.Spec) (string, erro
 	stdout := &boundedProbeBuffer{limit: versionProbeOutputBound}
 	cmd.Stdout = stdout
 	cmd.Stderr = nil
-	err := cmd.Run()
+	err = cmd.Run()
 	parsed := adapters.ParseVersion(stdout.String(), adapters.VendorExecutable(spec.Adapter))
 	if parsed != "" {
+		rememberVersionProbe(resolved, parsed)
 		return parsed, nil
 	}
 	if err != nil {
@@ -166,6 +249,11 @@ func DefaultVersionInspector(ctx context.Context, spec agent.Spec) (string, erro
 // and nothing is displayed.
 func CheckAgentVersion(ctx context.Context, spec agent.Spec, resolvedAdapter string, simulated bool, inspector VersionInspector) AgentVersionInfo {
 	if simulated || !adapters.IsVendorAdapter(resolvedAdapter) {
+		return AgentVersionInfo{}
+	}
+	// An administrator who set RELAYER_NO_VERSION_CHECK runs no probe at all:
+	// nothing is executed, and nothing is displayed.
+	if versionProbeDisabled() {
 		return AgentVersionInfo{}
 	}
 	if _, ok := probeExecutable(spec, resolvedAdapter); !ok {
