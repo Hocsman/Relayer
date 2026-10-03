@@ -36,7 +36,8 @@ type registryEntry struct {
 
 // Registry resolves explicit adapters and executable-name hints. Generic is
 // always installed as the final fallback. Claude and Codex remain
-// experimental and recognize only interactions backed by anonymized fixtures.
+// experimental and recognize only the interactions listed in docs/adapters.md;
+// for Claude the 2.1.286 layouts rest on test strings, not on fixtures.
 type Registry struct {
 	mu      sync.RWMutex
 	entries map[string]registryEntry
