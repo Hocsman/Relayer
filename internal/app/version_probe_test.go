@@ -6,7 +6,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/agent"
@@ -20,6 +23,10 @@ import (
 const (
 	versionHelperEnv       = "RELAYER_VERSION_HELPER"
 	versionHelperMarkerEnv = "RELAYER_VERSION_HELPER_MARKER"
+	versionHelperPIDEnv    = "RELAYER_VERSION_HELPER_PID"
+	// versionHelperHold is how long the grandchild that keeps the probe's
+	// stdout open stays alive. The probe must not wait for it.
+	versionHelperHold = 60 * time.Second
 )
 
 func TestMain(m *testing.M) {
@@ -49,6 +56,28 @@ func runVersionHelper(mode string) int {
 		// Stay alive until the runtime closes the terminal.
 		buffer := make([]byte, 1)
 		_, _ = os.Stdin.Read(buffer)
+	case "hold-pipe":
+		// Answer, then leave a grandchild holding the inherited stdout open
+		// and exit: the shape that made CombinedOutput outlive its timeout.
+		// The inheritance is the point — a grandchild whose stdout is the
+		// device null holds nothing.
+		_, _ = os.Stdout.WriteString("claude 2.1.285 (Claude Code)\n")
+		self, err := os.Executable()
+		if err != nil {
+			return 1
+		}
+		grandchild := exec.Command(self)
+		grandchild.Stdout = os.Stdout
+		grandchild.Stderr = os.Stderr
+		grandchild.Env = append(os.Environ(), versionHelperEnv+"=hold")
+		if err := grandchild.Start(); err != nil {
+			return 1
+		}
+		if path := os.Getenv(versionHelperPIDEnv); path != "" {
+			_ = os.WriteFile(path, []byte(strconv.Itoa(grandchild.Process.Pid)), 0o600)
+		}
+	case "hold":
+		time.Sleep(versionHelperHold)
 	default:
 		return 2
 	}
@@ -281,5 +310,66 @@ func TestTheRealProbeReadsTheAgentsOwnVersion(t *testing.T) {
 	info := CheckAgentVersion(context.Background(), spec, adapters.ClaudeID, false, nil)
 	if info.InstalledVersion != "2.1.285" || info.Unverified || info.Reason != "" {
 		t.Fatalf("a verified version reported %+v", info)
+	}
+}
+
+// The probe's timeout killed the process and then waited for its pipes: a
+// grandchild that inherited stdout kept the read blocked long after the
+// deadline, and the run's start waited with it. WaitDelay now bounds that
+// wait, and the version printed before the pipe was held is still read.
+func TestTheVersionProbeDoesNotWaitForAGrandchildThatHoldsThePipe(t *testing.T) {
+	directory := t.TempDir()
+	executable := versionHelperExecutable(t, directory, "claude")
+	pidFile := filepath.Join(directory, "grandchild.pid")
+
+	t.Cleanup(func() {
+		raw, err := os.ReadFile(pidFile)
+		if err != nil {
+			return
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+		if err != nil {
+			return
+		}
+		if process, err := os.FindProcess(pid); err == nil {
+			_ = process.Kill()
+		}
+	})
+
+	spec := agent.Spec{
+		ID:      "held-pipe",
+		Adapter: adapters.ClaudeID,
+		Command: []string{executable},
+		Env: map[string]string{
+			versionHelperEnv:    "hold-pipe",
+			versionHelperPIDEnv: pidFile,
+		},
+	}
+
+	type probeResult struct {
+		version string
+		err     error
+	}
+	done := make(chan probeResult, 1)
+	started := time.Now()
+	go func() {
+		version, err := DefaultVersionInspector(context.Background(), spec)
+		done <- probeResult{version: version, err: err}
+	}()
+
+	// The deadline is the probe's timeout; WaitDelay then bounds the wait for
+	// the pipe the grandchild holds. Anything past that is the old behavior,
+	// which waited for the grandchild's full sleep.
+	budget := versionProbeTimeout + versionProbeWaitDelay + 2*time.Second
+	select {
+	case got := <-done:
+		if elapsed := time.Since(started); elapsed > budget {
+			t.Fatalf("the probe took %s, want within %s", elapsed, budget)
+		}
+		if got.version != "2.1.285" {
+			t.Fatalf("the probe read %q (err %v), want the version printed before the pipe was held", got.version, got.err)
+		}
+	case <-time.After(budget + 5*time.Second):
+		t.Fatalf("the probe still waits for a grandchild that holds its pipe after %s", budget+5*time.Second)
 	}
 }

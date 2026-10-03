@@ -26,12 +26,50 @@ type AgentVersionInfo struct {
 type VersionInspector func(ctx context.Context, spec agent.Spec) (string, error)
 
 // versionProbeTimeout bounds one probe of an agent's own executable.
-const versionProbeTimeout = 2500 * time.Millisecond
+// versionProbeWaitDelay then bounds how long the wait for its output may
+// outlive the process: a grandchild that inherited stdout — a daemon the tool
+// spawned, a pager, a hung child — would otherwise keep the read open, and
+// the run's start with it, long after the timeout killed the probe.
+const (
+	versionProbeTimeout   = 2500 * time.Millisecond
+	versionProbeWaitDelay = 500 * time.Millisecond
+	// versionProbeOutputBound caps what one probe reads. --version prints a
+	// line; a binary that floods stdout must not fill memory before the
+	// deadline arrives.
+	versionProbeOutputBound = 64 * 1024
+)
 
 // ErrVersionProbeNotApplicable is what an inspector returns for an agent it
 // must not probe. The caller displays nothing, rather than a warning about a
 // version nobody looked at.
 var ErrVersionProbeNotApplicable = errors.New("the version probe does not apply to this agent")
+
+// boundedProbeBuffer keeps the first limit bytes a probe prints and discards
+// the rest. A --version answer is one line; what a binary prints beyond the
+// bound is not read, and cannot fill memory before the deadline arrives.
+type boundedProbeBuffer struct {
+	buffer bytes.Buffer
+	limit  int
+}
+
+func (b *boundedProbeBuffer) Write(p []byte) (int, error) {
+	written := len(p)
+	if room := b.limit - b.buffer.Len(); room > 0 {
+		if len(p) > room {
+			p = p[:room]
+		}
+		if _, err := b.buffer.Write(p); err != nil {
+			return 0, err
+		}
+	}
+	// The full length is always reported: a short write would tell the copy
+	// that the writer failed, and the probe's deadline decides, not this.
+	return written, nil
+}
+
+func (b *boundedProbeBuffer) String() string {
+	return b.buffer.String()
+}
 
 // probeExecutable returns the executable a version probe may run: the agent's
 // own argv[0], and only when its base name — without a Windows .exe suffix —
@@ -72,6 +110,7 @@ func DefaultVersionInspector(ctx context.Context, spec agent.Spec) (string, erro
 	defer cancel()
 
 	cmd := exec.CommandContext(timeoutCtx, executable, "--version")
+	cmd.WaitDelay = versionProbeWaitDelay
 	if spec.Cwd != "" {
 		cmd.Dir = spec.Cwd
 	}
@@ -96,8 +135,10 @@ func DefaultVersionInspector(ctx context.Context, spec agent.Spec) (string, erro
 	// Only stdout is parsed, and stderr is discarded: CombinedOutput let a
 	// banner, a launcher's own version or a shell rc greeting become "the
 	// agent's version", which every client then saw as the installed version.
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
+	// What is read is bounded: the version is on one of the first lines, and a
+	// binary that floods stdout must not fill memory before its deadline.
+	stdout := &boundedProbeBuffer{limit: versionProbeOutputBound}
+	cmd.Stdout = stdout
 	cmd.Stderr = nil
 	err := cmd.Run()
 	parsed := adapters.ParseVersion(stdout.String(), adapters.VendorExecutable(spec.Adapter))
