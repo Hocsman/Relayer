@@ -25,45 +25,53 @@ type AgentVersionInfo struct {
 // It returns the detected raw version or an error if inspection failed.
 type VersionInspector func(ctx context.Context, spec agent.Spec) (string, error)
 
-// DefaultVersionInspector runs "<cmd> --version" with a timeout to detect the installed version.
-func DefaultVersionInspector(ctx context.Context, spec agent.Spec) (string, error) {
-	executable := ""
-	if len(spec.Command) > 0 {
-		executable = spec.Command[0]
-	} else {
-		switch spec.Adapter {
-		case adapters.AiderID:
-			executable = "aider"
-		case adapters.ClaudeID:
-			executable = "claude"
-		case adapters.GooseID:
-			executable = "goose"
-		case adapters.OpenInterpreterID:
-			executable = "interpreter"
-		case adapters.CodexID:
-			executable = "codex"
-		}
+// versionProbeTimeout bounds one probe of an agent's own executable.
+const versionProbeTimeout = 2500 * time.Millisecond
+
+// ErrVersionProbeNotApplicable is what an inspector returns for an agent it
+// must not probe. The caller displays nothing, rather than a warning about a
+// version nobody looked at.
+var ErrVersionProbeNotApplicable = errors.New("the version probe does not apply to this agent")
+
+// probeExecutable returns the executable a version probe may run: the agent's
+// own argv[0], and only when its base name — without a Windows .exe suffix —
+// is exactly the adapter's vendor executable.
+//
+// Nothing else is ever executed. The probe used to rejoin a shell wrapper's
+// command line (sh -c, cmd /c) and run it again with --version appended: the
+// configured script's side effects happened twice, which a marker file proved
+// by being written once per start. A launcher (npx, node, python, docker)
+// reported its own version as the agent's, and a shell-mode agent — no argv at
+// all — probed whatever "claude" the PATH happened to resolve.
+func probeExecutable(spec agent.Spec, adapterID string) (string, bool) {
+	want := adapters.VendorExecutable(adapterID)
+	if want == "" || len(spec.Command) == 0 {
+		return "", false
 	}
-	executable = strings.TrimSpace(executable)
+	executable := strings.TrimSpace(spec.Command[0])
 	if executable == "" {
-		return "", errors.New("no executable found for agent")
+		return "", false
+	}
+	base := strings.TrimSuffix(strings.ToLower(filepath.Base(executable)), ".exe")
+	if base != want {
+		return "", false
+	}
+	return executable, true
+}
+
+// DefaultVersionInspector runs "<argv[0]> --version" — the adapter's own
+// executable, with none of the configured arguments — and reads the version
+// from stdout.
+func DefaultVersionInspector(ctx context.Context, spec agent.Spec) (string, error) {
+	executable, ok := probeExecutable(spec, spec.Adapter)
+	if !ok {
+		return "", ErrVersionProbeNotApplicable
 	}
 
-	var cmd *exec.Cmd
-	timeoutCtx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
+	timeoutCtx, cancel := context.WithTimeout(ctx, versionProbeTimeout)
 	defer cancel()
 
-	// Check for shell wrapper like `cmd.exe /c <tool>` or `sh -c <tool>`
-	baseName := strings.ToLower(filepath.Base(executable))
-	if len(spec.Command) >= 3 && (baseName == "cmd.exe" || baseName == "cmd") && strings.EqualFold(spec.Command[1], "/c") {
-		subCmd := strings.Join(spec.Command[2:], " ") + " --version"
-		cmd = exec.CommandContext(timeoutCtx, spec.Command[0], spec.Command[1], subCmd)
-	} else if len(spec.Command) >= 3 && (baseName == "sh" || baseName == "bash") && spec.Command[1] == "-c" {
-		subCmd := strings.Join(spec.Command[2:], " ") + " --version"
-		cmd = exec.CommandContext(timeoutCtx, spec.Command[0], spec.Command[1], subCmd)
-	} else {
-		cmd = exec.CommandContext(timeoutCtx, executable, "--version")
-	}
+	cmd := exec.CommandContext(timeoutCtx, executable, "--version")
 	if spec.Cwd != "" {
 		cmd.Dir = spec.Cwd
 	}
@@ -85,8 +93,8 @@ func DefaultVersionInspector(ctx context.Context, spec agent.Spec) (string, erro
 		cmd.Env = envList
 	}
 
-	// Only stdout is parsed, and only stderr is discarded: CombinedOutput let
-	// a banner, a launcher's own version or a shell rc greeting become "the
+	// Only stdout is parsed, and stderr is discarded: CombinedOutput let a
+	// banner, a launcher's own version or a shell rc greeting become "the
 	// agent's version", which every client then saw as the installed version.
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
@@ -102,10 +110,19 @@ func DefaultVersionInspector(ctx context.Context, spec agent.Spec) (string, erro
 	return "", errors.New("could not parse version from output")
 }
 
-// CheckAgentVersion inspects and evaluates the version for an agent specification.
-// If simulated is true or adapter is not a vendor adapter, no warning is generated.
-func CheckAgentVersion(ctx context.Context, spec agent.Spec, simulated bool, inspector VersionInspector) AgentVersionInfo {
-	if simulated || !adapters.IsVendorAdapter(spec.Adapter) {
+// CheckAgentVersion inspects and evaluates the version of one agent.
+//
+// resolvedAdapter is the adapter the run resolved, not the one the
+// configuration named: "command: [claude]" with no adapter resolves to the
+// Claude adapter, and testing spec.Adapter left that agent without a warning.
+// A simulated agent, a non-vendor adapter, and an agent whose argv[0] is not
+// the adapter's own executable produce no information at all: nothing is run,
+// and nothing is displayed.
+func CheckAgentVersion(ctx context.Context, spec agent.Spec, resolvedAdapter string, simulated bool, inspector VersionInspector) AgentVersionInfo {
+	if simulated || !adapters.IsVendorAdapter(resolvedAdapter) {
+		return AgentVersionInfo{}
+	}
+	if _, ok := probeExecutable(spec, resolvedAdapter); !ok {
 		return AgentVersionInfo{}
 	}
 
@@ -113,9 +130,17 @@ func CheckAgentVersion(ctx context.Context, spec agent.Spec, simulated bool, ins
 		inspector = DefaultVersionInspector
 	}
 
-	version, err := inspector(ctx, spec)
+	// The inspector sees the resolved adapter, so its own eligibility check
+	// and its parse anchor agree with this one.
+	probeSpec := spec
+	probeSpec.Adapter = resolvedAdapter
+
+	version, err := inspector(ctx, probeSpec)
+	if errors.Is(err, ErrVersionProbeNotApplicable) {
+		return AgentVersionInfo{}
+	}
 	if err != nil && version == "" {
-		unverified, reason := adapters.CheckVersion(spec.Adapter, "")
+		unverified, reason := adapters.CheckVersion(resolvedAdapter, "")
 		return AgentVersionInfo{
 			InstalledVersion: "",
 			Unverified:       unverified,
@@ -123,7 +148,7 @@ func CheckAgentVersion(ctx context.Context, spec agent.Spec, simulated bool, ins
 		}
 	}
 
-	unverified, reason := adapters.CheckVersion(spec.Adapter, version)
+	unverified, reason := adapters.CheckVersion(resolvedAdapter, version)
 	return AgentVersionInfo{
 		InstalledVersion: version,
 		Unverified:       unverified,
