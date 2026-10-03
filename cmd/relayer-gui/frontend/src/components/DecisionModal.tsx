@@ -189,9 +189,9 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
             {agent?.unverifiedVersion && (
               <em
                 className="unverified-version-tag"
-                title={agent.unverifiedReason || "Version non vérifiée"}
+                title={agent.unverifiedReason || "Unverified version"}
               >
-                version non vérifiée
+                unverified version
               </em>
             )}
           </div>

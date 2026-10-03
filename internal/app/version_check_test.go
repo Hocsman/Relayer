@@ -61,7 +61,7 @@ func TestCheckAgentVersion(t *testing.T) {
 	if !info.Unverified {
 		t.Errorf("failed version inspection should be marked unverified")
 	}
-	if !strings.Contains(info.Reason, "non détectée") {
-		t.Errorf("expected reason to mention 'non détectée', got %s", info.Reason)
+	if !strings.Contains(info.Reason, "no version detected") {
+		t.Errorf("expected reason to mention 'no version detected', got %s", info.Reason)
 	}
 }

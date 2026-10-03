@@ -342,7 +342,7 @@ func StartDesktopRuntime(parent context.Context, plan *DesktopPlan, runID string
 	runtime.startupLogs = buildStartupLogs(plan.configuration, plan.resolution, runtime.infos, plan.configPath)
 	for _, s := range runtime.sessions {
 		if s.UnverifiedVersion && s.UnverifiedReason != "" {
-			runtime.startupLogs = append(runtime.startupLogs, fmt.Sprintf("Avertissement [%s] : %s", s.Name, s.UnverifiedReason))
+			runtime.startupLogs = append(runtime.startupLogs, fmt.Sprintf("Warning [%s]: %s", s.Name, s.UnverifiedReason))
 		}
 	}
 	if auditor.Enabled() {
