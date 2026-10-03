@@ -8,8 +8,8 @@ import (
 
 const (
 	// ClaudeID identifies the experimental Claude Code adapter. Its vendor
-	// rules are intentionally limited to anonymized prompts observed with the
-	// version documented alongside the fixtures.
+	// rules are limited to the layouts listed in docs/adapters.md; the Claude
+	// Code 2.1.286 ones rest on test strings, not on stored fixtures.
 	ClaudeID = "claude"
 
 	claudeWorkspaceTrustPattern = "relayer.vendor.claude.2_1_59.workspace_trust.4bf978bb"
@@ -199,10 +199,10 @@ var claudeObservedRules = []claudeObservedRule{
 	},
 }
 
-// ClaudeAdapter recognizes only prompts backed by anonymized Claude Code
-// observations: the 2.1.59 workspace-trust and environment-key prompts, the
-// 2.1.285 Bash, create-file and edit-file prompts, and the Bash and create-file
-// layouts of 2.1.286, which rest on test strings. Configured
+// ClaudeAdapter recognizes only these layouts: the 2.1.59 workspace-trust and
+// environment-key prompts, the 2.1.285 Bash, create-file and edit-file cases
+// (provenance unconfirmed), and the Bash and create-file layouts of 2.1.286,
+// which rest on test strings. Configured
 // intercept_patterns retain their configured order and take priority,
 // preserving the semantics of existing configurations.
 //

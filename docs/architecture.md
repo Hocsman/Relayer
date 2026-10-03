@@ -238,7 +238,8 @@ occurrence of the same text to become actionable again.
 
 The stable generic adapter applies ordered regular expressions only to the
 active terminal line touched by new output. Experimental Claude and Codex
-adapters recognize only fixture-backed vendor structures, then retain the same
+adapters recognize only the vendor structures listed in adapters.md (for Claude,
+the 2.1.286 layouts rest on test strings, not fixtures), then retain the same
 generic pattern fallback. See [adapters.md](adapters.md).
 
 The older `internal/intercept` package remains as a compatibility facade around
