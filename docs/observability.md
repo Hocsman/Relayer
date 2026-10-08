@@ -76,7 +76,7 @@ docker compose -f docker-compose.telemetry.yml down
 
 If your team already operates a shared Grafana instance:
 
-1. Copy [`docs/grafana-dashboard.json`](file:///c:/Users/Duc_Monster/Projets/Relayer/docs/grafana-dashboard.json) (or from `telemetry/grafana/dashboards/relayer-dashboard.json`).
+1. Copy [`docs/grafana-dashboard.json`](grafana-dashboard.json) (or from `telemetry/grafana/dashboards/relayer-dashboard.json`).
 2. In Grafana, navigate to **Dashboards** $\rightarrow$ **New** $\rightarrow$ **Import**.
 3. Upload the JSON file or paste its contents.
 4. Select your Prometheus datasource and click **Import**.
