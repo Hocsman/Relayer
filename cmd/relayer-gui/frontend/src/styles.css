@@ -1487,6 +1487,35 @@ select:focus-visible {
   background: rgba(0, 0, 0, 0.28);
 }
 
+.decision-command {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 14px 20px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.decision-command pre {
+  /* The command is what the decision is about, so it gets more room than the
+     transcript under it and wraps instead of scrolling sideways. The core sends
+     up to eight lines of 200 characters and a mark where it cut; at about 84
+     characters a row that is more than twenty rows, so the box holds twenty (a
+     whole number of 16.5px line boxes) before it scrolls. Like the transcript it
+     yields to the controls on a short window, where the modal's body scrolls. */
+  max-height: min(330px, 40vh);
+  margin: 0;
+  overflow: auto;
+  color: #e6edf7;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .decision-transcript pre {
   /* Yields before the controls do: on a short window the transcript is the part
      that can afford to shrink, and pushing Allow/Deny below the fold is exactly

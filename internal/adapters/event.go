@@ -82,6 +82,29 @@ type Event struct {
 	anchor screen.RowID
 }
 
+const (
+	// MetadataCommandKind is the metadata key under which an adapter says what
+	// kind of text its Event.Command holds. Without it the field is only a
+	// fragment of the question line (the generic adapter's quoted word, which may
+	// be a file name or the word "yes"), good enough for a policy to match and not
+	// something to put in front of a person as the command the agent asks to run.
+	// The journal admits no metadata key of this name.
+	MetadataCommandKind = "command_kind"
+
+	// CommandKindShell marks a prompt that asks to run one shell command, whose
+	// Event.Command is that command as the agent's screen showed it. It is set by
+	// a rule written for such a prompt, never by a configured pattern.
+	CommandKindShell = "shell"
+)
+
+// IsShellCommandPrompt reports whether the occurrence is a prompt that asks to
+// run one shell command, as its adapter's own rule read it. Such a prompt is
+// about its command, not about an MCP tool call, and its command is the one text
+// a front end may show as such.
+func (event Event) IsShellCommandPrompt() bool {
+	return event.Metadata[MetadataCommandKind] == CommandKindShell
+}
+
 // NewProcessExitEvent creates the sole lifecycle event currently represented
 // in the semantic stream. Metadata contains only a numeric exit code.
 func NewProcessExitEvent(sessionID, agentID, adapterID string, sequence uint64, exitCode *int, failed bool) Event {

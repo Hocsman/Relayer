@@ -8,7 +8,9 @@ import (
 )
 
 // View is the display-safe form of one supervised prompt: what a front end may
-// put on screen or send to a browser. Its JSON is the desktop's SupervisionEvent,
+// put on screen or send to a browser. The exception is Command, which is
+// display-safe for the operator who answers the prompt and is not sent to a
+// viewer (the web gateway removes it). Its JSON is the desktop's SupervisionEvent,
 // field for field. It has no field for terminal input, adapter matches or raw
 // backend text, and its summary, rule and reason have been bounded and redacted.
 type View struct {
@@ -37,6 +39,11 @@ type View struct {
 	// and every answer but deny when the policy denies the prompt but it goes
 	// to the operator all the same. An answer not offered is refused.
 	Decisions []string `json:"decisions"`
+	// Command is the command the prompt asks about, in the form that may be
+	// shown (displayCommand): redacted, with its lines kept and bounded, and
+	// empty when the adapter read none or the prompt is sensitive. It is agent
+	// text read from the screen, advisory and never journaled.
+	Command string `json:"command,omitempty"`
 	// toolCall is the MCP tool call the prompt asks about, in the form that
 	// may be shown (displayToolCall), or nil. It is not part of the JSON: the
 	// desktop's interface has no badge for it, and its SupervisionEvent stays
@@ -106,6 +113,7 @@ func supervisionView(
 		Evaluation:     evaluationView(evaluation),
 		DeliveryStatus: delivery,
 		Decisions:      offered,
+		Command:        displayCommand(event),
 		toolCall:       displayToolCall(event),
 	}
 }

@@ -460,14 +460,21 @@ func newGatewayHandler(ctrl *Controller, tokens map[string]AuthIdentity, allowAn
 				return
 			}
 		}
+		if prompt, ok := payload.(SupervisionEvent); ok && prompt.Command != "" {
+			viewerBytes, err = json.Marshal(wsEventMessage{Event: event, Payload: commandForRole(prompt, RoleViewer)})
+			if err != nil {
+				return
+			}
+		}
 
 		gh.clientsMu.RLock()
 		defer gh.clientsMu.RUnlock()
 		for client := range gh.clients {
-			if client.role == RoleViewer {
-				client.safeSend(viewerBytes)
-			} else {
+			// Fail closed: only an operator is sent the unmasked frame.
+			if client.role == RoleOperator {
 				client.safeSend(msgBytes)
+			} else {
+				client.safeSend(viewerBytes)
 			}
 		}
 	})

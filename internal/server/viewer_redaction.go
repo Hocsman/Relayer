@@ -59,6 +59,10 @@ func stateForRole(state AppState, role UserRole) AppState {
 	masked := state
 	masked.Notices = nil
 	masked.Audit.Path = ""
+	masked.PendingEvents = make([]SupervisionEvent, len(state.PendingEvents))
+	for index, prompt := range state.PendingEvents {
+		masked.PendingEvents[index] = commandForRole(prompt, role)
+	}
 	agents := make([]AgentState, len(state.Agents))
 	for index, agent := range state.Agents {
 		agent.InstalledVersion = ""
@@ -67,6 +71,20 @@ func stateForRole(state AppState, role UserRole) AppState {
 	}
 	masked.Agents = agents
 	return masked
+}
+
+// commandForRole returns a prompt unchanged for an operator and without its
+// command for a viewer. The command a prompt asks about is text the agent
+// printed, redacted as the journal redacts text but still its own: a path on the
+// host, a host name, an argument that is not a secret by any pattern. A viewer
+// is shown that a prompt waits and what it is, not what the agent was about to
+// run; with --viewer-terminals hidden that is the whole point.
+func commandForRole(prompt SupervisionEvent, role UserRole) SupervisionEvent {
+	if role == RoleOperator {
+		return prompt
+	}
+	prompt.Command = ""
+	return prompt
 }
 
 // errViewerAudit replaces an audit error for a viewer: the error from opening
