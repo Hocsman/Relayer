@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/Hocsman/Relayer/internal/adapters"
 	"github.com/Hocsman/Relayer/internal/session"
@@ -175,8 +176,8 @@ func TestTheCommandOfAPromptIsRedactedAndBounded(t *testing.T) {
 		{name: "blank lines around it go", command: "\n\n  \necho hi\n\n", want: "echo hi"},
 		{name: "a control character is a space", command: "echo\x1b[31m red\x00 done\ttab", want: "echo [31m red  done tab"},
 		{name: "invalid UTF-8 is a replacement character", command: "echo \xff\xfe ok", want: "echo �� ok"},
-		{name: "a bidi override is a visible mark", command: "echo ok‮txt.exe", want: "echo ok�txt.exe"},
-		{name: "a zero-width space is a visible mark", command: "rm​ -rf x", want: "rm� -rf x"},
+		{name: "a bidi override is a visible mark", command: "echo ok" + string(rune(0x202e)) + "txt.exe", want: "echo ok" + string(unicode.ReplacementChar) + "txt.exe"},
+		{name: "a zero-width space is a visible mark", command: "rm" + string(rune(0x200b)) + " -rf x", want: "rm" + string(unicode.ReplacementChar) + " -rf x"},
 		{name: "a line of 200 characters is whole", command: strings.Repeat("x", 200), want: strings.Repeat("x", 200)},
 		{name: "a line of 201 characters is cut", command: strings.Repeat("x", 201), want: strings.Repeat("x", 199) + "…"},
 		{name: "a long line is cut", command: strings.Repeat("x", 500), want: strings.Repeat("x", 199) + "…"},

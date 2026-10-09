@@ -82,7 +82,8 @@ export function stripTerminalEscapes(value: string): string {
 // A format character — a bidi override, a zero-width space — is drawn as a
 // visible mark: text a person reads to decide what runs must show what the shell
 // will read, and "echo ok" followed by a right-to-left override reorders what
-// comes after it on screen, as "rm​ -rf x" looks like "rm -rf x" and is not.
+// comes after it on screen, and "rm", a zero-width space and " -rf x" read as the
+// command "rm -rf x" and are not it.
 export function commandLines(command: string | undefined, maximumLines = 12): string[] {
   if (!command) return [];
   const lines = redactSecrets(stripTerminalEscapes(boundedWindow(command, MAX_REDACTION_WINDOW).replace(/\r\n?/g, "\n")).replace(formatCharacterPattern, "�"))
