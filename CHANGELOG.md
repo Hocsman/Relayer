@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.18] - 2026-10-09
+
+Patch release built with Go 1.26.9, which fixes the standard library advisories in `net/http`, `crypto/tls`, `net/textproto` and `mime/multipart` that every earlier release carried. A high-risk prompt, such as a shell command Claude Code asks about, is no longer masked as confidential, and a URL that does not parse no longer prints its credentials, a leak the move to Go 1.26 exposed.
+
 ### Fixed
 
 - **A high-risk prompt was displayed as a confidential one.** The display mask covered every high-risk event, so a shell command Claude Code asks about showed the title "Confidential input required", a masked answer field and no command — the command had to be read in the terminal. Masking now covers only what is a secret: an event the adapter marked sensitive, or a credential prompt. A high-risk prompt keeps an honest label and takes a normal, visible answer, in the decision modal and in the TUI, whose notifications now carry the summary the prompt is shown with rather than the adapter's raw text. The decision modal also shows the last lines of the agent's output, redacted and cut; for a Claude Code shell command they are the terminal's raw text, escape sequences included. The command itself is still not in the prompt's summary, which for Claude Code is a constant: read it on the agent's card. A prompt whose text contains `token`, `secret`, `password` or `otp`, even inside a longer word such as `footprint`, is still marked sensitive and still masked. The audit journal is unchanged: a high-risk entry is still recorded sensitive, with the constant `sensitive_event` summary.
@@ -1124,7 +1128,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.17...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.18...main
+[0.8.18]: https://github.com/Hocsman/Relayer/compare/v0.8.17...v0.8.18
 [0.8.17]: https://github.com/Hocsman/Relayer/compare/v0.8.16...v0.8.17
 [0.8.16]: https://github.com/Hocsman/Relayer/compare/v0.8.15...v0.8.16
 [0.8.15]: https://github.com/Hocsman/Relayer/compare/v0.8.14...v0.8.15
