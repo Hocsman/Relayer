@@ -121,9 +121,10 @@ or a substitute for reviewing an agent's work. See the
 
 ## Prerequisites
 
-- Go 1.26.9 or newer to build from source. The patch-level minimum keeps
-  release binaries on a standard library version covered by the vulnerability
-  gate.
+- Go 1.26.9, or 1.27.2 or newer, to build from source: 1.27.0 and 1.27.1 still
+  carry the standard library advisories that 1.26.9 fixes. The patch-level
+  minimum keeps release binaries on a standard library version covered by the
+  vulnerability gate.
 - A UTF-8 interactive terminal.
 - Bash for the bundled mock agents and the reproducible demo.
 - tmux only when selecting `tmux` or when you want `auto` to choose it.
