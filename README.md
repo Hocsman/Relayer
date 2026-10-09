@@ -121,7 +121,7 @@ or a substitute for reviewing an agent's work. See the
 
 ## Prerequisites
 
-- Go 1.25.13 or newer to build from source. The patch-level minimum keeps
+- Go 1.26.9 or newer to build from source. The patch-level minimum keeps
   release binaries on a standard library version covered by the vulnerability
   gate.
 - A UTF-8 interactive terminal.
