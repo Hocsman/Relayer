@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -38,11 +39,25 @@ func runAnsweredThenProgramHelper(kind string) {
 	for index := range 45 {
 		fmt.Printf("agent output line %d\r\n", index)
 	}
+	// The read that waits for the answer is already pending when the question
+	// is asked, as an agent's is once it has been waiting for input. Started
+	// after the question instead, it began within about a millisecond of the
+	// answer, which the test sends as soon as it sees the question. Reproduced
+	// locally (CPU limited to four cores, the test ending at the first paint as
+	// it does where ConPTY does not pass the screen switch through), a read
+	// started that close to the answer did not wake for ten seconds, and a
+	// later keystroke released it with the answer queued behind it. A windows-2022
+	// run failed the same way, with a program that never painted.
+	input := bufio.NewReader(os.Stdin)
+	answered := make(chan struct{})
+	go func() {
+		_, _ = input.ReadString('\n')
+		close(answered)
+	}()
 	// The question in a write of its own, as an agent that stops to ask it.
 	time.Sleep(300 * time.Millisecond)
 	fmt.Print(prompt)
-	input := bufio.NewReader(os.Stdin)
-	_, _ = input.ReadString('\n')
+	<-answered
 
 	stdout := windows.Handle(os.Stdout.Fd())
 	var mode uint32
@@ -58,27 +73,35 @@ func runAnsweredThenProgramHelper(kind string) {
 	os.Exit(0)
 }
 
-// programRepaints counts the writes that painted the program's screen, so the
+// programRepaints counts the times the program's screen was painted, so the
 // test can wait for ConPTY to have redrawn it after each resize. The recorder
-// sees a write once the Processor has read it.
+// sees a write once the Processor has read it. What is counted is everything
+// read so far, not each write: ConPTY cuts its output wherever it likes, and
+// "editor contents" or the switch to the alternate screen split between two
+// reads was never found in either.
 type programRepaints struct {
-	mu       sync.Mutex
-	count    int
-	switched bool
-	output   strings.Builder
+	mu     sync.Mutex
+	read   strings.Builder
+	output strings.Builder
+	// helperState says whether the helper process is still running, for the
+	// dump of a run that failed. Set before the first wait, read by the test's
+	// own goroutine only.
+	helperState func() string
 }
 
 func (r *programRepaints) StartSession(terminal.Info, terminal.Size, time.Time) {}
 func (r *programRepaints) RecordOutput(_ terminal.SessionID, _ time.Time, data []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if strings.Contains(string(data), "editor contents") {
-		r.count++
-	}
-	if strings.Contains(string(data), "\x1b[?1049h") {
-		r.switched = true
-	}
+	r.read.Write(data)
 	fmt.Fprintf(&r.output, "%q\n", data)
+}
+
+// paints is how many times the program's screen has been painted.
+func (r *programRepaints) paints() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return strings.Count(r.read.String(), "editor contents")
 }
 
 // passedTheSwitchThrough reports whether ConPTY handed the program's switch to
@@ -89,7 +112,7 @@ func (r *programRepaints) RecordOutput(_ terminal.SessionID, _ time.Time, data [
 func (r *programRepaints) passedTheSwitchThrough() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.switched
+	return strings.Contains(r.read.String(), "\x1b[?1049h")
 }
 
 // conptyRepaintsFullScreenPrograms is why a full-screen case is skipped where
@@ -98,7 +121,13 @@ func (r *programRepaints) passedTheSwitchThrough() bool {
 const conptyRepaintsFullScreenPrograms = "this ConPTY paints a full-screen program over the primary screen instead of switching screens; " +
 	"the answered question is then asked again when the program exits (a known gap, see docs/adapters.md)"
 
-func (r *programRepaints) RecordInput(terminal.SessionID, time.Time, []byte)         {}
+// RecordInput keeps what was typed in the dump, in order with what was read, so
+// a run that fails shows whether the answer was written before the silence.
+func (r *programRepaints) RecordInput(_ terminal.SessionID, _ time.Time, data []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	fmt.Fprintf(&r.output, "typed %q\n", data)
+}
 func (r *programRepaints) RecordResize(terminal.SessionID, time.Time, terminal.Size) {}
 func (r *programRepaints) FinishSession(terminal.SessionID, time.Time, *int)         {}
 
@@ -107,15 +136,17 @@ func (r *programRepaints) waitFor(t *testing.T, count int) {
 	deadline := time.Now().Add(10 * time.Second)
 	seen := 0
 	for time.Now().Before(deadline) {
-		r.mu.Lock()
-		seen = r.count
-		r.mu.Unlock()
+		seen = r.paints()
 		if seen >= count {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("the program's screen was painted %d time(s), want %d\n%s", seen, count, r.written())
+	state := ""
+	if r.helperState != nil {
+		state = r.helperState() + "\n"
+	}
+	t.Fatalf("the program's screen was painted %d time(s), want %d\n%s%s", seen, count, state, r.written())
 }
 
 func (r *programRepaints) written() string {
@@ -190,6 +221,14 @@ func TestAWindowResizedWhileAProgramRunsAfterTheAnswerDoesNotAskItAgainOnConPTY(
 			}, 120, 30)
 			if err != nil {
 				t.Fatalf("Start: %v", err)
+			}
+			repaints.helperState = func() string {
+				exited, waitErr, exitCode, _ := manager.Result(info.ID)
+				code := "none"
+				if exitCode != nil {
+					code = strconv.Itoa(*exitCode)
+				}
+				return fmt.Sprintf("the helper has exited: %t (wait error %v, exit code %s)", exited, waitErr, code)
 			}
 			next := func() Event {
 				t.Helper()
