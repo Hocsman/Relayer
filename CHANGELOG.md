@@ -12,7 +12,7 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ### Security
 
-- **Relayer is built with Go 1.26.9.** The Go standard library has advisories in `net/http`, `crypto/tls` and `mime/multipart` (GO-2026-6603, GO-2026-6607, GO-2026-6608, GO-2026-6613 and GO-2026-6617 among them) that are fixed in Go 1.26.9; the 1.25 series, which every release up to v0.8.17 was built with (1.25.13), is no longer supported and gets no fix. The web gateway serves `net/http`, and the desktop's update check and the webhooks speak TLS. Building from source needs Go 1.26.9 or newer.
+- **Relayer is built with Go 1.26.9.** The Go standard library has advisories in `net/http`, `crypto/tls`, `net/textproto` and `mime/multipart` (GO-2026-6603, GO-2026-6607, GO-2026-6608, GO-2026-6613 and GO-2026-6617 among them; `govulncheck` reported at least seven) that are fixed in Go 1.26.9 and in Go 1.27.2. Go 1.27.0 and 1.27.1 are affected. The 1.25 series, which every release was built with (1.25.13 from v0.1.1-alpha to v0.8.17, 1.25.8 for v0.1.0-alpha), is no longer supported and gets no fix. The web gateway serves `net/http`, and the desktop's update check and the webhooks speak HTTP and TLS as clients. Building from source needs Go 1.26.9, or 1.27.2 or newer. Moving the `go` line to 1.26 also changes the defaults of three `GODEBUG` settings: TLS clients offer two more hybrid ML-KEM key exchange groups, and `url.Parse` refuses a host with an extra colon (see the fix above).
 
 ## [0.8.17] - 2026-10-08
 
