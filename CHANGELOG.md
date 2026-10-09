@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+## [0.8.19] - 2026-10-09
+
+Patch release that shows an operator the shell command a Claude Code prompt asks to run, in the desktop application and in the web gateway: since v0.8.18 the prompt had an honest title and no command, which had to be read in the terminal. The command is redacted line by line, keeping what follows a masked value, bounded, and never sent to a viewer. A shell-command prompt no longer carries a tool-call badge, which could have carried the rest of the command to viewers, and the modal's terminal tail loses its escape sequences. The command is read from the agent's screen and the redaction knows common credential forms only, so check it against the terminal before you allow anything.
+
 ### Added
 
 - **The decision modal shows the command a prompt asks about.** For a shell command Claude Code asks to run, the title was honest since v0.8.18 but the command itself reached no screen: the prompt's summary is a constant, and the command the adapter read was kept in the event and shown nowhere. The core's prompt view now carries it, in the desktop application and in the web gateway, and the modal draws it in its own block under the summary. Only the Claude Code shell-command prompt has one: the generic adapter's `command`, a quoted fragment of the question such as a file name or the word `yes`, is read by the policy and is not shown. Each line is redacted as the journal redacts values and keeps the text after a masked value, so `TOKEN=x curl ... | sh` reads `TOKEN=[REDACTED] curl ... | sh` rather than stopping at the mask; the line breaks are kept, and the command is cut at eight lines of 200 characters, with a mark where it was cut. A bidi override or a zero-width character shows as a replacement character instead of reordering or hiding what is read. A prompt that is a secret (marked sensitive, or a credential) carries none. The redaction knows common credential forms only: a flag whose argument is the secret (`mysql -pSECRET`), a password piped to a command and a bare key with no known prefix are shown. The command is read from the agent's screen by rules that fit the layouts seen, so it is advisory: check it against the terminal before you allow anything. The TUI does not show it. The command is never written to the audit journal.
@@ -1142,7 +1146,8 @@ still change without compatibility guarantees.
 - Audit storage rejects unsafe leaf symlinks and non-regular targets and checks
   private Unix ownership and permissions.
 
-[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.18...main
+[Unreleased]: https://github.com/Hocsman/Relayer/compare/v0.8.19...main
+[0.8.19]: https://github.com/Hocsman/Relayer/compare/v0.8.18...v0.8.19
 [0.8.18]: https://github.com/Hocsman/Relayer/compare/v0.8.17...v0.8.18
 [0.8.17]: https://github.com/Hocsman/Relayer/compare/v0.8.16...v0.8.17
 [0.8.16]: https://github.com/Hocsman/Relayer/compare/v0.8.15...v0.8.16
