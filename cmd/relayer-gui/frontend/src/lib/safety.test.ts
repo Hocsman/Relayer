@@ -277,10 +277,12 @@ describe("commandLines", () => {
   // reorders what follows it on screen, and "rm" followed by a zero-width space is
   // not the word it looks like.
   it("shows a format character as a visible mark", () => {
-    const mark = "�";
-    expect(commandLines("echo ok‮txt.exe")).toEqual([`echo ok${mark}txt.exe`]);
-    expect(commandLines("rm​ -rf x")).toEqual([`rm${mark} -rf x`]);
-    expect(commandLines("​​")).toEqual([`${mark}${mark}`]);
+    const mark = String.fromCharCode(0xfffd);
+    const override = String.fromCharCode(0x202e);
+    const zeroWidth = String.fromCharCode(0x200b);
+    expect(commandLines(`echo ok${override}txt.exe`)).toEqual([`echo ok${mark}txt.exe`]);
+    expect(commandLines(`rm${zeroWidth} -rf x`)).toEqual([`rm${mark} -rf x`]);
+    expect(commandLines(`${zeroWidth}${zeroWidth}`)).toEqual([`${mark}${mark}`]);
   });
 
   it("does not stall on a long unbroken command", () => {
