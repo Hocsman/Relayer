@@ -25,6 +25,7 @@ const (
 
 var (
 	urlPattern              = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s<>"']+`)
+	urlUserinfoPattern      = regexp.MustCompile(`(?i)^([a-z][a-z0-9+.-]*://).*@`)
 	bearerPattern           = regexp.MustCompile(`(?i)\b(bearer[ \t]+)[A-Za-z0-9._~+/=-]+`)
 	basicPattern            = regexp.MustCompile(`(?i)\b(basic[ \t]+)[A-Za-z0-9+/=]+`)
 	jwtPattern              = regexp.MustCompile(`\b[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]{8,}\b`)
@@ -374,7 +375,14 @@ func credentialValueLooksSecret(value string) bool {
 func redactURL(value string) string {
 	trimmed, suffix := trimURLPunctuation(value)
 	parsed, err := url.Parse(trimmed)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+	if err != nil {
+		// Not a reason to print what comes before its @. Go 1.26 refuses a host
+		// with an extra colon, which 1.25 parsed and masked, and a password may
+		// hold an @ or a / that no parser accepts. Everything up to the last @
+		// of the token goes, whatever the URL would have meant.
+		return urlUserinfoPattern.ReplaceAllString(value, "${1}"+redactedValue+"@")
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
 		return value
 	}
 	if parsed.User != nil {

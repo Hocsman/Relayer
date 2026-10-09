@@ -701,3 +701,65 @@ func TestAPersonsDecisionOnASensitivePromptCarriesNoSummary(t *testing.T) {
 		t.Fatalf("the policy's decision on a sensitive prompt = %q, want the constant", policy.Summary)
 	}
 }
+
+// Go 1.26 rejects a host with an extra colon (http://localhost:80:80/), which
+// 1.25 parsed: redactURL then returned the text untouched, and the password of
+// "https://bot:Sup3rS3cret@host:443:443/repo.git" stayed in the summary a
+// journal, a notification and a decision modal print. A URL that does not
+// parse is no reason to print what comes before its @.
+func TestRedactMasksTheCredentialsOfAURLThatDoesNotParse(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		secrets   []string
+		preserves []string
+	}{
+		{
+			name:      "an extra colon in the host",
+			input:     "git clone https://bot:Sup3rS3cret@host:443:443/repo.git now",
+			secrets:   []string{"Sup3rS3cret", "bot:"},
+			preserves: []string{"git clone https://" + redactedValue + "@host:443:443/repo.git", "now"},
+		},
+		{
+			name:      "an @ inside the password",
+			input:     "https://bot:p@ss@host:1:2/x",
+			secrets:   []string{"bot", "p@ss", "ss@host"},
+			preserves: []string{"https://" + redactedValue + "@host:1:2/x"},
+		},
+		{
+			name:      "a slash inside the password",
+			input:     "https://bot:pa/ss@host:1:2/x",
+			secrets:   []string{"bot", "pa/ss"},
+			preserves: []string{"https://" + redactedValue + "@host:1:2/x"},
+		},
+		{
+			name:      "in parentheses and followed by a comma",
+			input:     "(see https://bot:Sup3rS3cret@host:80:80/a), then",
+			secrets:   []string{"Sup3rS3cret"},
+			preserves: []string{"then"},
+		},
+		{
+			name:    "a query secret on a URL that does not parse",
+			input:   "https://host:1:2/path?ok=yes&access_token=url-secret&API_KEY=key-secret",
+			secrets: []string{"url-secret", "key-secret"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := Redact(test.input)
+			for _, secret := range test.secrets {
+				if strings.Contains(got, secret) {
+					t.Fatalf("Redact(%q) = %q, which still holds %q", test.input, got, secret)
+				}
+			}
+			for _, kept := range test.preserves {
+				if !strings.Contains(got, kept) {
+					t.Fatalf("Redact(%q) = %q, which lost %q", test.input, got, kept)
+				}
+			}
+			if again := Redact(got); again != got {
+				t.Fatalf("Redact is not idempotent: %q then %q", got, again)
+			}
+		})
+	}
+}
