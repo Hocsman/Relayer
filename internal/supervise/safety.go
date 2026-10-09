@@ -12,6 +12,15 @@ import (
 const (
 	maxDisplaySummaryRunes = 120
 	maxDisplayErrorRunes   = 180
+	// maxDisplayCommandLines and maxDisplayCommandLineRunes bound the command a
+	// prompt asks about: enough for a one-liner or a short script, not for a
+	// payload that would push the controls off the screen.
+	maxDisplayCommandLines     = 8
+	maxDisplayCommandLineRunes = 200
+	// maxCommandInputBytes bounds what is read of a command before it is split
+	// and redacted: the adapters' detection window is 16 KiB, and the extractor
+	// of a Claude Code command has no bound of its own.
+	maxCommandInputBytes = 16 << 10
 	// maxDisplayToolNameRunes and maxDisplayToolValueRunes are the bounds the
 	// adapters' tool-call parser already applies to a name and to a parameter
 	// value; the display form keeps them whatever the parser becomes.
@@ -39,6 +48,80 @@ func safeEventSummary(event adapters.Event) string {
 		return "Sensitive input required"
 	}
 	return boundedDisplayText(audit.Redact(event.Summary), maxDisplaySummaryRunes, "Event detected")
+}
+
+// displayCommand is the only form of the command an event asks about that may
+// be shown. It is none for an event whose text must not be shown and for one
+// that is not a shell-command prompt: the generic adapter's Event.Command is a
+// quoted fragment of the question ("config.yaml", "yes") that has lost the words
+// that would let a redaction see what it is. Otherwise it is the command with
+// each line redacted as the journal redacts values, line breaks kept, and lines
+// and their lengths bounded. The adapters read it from the agent's own screen, so
+// it is agent-controlled text: display data, never an instruction, and never
+// journaled (the journal records a high-risk entry under a constant label).
+//
+// Each line is cleaned and then redacted on its own: a keyword at the end of one
+// line must not mask the first word of the next, and a control character is a
+// space before the redaction looks, as in the journal, or "password\x00is\x00x"
+// would pass it. The redaction drops no text after a masked value
+// (audit.RedactValues): a line that stops at "[REDACTED]" reads as a whole one.
+// Line breaks are kept because flattening "rm -rf a" and "ls" onto one line reads
+// as one command with arguments. A format character, such as a bidi override or a
+// zero-width space, shows as U+FFFD: it reorders or hides what a person reads.
+func displayCommand(event adapters.Event) string {
+	if requiresSecretHandling(event) || !event.IsShellCommandPrompt() || strings.TrimSpace(event.Command) == "" {
+		return ""
+	}
+	text := event.Command
+	if len(text) > maxCommandInputBytes {
+		text = strings.ToValidUTF8(text[:maxCommandInputBytes], "")
+	}
+	text = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(text)
+	lines := make([]string, 0, maxDisplayCommandLines)
+	cut := false
+	for _, line := range strings.Split(text, "\n") {
+		line = displayCommandLine(line)
+		if line == "" && len(lines) == 0 {
+			continue
+		}
+		if len(lines) == maxDisplayCommandLines {
+			if line != "" {
+				cut = true
+				break
+			}
+			continue
+		}
+		if utf8.RuneCountInString(line) > maxDisplayCommandLineRunes {
+			line = string([]rune(line)[:maxDisplayCommandLineRunes-1]) + "…"
+		}
+		lines = append(lines, line)
+	}
+	for len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if cut {
+		lines = append(lines, "…")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// displayCommandLine is one line of a command as it may be shown: control
+// characters as spaces, then redacted, trailing space off, then format
+// characters as a visible mark.
+func displayCommandLine(line string) string {
+	line = strings.Map(func(character rune) rune {
+		if unicode.IsControl(character) {
+			return ' '
+		}
+		return character
+	}, line)
+	line = strings.TrimRightFunc(audit.RedactValues(line), unicode.IsSpace)
+	return strings.Map(func(character rune) rune {
+		if unicode.Is(unicode.Cf, character) {
+			return unicode.ReplacementChar
+		}
+		return character
+	}, line)
 }
 
 // displayToolCall is the only form of an event's MCP tool call that may be

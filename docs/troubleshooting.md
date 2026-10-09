@@ -327,8 +327,8 @@ cannot deliver that proposal automatically.
 
 Credential and sensitive prompts use masked input. The target still
 receives the actual value and may echo it. A high-risk prompt is not masked:
-its bounded, redacted command is shown and the answer is typed in a normal
-field; only the audit journal keeps its constant label. If a prompt was
+its bounded, redacted command is shown when the adapter read one, and the
+answer is typed in a normal field; only the audit journal keeps its constant label. If a prompt was
 incorrectly marked sensitive, inspect the pattern expression and description
 for credential words. Do not weaken a genuinely sensitive pattern merely to
 display input.

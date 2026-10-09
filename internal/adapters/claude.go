@@ -309,6 +309,7 @@ func (a *ClaudeAdapter) Detect(state *DetectionState, chunk []byte) ([]Event, er
 			event.Metadata["observed_cli_version"] = rule.version
 			if patternName == claudeBashCommandPattern {
 				event.Command = extractClaudeBashCommand(event.Match)
+				event.Metadata[MetadataCommandKind] = CommandKindShell
 			} else if patternName == claudeWriteFilePattern || patternName == claudeEditFilePattern {
 				if targetFile := extractClaudeTargetFile(event.Match); targetFile != "" {
 					event.Metadata["target_file"] = targetFile

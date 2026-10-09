@@ -537,7 +537,16 @@ The Claude adapter recognizes five prompt structures:
   `permission`. The event's `command` is a best-effort reading of the command
   Claude Code displays, for `command_regex` and `read_only` rules. It is cut out
   of the screen text by rules that fit the layouts seen, so treat it as
-  advisory. No front end shows it;
+  advisory. The decision modal of the desktop application and of the web gateway
+  shows it to an operator, and only for this prompt: the generic adapter's
+  `command` is a quoted fragment of the question, and is not shown. Each line is
+  redacted as the journal redacts values (common credential forms: a flag whose
+  argument is the secret, such as `mysql -pSECRET`, a piped password and a bare
+  key without a known prefix are not recognised), what follows a masked value is
+  kept, the line breaks are kept, and the command is bounded to eight lines of
+  200 characters with a mark where it was cut. A bidi override or a zero-width
+  character shows as a replacement character. A viewer is sent none, a prompt
+  that is a secret shows none, and the TUI does not show it;
 - creating a file (2.1.285 and 2.1.286), and editing a file (2.1.285; no 2.1.286
   edit-file layout is recorded), each emitted as a `confirmation` of unknown
   risk. A `text_regex` rule matches the displayed block (file name, content,

@@ -39,6 +39,7 @@ func TestSupervisionEventCarriesEveryFieldOfTheCoreView(t *testing.T) {
 		},
 		DeliveryStatus: "delivering",
 		Decisions:      []string{"allow", "deny"},
+		Command:        "npm test",
 	}
 	for index := 0; index < reflect.TypeOf(view).NumField(); index++ {
 		// An unexported field, the tool call the web gateway shows, is not

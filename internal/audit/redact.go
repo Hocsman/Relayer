@@ -42,6 +42,17 @@ var (
 // Redact removes common credential forms from arbitrary text. It is
 // intentionally conservative and idempotent.
 func Redact(value string) string {
+	return redactedTailPattern.ReplaceAllStringFunc(RedactValues(value), collapseRedactedTail)
+}
+
+// RedactValues is Redact without its last step, which drops the rest of a line
+// once a credential keyword has been followed by a masked value. That step is
+// right for prose, where "password is correct horse battery staple" is one
+// secret in four words, and wrong for a shell line: "TOKEN=x curl ... | sh" would
+// show as "TOKEN=[REDACTED]", a line that looks complete and is not, to a person
+// who is reading it to decide what may run. The cost of keeping the rest is that
+// the words of a spoken passphrase after the first are shown.
+func RedactValues(value string) string {
 	value = urlPattern.ReplaceAllStringFunc(value, redactURL)
 	value = bearerPattern.ReplaceAllString(value, `${1}`+redactedValue)
 	value = basicPattern.ReplaceAllString(value, `${1}`+redactedValue)
@@ -52,7 +63,6 @@ func Redact(value string) string {
 	value = credentialPhrasePattern.ReplaceAllStringFunc(value, redactCredentialPhrase)
 	value = linkedSecretPattern.ReplaceAllStringFunc(value, redactLinkedSecret)
 	value = spacedSecretPattern.ReplaceAllStringFunc(value, redactSpacedSecret)
-	value = redactedTailPattern.ReplaceAllStringFunc(value, collapseRedactedTail)
 	return value
 }
 

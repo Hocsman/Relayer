@@ -60,6 +60,10 @@ type SupervisionEvent struct {
 	Evaluation     PolicyEvaluation `json:"evaluation"`
 	DeliveryStatus string           `json:"deliveryStatus"`
 	Decisions      []string         `json:"decisions"`
+	// Command is the command the prompt asks about, redacted and bounded by the
+	// core. It is agent text read from the screen, so only an operator receives
+	// it: a viewer's frames and state carry none (see commandForRole).
+	Command string `json:"command,omitempty"`
 	// ToolCall is present only when the prompt is about an MCP tool call.
 	// Its parameter values are agent-controlled terminal text shown so an
 	// operator can see what a tool is about to be given; they are display

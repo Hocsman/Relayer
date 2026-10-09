@@ -285,8 +285,11 @@ recordings keep them, as they keep everything. What an agent prints —
 a token it echoes, a file it displays, a secret in a command it runs — reaches
 every viewer. Only the prompt cards are redacted: a prompt's summary, its
 tool-call badge and every notification carry bounded, redacted text, and a
-prompt whose text must not be shown carries none. A viewer token is therefore
-a token to read the terminals, and should be given only to people who may.
+prompt whose text must not be shown carries none. The command a prompt asks
+about, which the decision modal shows, goes to operators only: a viewer's frames
+and state carry none, though with terminals shown it can read the command where
+the agent printed it. A viewer token is therefore a token to read the terminals,
+and should be given only to people who may.
 
 A gateway started with `--viewer-terminals hidden` sends its viewers no
 terminal at all. Their state and snapshots carry each agent's status, exit code

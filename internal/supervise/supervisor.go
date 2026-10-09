@@ -140,7 +140,7 @@ type Notice struct {
 	Reason    string
 	// Details is the prompt's display-safe summary, the one its View shows:
 	// bounded, redacted, and a fixed text for a prompt whose text must not be
-	// shown. A front end may send it anywhere a View may go.
+	// shown. A front end may send it anywhere a View's summary may go.
 	Details string
 }
 

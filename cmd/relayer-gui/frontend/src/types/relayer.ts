@@ -105,6 +105,11 @@ export interface SupervisionEvent {
   timestamp: string;
   evaluation: PolicyEvaluation;
   deliveryStatus: DeliveryStatus;
+  // The command the prompt asks about, redacted and bounded by the core, with
+  // its line breaks. Present only for an operator, and only when the adapter
+  // read one and the prompt is not a secret. It is agent text: display it,
+  // never act on it.
+  command?: string;
   // Present only when the prompt is about an MCP tool call. Parameter values
   // are agent-controlled terminal text: display them, never act on them.
   toolCall?: ToolCallView;

@@ -63,6 +63,9 @@ type SupervisionEvent struct {
 	// offered an Allow button the adapter has no verified bytes for would be
 	// promising a delivery that fails at the last step.
 	Decisions []string `json:"decisions"`
+	// Command is the command the prompt asks about, redacted and bounded by the
+	// core; empty when the adapter read none or the prompt is sensitive.
+	Command string `json:"command,omitempty"`
 }
 
 type AppState struct {

@@ -407,6 +407,45 @@ func TestClaudeAdapterEncodeDecisionIsConservative(t *testing.T) {
 	}
 }
 
+// Only the rule written for the shell-command prompt says its Event.Command is
+// a shell command. A front end shows the command of such a prompt and of no
+// other, and a create or edit prompt, which carries a target file and no command,
+// must not be taken for one.
+func TestOnlyTheClaudeShellCommandRuleMarksItsCommand(t *testing.T) {
+	adapter := newClaudeAdapterForTest(t, nil)
+	prompts := map[string]struct {
+		text  string
+		shell bool
+	}{
+		"bash": {shell: true, text: "Bash command\n" +
+			"Run shell command ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+			"echo PROBE_BASH_OK > bash_probe.txt\n" +
+			"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+			"Do you want to proceed?\n" +
+			"❯ 1. Yes\n  2. Yes, and always allow access to folder\n  3. No\n\n" +
+			"Esc to cancel · Tab to amend"},
+		"create": {text: "Create file\nnew_file.txt\n" +
+			"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n  1 hello world\n" +
+			"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+			"Do you want to create new_file.txt?\n❯ 1. Yes\n  2. No\n\n" +
+			"Esc to cancel · Tab to amend"},
+		"edit": {text: "Edit file\nmain.go\n" +
+			"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n- old\n+ new\n" +
+			"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n" +
+			"Do you want to make this edit to main.go?\n❯ 1. Yes\n  2. No\n\n" +
+			"Esc to cancel · Tab to amend"},
+	}
+	for name, prompt := range prompts {
+		events, err := adapter.Detect(NewDetectionState("session-"+name, "agent-claude", ClaudeID), []byte(prompt.text))
+		if err != nil || len(events) != 1 {
+			t.Fatalf("%s: detected %#v, %v", name, events, err)
+		}
+		if got := events[0].IsShellCommandPrompt(); got != prompt.shell {
+			t.Errorf("%s: IsShellCommandPrompt = %v, want %v (metadata %v)", name, got, prompt.shell, events[0].Metadata)
+		}
+	}
+}
+
 // No answer to a Claude Code Bash, create or edit prompt has been typed into a
 // real Claude Code with its effect checked, so none is claimed: a policy
 // decision on these prompts is a question for a person, and what a person types

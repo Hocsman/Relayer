@@ -21,8 +21,10 @@ import (
 
 // gatewaySink carries what one run's supervision core shows to every client of
 // the gateway, as the gateway's own frames. Each frame goes to every client,
-// viewers included, since the fan-out does not filter by role: what the core
-// shows is display-safe by construction, and the sink adds nothing that is not.
+// viewers included: what the core shows is display-safe by construction, and the
+// sink adds nothing that is not. The one field of a prompt that is not for every
+// client is its command, which the fan-out removes from a viewer's copy (see
+// commandForRole).
 //
 // The core calls the sink without holding its own lock, so the sink may take
 // c.mu, and it does. The gateway therefore never holds c.mu while it calls an
@@ -176,6 +178,7 @@ func supervisionEventFromView(view supervise.View) SupervisionEvent {
 		Evaluation:     PolicyEvaluation(view.Evaluation),
 		DeliveryStatus: view.DeliveryStatus,
 		Decisions:      view.Decisions,
+		Command:        view.Command,
 		ToolCall:       toolCallView(view.ToolCall()),
 	}
 }

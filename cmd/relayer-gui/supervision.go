@@ -145,5 +145,6 @@ func supervisionEventFromView(view supervise.View) SupervisionEvent {
 		Evaluation:     PolicyEvaluation(view.Evaluation),
 		DeliveryStatus: view.DeliveryStatus,
 		Decisions:      view.Decisions,
+		Command:        view.Command,
 	}
 }
