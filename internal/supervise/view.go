@@ -12,13 +12,13 @@ import (
 // field for field. It has no field for terminal input, adapter matches or raw
 // backend text, and its summary, rule and reason have been bounded and redacted.
 type View struct {
-	RunID          string         `json:"runID"`
-	ID             string         `json:"id"`
-	SessionID      string         `json:"sessionID"`
-	AgentID        string         `json:"agentID"`
-	Adapter        string         `json:"adapter"`
-	Type           string         `json:"type"`
-	Summary        string         `json:"summary"`
+	RunID     string `json:"runID"`
+	ID        string `json:"id"`
+	SessionID string `json:"sessionID"`
+	AgentID   string `json:"agentID"`
+	Adapter   string `json:"adapter"`
+	Type      string `json:"type"`
+	Summary   string `json:"summary"`
 	// Sensitive marks a prompt whose text is a secret — the adapter said so,
 	// or the prompt asks for a credential — and only those: a front end masks
 	// exactly these, with a constant label and a masked field. A high-risk
