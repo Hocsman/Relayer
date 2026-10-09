@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. This file follows the stru
 
 ## [Unreleased]
 
+### Fixed
+
+- **A high-risk prompt was displayed as a confidential one.** The display mask covered every high-risk event, so a shell command Claude Code asks about showed the title "Confidential input required", a masked answer field and no command — the command had to be read in the terminal. Masking now covers only what is a secret: an event the adapter marked sensitive, or a credential prompt. A high-risk prompt keeps an honest label, shows its bounded, redacted command and takes a normal, visible answer, in the decision modal and in the TUI, whose notifications now carry the summary the prompt is shown with rather than the adapter's raw text. The audit journal is unchanged: a high-risk entry is still recorded sensitive, with the constant `sensitive_event` summary.
+
 ## [0.8.17] - 2026-10-08
 
 Patch release that lets Relayer see the prompts Claude Code asks before it runs a shell command or creates a file (2.1.285 and 2.1.286) or edits one (2.1.285), which an agent waited at unseen until now, and that makes a panic while reading one agent's output end that agent's session instead of the whole process. A person answers those prompts: Allow and Deny are not offered for Claude, since no answer to them has been checked against a real Claude Code, and the rules rest on 2.1.285 cases of unconfirmed provenance and on 2.1.286 test strings. The desktop application and the gateway also flag an agent whose version they were not verified against; the probe that finds the version runs only the agent's own binary, inside its deadline and outside the gateway's state lock.

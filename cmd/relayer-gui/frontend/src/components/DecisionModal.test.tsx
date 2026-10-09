@@ -112,6 +112,24 @@ describe("DecisionModal terminal context", () => {
     expect(markup).not.toContain("Enter your API token");
     expect(markup).toContain("Confidential input required");
   });
+
+  it("masks a credential prompt even if the sensitive flag is lost", () => {
+    const markup = render(event({ type: "credential", summary: "Enter your password" }));
+    expect(markup).toContain("Confidential input required");
+    expect(markup).toContain('type="password"');
+    expect(markup).not.toContain("Enter your password");
+  });
+
+  // High risk is not a secret: the modal shows the command and the terminal
+  // context, and the answer goes in a normal, visible field.
+  it("shows a high-risk prompt's command with a normal field", () => {
+    const markup = render(event({ risk: "high", summary: "Run command: npm test" }));
+    expect(markup).toContain("Run command: npm test");
+    expect(markup).not.toContain("Confidential input required");
+    expect(markup).toContain("Terminal context");
+    expect(markup).toContain('type="text"');
+    expect(markup).not.toContain('type="password"');
+  });
 });
 
 // The permissive answer must not be the one the eye picks. button--primary is

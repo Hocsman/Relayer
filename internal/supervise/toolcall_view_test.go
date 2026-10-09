@@ -104,7 +104,6 @@ func TestAPromptShowsItsToolCallOnlyAsItMayBeShown(t *testing.T) {
 	for name, mark := range map[string]func(*adapters.Event){
 		"a sensitive prompt":  func(event *adapters.Event) { event.Sensitive = true },
 		"a credential prompt": func(event *adapters.Event) { event.Type = adapters.EventCredential },
-		"a high-risk prompt":  func(event *adapters.Event) { event.Risk = adapters.RiskHigh },
 	} {
 		t.Run(name, func(t *testing.T) {
 			sup, _ := newCoreForTest(t, newFakeEngine(), "agent-a")
@@ -120,6 +119,33 @@ func TestAPromptShowsItsToolCallOnlyAsItMayBeShown(t *testing.T) {
 			}
 		})
 	}
+
+	// High risk is not a secret: the prompt is not marked sensitive and shows
+	// its call, redacted and bounded like any other's.
+	t.Run("a high-risk prompt", func(t *testing.T) {
+		sup, _ := newCoreForTest(t, newFakeEngine(), "agent-a")
+		event := toolCallPrompt("agent-a", "prompt-risky")
+		event.Risk = adapters.RiskHigh
+		sup.Handle(session.AdapterEvent{Event: event})
+		pending := sup.State().Pending
+		if len(pending) != 1 {
+			t.Fatalf("pending = %v, want the prompt", pendingIDs(sup))
+		}
+		if pending[0].Sensitive {
+			t.Fatal("a high-risk prompt is marked sensitive: it is shown, not masked")
+		}
+		call := pending[0].ToolCall()
+		if call == nil {
+			t.Fatal("a high-risk prompt shows its tool call")
+		}
+		values := map[string]adapters.ToolCallParam{}
+		for _, param := range call.Params {
+			values[param.Name] = param
+		}
+		if values["password"].Value != "[REDACTED]" {
+			t.Fatalf("password = %q, want it redacted", values["password"].Value)
+		}
+	})
 }
 
 // A prompt that asks about no tool call shows none.

@@ -325,10 +325,13 @@ cannot deliver that proposal automatically.
 
 ## The supervisor input is masked
 
-Credential, sensitive, and high-risk prompts use masked input. The target still
-receives the actual value and may echo it. If a prompt was incorrectly marked
-sensitive, inspect the pattern expression and description for credential words.
-Do not weaken a genuinely sensitive pattern merely to display input.
+Credential and sensitive prompts use masked input. The target still
+receives the actual value and may echo it. A high-risk prompt is not masked:
+its bounded, redacted command is shown and the answer is typed in a normal
+field; only the audit journal keeps its constant label. If a prompt was
+incorrectly marked sensitive, inspect the pattern expression and description
+for credential words. Do not weaken a genuinely sensitive pattern merely to
+display input.
 
 ## Agents remain after `Ctrl+C`
 

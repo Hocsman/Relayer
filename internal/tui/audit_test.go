@@ -325,6 +325,41 @@ func TestAuditEventSummaryShowsSafeTextAndMasksSensitiveText(t *testing.T) {
 	}
 }
 
+// The other side of the split: a high-risk prompt is not a secret, so the
+// screen shows its command, but the journal keeps the constant label it has
+// always kept for such an event.
+func TestAuditJournalKeepsItsConstantLabelForAHighRiskPrompt(t *testing.T) {
+	backend := newFakeBackend()
+	t.Cleanup(backend.cancel)
+	sink := &tuiAuditSink{}
+	application := newAuditedModel(
+		t,
+		backend,
+		policy.Config{DefaultAction: policy.ActionAsk},
+		auditedPanes(),
+		sink,
+	)
+	event := testAdapterEvent("agent-a", "confirmation", "Run command: go test ./...", false).Event
+	event.Risk = adapters.RiskHigh
+
+	application, _ = updateModel(t, application, session.AdapterEvent{Event: event})
+	if !strings.Contains(strings.Join(application.logs, "\n"), "go test ./...") {
+		t.Fatalf("the screen does not show the command: %#v", application.logs)
+	}
+	entries := sink.entries(t)
+	if len(entries) != 2 {
+		t.Fatalf("audit entries = %#v, want detected and evaluated", entries)
+	}
+	for _, entry := range entries {
+		if !entry.Sensitive || entry.Summary != "sensitive_event" {
+			t.Fatalf("journal entry = %#v, want the constant label", entry)
+		}
+	}
+	if strings.Contains(sink.raw(), "go test") {
+		t.Fatal("the command reached the journal")
+	}
+}
+
 func TestAuditFailureBeforeManualSendClearsSecretAndSkipsBackend(t *testing.T) {
 	backend := newFakeBackend()
 	t.Cleanup(backend.cancel)

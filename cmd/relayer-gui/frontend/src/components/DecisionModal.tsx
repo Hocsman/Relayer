@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ToolCallBadge } from "./ToolCallBadge";
 import { useDialogKeyboard } from "../hooks/useDialogKeyboard";
 import { reasonText } from "../lib/reason";
-import { promptContextLines, safeEventSummary } from "../lib/safety";
+import { isConfidential, promptContextLines, safeEventSummary } from "../lib/safety";
 import { answerLocked, deliveryRequiresResync, policyDecisionInProgress, typedAtTerminal } from "../lib/delivery";
 import type { AgentState, SemanticDecision, SupervisionEvent } from "../types/relayer";
 
@@ -72,7 +72,11 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
   const policyDeciding = event ? policyDecisionInProgress(event) : false;
   const locked = event ? answerLocked(event) : false;
   const reason = event ? reasonText(event.evaluation.reason) : undefined;
-  const context = event?.sensitive ? [] : promptContextLines(agent?.output ?? "");
+  // Masking follows the one rule of lib/safety: a secret or a credential is
+  // masked; a high-risk prompt is shown — its command, the terminal context
+  // and the tool call badge included — and answered in a normal field.
+  const confidential = event ? isConfidential(event) : false;
+  const context = confidential ? [] : promptContextLines(agent?.output ?? "");
   const offered = (event?.decisions ?? []).filter(
     (decision): decision is SemanticDecision => decision === "allow" || decision === "deny",
   );
@@ -156,7 +160,7 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
     <div className="modal-layer" role="presentation">
       <section
         ref={dialogRef}
-        className={`decision-modal${event.sensitive ? " decision-modal--sensitive" : ""}`}
+        className={`decision-modal${confidential ? " decision-modal--sensitive" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="decision-title"
@@ -207,7 +211,7 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
         {/* Above the transcript: the question is what this tool call will do,
             so it should be readable without scrolling the output. Suppressed on
             a sensitive event for the same reason the transcript is. */}
-        {!event.sensitive && <ToolCallBadge toolCall={event.toolCall} />}
+        {!confidential && <ToolCallBadge toolCall={event.toolCall} />}
 
         {context.length > 0 && (
           <div className="decision-transcript">
@@ -274,7 +278,7 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
 
         <form className="decision-form" onSubmit={(formEvent) => void submit(formEvent)}>
           <label htmlFor="manual-decision">
-            {event.sensitive
+            {confidential
               ? "Confidential value"
               : offered.length > 0
                 ? "Or answer manually"
@@ -285,13 +289,13 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
               ref={inputRef}
               id="manual-decision"
               name="relayer-manual-decision"
-              type={event.sensitive ? "password" : "text"}
-              autoComplete={event.sensitive ? "new-password" : "off"}
+              type={confidential ? "password" : "text"}
+              autoComplete={confidential ? "new-password" : "off"}
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}
               data-1p-ignore
-              placeholder={readOnly ? "Read-only (viewer)" : event.sensitive ? "••••••••" : "Type your answer…"}
+              placeholder={readOnly ? "Read-only (viewer)" : confidential ? "••••••••" : "Type your answer…"}
               disabled={busy || locked || readOnly}
             />
             <button
@@ -303,7 +307,7 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
             </button>
           </div>
           <p>
-            {event.sensitive
+            {confidential
               ? "The value is masked, submitted directly and never added to the interface logs."
               : "The answer is sent to this exact prompt occurrence."}
           </p>
@@ -312,7 +316,7 @@ export function DecisionModal({ event, agent, queueSize, readOnly, onClose, onSu
         </div>
 
         <footer className="decision-modal__footer">
-          <span>{event.sensitive ? "Sensitive event" : `Event ${event.id}`}</span>
+          <span>{confidential ? "Sensitive event" : `Event ${event.id}`}</span>
           {queueSize > 1 && <span>{queueSize - 1} other{queueSize > 2 ? "s" : ""} pending</span>}
         </footer>
       </section>

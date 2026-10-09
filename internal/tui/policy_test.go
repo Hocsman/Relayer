@@ -326,6 +326,8 @@ func TestPolicyDryRunAndCredentialAlwaysRemainHumanAndSecretSafe(t *testing.T) {
 		backend := newPolicyTestBackend()
 		t.Cleanup(backend.cancel)
 		application := newPolicyModel(t, backend, policy.Config{DefaultAction: policy.ActionAllow})
+		notifier := &recordingNotifier{}
+		application.SetNotifier(notifier)
 		event := automaticEvent("agent-a", "credential")
 		event.Type = adapters.EventCredential
 		event.Sensitive = false
@@ -346,6 +348,50 @@ func TestPolicyDryRunAndCredentialAlwaysRemainHumanAndSecretSafe(t *testing.T) {
 		}
 		if !strings.Contains(visible, "summary=sensitive_event") {
 			t.Fatalf("credential summary was not replaced with its safe marker: %q", visible)
+		}
+		notifier.mu.Lock()
+		defer notifier.mu.Unlock()
+		if len(notifier.notifications) != 1 || notifier.notifications[0].Details != "sensitive_event" {
+			t.Fatalf("notification = %#v, want the constant label as its details", notifier.notifications)
+		}
+	})
+
+	// High risk is not a secret: the prompt waits for a person with its
+	// bounded, redacted command on screen and in the notification, and the
+	// answer field echoes normally.
+	t.Run("a high-risk prompt shows its command and takes a normal answer", func(t *testing.T) {
+		backend := newPolicyTestBackend()
+		t.Cleanup(backend.cancel)
+		application := newPolicyModel(t, backend, policy.Config{DefaultAction: policy.ActionAsk})
+		notifier := &recordingNotifier{}
+		application.SetNotifier(notifier)
+		event := automaticEvent("agent-a", "high-risk")
+		event.Risk = adapters.RiskHigh
+		event.Summary = "Run command: go test ./... -- password=hunter2"
+		backend.setPending(event)
+		application, _ = updateModel(t, application, session.AdapterEvent{Event: event})
+		if !application.panes[0].blocked {
+			t.Fatal("the prompt is not waiting for a person")
+		}
+		if application.input.EchoMode != textinput.EchoNormal {
+			t.Fatalf("echo mode = %v, want a normal field for a high-risk prompt", application.input.EchoMode)
+		}
+		visible := strings.Join(application.logs, "\n") + application.View()
+		if !strings.Contains(visible, "go test ./...") {
+			t.Fatalf("the command is not shown: %q", visible)
+		}
+		if strings.Contains(visible, "hunter2") {
+			t.Fatalf("a credential shape survived in the shown command: %q", visible)
+		}
+		notifier.mu.Lock()
+		defer notifier.mu.Unlock()
+		if len(notifier.notifications) != 1 {
+			t.Fatalf("notifications = %#v, want one", notifier.notifications)
+		}
+		notice := notifier.notifications[0]
+		if notice.Reason != "confirmation required" || !strings.Contains(notice.Details, "go test ./...") ||
+			strings.Contains(notice.Details, "hunter2") {
+			t.Fatalf("notification = %#v, want an honest label and the bounded, redacted command", notice)
 		}
 	})
 }

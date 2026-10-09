@@ -19,6 +19,11 @@ type View struct {
 	Adapter        string         `json:"adapter"`
 	Type           string         `json:"type"`
 	Summary        string         `json:"summary"`
+	// Sensitive marks a prompt whose text is a secret — the adapter said so,
+	// or the prompt asks for a credential — and only those: a front end masks
+	// exactly these, with a constant label and a masked field. A high-risk
+	// prompt is not sensitive: it is shown with its bounded, redacted summary
+	// and answered in an ordinary field.
 	Sensitive      bool           `json:"sensitive"`
 	Risk           string         `json:"risk"`
 	Timestamp      string         `json:"timestamp"`

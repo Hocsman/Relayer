@@ -562,6 +562,35 @@ func TestSensitiveManualInputNeverAppearsInDTOsOrAudit(t *testing.T) {
 	}
 }
 
+// High risk is not a secret: a high-risk prompt — a shell command Claude Code
+// asks about, for one — crosses the bridge with its bounded, redacted command
+// as its summary and no sensitive flag, so the modal shows the command and
+// takes the answer in a normal field.
+func TestAHighRiskPromptShowsItsCommandInDTOs(t *testing.T) {
+	engine := newFakeDesktopEngine("agent-a")
+	application := newBridgeForTest(engine)
+	event := bridgeEvent("agent-a", "bash-1")
+	event.Type = adapters.EventPermission
+	event.Risk = adapters.RiskHigh
+	event.Summary = "Run command: go test ./..."
+	application.handleAdapterEvent(event)
+
+	state, err := application.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if len(state.PendingEvents) != 1 {
+		t.Fatalf("pending events = %#v, want the prompt", state.PendingEvents)
+	}
+	prompt := state.PendingEvents[0]
+	if prompt.Sensitive {
+		t.Fatal("a high-risk prompt is marked sensitive: it is shown, not masked")
+	}
+	if !strings.Contains(prompt.Summary, "go test ./...") {
+		t.Fatalf("summary = %q, want the command shown", prompt.Summary)
+	}
+}
+
 func TestSubmitLineSuccessAuditsOnlyStaticMetadata(t *testing.T) {
 	const secret = "line-secret-sentinel-7fd28c"
 	engine := newFakeDesktopEngine("agent-a")

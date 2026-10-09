@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { promptContextLines, redactForDisplay, safeError, safeEventSummary } from "./safety";
+import { isConfidential, promptContextLines, redactForDisplay, safeError, safeEventSummary } from "./safety";
 import type { SupervisionEvent } from "../types/relayer";
 
 function event(overrides: Partial<SupervisionEvent> = {}): SupervisionEvent {
@@ -44,6 +44,23 @@ describe("frontend redaction", () => {
     });
     expect(safeEventSummary(sensitive)).toBe("Confidential input required");
     expect(safeEventSummary(sensitive)).not.toContain("must-not-appear");
+  });
+
+  it("masks a credential prompt even if the sensitive flag is lost", () => {
+    const credential = event({ type: "credential", summary: "Enter your password" });
+    expect(isConfidential(credential)).toBe(true);
+    expect(safeEventSummary(credential)).toBe("Confidential input required");
+  });
+
+  // High risk is not a secret: the prompt keeps an honest label and shows its
+  // command, redacted and bounded, instead of a masked placeholder.
+  it("shows a high-risk prompt's command instead of masking it", () => {
+    const risky = event({ risk: "high", summary: "Run command: npm test -- password=hunter2" });
+    expect(isConfidential(risky)).toBe(false);
+    const shown = safeEventSummary(risky);
+    expect(shown).toContain("npm test");
+    expect(shown).not.toContain("hunter2");
+    expect(shown).not.toBe("Confidential input required");
   });
 });
 

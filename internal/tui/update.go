@@ -534,7 +534,11 @@ func (m *Model) queueHumanEvent(event adapters.Event, evaluation policy.Evaluati
 			EventID:   event.ID,
 			Kind:      kind,
 			Severity:  severity,
-			Details:   event.Summary,
+			// A notification leaves the machine — a webhook posts the details
+			// as they are — so they are the summary the prompt is shown with,
+			// bounded and redacted, never the adapter's own text: the raw
+			// summary went out even for a prompt that asked for a password.
+			Details: safeEventSummary(event),
 		})
 	}
 	if m.inputTarget == "" && !m.writePending {
@@ -759,12 +763,21 @@ func (m *Model) clearAutomaticState(sessionID string) {
 	}
 }
 
+// requiresHumanSafety reports whether a prompt must be answered by a person:
+// the adapter marked it sensitive or it asks for a credential. The policy
+// never answers those.
 func requiresHumanSafety(event adapters.Event) bool {
 	return event.Sensitive || event.Type == adapters.EventCredential
 }
 
+// requiresSecretHandling reports whether a prompt's text must never be shown
+// or journaled — the same set requiresHumanSafety names. High risk is not a
+// secret: a high-risk prompt keeps an honest label, shows its summary bounded
+// and redacted and takes a normal, visible answer. Only the journal still
+// holds such an event under its constant label (audit.SanitizeEntry marks it
+// sensitive there).
 func requiresSecretHandling(event adapters.Event) bool {
-	return requiresHumanSafety(event) || event.Risk == adapters.RiskHigh
+	return requiresHumanSafety(event)
 }
 
 func (m *Model) appendPolicyLog(
@@ -856,6 +869,9 @@ func safeEventSummary(event adapters.Event) string {
 		return character
 	}, event.Summary)
 	value = strings.Join(strings.Fields(value), " ")
+	// Shown, logged and notified text is redacted as the journal redacts: a
+	// high-risk prompt shows its command, never a credential shape in it.
+	value = audit.Redact(value)
 	if value == "" {
 		return "-"
 	}

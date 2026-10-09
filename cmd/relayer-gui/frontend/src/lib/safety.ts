@@ -17,8 +17,17 @@ export function redactForDisplay(value: string): string {
     .slice(0, MAX_SAFE_MESSAGE);
 }
 
+// isConfidential is the one masking rule of the interface: a prompt is masked
+// only when its text is a secret — the core marked it sensitive, or it asks
+// for a credential. High risk is not a secret: a high-risk prompt keeps an
+// honest label, shows its bounded, redacted summary and takes a normal,
+// visible answer.
+export function isConfidential(event: SupervisionEvent): boolean {
+  return event.sensitive || event.type === "credential";
+}
+
 export function safeEventSummary(event: SupervisionEvent): string {
-  if (event.sensitive || event.type === "credential") {
+  if (isConfidential(event)) {
     return "Confidential input required";
   }
   const summary = redactForDisplay(event.summary.trim());

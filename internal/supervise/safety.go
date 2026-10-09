@@ -23,10 +23,13 @@ const (
 )
 
 // requiresSecretHandling reports whether an event's text must never be shown
-// or journaled: the adapter marked it sensitive, it asks for a credential, or
-// its risk is high.
+// or journaled: the adapter marked it sensitive, or it asks for a credential.
+// High risk is not a secret: a high-risk prompt keeps an honest label, shows
+// its summary bounded and redacted and takes a normal, visible answer. Only
+// the journal still holds such an event under its constant label
+// (audit.SanitizeEntry marks it sensitive there).
 func requiresSecretHandling(event adapters.Event) bool {
-	return event.Sensitive || event.Type == adapters.EventCredential || event.Risk == adapters.RiskHigh
+	return event.Sensitive || event.Type == adapters.EventCredential
 }
 
 // safeEventSummary is the only form of an event's summary that may be shown
